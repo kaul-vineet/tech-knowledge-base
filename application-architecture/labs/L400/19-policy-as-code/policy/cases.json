@@ -1,0 +1,33 @@
+{
+  "_doc": "Requirements as test cases (policy tests). Shared by test_policy.py (rego_lite) and policy/loans_test.rego (OPA, CI).",
+  "cases": [
+    {"id": "member borrows for self", "allowed": true,
+     "input": {"action": "borrow", "subject": {"id": "m1", "tenant": "lib00", "roles": ["member"], "email": "m1@example.org"}, "resource": {"tenant": "lib00", "member_id": "m1", "active_loans": 2}}},
+    {"id": "member at the loan limit", "allowed": false,
+     "input": {"action": "borrow", "subject": {"id": "m1", "tenant": "lib00", "roles": ["member"]}, "resource": {"tenant": "lib00", "member_id": "m1", "active_loans": 5}}},
+    {"id": "member borrows for someone else", "allowed": false,
+     "input": {"action": "borrow", "subject": {"id": "m1", "tenant": "lib00", "roles": ["member"]}, "resource": {"tenant": "lib00", "member_id": "m2", "active_loans": 0}}},
+    {"id": "member returns own loan", "allowed": true,
+     "input": {"action": "return", "subject": {"id": "m1", "tenant": "lib00", "roles": ["member"]}, "resource": {"tenant": "lib00", "member_id": "m1", "active_loans": 5}}},
+    {"id": "member views own loans", "allowed": true,
+     "input": {"action": "view", "subject": {"id": "m1", "tenant": "lib00", "roles": ["member"]}, "resource": {"tenant": "lib00", "member_id": "m1", "active_loans": 1}}},
+    {"id": "member views another member's loans", "allowed": false,
+     "input": {"action": "view", "subject": {"id": "m1", "tenant": "lib00", "roles": ["member"]}, "resource": {"tenant": "lib00", "member_id": "m2", "active_loans": 1}}},
+    {"id": "member of another library", "allowed": false,
+     "input": {"action": "borrow", "subject": {"id": "m1", "tenant": "lib01", "roles": ["member"]}, "resource": {"tenant": "lib00", "member_id": "m1", "active_loans": 0}}},
+    {"id": "suspended member", "allowed": false,
+     "input": {"action": "borrow", "subject": {"id": "m1", "tenant": "lib00", "roles": ["member"], "suspended": true}, "resource": {"tenant": "lib00", "member_id": "m1", "active_loans": 0}}},
+    {"id": "librarian borrows for a member", "allowed": true,
+     "input": {"action": "borrow", "subject": {"id": "s1", "tenant": "lib00", "roles": ["librarian"], "email": "s1@example.org"}, "resource": {"tenant": "lib00", "member_id": "m2", "active_loans": 7}}},
+    {"id": "librarian waives a 12.00 fine", "allowed": true,
+     "input": {"action": "waive_fine", "subject": {"id": "s1", "tenant": "lib00", "roles": ["librarian"]}, "resource": {"tenant": "lib00", "member_id": "m2", "amount": 12}}},
+    {"id": "librarian waives a 25.00 fine", "allowed": false,
+     "input": {"action": "waive_fine", "subject": {"id": "s1", "tenant": "lib00", "roles": ["librarian"]}, "resource": {"tenant": "lib00", "member_id": "m2", "amount": 25}}},
+    {"id": "manager-librarian waives a 25.00 fine", "allowed": true,
+     "input": {"action": "waive_fine", "subject": {"id": "s2", "tenant": "lib00", "roles": ["librarian", "manager"]}, "resource": {"tenant": "lib00", "member_id": "m2", "amount": 25}}},
+    {"id": "librarian of another library", "allowed": false,
+     "input": {"action": "view", "subject": {"id": "s9", "tenant": "lib01", "roles": ["librarian"]}, "resource": {"tenant": "lib00", "member_id": "m2", "active_loans": 1}}},
+    {"id": "unknown action", "allowed": false,
+     "input": {"action": "delete_catalogue", "subject": {"id": "s1", "tenant": "lib00", "roles": ["librarian"]}, "resource": {"tenant": "lib00"}}}
+  ]
+}

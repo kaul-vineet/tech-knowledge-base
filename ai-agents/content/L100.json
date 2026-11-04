@@ -1,0 +1,1236 @@
+[
+  {
+    "id": "set-up-environment",
+    "number": 1,
+    "level": "Setup",
+    "title": "Set up your environment",
+    "phase": "Foundations",
+    "category": "setup",
+    "description": "Run a small open-weight model locally and a deterministic fake server, both serving the chat-completions API.",
+    "outcome": "You can reach a /v1/chat/completions endpoint (real or fake) and verify it from Python.",
+    "environment": "Python 3.12 (macOS: brew install python@3.12; Windows: winget Python.Python.3.12 + py launcher), requests 2.34.2; fake_model_server.py (stdlib); optional: Ollama 0.40.12 + qwen2.5:1.5b (Q4_K_M, 986 MB; CPU, or GPU via Metal on Apple silicon / CUDA, ROCm or Vulkan on Windows). Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "Every lab talks to one URL shape: <base>/v1/chat/completions. Use Ollama with a small CPU model, or the stdlib fake server for tests and offline work."
+    ],
+    "prerequisites": [
+      "Python 3.10+ (validated on 3.12) and pip",
+      "~2 GB free disk and 4 GB RAM for the optional qwen2.5:1.5b model",
+      "Bigger models: size by download (qwen2.5 Q4_K_M: 1.5b 986 MB, 7b 4.7 GB, 14b 9.0 GB, 32b 20 GB) plus context memory; check the real footprint with ollama ps (documentation/HARDWARE.md)"
+    ],
+    "glossary": [
+      {
+        "term": "Chat-completions endpoint",
+        "meaning": "HTTP API that accepts the same JSON as POST /v1/chat/completions; many local servers implement it."
+      },
+      {
+        "term": "Open-weight model",
+        "meaning": "Model whose weights you can download and run yourself (here qwen2.5:1.5b, Apache-2.0)."
+      },
+      {
+        "term": "Fake/stub server",
+        "meaning": "Deterministic program that returns protocol-correct replies so code can be tested without a model."
+      }
+    ],
+    "concepts": [
+      "One wire format, many servers: switch back ends by changing LOCAL_MODEL_URL and LOCAL_MODEL.",
+      "Small quantized models (1-2B, Q4) run on CPU; slower but fine for learning.",
+      "Tests should never depend on a live model: use a deterministic stand-in.",
+      "Same server on a Mac mini (Metal GPU) or a Windows PC (NVIDIA CUDA, AMD ROCm/Vulkan, else CPU); `ollama ps` shows where the model landed."
+    ],
+    "inRealSystems": "Ollama, llama.cpp's llama-server and vLLM all serve /v1/chat/completions, so only LOCAL_MODEL_URL and LOCAL_MODEL change between them.",
+    "useWhen": "Use for learning, private data and offline CI; not for judging model quality.",
+    "steps": [
+      {
+        "title": "Create a virtual environment and install the client library",
+        "detail": "From the topic folder create .venv, activate it, then install requests==2.34.2. Same commands as the shared page - Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+        "mac": "brew install python@3.12\npython3.12 -m venv .venv && source .venv/bin/activate\npython -m pip install requests==2.34.2",
+        "windows": "winget install -e --id Python.Python.3.12\npy -3.12 -m venv .venv; .venv\\Scripts\\Activate.ps1   # blocked? Set-ExecutionPolicy -Scope CurrentUser RemoteSigned\n$env:PYTHONUTF8 = \"1\"\npython -m pip install requests==2.34.2",
+        "expected": "Prompt shows (.venv); Successfully installed requests-2.34.2 (or already satisfied)",
+        "ifNot": "Use python -m pip (not a global pip); re-activate the venv in every new terminal."
+      },
+      {
+        "title": "Start the fake server",
+        "detail": "Run the deterministic stand-in on port 8765 (binds 127.0.0.1 only).",
+        "mac": "cd labs/L100/01-setup\npython fake_model_server.py --port 8765",
+        "windows": "cd labs\\L100\\01-setup\npython fake_model_server.py --port 8765",
+        "expected": "fake model server on http://127.0.0.1:8765/v1 (Ctrl+C to stop)",
+        "ifNot": "Port in use: pick another port and use it in LOCAL_MODEL_URL."
+      },
+      {
+        "title": "Check the endpoint",
+        "detail": "In a second terminal (venv active, same folder) point LOCAL_MODEL_URL and LOCAL_MODEL at the fake server. The older names BASE_URL / MODEL still work as a fallback; LOCAL_MODEL_URL / LOCAL_MODEL win when both are set (same names as every other topic).",
+        "mac": "LOCAL_MODEL_URL=http://127.0.0.1:8765/v1 LOCAL_MODEL=fake-model python check_endpoint.py",
+        "windows": "$env:LOCAL_MODEL_URL=\"http://127.0.0.1:8765/v1\"; $env:LOCAL_MODEL=\"fake-model\"; python check_endpoint.py",
+        "expected": "models served: ['fake-model'] then a chat reply line",
+        "ifNot": "Cannot reach ...: server not running or wrong port. PowerShell keeps $env: values for that window only."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "Runs the lab tests (including one that checks the old BASE_URL / MODEL names still work), the tryIt tests and test_shared_helper.py, which checks that kb/shared/local_agent/ (the helper other topics reuse for their agent-assist labs) still matches this fake server.",
+        "mac": "python -m unittest -v",
+        "windows": "python -m unittest -v",
+        "expected": "Ran 10 tests ... OK (5 lab + 2 tryIt + 3 shared-helper)",
+        "ifNot": "ModuleNotFoundError: requests -> repeat step 1. Shared-helper tests show 'skipped' if this topic is checked out without kb/shared - fine."
+      },
+      {
+        "title": "Optional: install Ollama and pull a small model",
+        "detail": "Install Ollama exactly as in WORKSTATION-SETUP: the server must be running before ollama pull. It listens on 127.0.0.1:11434 and uses the GPU automatically when one is supported.",
+        "mac": "brew install ollama\nbrew services start ollama       # server runs in the background (alt: brew install --cask ollama-app, then open the app once)\nollama pull qwen2.5:1.5b\nexport LOCAL_MODEL_URL=http://localhost:11434/v1\nexport LOCAL_MODEL=qwen2.5:1.5b\npython check_endpoint.py\nollama ps                        # PROCESSOR 100% GPU = Metal (Apple silicon)",
+        "windows": "# Installer OllamaSetup.exe from https://ollama.com/download (winget Ollama.Ollama lags behind the newest release)\nollama pull qwen2.5:1.5b\n$env:LOCAL_MODEL_URL=\"http://localhost:11434/v1\"\n$env:LOCAL_MODEL=\"qwen2.5:1.5b\"\npython check_endpoint.py\nollama ps                        # 100% GPU = NVIDIA CUDA / AMD ROCm or Vulkan; 100% CPU = no supported GPU",
+        "expected": "'qwen2.5:1.5b' in the model list, a short reply, and ollama ps listing the model with its GPU/CPU split",
+        "ifNot": "Mac: brew services start ollama (or open the Ollama app); Windows: start Ollama from the Start menu. Models live in ~/.ollama/models (macOS) or C:\\Users\\<you>\\.ollama\\models (Windows); set OLLAMA_MODELS to move them."
+      },
+      {
+        "title": "Optional: use the Mac mini's model from the Windows PC (LAN)",
+        "detail": "Ollama binds 127.0.0.1:11434 by default. On the host set OLLAMA_HOST=0.0.0.0:11434, restart Ollama, then point LOCAL_MODEL_URL on the other machine at http://<host-ip>:11434/v1. Trusted home/lab network only.",
+        "mac": "brew services stop ollama\nOLLAMA_HOST=0.0.0.0:11434 ollama serve          # foreground; app users: launchctl setenv OLLAMA_HOST \"0.0.0.0:11434\", then reopen the app\nipconfig getifaddr en0                         # this Mac's LAN IP, e.g. 192.168.1.20",
+        "windows": "$env:LOCAL_MODEL_URL=\"http://192.168.1.20:11434/v1\"; python check_endpoint.py   # client: use the Mac mini's model\n# host instead (Windows serves): user env var OLLAMA_HOST=0.0.0.0:11434, quit Ollama from the taskbar, start it again\n[Environment]::SetEnvironmentVariable(\"OLLAMA_HOST\", \"0.0.0.0:11434\", \"User\")",
+        "expected": "From the other machine, models served lists the host's pulled models (e.g. 'qwen2.5:1.5b')",
+        "ifNot": "Connection refused: the app did not pick up OLLAMA_HOST (fully quit and restart it) or a firewall blocks 11434; test with curl http://<host-ip>:11434/v1/models."
+      }
+    ],
+    "code": "\"\"\"Check that a chat-completions server is up: list models, then send one chat request.\n\nReal model : LOCAL_MODEL_URL=http://localhost:11434/v1 LOCAL_MODEL=qwen2.5:1.5b python check_endpoint.py\nFake model : LOCAL_MODEL_URL=http://127.0.0.1:8765/v1  LOCAL_MODEL=fake-model   python check_endpoint.py\nThe older names BASE_URL / MODEL still work as a fallback (LOCAL_MODEL_URL / LOCAL_MODEL win if both are set).\n\"\"\"\nimport os\nimport sys\n\nimport requests\n\nBASE_URL = os.environ.get(\"LOCAL_MODEL_URL\") or os.environ.get(\"BASE_URL\", \"http://localhost:11434/v1\")\nMODEL = os.environ.get(\"LOCAL_MODEL\") or os.environ.get(\"MODEL\", \"qwen2.5:1.5b\")  # one wire format, many servers: only the URL + model name change\n\n\ndef check(base_url=BASE_URL, model=MODEL):\n    models = requests.get(f\"{base_url}/models\", timeout=10)  # health check: what can this server serve?\n    models.raise_for_status()\n    ids = [m[\"id\"] for m in models.json()[\"data\"]]\n    print(\"models served:\", ids)\n    if model not in ids:\n        print(f\"WARNING: {model!r} not listed - pull it first (ollama pull {model})\")\n    resp = requests.post(f\"{base_url}/chat/completions\", timeout=120, json={\n        \"model\": model,\n        \"messages\": [{\"role\": \"user\", \"content\": \"Reply with the single word: ready\"}],\n        \"temperature\": 0,\n    })\n    resp.raise_for_status()\n    reply = resp.json()[\"choices\"][0][\"message\"][\"content\"]\n    print(\"chat reply:\", reply)\n    return ids, reply\n\n\nif __name__ == \"__main__\":\n    try:\n        check()\n    except requests.ConnectionError:\n        sys.exit(f\"Cannot reach {BASE_URL} - is the server running?\")\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/01-setup/check_endpoint.py",
+        "purpose": "List models and send one chat request"
+      },
+      {
+        "path": "labs/L100/01-setup/fake_model_server.py",
+        "purpose": "Deterministic chat-completions stub (chat, JSON, tool_calls) used by every lab test"
+      },
+      {
+        "path": "labs/L100/01-setup/test_setup.py",
+        "purpose": "unittest: endpoint check, CLI, 400 on bad request, tool_call shape"
+      },
+      {
+        "path": "labs/L100/01-setup/README.md",
+        "purpose": "Run commands and observed output"
+      },
+      {
+        "path": "labs/L100/01-setup/test_try_it_01.py",
+        "purpose": "the two tryIt changes, run against the fake server"
+      },
+      {
+        "path": "labs/L100/01-setup/test_shared_helper.py",
+        "purpose": "EXTRA_RULES hook test + checks kb/shared/local_agent/ matches this fake server (skips if absent)"
+      }
+    ],
+    "expectedResults": [
+      "models served: ['fake-model']",
+      "chat reply: Hello from fake-model! You said: 'Reply with the single word: ready'"
+    ],
+    "testCases": [
+      {
+        "action": "check() against fake server",
+        "expected": "returns ['fake-model'] and a reply containing 'ready'"
+      },
+      {
+        "action": "POST without messages",
+        "expected": "HTTP 400 with an {\"error\": {...}} object"
+      },
+      {
+        "action": "POST with tools + 'What is 2+3?'",
+        "expected": "finish_reason tool_calls, calculator with arguments '{\"expression\": \"2+3\"}'"
+      },
+      {
+        "action": "fake_model_server.py vs kb/shared/local_agent/fake_model_server.py",
+        "expected": "identical source; shared client.chat() gets the same echo reply from this server"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Run check_endpoint.py against the fake server with LOCAL_MODEL=not-pulled.",
+        "predict": "Does it crash, warn, or answer?",
+        "expected": "models served: ['fake-model'], then WARNING: 'not-pulled' not listed - pull it first (ollama pull not-pulled), then a chat reply."
+      },
+      {
+        "task": "Drop /v1 from LOCAL_MODEL_URL (http://127.0.0.1:8765) and run it again.",
+        "predict": "Which HTTP status comes back, and from which call?",
+        "expected": "requests.HTTPError: 404 Client Error: Not Found - raised by GET /models, before any chat request."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Cannot reach http://localhost:11434/v1",
+        "action": "Mac: brew services start ollama; Windows: start the Ollama app. Ollama binds 127.0.0.1:11434 by default."
+      },
+      {
+        "symptom": "Model not listed",
+        "action": "ollama pull qwen2.5:1.5b or set LOCAL_MODEL to a listed name."
+      }
+    ],
+    "equivalents": [
+      "Same server in llama.cpp: brew install llama.cpp (macOS, Metal) or winget install llama.cpp (Windows); llama-server -hf Qwen/Qwen2.5-1.5B-Instruct-GGUF:Q4_K_M -> http://127.0.0.1:9931/v1; LAN: --host 0.0.0.0 --api-key <key>",
+      "Same server in vLLM: vllm serve <model> (GPU-oriented, Linux; exposes /v1/chat/completions)",
+      "Other CPU-sized tags with tool support: qwen3:0.6b, qwen3:1.7b (thinking models)",
+      "Hosted chat-completions APIs: change LOCAL_MODEL_URL and add an Authorization header"
+    ],
+    "simulatorVsReal": "Validated against fake_model_server.py, a rule-based stand-in (not a model) for the chat-completions wire format: it proves the plumbing, not model quality; a real model's wording differs and it may not always follow instructions.",
+    "caution": "Keep model servers on 127.0.0.1 unless you need LAN access; with OLLAMA_HOST=0.0.0.0 anyone who can reach port 11434 can use (and load) your models - trusted network only, never port-forward it to the internet; llama-server can require --api-key. Never send secrets or keys in prompts.",
+    "checkpoint": "PASS if check_endpoint.py prints a model list and a reply from the fake server (and optionally from Ollama).",
+    "checkYourself": [
+      {
+        "q": "Which two settings change when you move from the fake server to Ollama?",
+        "a": "LOCAL_MODEL_URL (http://127.0.0.1:8765/v1 -> http://localhost:11434/v1) and LOCAL_MODEL (fake-model -> qwen2.5:1.5b)."
+      },
+      {
+        "q": "Which endpoint do you call first to check a server?",
+        "a": "GET /v1/models."
+      },
+      {
+        "q": "How does the Windows PC use the model running on the Mac mini?",
+        "a": "On the Mac: launchctl setenv OLLAMA_HOST \"0.0.0.0:11434\" and restart Ollama; on the PC: LOCAL_MODEL_URL=http://<mac-ip>:11434/v1. Trusted LAN only."
+      }
+    ],
+    "next": "L200 #7 Retrieval-augmented answers: the same local server also serves /v1/embeddings",
+    "sources": [
+      {
+        "title": "Ollama docs - Linux install",
+        "url": "https://docs.ollama.com/linux"
+      },
+      {
+        "title": "Ollama releases (v0.40.12)",
+        "url": "https://github.com/ollama/ollama/releases"
+      },
+      {
+        "title": "Ollama library - qwen2.5 tags",
+        "url": "https://ollama.com/library/qwen2.5/tags"
+      },
+      {
+        "title": "Python docs - http.server",
+        "url": "https://docs.python.org/3/library/http.server.html"
+      },
+      {
+        "title": "Ollama docs - /v1 chat-completions compatibility",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      },
+      {
+        "title": "Ollama docs - FAQ (bind address, port)",
+        "url": "https://docs.ollama.com/faq"
+      },
+      {
+        "title": "llama.cpp - llama-server README",
+        "url": "https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md"
+      },
+      {
+        "title": "Ollama docs - macOS (requirements, ~/.ollama)",
+        "url": "https://docs.ollama.com/macos"
+      },
+      {
+        "title": "Ollama docs - Windows (requirements, OllamaSetup.exe)",
+        "url": "https://docs.ollama.com/windows"
+      },
+      {
+        "title": "Ollama docs - Hardware support (NVIDIA, AMD, Metal, Vulkan)",
+        "url": "https://docs.ollama.com/gpu"
+      },
+      {
+        "title": "Homebrew cask ollama-app",
+        "url": "https://formulae.brew.sh/cask/ollama-app"
+      },
+      {
+        "title": "winget-pkgs manifests - Ollama.Ollama",
+        "url": "https://github.com/microsoft/winget-pkgs/tree/master/manifests/o/Ollama/Ollama"
+      },
+      {
+        "title": "llama.cpp - install pre-built (brew, winget)",
+        "url": "https://github.com/ggml-org/llama.cpp/blob/master/docs/install.md"
+      },
+      {
+        "title": "Python docs - venv (activation, ExecutionPolicy)",
+        "url": "https://docs.python.org/3/library/venv.html"
+      },
+      {
+        "title": "Homebrew formula ollama (brew services start ollama)",
+        "url": "https://formulae.brew.sh/formula/ollama"
+      },
+      {
+        "title": "Ollama download (Windows installer OllamaSetup.exe)",
+        "url": "https://ollama.com/download"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran fake_model_server.py on port 8765 and check_endpoint.py against it (output pasted in README); python -m unittest -v -> 10 tests OK (5 lab incl. the BASE_URL/MODEL fallback + 2 tryIt + 3 shared-helper) (Linux sandbox, Python 3.12.15, requests 2.34.2). tryIt: python -m unittest -v test_try_it_01 -> 2 tests OK; tryIt.expected is the observed output. Not run here: Ollama/llama.cpp install, GPU use and LAN access (no internet, Linux sandbox) - commands taken from the official docs listed in sources; macOS/Windows test runs are wired into the CI matrix (platforms: expected until CI passes).",
+      "pendingCi": [
+        "Ollama / llama.cpp install, GPU and LAN steps (manual, Mac mini + Windows PC)",
+        "check_endpoint.py against a real model (CI workflow_dispatch real_model=true)"
+      ]
+    },
+    "conceptNote": "content/concepts/01-set-up-environment.md",
+    "conceptSummary": "Your code talks to one chat-completions URL; Ollama, llama.cpp, vLLM or the fake server can answer it. Switching back end means changing LOCAL_MODEL_URL and LOCAL_MODEL, and tests use a deterministic stand-in instead of a model.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "call-model-over-http",
+    "number": 2,
+    "level": "L100",
+    "title": "Call a model over HTTP",
+    "phase": "Foundations",
+    "category": "http-api",
+    "description": "POST messages to /v1/chat/completions with requests or urllib and read the reply.",
+    "outcome": "You can call any chat-completions server without a client library and read content, finish_reason and usage.",
+    "environment": "Python 3.12 (macOS: brew python@3.12; Windows: python.org installer + py launcher), requests 2.34.2; fake_model_server.py (stdlib); optional: Ollama 0.40.12 + qwen2.5:1.5b (Q4_K_M, 986 MB; CPU, or GPU via Metal on Apple silicon / CUDA, ROCm or Vulkan on Windows)",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "A chat call is one JSON POST: model + messages (+ temperature, max_tokens). The answer is in choices[0].message.content."
+    ],
+    "prerequisites": [
+      "Lesson 1 done (fake server or Ollama reachable)"
+    ],
+    "glossary": [
+      {
+        "term": "messages",
+        "meaning": "Ordered list of {role, content}; roles are system, user, assistant, tool."
+      },
+      {
+        "term": "temperature",
+        "meaning": "Sampling randomness; 0 gives the most repeatable output."
+      },
+      {
+        "term": "finish_reason",
+        "meaning": "Why generation stopped: stop (done), length (hit max_tokens), tool_calls."
+      }
+    ],
+    "concepts": [
+      "The model is stateless: send the whole conversation every call.",
+      "Always set a timeout and check the HTTP status.",
+      "A client library is a convenience wrapper around this same POST."
+    ],
+    "inRealSystems": "Client libraries and agent frameworks wrap this same POST; Ollama, llama.cpp and vLLM accept it.",
+    "useWhen": "Raw HTTP to see the wire format; a client library for streaming, retries and typed responses.",
+    "steps": [
+      {
+        "title": "Start the fake model server",
+        "detail": "python ../01-setup/fake_model_server.py --port 8765   (terminal 1)",
+        "expected": "fake model server on http://127.0.0.1:8765/v1 (Ctrl+C to stop)",
+        "ifNot": "Port busy: use --port 8766 and change LOCAL_MODEL_URL to match."
+      },
+      {
+        "title": "Run call_model.py against it",
+        "detail": "LOCAL_MODEL_URL=http://127.0.0.1:8765/v1 LOCAL_MODEL=fake-model python call_model.py   (terminal 2)",
+        "expected": "reply / finish_reason: stop / usage / top-level keys lines",
+        "ifNot": "Check LOCAL_MODEL_URL ends with /v1 and the server terminal shows no traceback."
+      },
+      {
+        "title": "Try the stdlib variant",
+        "detail": "LOCAL_MODEL_URL=http://127.0.0.1:8765/v1 LOCAL_MODEL=fake-model python call_model_urllib.py",
+        "expected": "reply: Hello from fake-model! You said: 'Say hello in one short sentence.'",
+        "ifNot": "urllib raises HTTPError for 4xx/5xx; print e.read() to see the error body."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v   (starts its own fake server in a thread)",
+        "expected": "All tests end with OK",
+        "ifNot": "Read the failing assertion; compare your file with the lesson code."
+      },
+      {
+        "title": "Optional: run against the real local model",
+        "detail": "ollama pull qwen2.5:1.5b && python call_model.py   (defaults: http://localhost:11434/v1, qwen2.5:1.5b)",
+        "expected": "Same structure; wording chosen by the model",
+        "ifNot": "Run 01-setup/check_endpoint.py first; first call on CPU can take 10-60 s."
+      }
+    ],
+    "code": "\"\"\"Call a chat model over plain HTTP (no SDK): POST /v1/chat/completions and read the reply.\"\"\"\nimport json\nimport os\n\nimport requests\n\nBASE_URL = os.environ.get(\"LOCAL_MODEL_URL\") or os.environ.get(\"BASE_URL\", \"http://localhost:11434/v1\")  # Ollama default\nMODEL = os.environ.get(\"LOCAL_MODEL\") or os.environ.get(\"MODEL\", \"qwen2.5:1.5b\")\n\n\ndef chat(messages, base_url=BASE_URL, model=MODEL, temperature=0.0, max_tokens=200):\n    payload = {\n        \"model\": model,\n        \"messages\": messages,          # stateless: the WHOLE {\"role\", \"content\"} history, every call\n        \"temperature\": temperature,    # sampling: 0 = most repeatable; higher = more varied\n        \"max_tokens\": max_tokens,      # hard cap on reply length\n    }\n    resp = requests.post(f\"{base_url}/chat/completions\", json=payload, timeout=120)\n    resp.raise_for_status()            # turn 4xx/5xx into an exception\n    return resp.json()\n\n\nif __name__ == \"__main__\":\n    data = chat([{\"role\": \"user\", \"content\": \"Say hello in one short sentence.\"}])\n    choice = data[\"choices\"][0]\n    print(\"reply        :\", choice[\"message\"][\"content\"])\n    print(\"finish_reason:\", choice[\"finish_reason\"])  # \"stop\" = done, \"length\" = hit max_tokens\n    print(\"usage        :\", json.dumps(data.get(\"usage\")))\n    print(\"top-level keys:\", sorted(data))\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/02-call-model-http/call_model.py",
+        "purpose": "requests version"
+      },
+      {
+        "path": "labs/L100/02-call-model-http/call_model_urllib.py",
+        "purpose": "stdlib-only version"
+      },
+      {
+        "path": "labs/L100/02-call-model-http/test_call_model.py",
+        "purpose": "unittest incl. error handling and urllib parity"
+      },
+      {
+        "path": "labs/L100/02-call-model-http/README.md",
+        "purpose": "Run commands and observed output"
+      },
+      {
+        "path": "labs/L100/02-call-model-http/test_try_it_02.py",
+        "purpose": "the two tryIt changes, run against the fake server"
+      }
+    ],
+    "expectedResults": [
+      "reply        : Hello from fake-model! You said: 'Say hello in one short sentence.'",
+      "finish_reason: stop",
+      "usage        : {\"prompt_tokens\": 6, \"completion_tokens\": 11, \"total_tokens\": 17}"
+    ],
+    "testCases": [
+      {
+        "action": "chat([user 'Say hello'])",
+        "expected": "assistant role, finish_reason stop, usage.total_tokens present"
+      },
+      {
+        "action": "chat([]) (empty messages)",
+        "expected": "requests.HTTPError (server returns 400)"
+      },
+      {
+        "action": "requests vs urllib on same input",
+        "expected": "identical choices"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Send 'What did I just say?' alone, then again after the 'Hi' turn and its reply; compare usage.prompt_tokens.",
+        "predict": "How much does resending the history cost?",
+        "expected": "alone: prompt_tokens=5; with history (3 messages): prompt_tokens=12 - history is resent every call."
+      },
+      {
+        "task": "Change the only message's role from 'user' to 'system' and call chat().",
+        "predict": "Does the server answer?",
+        "expected": "requests.HTTPError: HTTP 400 - at least one 'user' message is required."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "ReadTimeout on first call",
+        "action": "Model is loading on CPU; raise timeout or retry."
+      },
+      {
+        "symptom": "HTTP 404",
+        "action": "LOCAL_MODEL_URL must end in /v1 and LOCAL_MODEL must be a served model name."
+      }
+    ],
+    "equivalents": [
+      "Same call from any client library that takes a base URL: point it at LOCAL_MODEL_URL; it sends this POST",
+      "Same call with curl: curl $LOCAL_MODEL_URL/chat/completions -H 'Content-Type: application/json' -d '{\"model\":...,\"messages\":[...]}'",
+      "Same call in JavaScript: fetch(`${LOCAL_MODEL_URL}/chat/completions`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})",
+      "Ollama native API: POST /api/chat (different response shape: message at top level)",
+      "Decoding explained with code (temperature, top-k, top-p): Hugging Face blog 'How to generate text' (vendor tutorial, background)"
+    ],
+    "simulatorVsReal": "Validated against fake_model_server.py, a rule-based stand-in (not a model) for the chat-completions wire format: it proves the plumbing, not model quality; a real model's wording differs and it may not always follow instructions.",
+    "caution": "Never hard-code API keys in code; read them from environment variables when you move to a hosted endpoint.",
+    "checkpoint": "PASS if you can print content, finish_reason and usage from one call and the tests are OK.",
+    "checkYourself": [
+      {
+        "q": "Where is the generated text in the response?",
+        "a": "choices[0].message.content."
+      },
+      {
+        "q": "Two questions in a row: how many messages does the second request carry at minimum?",
+        "a": "Three: user, assistant reply, new user message."
+      }
+    ],
+    "next": "L200 #9 State and memory: use usage token counts to keep a conversation inside a context budget",
+    "sources": [
+      {
+        "title": "Ollama docs - /v1 chat-completions compatibility",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      },
+      {
+        "title": "llama.cpp - llama-server README",
+        "url": "https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md"
+      },
+      {
+        "title": "vLLM - Online serving (chat completions server)",
+        "url": "https://docs.vllm.ai/en/latest/serving/online_serving/"
+      },
+      {
+        "title": "Ollama API - Generate a chat message (/api/chat)",
+        "url": "https://docs.ollama.com/api/chat"
+      },
+      {
+        "title": "Holtzman et al. - The Curious Case of Neural Text Degeneration (ICLR 2020; decoding, temperature, nucleus sampling)",
+        "url": "https://arxiv.org/abs/1904.09751"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran call_model.py and call_model_urllib.py against fake_model_server.py (output pasted in README); python -m unittest -v -> 6 tests OK (4 lab + 2 tryIt). tryIt: python -m unittest -v test_try_it_02 -> 2 tests OK; tryIt.expected is the observed output.",
+      "pendingCi": [
+        "call_model.py and call_model_urllib.py against a real model (CI real_model job)",
+        "curl equivalent in the README (needs a live server)"
+      ]
+    },
+    "conceptNote": "content/concepts/02-call-model-over-http.md",
+    "conceptSummary": "A chat completion is one stateless POST: you resend the whole message list every time and read choices[0].message. Temperature rescales next-token probabilities, so low values give repeatable output.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "Ollama (supporting runtime)",
+        "role": "CHECK",
+        "exercise": "Set LOCAL_MODEL_URL=http://localhost:11434/v1 and LOCAL_MODEL=qwen2.5:1.5b, run call_model.py again and compare what it prints with the fake-server run.",
+        "expected": "Pending a manual run. Should match the lab's shape: finish_reason: stop and the core keys choices, model, usage (fake server printed top-level keys ['choices', 'created', 'id', 'model', 'object', 'usage']); reply wording and token counts differ (real tokens, not words).",
+        "mac": "brew install ollama && brew services start ollama && ollama pull qwen2.5:1.5b",
+        "windows": "Installer OllamaSetup.exe from https://ollama.com/download, then: ollama pull qwen2.5:1.5b",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://ollama.com/download"
+      },
+      {
+        "name": "KNIME Analytics Platform",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "With the KNIME AI Extension: OpenAI Authenticator (base URL http://localhost:11434/v1) -> LLM Selector (qwen2.5:1.5b) -> LLM Prompter with 'Say hello in one short sentence.'; compare with call_model.py against the same Ollama.",
+        "expected": "Pending a manual run. Both send a chat-completions request to the same endpoint, so both return a short greeting; wording can differ per run. Fake-server reference: reply : Hello from fake-model! You said: 'Say hello in one short sentence.'",
+        "mac": "brew install --cask knime",
+        "windows": "Installer from https://www.knime.com/downloads (no verified winget id)",
+        "licence": "GPL-3.0 + KNIME additional permissions (OSI: yes); Pro/Team/Business Hub are commercial",
+        "url": "https://docs.knime.com/ap/latest/ai/local-model-ollama"
+      }
+    ]
+  },
+  {
+    "id": "prompt-structure",
+    "number": 3,
+    "level": "L100",
+    "title": "Prompt structure",
+    "phase": "Prompting",
+    "category": "prompting",
+    "description": "Compare user-only, system+user and few-shot+delimited prompts on the same task.",
+    "outcome": "You can put rules in the system message, show the output format with examples, and fence input data with delimiters.",
+    "environment": "Python 3.12 (macOS: brew python@3.12; Windows: python.org installer + py launcher), requests 2.34.2; fake_model_server.py (stdlib); optional: Ollama 0.40.12 + qwen2.5:1.5b (Q4_K_M, 986 MB; CPU, or GPU via Metal on Apple silicon / CUDA, ROCm or Vulkan on Windows)",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "Where text goes matters: rules in system, data in user, format shown by examples, data fenced by tags."
+    ],
+    "prerequisites": [
+      "Lesson 2"
+    ],
+    "glossary": [
+      {
+        "term": "system message",
+        "meaning": "Instructions from the application, placed first; higher priority than user text in most chat templates."
+      },
+      {
+        "term": "few-shot",
+        "meaning": "Example user/assistant pairs placed before the real input to show the desired output."
+      },
+      {
+        "term": "delimiter",
+        "meaning": "Markers such as <review>...</review> that separate data from instructions."
+      }
+    ],
+    "concepts": [
+      "The server turns the message list into one token sequence using the model's chat template.",
+      "Few-shot examples steer format more reliably than adjectives in instructions.",
+      "Delimiters make it clear which text is data; they reduce but do not eliminate prompt injection."
+    ],
+    "inRealSystems": "Hugging Face Transformers ships each model's chat template (apply_chat_template); Ollama, llama.cpp and vLLM apply it server-side.",
+    "useWhen": "Use when the format must be exact; skip when context is tight or the task is open-ended writing.",
+    "steps": [
+      {
+        "title": "Start the fake model server",
+        "detail": "python ../01-setup/fake_model_server.py --port 8765   (terminal 1)",
+        "expected": "fake model server on http://127.0.0.1:8765/v1 (Ctrl+C to stop)",
+        "ifNot": "Port busy: use --port 8766 and change LOCAL_MODEL_URL to match."
+      },
+      {
+        "title": "Run prompt_structure.py against it",
+        "detail": "LOCAL_MODEL_URL=http://127.0.0.1:8765/v1 LOCAL_MODEL=fake-model python prompt_structure.py   (terminal 2)",
+        "expected": "[A user-only] -> long sentence; [B system+user] -> negative; [C few-shot+delimiters] -> NEGATIVE",
+        "ifNot": "Check LOCAL_MODEL_URL ends with /v1 and the server terminal shows no traceback."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v   (starts its own fake server in a thread)",
+        "expected": "All tests end with OK",
+        "ifNot": "Read the failing assertion; compare your file with the lesson code."
+      },
+      {
+        "title": "Optional: run against the real local model",
+        "detail": "ollama pull qwen2.5:1.5b && python prompt_structure.py   (defaults: http://localhost:11434/v1, qwen2.5:1.5b)",
+        "expected": "Same structure; wording chosen by the model",
+        "ifNot": "Run 01-setup/check_endpoint.py first; first call on CPU can take 10-60 s."
+      }
+    ],
+    "code": "\"\"\"Same task, three prompt structures: user-only, system+user, system+few-shot+delimited input.\"\"\"\nimport os\n\nimport requests\n\nBASE_URL = os.environ.get(\"LOCAL_MODEL_URL\") or os.environ.get(\"BASE_URL\", \"http://localhost:11434/v1\")\nMODEL = os.environ.get(\"LOCAL_MODEL\") or os.environ.get(\"MODEL\", \"qwen2.5:1.5b\")\nREVIEW = \"The battery died after two days and support never answered my emails.\"\n\n\ndef chat(messages, base_url=BASE_URL, model=MODEL):\n    resp = requests.post(f\"{base_url}/chat/completions\", timeout=120,\n                         json={\"model\": model, \"messages\": messages, \"temperature\": 0})\n    resp.raise_for_status()\n    return resp.json()[\"choices\"][0][\"message\"][\"content\"].strip()\n\n\n# system role: the application's rules, sent first\nSYSTEM = (\"You are a sentiment classifier for product reviews. \"\n          \"Reply with exactly one word: positive, negative or neutral.\")\n\nPROMPTS = {\n    # A: everything in one user message -> free-form, chatty answer\n    \"A user-only\": [\n        {\"role\": \"user\", \"content\": f\"What is the sentiment of this review? {REVIEW}\"}],\n    # B: rules in the system message, data in the user message\n    \"B system+user\": [\n        {\"role\": \"system\", \"content\": SYSTEM},\n        {\"role\": \"user\", \"content\": REVIEW}],\n    # C: + few-shot examples that fix the output format, + input wrapped in delimiters\n    \"C few-shot+delimiters\": [\n        {\"role\": \"system\", \"content\": SYSTEM + \" Use the exact format shown in the examples. \"\n                                               \"Classify only the text inside <review> tags.\"},\n        {\"role\": \"user\", \"content\": \"<review>I love it, setup took two minutes.</review>\"},\n        {\"role\": \"assistant\", \"content\": \"POSITIVE\"},  # few-shot: the model copies this format\n        {\"role\": \"user\", \"content\": \"<review>Arrived broken, asked for a refund.</review>\"},\n        {\"role\": \"assistant\", \"content\": \"NEGATIVE\"},\n        {\"role\": \"user\", \"content\": f\"<review>{REVIEW}</review>\"}],  # delimiters: data, not instructions\n}\n\n\ndef run_all(base_url=BASE_URL, model=MODEL):\n    return {name: chat(msgs, base_url, model) for name, msgs in PROMPTS.items()}\n\n\nif __name__ == \"__main__\":\n    for name, answer in run_all().items():\n        print(f\"[{name}] -> {answer}\")\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/03-prompt-structure/prompt_structure.py",
+        "purpose": "Three prompt layouts, same review"
+      },
+      {
+        "path": "labs/L100/03-prompt-structure/test_prompt_structure.py",
+        "purpose": "unittest: message roles and output differences"
+      },
+      {
+        "path": "labs/L100/03-prompt-structure/README.md",
+        "purpose": "Run commands and observed output"
+      },
+      {
+        "path": "labs/L100/03-prompt-structure/test_try_it_03.py",
+        "purpose": "the two tryIt changes, run against the fake server"
+      }
+    ],
+    "expectedResults": [
+      "[A user-only] -> Sure! Reading the review carefully, I would say the overall sentiment is negative. ...",
+      "[B system+user] -> negative",
+      "[C few-shot+delimiters] -> NEGATIVE"
+    ],
+    "testCases": [
+      {
+        "action": "Inspect PROMPTS['C few-shot+delimiters'] roles",
+        "expected": "system, user, assistant, user, assistant, user"
+      },
+      {
+        "action": "run_all() on fake server",
+        "expected": "A > 5 words, B == 'negative', C == 'NEGATIVE'"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "In layout C, change the example answers to lowercase ('positive', 'negative').",
+        "predict": "Which casing comes back?",
+        "expected": "negative - the label follows the examples' casing."
+      },
+      {
+        "task": "Delete the system message from layout C, keep the examples.",
+        "predict": "Still a label?",
+        "expected": "Hello from fake-model! You said: '<review>The battery died after two days and support never answered my emails.</r' - the task lived only in the system message."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Real model still answers with a sentence in B/C",
+        "action": "Add an example, keep temperature 0, and validate the label in code."
+      },
+      {
+        "symptom": "Different answer each run",
+        "action": "temperature 0 and a fixed seed where the server supports it."
+      }
+    ],
+    "equivalents": [
+      "Override a model's template: --chat-template in llama.cpp's llama-server and in vLLM",
+      "Hugging Face transformers: tokenizer.apply_chat_template(messages) shows the exact text the model sees",
+      "Delimiters in other styles: Markdown headings, triple quotes, or XML-like tags"
+    ],
+    "simulatorVsReal": "Validated against fake_model_server.py, a rule-based stand-in (not a model) for the chat-completions wire format: it proves the plumbing, not model quality; a real model's wording differs and it may not always follow instructions. For this lesson the fake hard-codes the typical effect of each layout; observe the real effect with the optional run.",
+    "caution": "Treat any text from users, files or web pages as data, never as instructions; delimiters help but are not a security boundary.",
+    "checkpoint": "PASS if the three layouts produce visibly different outputs and the tests are OK.",
+    "checkYourself": [
+      {
+        "q": "Which message holds the rules, and which the review?",
+        "a": "Rules in system; review in user, inside <review> tags."
+      },
+      {
+        "q": "Why did layout C return NEGATIVE in capitals?",
+        "a": "It copies the format of the example assistant replies."
+      }
+    ],
+    "next": "L200 #11 Guardrails basics: delimiters alone do not stop prompt injection - code checks do",
+    "sources": [
+      {
+        "title": "Hugging Face Transformers - Chat templates",
+        "url": "https://huggingface.co/docs/transformers/main/en/chat_templating"
+      },
+      {
+        "title": "Hugging Face Transformers - Prompt engineering",
+        "url": "https://huggingface.co/docs/transformers/main/en/tasks/prompting"
+      },
+      {
+        "title": "Ollama docs - /v1 chat-completions compatibility",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran prompt_structure.py against fake_model_server.py (output pasted in README); python -m unittest -v -> 5 tests OK (3 lab + 2 tryIt). Real-model behaviour not observed in sandbox. tryIt: python -m unittest -v test_try_it_03 -> 2 tests OK; tryIt.expected is the observed output.",
+      "pendingCi": [
+        "prompt_structure.py against a real model (CI real_model job)"
+      ]
+    },
+    "conceptNote": "content/concepts/03-prompt-structure.md",
+    "conceptSummary": "The server renders system, user and example messages into one token sequence via the model's chat template. Rules belong in the system message, data in delimiters, and few-shot examples fix the output format.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "structured-output",
+    "number": 4,
+    "level": "L100",
+    "title": "Structured output",
+    "phase": "Prompting",
+    "category": "structured-output",
+    "description": "Request JSON for a schema, parse and validate it in code, retry on invalid output.",
+    "outcome": "You can turn model text into a validated Python dict, with a bounded retry and an optional server-side schema constraint.",
+    "environment": "Python 3.12 (macOS: brew python@3.12; Windows: python.org installer + py launcher), requests 2.34.2; fake_model_server.py (stdlib); optional: Ollama 0.40.12 + qwen2.5:1.5b (Q4_K_M, 986 MB; CPU, or GPU via Metal on Apple silicon / CUDA, ROCm or Vulkan on Windows)",
+    "estimatedTime": "20-30 minutes",
+    "overview": [
+      "Ask for JSON, then trust only what passes json.loads plus your own checks; feed errors back and retry a fixed number of times."
+    ],
+    "prerequisites": [
+      "Lessons 2-3"
+    ],
+    "glossary": [
+      {
+        "term": "JSON Schema",
+        "meaning": "Standard vocabulary describing a JSON shape (types, required keys)."
+      },
+      {
+        "term": "response_format",
+        "meaning": "Chat-completions request field asking the server to constrain output to JSON or a JSON schema."
+      },
+      {
+        "term": "constrained decoding",
+        "meaning": "Server only allows tokens that keep the output valid for the grammar/schema."
+      }
+    ],
+    "concepts": [
+      "Prompt-only JSON often arrives wrapped in prose or code fences.",
+      "Validation is deterministic code, not another model call.",
+      "Schema-valid is not the same as correct: still check values."
+    ],
+    "inRealSystems": "Ollama (format / response_format) and llama.cpp (JSON Schema -> GBNF grammar) constrain output on the server; jsonschema, Pydantic and Zod check it on the client.",
+    "useWhen": "Whenever output feeds code, a database or an API; not for prose.",
+    "steps": [
+      {
+        "title": "Start the fake model server",
+        "detail": "python ../01-setup/fake_model_server.py --port 8765   (terminal 1)",
+        "expected": "fake model server on http://127.0.0.1:8765/v1 (Ctrl+C to stop)",
+        "ifNot": "Port busy: use --port 8766 and change LOCAL_MODEL_URL to match."
+      },
+      {
+        "title": "Run structured_output.py against it",
+        "detail": "LOCAL_MODEL_URL=http://127.0.0.1:8765/v1 LOCAL_MODEL=fake-model python structured_output.py   (terminal 2)",
+        "expected": "attempt 1 fails (not valid JSON), attempt 2 OK; with response_format attempt 1 OK",
+        "ifNot": "Check LOCAL_MODEL_URL ends with /v1 and the server terminal shows no traceback."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v   (starts its own fake server in a thread)",
+        "expected": "All tests end with OK",
+        "ifNot": "Read the failing assertion; compare your file with the lesson code."
+      },
+      {
+        "title": "Optional: run against the real local model",
+        "detail": "ollama pull qwen2.5:1.5b && python structured_output.py   (defaults: http://localhost:11434/v1, qwen2.5:1.5b)",
+        "expected": "Same structure; wording chosen by the model",
+        "ifNot": "Run 01-setup/check_endpoint.py first; first call on CPU can take 10-60 s."
+      }
+    ],
+    "code": "\"\"\"Ask for JSON matching a schema, parse it, validate it with stdlib checks, retry if invalid.\"\"\"\nimport json\nimport os\n\nimport requests\n\nBASE_URL = os.environ.get(\"LOCAL_MODEL_URL\") or os.environ.get(\"BASE_URL\", \"http://localhost:11434/v1\")\nMODEL = os.environ.get(\"LOCAL_MODEL\") or os.environ.get(\"MODEL\", \"qwen2.5:1.5b\")\nSCHEMA = {\n    \"type\": \"object\",\n    \"properties\": {\"name\": {\"type\": \"string\"}, \"age\": {\"type\": \"integer\"}, \"city\": {\"type\": \"string\"}},\n    \"required\": [\"name\", \"age\", \"city\"],\n    \"additionalProperties\": False,\n}\n\n\ndef chat(messages, response_format=None, base_url=BASE_URL, model=MODEL):\n    payload = {\"model\": model, \"messages\": messages, \"temperature\": 0}\n    if response_format:\n        payload[\"response_format\"] = response_format  # constrained decoding on the server, where supported\n    resp = requests.post(f\"{base_url}/chat/completions\", json=payload, timeout=120)\n    resp.raise_for_status()\n    return resp.json()[\"choices\"][0][\"message\"][\"content\"]\n\n\ndef validate(obj):\n    \"\"\"Return a list of problems (empty list = valid). Plain code, no model involved.\"\"\"\n    # trust boundary: model JSON is untrusted input until this returns []\n    if not isinstance(obj, dict):\n        return [\"top level must be an object\"]\n    errors = [f\"missing key {k!r}\" for k in SCHEMA[\"required\"] if k not in obj]\n    errors += [f\"unexpected key {k!r}\" for k in obj if k not in SCHEMA[\"properties\"]]\n    if \"name\" in obj and not isinstance(obj[\"name\"], str):\n        errors.append(\"name must be a string\")\n    if \"city\" in obj and not isinstance(obj[\"city\"], str):\n        errors.append(\"city must be a string\")\n    if \"age\" in obj and (type(obj[\"age\"]) is not int or not 0 <= obj[\"age\"] <= 150):\n        errors.append(\"age must be an integer 0-150\")\n    return errors\n\n\ndef extract_person(text, use_response_format=False, max_attempts=3, **kw):\n    messages = [\n        {\"role\": \"system\", \"content\": \"Extract the person from the text inside <input> tags. Reply with \"\n                                      \"ONLY a JSON object matching this JSON schema:\\n\" + json.dumps(SCHEMA)},\n        {\"role\": \"user\", \"content\": f\"<input>{text}</input>\"},\n    ]\n    rf = {\"type\": \"json_schema\", \"json_schema\": {\"name\": \"person\", \"schema\": SCHEMA, \"strict\": True}}\n    for attempt in range(1, max_attempts + 1):\n        reply = chat(messages, rf if use_response_format else None, **kw)\n        try:\n            obj = json.loads(reply)  # strict parse: prose or code fences fail here\n            errors = validate(obj)\n        except json.JSONDecodeError as exc:\n            errors = [f\"not valid JSON ({exc.msg})\"]\n        print(f\"  attempt {attempt}: {'OK' if not errors else errors}\")\n        if not errors:\n            return obj, attempt\n        # bounded retry: feed the bad answer and the exact problem back, then ask again\n        messages += [{\"role\": \"assistant\", \"content\": reply},\n                     {\"role\": \"user\", \"content\": f\"Invalid: {'; '.join(errors)}. Reply with ONLY the JSON object.\"}]\n    raise ValueError(f\"no valid JSON after {max_attempts} attempts\")\n\n\nif __name__ == \"__main__\":\n    text = \"Maria moved to Lisbon in 2019; she is 34 and works as a nurse.\"\n    print(\"prompt-only (parse + validate + retry):\")\n    print(\"  result:\", extract_person(text))\n    print(\"with response_format json_schema:\")\n    print(\"  result:\", extract_person(text, use_response_format=True))\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/04-structured-output/structured_output.py",
+        "purpose": "Schema, validator, retry loop, response_format mode"
+      },
+      {
+        "path": "labs/L100/04-structured-output/test_structured_output.py",
+        "purpose": "unittest: validator cases, retry, budget"
+      },
+      {
+        "path": "labs/L100/04-structured-output/README.md",
+        "purpose": "Run commands and observed output"
+      },
+      {
+        "path": "labs/L100/04-structured-output/test_try_it_04.py",
+        "purpose": "the two tryIt changes, run against the fake server"
+      }
+    ],
+    "expectedResults": [
+      "attempt 1: ['not valid JSON (Expecting value)']",
+      "attempt 2: OK",
+      "result: ({'name': 'Maria', 'age': 34, 'city': 'Lisbon'}, 2)",
+      "with response_format: result: ({'name': 'Maria', 'age': 34, 'city': 'Lisbon'}, 1)"
+    ],
+    "testCases": [
+      {
+        "action": "validate() with age '34', True, missing city, extra key, list",
+        "expected": "specific error messages"
+      },
+      {
+        "action": "extract_person() prompt-only",
+        "expected": "valid dict after 2 attempts"
+      },
+      {
+        "action": "extract_person(max_attempts=1)",
+        "expected": "ValueError"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Call extract_person(text, max_attempts=1) in prompt-only mode.",
+        "predict": "Result or exception?",
+        "expected": "ValueError: no valid JSON after 1 attempts - the fenced first reply is never retried."
+      },
+      {
+        "task": "Remove 'she is 34' from the input text.",
+        "predict": "What does the validator do with a missing age?",
+        "expected": "attempt 1: ['not valid JSON (Expecting value)'] | attempt 2: ['age must be an integer 0-150'] | attempt 3: same -> ValueError. Nothing invents the missing value."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "ValueError: no valid JSON after 3 attempts",
+        "action": "Use response_format, lower temperature, show the schema in the system message."
+      },
+      {
+        "symptom": "HTTP 400 about response_format",
+        "action": "Server lacks json_schema: use {'type': 'json_object'} or prompt-only mode."
+      }
+    ],
+    "equivalents": [
+      "Ollama native API: \"format\": <JSON schema> (or \"json\") on POST /api/chat",
+      "llama.cpp: response_format with a schema, or --json-schema / GBNF grammars",
+      "Validation libraries: jsonschema (Python), Pydantic model_validate_json, Zod (JS)"
+    ],
+    "simulatorVsReal": "Validated against fake_model_server.py, a rule-based stand-in (not a model) for the chat-completions wire format: it proves the plumbing, not model quality; a real model's wording differs and it may not always follow instructions. The fake returns fenced JSON on the first prompt-only attempt on purpose to exercise the retry path.",
+    "caution": "Decisions that must be exact (amounts, permissions, routing) belong in code that checks the parsed values, not in the model.",
+    "checkpoint": "PASS if both modes return {'name': 'Maria', 'age': 34, 'city': 'Lisbon'} and the tests are OK.",
+    "checkYourself": [
+      {
+        "q": "Why does json.loads fail at char 0 on the fenced reply?",
+        "a": "The text starts with 'Sure!', which is not a JSON value."
+      },
+      {
+        "q": "Name one thing JSON Schema cannot check here.",
+        "a": "Whether the extracted age belongs to the named person."
+      }
+    ],
+    "next": "L200 #8 Agents with several tools: validate tool arguments against a JSON Schema and send errors back",
+    "sources": [
+      {
+        "title": "Ollama docs - Structured outputs",
+        "url": "https://docs.ollama.com/capabilities/structured-outputs"
+      },
+      {
+        "title": "llama.cpp - GBNF guide (JSON Schema to grammar)",
+        "url": "https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md"
+      },
+      {
+        "title": "llama.cpp - llama-server README",
+        "url": "https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md"
+      },
+      {
+        "title": "JSON Schema reference - object (properties, required, additionalProperties)",
+        "url": "https://json-schema.org/understanding-json-schema/reference/object"
+      },
+      {
+        "title": "Understanding JSON Schema - What is a schema?",
+        "url": "https://json-schema.org/understanding-json-schema/about"
+      },
+      {
+        "title": "Python docs - json (JSONDecodeError)",
+        "url": "https://docs.python.org/3/library/json.html"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran structured_output.py against fake_model_server.py (output pasted in README); python -m unittest -v -> 7 tests OK (5 lab + 2 tryIt). response_format json_schema behaviour on Ollama/llama.cpp not run in sandbox. tryIt: python -m unittest -v test_try_it_04 -> 2 tests OK; tryIt.expected is the observed output.",
+      "pendingCi": [
+        "structured_output.py against a real model, incl. response_format json_schema on Ollama / llama.cpp (CI real_model job)"
+      ]
+    },
+    "conceptNote": "content/concepts/04-structured-output.md",
+    "conceptSummary": "Model JSON is untrusted input: parse it strictly, validate it in code, and retry a bounded number of times with the error. Server-side schema constraints reduce retries but never replace validation.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "promptfoo",
+        "role": "CHECK",
+        "exercise": "Put the lab's extraction prompt in a promptfoo config with 10 short person descriptions and an ollama: provider (qwen2.5:1.5b); assert is-json plus the lab's SCHEMA. Run it prompt-only and with response_format.",
+        "expected": "Pending a manual run. Prompt-only replies that wrap JSON in prose or a ```json fence fail is-json - the same failure as the lab's attempt 1 ('not valid JSON (Expecting value)'); with response_format the lab passed on attempt 1, so expect most or all 10 to pass.",
+        "mac": "npx promptfoo@latest init   (or brew install promptfoo; Node >= 22.22 - Node 24 from WORKSTATION-SETUP)",
+        "windows": "npx promptfoo@latest init   (or npm i -g promptfoo; Node >= 22.22)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://www.promptfoo.dev/docs/providers/ollama/"
+      }
+    ]
+  },
+  {
+    "id": "first-tool-call",
+    "number": 5,
+    "level": "L100",
+    "title": "Your first tool call",
+    "phase": "Tools",
+    "category": "tool-calling",
+    "description": "Declare one tool, detect tool_calls, run it locally, send the result back.",
+    "outcome": "You can complete one full tool-call round trip in the chat-completions tools format.",
+    "environment": "Python 3.12 (macOS: brew python@3.12; Windows: python.org installer + py launcher), requests 2.34.2; fake_model_server.py (stdlib); optional: Ollama 0.40.12 + qwen2.5:1.5b (Q4_K_M, 986 MB; CPU, or GPU via Metal on Apple silicon / CUDA, ROCm or Vulkan on Windows)",
+    "estimatedTime": "20-30 minutes",
+    "overview": [
+      "The model never runs code: it returns a tool_call (name + JSON arguments); your program runs the function and replies with a tool message."
+    ],
+    "prerequisites": [
+      "Lessons 2 and 4"
+    ],
+    "glossary": [
+      {
+        "term": "tool / function",
+        "meaning": "Name, description and JSON-schema parameters you advertise in the request's tools list."
+      },
+      {
+        "term": "tool_call",
+        "meaning": "Model output asking you to run a tool: id, function.name, function.arguments (JSON string)."
+      },
+      {
+        "term": "tool message",
+        "meaning": "{role: 'tool', tool_call_id, content} carrying your result back to the model."
+      }
+    ],
+    "concepts": [
+      "Append the assistant message with tool_calls before the tool results.",
+      "Match each result to its call with tool_call_id.",
+      "Only run functions from an allow-list; unknown names return an error string."
+    ],
+    "inRealSystems": "vLLM, llama.cpp and Ollama's /v1 return tool_calls in this shape; MCP standardises listing (tools/list) and calling (tools/call) tools across processes.",
+    "useWhen": "When the answer needs fresh data or real computation; not when your code already knows the value.",
+    "steps": [
+      {
+        "title": "Start the fake model server",
+        "detail": "python ../01-setup/fake_model_server.py --port 8765   (terminal 1)",
+        "expected": "fake model server on http://127.0.0.1:8765/v1 (Ctrl+C to stop)",
+        "ifNot": "Port busy: use --port 8766 and change LOCAL_MODEL_URL to match."
+      },
+      {
+        "title": "Run first_tool_call.py against it",
+        "detail": "LOCAL_MODEL_URL=http://127.0.0.1:8765/v1 LOCAL_MODEL=fake-model python first_tool_call.py   (terminal 2)",
+        "expected": "model requested: get_time({}) / tool result: <UTC ISO time> / final answer",
+        "ifNot": "Check LOCAL_MODEL_URL ends with /v1 and the server terminal shows no traceback."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v   (starts its own fake server in a thread)",
+        "expected": "All tests end with OK",
+        "ifNot": "Read the failing assertion; compare your file with the lesson code."
+      },
+      {
+        "title": "Optional: run against the real local model",
+        "detail": "ollama pull qwen2.5:1.5b && python first_tool_call.py   (defaults: http://localhost:11434/v1, qwen2.5:1.5b)",
+        "expected": "Same structure; wording chosen by the model",
+        "ifNot": "Run 01-setup/check_endpoint.py first; first call on CPU can take 10-60 s."
+      }
+    ],
+    "code": "\"\"\"One tool, one round trip: model asks for get_time -> we run it locally -> model answers.\"\"\"\nimport json\nimport os\nfrom datetime import datetime, timezone\n\nimport requests\n\nBASE_URL = os.environ.get(\"LOCAL_MODEL_URL\") or os.environ.get(\"BASE_URL\", \"http://localhost:11434/v1\")\nMODEL = os.environ.get(\"LOCAL_MODEL\") or os.environ.get(\"MODEL\", \"qwen2.5:1.5b\")\n\nTOOLS = [{  # tool declaration: name + description + JSON-schema parameters\n    \"type\": \"function\",\n    \"function\": {\n        \"name\": \"get_time\",\n        \"description\": \"Return the current UTC date and time in ISO 8601 format.\",\n        \"parameters\": {\"type\": \"object\", \"properties\": {}, \"required\": []},\n    },\n}]\n\n\ndef get_time():\n    return datetime.now(timezone.utc).isoformat(timespec=\"seconds\")\n\n\nLOCAL_FUNCTIONS = {\"get_time\": get_time}  # allow-list: only these names can ever run\n\n\ndef chat(messages, base_url=BASE_URL, model=MODEL):\n    resp = requests.post(f\"{base_url}/chat/completions\", timeout=120,\n                         json={\"model\": model, \"messages\": messages, \"tools\": TOOLS, \"temperature\": 0})\n    resp.raise_for_status()\n    return resp.json()[\"choices\"][0][\"message\"]\n\n\ndef run_tool(call):\n    fn = LOCAL_FUNCTIONS.get(call[\"function\"][\"name\"])\n    if fn is None:\n        return f\"error: unknown tool {call['function']['name']!r}\"\n    raw = call[\"function\"].get(\"arguments\") or \"{}\"\n    args = raw if isinstance(raw, dict) else json.loads(raw)  # /v1 sends a JSON string; some native APIs an object\n    return str(fn(**args))\n\n\ndef ask(question, **kw):\n    messages = [{\"role\": \"user\", \"content\": question}]\n    reply = chat(messages, **kw)\n    calls = reply.get(\"tool_calls\") or []\n    if not calls:                      # model answered directly\n        return reply[\"content\"]\n    messages.append(reply)             # round trip: the assistant turn with tool_calls goes first\n    for call in calls:\n        print(f\"model requested: {call['function']['name']}({call['function']['arguments']})\")\n        result = run_tool(call)\n        print(f\"tool result    : {result}\")\n        messages.append({\"role\": \"tool\", \"tool_call_id\": call[\"id\"], \"content\": result})  # id links result to call\n    return chat(messages, **kw)[\"content\"]  # second call: model sees the tool result\n\n\nif __name__ == \"__main__\":\n    print(\"final answer   :\", ask(\"What time is it right now (UTC)?\"))\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/05-first-tool-call/first_tool_call.py",
+        "purpose": "get_time tool, dispatcher, two-call round trip"
+      },
+      {
+        "path": "labs/L100/05-first-tool-call/test_first_tool_call.py",
+        "purpose": "unittest: schema, args parsing, unknown tool, round trip"
+      },
+      {
+        "path": "labs/L100/05-first-tool-call/README.md",
+        "purpose": "Run commands and observed output"
+      },
+      {
+        "path": "labs/L100/05-first-tool-call/test_try_it_05.py",
+        "purpose": "the two tryIt changes, run against the fake server"
+      }
+    ],
+    "expectedResults": [
+      "model requested: get_time({})",
+      "tool result    : <current UTC time, e.g. 2026-10-28T05:43:10+00:00>",
+      "final answer   : Final answer: get_time() = <same time>"
+    ],
+    "testCases": [
+      {
+        "action": "run_tool with arguments '{}' and {}",
+        "expected": "ISO 8601 UTC string both times"
+      },
+      {
+        "action": "run_tool('delete_files')",
+        "expected": "'error: unknown tool ...' and nothing executed"
+      },
+      {
+        "action": "ask('What time is it?') on fake server",
+        "expected": "Final answer: get_time() = <ISO time>"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Call ask('What is the capital of France?').",
+        "predict": "Will the model request get_time?",
+        "expected": "No 'model requested' line; the reply comes straight back: Hello from fake-model! You said: 'What is the capital of France?'"
+      },
+      {
+        "task": "Delete messages.append(reply) so the tool result is sent without the assistant tool_calls turn.",
+        "predict": "Does the second call still work?",
+        "expected": "requests.HTTPError: HTTP 400 - tool message has unknown or missing 'tool_call_id'."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "HTTP 400 on the second request",
+        "action": "Append the assistant message (with tool_calls) before the tool message; tool_call_id must match."
+      },
+      {
+        "symptom": "Model answers without calling the tool",
+        "action": "Use a model tagged 'tools', make the description specific, keep temperature 0."
+      }
+    ],
+    "equivalents": [
+      "Ollama native /api/chat: arguments arrive as an object and the result uses tool_name",
+      "llama.cpp: llama-server with --jinja (on by default in current builds) parses tool calls",
+      "vLLM: --enable-auto-tool-choice --tool-call-parser <parser>; parallel_tool_calls=false limits a reply to 0 or 1 calls",
+      "MCP (Model Context Protocol): a standard way to expose tools from separate processes"
+    ],
+    "simulatorVsReal": "Validated against fake_model_server.py, a rule-based stand-in (not a model) for the chat-completions wire format: it proves the plumbing, not model quality; a real model's wording differs and it may not always follow instructions.",
+    "caution": "Never expose destructive tools (delete, send, pay, shell) without human approval and least privilege; validate arguments in code before running anything.",
+    "checkpoint": "PASS if the script prints the tool request, the local result, and a final answer, and the tests are OK.",
+    "checkYourself": [
+      {
+        "q": "What type is function.arguments on /v1?",
+        "a": "A JSON-encoded string - parse it with json.loads."
+      },
+      {
+        "q": "The model requests a tool that is not in the allow-list. What happens?",
+        "a": "Nothing runs; an error string goes back as the tool result."
+      }
+    ],
+    "next": "L200 #10 Build an MCP server and client: expose tools from a separate process",
+    "sources": [
+      {
+        "title": "vLLM - Tool calling",
+        "url": "https://docs.vllm.ai/en/latest/features/tool_calling/"
+      },
+      {
+        "title": "Ollama docs - Tool calling (incl. agent loop)",
+        "url": "https://docs.ollama.com/capabilities/tool-calling"
+      },
+      {
+        "title": "llama.cpp - Function calling",
+        "url": "https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md"
+      },
+      {
+        "title": "Model Context Protocol spec - Tools (2026-07-28)",
+        "url": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools"
+      },
+      {
+        "title": "OWASP GenAI - LLM06:2025 Excessive Agency",
+        "url": "https://genai.owasp.org/llmrisk/llm062025-excessive-agency/"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran first_tool_call.py against fake_model_server.py (output pasted in README); python -m unittest -v -> 9 tests OK (7 lab + 2 tryIt). Tool calling with qwen2.5:1.5b on Ollama not run in sandbox. tryIt: python -m unittest -v test_try_it_05 -> 2 tests OK; tryIt.expected is the observed output.",
+      "pendingCi": [
+        "first_tool_call.py tool calling with qwen2.5:1.5b (CI real_model job)"
+      ]
+    },
+    "conceptNote": "content/concepts/05-first-tool-call.md",
+    "conceptSummary": "The model only requests a tool call (name plus JSON-string arguments); your code checks an allow-list, runs it and returns the result with the matching tool_call_id. Who executes the call, and with what permissions, is your decision.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "promptfoo",
+        "role": "CHECK",
+        "exercise": "Send the lab's question 'What time is it right now (UTC)?' with the lab's get_time tool definition and assert is-valid-openai-tools-call; add 'What is the capital of France?' as a second case.",
+        "expected": "Pending a manual run. Should match the lab's printed call - model requested: get_time({}) - for the time question; the France question gets no tool call (the lab's tryIt 1), so that case fails the assertion by design.",
+        "mac": "npx promptfoo@latest init   (or brew install promptfoo; Node >= 22.22 - Node 24 from WORKSTATION-SETUP)",
+        "windows": "npx promptfoo@latest init   (or npm i -g promptfoo; Node >= 22.22)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://www.promptfoo.dev/docs/providers/ollama/"
+      }
+    ]
+  },
+  {
+    "id": "minimal-agent-loop",
+    "number": 6,
+    "level": "L100",
+    "title": "A minimal agent loop",
+    "phase": "Agents",
+    "category": "agent-loop",
+    "description": "Loop model -> tool calls -> results -> model with a max-steps budget, a stop condition and step logs.",
+    "outcome": "You can write and reason about an agent loop in ~40 lines without a framework.",
+    "environment": "Python 3.12 (macOS: brew python@3.12; Windows: python.org installer + py launcher), requests 2.34.2; fake_model_server.py (stdlib); optional: Ollama 0.40.12 + qwen2.5:1.5b (Q4_K_M, 986 MB; CPU, or GPU via Metal on Apple silicon / CUDA, ROCm or Vulkan on Windows)",
+    "estimatedTime": "30 minutes",
+    "overview": [
+      "An agent is a loop: call the model, run any requested tools, append results, repeat until it answers or the budget runs out."
+    ],
+    "prerequisites": [
+      "Lesson 5"
+    ],
+    "glossary": [
+      {
+        "term": "agent loop",
+        "meaning": "Repeated model calls where tool results feed the next call."
+      },
+      {
+        "term": "stop condition",
+        "meaning": "Reply without tool_calls = final answer."
+      },
+      {
+        "term": "step budget",
+        "meaning": "max_steps hard limit so a confused model cannot loop forever (or burn cost)."
+      }
+    ],
+    "concepts": [
+      "The loop, the budget and the tool allow-list are plain code you control.",
+      "Tool errors go back to the model as text instead of crashing the loop.",
+      "Risky tools require an approval callback that defaults to deny."
+    ],
+    "inRealSystems": "Ollama's docs show the same while-loop; LangGraph draws it as LLM node + tool node + conditional edge.",
+    "useWhen": "When steps depend on intermediate results; a fixed sequence when they are known in advance.",
+    "steps": [
+      {
+        "title": "Start the fake model server",
+        "detail": "python ../01-setup/fake_model_server.py --port 8765   (terminal 1)",
+        "expected": "fake model server on http://127.0.0.1:8765/v1 (Ctrl+C to stop)",
+        "ifNot": "Port busy: use --port 8766 and change LOCAL_MODEL_URL to match."
+      },
+      {
+        "title": "Run agent_loop.py against it",
+        "detail": "LOCAL_MODEL_URL=http://127.0.0.1:8765/v1 LOCAL_MODEL=fake-model python agent_loop.py   (terminal 2)",
+        "expected": "3 logged steps then stopped final_answer; with budget 1 stopped max_steps",
+        "ifNot": "Check LOCAL_MODEL_URL ends with /v1 and the server terminal shows no traceback."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v   (starts its own fake server in a thread)",
+        "expected": "All tests end with OK",
+        "ifNot": "Read the failing assertion; compare your file with the lesson code."
+      },
+      {
+        "title": "Optional: run against the real local model",
+        "detail": "ollama pull qwen2.5:1.5b && python agent_loop.py   (defaults: http://localhost:11434/v1, qwen2.5:1.5b)",
+        "expected": "Same structure; wording chosen by the model",
+        "ifNot": "Run 01-setup/check_endpoint.py first; first call on CPU can take 10-60 s."
+      }
+    ],
+    "code": "\"\"\"Minimal agent loop without a framework: model -> tool calls -> results -> model, until done or out of budget.\"\"\"\nimport ast\nimport json\nimport operator\nimport os\n\nimport requests\n\nBASE_URL = os.environ.get(\"LOCAL_MODEL_URL\") or os.environ.get(\"BASE_URL\", \"http://localhost:11434/v1\")\nMODEL = os.environ.get(\"LOCAL_MODEL\") or os.environ.get(\"MODEL\", \"qwen2.5:1.5b\")\nOPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv}\n\n\ndef calculator(expression):\n    \"\"\"Deterministic arithmetic in code (no eval): + - * / and parentheses only.\"\"\"\n    def ev(node):\n        if isinstance(node, ast.Constant) and type(node.value) in (int, float):\n            return node.value\n        if isinstance(node, ast.BinOp) and type(node.op) in OPS:\n            return OPS[type(node.op)](ev(node.left), ev(node.right))\n        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):\n            return -ev(node.operand)\n        raise ValueError(\"unsupported expression\")\n    return ev(ast.parse(expression, mode=\"eval\").body)\n\n\n# tool registry = allow-list: name -> (function, needs human approval?, tool schema)\nREGISTRY = {\"calculator\": (calculator, False, {\"type\": \"function\", \"function\": {\n    \"name\": \"calculator\", \"description\": \"Evaluate one arithmetic expression, e.g. '17*23'.\",\n    \"parameters\": {\"type\": \"object\", \"properties\": {\"expression\": {\"type\": \"string\"}},\n                   \"required\": [\"expression\"]}}})}\n\n\ndef execute(name, args, approve=lambda name, args: False):\n    if name not in REGISTRY:\n        return f\"error: unknown tool {name!r}\"\n    fn, needs_approval, _ = REGISTRY[name]\n    if needs_approval and not approve(name, args):  # approval gate: default deny anything risky\n        return \"error: action denied by human reviewer\"\n    try:\n        return str(fn(**args))\n    except Exception as exc:  # errors are data: report them to the model instead of crashing\n        return f\"error: {exc}\"\n\n\ndef run_agent(task, max_steps=5, base_url=BASE_URL, model=MODEL, approve=lambda n, a: False):\n    messages = [{\"role\": \"system\", \"content\": \"Use the calculator tool for every arithmetic step. \"\n                                              \"You may call tools several times before answering.\"},\n                {\"role\": \"user\", \"content\": task}]\n    tools = [schema for _, _, schema in REGISTRY.values()]\n    for step in range(1, max_steps + 1):  # step budget: at most max_steps model calls\n        resp = requests.post(f\"{base_url}/chat/completions\", timeout=120, json={\n            \"model\": model, \"messages\": messages, \"tools\": tools, \"temperature\": 0})\n        resp.raise_for_status()\n        reply = resp.json()[\"choices\"][0][\"message\"]\n        messages.append(reply)  # state = the message list, nothing else\n        calls = reply.get(\"tool_calls\") or []\n        if not calls:  # stop condition: model gave a final answer\n            print(f\"step {step}: final -> {reply['content']}\")\n            return {\"answer\": reply[\"content\"], \"steps\": step, \"stopped\": \"final_answer\"}\n        for call in calls:\n            raw = call[\"function\"].get(\"arguments\") or \"{}\"\n            args = raw if isinstance(raw, dict) else json.loads(raw)\n            result = execute(call[\"function\"][\"name\"], args, approve)\n            print(f\"step {step}: tool  -> {call['function']['name']}({args}) = {result}\")\n            messages.append({\"role\": \"tool\", \"tool_call_id\": call[\"id\"], \"content\": result})\n    print(f\"stopped: max_steps={max_steps} reached without a final answer\")\n    return {\"answer\": None, \"steps\": max_steps, \"stopped\": \"max_steps\"}\n\n\nif __name__ == \"__main__\":\n    task = \"Use the calculator to compute 17*23 and (120-20)/4, then report both results.\"\n    print(\"== budget 5 ==\")\n    print(run_agent(task, max_steps=5))\n    print(\"== budget 1 ==\")\n    print(run_agent(task, max_steps=1))\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/06-minimal-agent-loop/agent_loop.py",
+        "purpose": "Safe calculator, tool registry with approval flag, loop with budget and logs"
+      },
+      {
+        "path": "labs/L100/06-minimal-agent-loop/test_agent_loop.py",
+        "purpose": "unittest: final answer, budget, tool errors, approval gate, unsafe input"
+      },
+      {
+        "path": "labs/L100/06-minimal-agent-loop/README.md",
+        "purpose": "Run commands and observed output"
+      },
+      {
+        "path": "labs/L100/06-minimal-agent-loop/test_try_it_06.py",
+        "purpose": "the two tryIt changes, run against the fake server"
+      }
+    ],
+    "expectedResults": [
+      "step 1: tool  -> calculator({'expression': '17*23'}) = 391",
+      "step 2: tool  -> calculator({'expression': '(120-20)/4'}) = 25.0",
+      "step 3: final -> Final answer: 17*23 = 391; (120-20)/4 = 25.0",
+      "budget 1: stopped: max_steps=1 reached without a final answer"
+    ],
+    "testCases": [
+      {
+        "action": "run_agent(task, max_steps=5)",
+        "expected": "stopped final_answer after 3 steps"
+      },
+      {
+        "action": "run_agent(task, max_steps=1)",
+        "expected": "stopped max_steps, answer None"
+      },
+      {
+        "action": "execute a tool flagged needs-approval with default approver",
+        "expected": "'denied', function not called"
+      },
+      {
+        "action": "calculator(\"__import__('os')...\")",
+        "expected": "ValueError (no eval)"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Run run_agent(task, max_steps=2).",
+        "predict": "Final answer or budget stop?",
+        "expected": "{'answer': None, 'steps': 2, 'stopped': 'max_steps'} - the final answer never arrived."
+      },
+      {
+        "task": "Set the calculator's 'needs approval' flag to True and keep the default approver.",
+        "predict": "Crash, hang, or a clean end?",
+        "expected": "step 3: final -> Final answer: 17*23 = error: action denied by human reviewer; (120-20)/4 = error: action denied by human reviewer - nothing ran; the loop still ended."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Always stops at max_steps",
+        "action": "Check every tool_call gets a tool message back; tighten the system prompt."
+      },
+      {
+        "symptom": "Model does the maths itself",
+        "action": "Small models skip tools sometimes; keep the instruction and verify numbers in code."
+      }
+    ],
+    "equivalents": [
+      "LangGraph: StateGraph with an LLM node, a tool node and a conditional edge that ends when there are no tool_calls",
+      "Ollama docs: the same while-loop pattern in its 'Multi-turn tool calling (Agent loop)' example",
+      "Other frameworks (smolagents, LlamaIndex, Semantic Kernel...): same loop with more abstraction"
+    ],
+    "simulatorVsReal": "Validated against fake_model_server.py, a rule-based stand-in (not a model) for the chat-completions wire format: it proves the plumbing, not model quality; a real model's wording differs and it may not always follow instructions. The fake issues one tool call per turn; a real model may issue several in one turn - the loop handles both.",
+    "caution": "Never give an agent destructive tools without an approval step; keep must-be-deterministic decisions (budgets, permissions, arithmetic, validation) in code, not in the model.",
+    "checkpoint": "PASS if you see logged steps ending in a final answer, a budget stop with max_steps=1, and the tests are OK.",
+    "checkYourself": [
+      {
+        "q": "What are the two ways the loop ends?",
+        "a": "A reply without tool_calls, or reaching max_steps."
+      },
+      {
+        "q": "Where is 'may this tool delete files?' decided?",
+        "a": "In code: allow-list plus an approval callback that defaults to deny."
+      }
+    ],
+    "next": "L200 #8 Agents with several tools: choose among tools, validate arguments, feed errors back",
+    "sources": [
+      {
+        "title": "Ollama docs - Tool calling (incl. agent loop)",
+        "url": "https://docs.ollama.com/capabilities/tool-calling"
+      },
+      {
+        "title": "ReAct: Synergizing Reasoning and Acting in Language Models (Yao et al.)",
+        "url": "https://arxiv.org/abs/2210.03629"
+      },
+      {
+        "title": "Model Context Protocol spec - Tools (2026-07-28)",
+        "url": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools"
+      },
+      {
+        "title": "OWASP GenAI - LLM06:2025 Excessive Agency",
+        "url": "https://genai.owasp.org/llmrisk/llm062025-excessive-agency/"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran agent_loop.py against fake_model_server.py (output pasted in README); python -m unittest -v -> 8 tests OK (6 lab + 2 tryIt). Real-model run not performed in sandbox. tryIt: python -m unittest -v test_try_it_06 -> 2 tests OK; tryIt.expected is the observed output.",
+      "pendingCi": [
+        "agent_loop.py against a real model (CI real_model job)"
+      ]
+    },
+    "conceptNote": "content/concepts/06-minimal-agent-loop.md",
+    "conceptSummary": "An agent is a loop of model calls and tool runs over a growing message list that ends on a final answer or a step budget. Budgets, allow-lists, approvals and arithmetic stay in deterministic code.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "Langflow",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Rebuild the lab as an Agent + Ollama component (qwen2.5:1.5b) with a calculator tool; give it the lab's task (17*23 and (120-20)/4) and compare its tool-call trace with the lab's step log.",
+        "expected": "Pending a manual run. Should reach the lab's numbers: calculator('17*23') = 391 and calculator('(120-20)/4') = 25.0, then a final answer (lab: 3 steps, stopped: final_answer). The flow may batch both calls; look for its equivalent of max_steps and of the approval gate.",
+        "mac": "uv pip install langflow && uv run langflow run   (Python 3.10-3.14; set LANGFLOW_SUPERUSER_PASSWORD first)",
+        "windows": "uv pip install langflow; uv run langflow run   (set $env:LANGFLOW_SUPERUSER_PASSWORD first; Desktop .msi may need MS C++ Build Tools)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://docs.langflow.org/bundles-ollama"
+      }
+    ]
+  }
+]

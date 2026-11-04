@@ -1,0 +1,139 @@
+[
+ {
+  "id": "06-mac-01",
+  "level": "L600",
+  "lesson": 6,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "An RFC 9162 inclusion proof for one row in a release of 10,000,000 rows contains at most how many hashes?",
+  "options": [
+   "24",
+   "23",
+   "10,000,000",
+   "7"
+  ],
+  "answer": 0,
+  "explanation": "The proof has at most ceil(log2 n) hashes: 2^23 = 8,388,608 < 10^7 <= 2^24, so 24. That is why proofs stay small while the catalogue grows.",
+  "source": "06 mac_mini/scale_bench.py proof_hashes_max; RFC 9162 2.1.3"
+ },
+ {
+  "id": "06-mac-02",
+  "level": "L600",
+  "lesson": 6,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Over HTTP, 4 releases moved 174,951 bytes between healthy mirrors and 4,839,263 bytes with the float-format fault. About how many times more traffic did the fault cause?",
+  "options": [
+   "About 2.8 times",
+   "About 280 times",
+   "About 28 times",
+   "About 4 times"
+  ],
+  "answer": 2,
+  "explanation": "4,839,263 / 174,951 = 27.7. The broken mirror's bucket hashes never match, so every round re-sends the same objects.",
+  "source": "06 mac_mini/README.md real output"
+ },
+ {
+  "id": "06-mac-03",
+  "level": "L600",
+  "lesson": 6,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "With --inject float-format, why does gossip never converge even though every mirror holds the same VALUES?",
+  "options": [
+   "The timestamp on m2 expires before the round ends",
+   "m2 stores different BYTES for the same keys, so its bucket hashes never match, and immutable keys turn every re-send into a conflict",
+   "HTTP truncates catalogue.json above 64 KiB",
+   "The client rejects m2, which removes it from gossip"
+  ],
+  "answer": 1,
+  "explanation": "Anti-entropy compares hashes of bytes, not parsed values; '%.17g' doubles change the bytes. Immutable keys are never overwritten, so the difference can never heal. The client does not take part in gossip.",
+  "source": "mirrors.py Mirror.put; 06 mac_mini/http_world.py"
+ },
+ {
+  "id": "06-mac-04",
+  "level": "L600",
+  "lesson": 6,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "The client verifies the latest release from m0, m1 and m3 over HTTP but rejects m2 with 'v4: catalogue.json missing or changed'. What is the first thing to compare?",
+  "options": [
+   "The Ed25519 key ids in the root on m2",
+   "The TTL of the timestamp served by m2",
+   "The transparency-log inclusion proof served by m2",
+   "The bytes of releases/v4/catalogue.json on m2 against m0: same JSON values, different number formatting"
+  ],
+  "answer": 3,
+  "explanation": "The manifest pins each file's SHA-256 and length; that check fails first, before any signature on the file is relevant. run_project.py's diagnose() shows the first differing bytes ('%.17g' doubles).",
+  "source": "client.verify_release; run_project.diagnose; 06 mac_mini/http_world.py"
+ },
+ {
+  "id": "06-mac-05",
+  "level": "L600",
+  "lesson": 6,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "The streaming tree keeps a stack of perfect subtrees (a binary counter). This snippet tracks only subtree heights. What does it print?",
+  "code": "stack = []\nfor _ in range(11):\n    stack.append(0)\n    while len(stack) > 1 and stack[-1] == stack[-2]:\n        stack.pop()\n        stack[-1] += 1\nprint(stack)",
+  "options": [
+   "[0, 1, 3]",
+   "[3, 1, 0]",
+   "[4]",
+   "[2, 2, 1]"
+  ],
+  "answer": 1,
+  "explanation": "11 = 8 + 2 + 1: perfect subtrees of heights 3, 1 and 0, largest first. The stack length is the number of 1-bits of n, so memory stays O(log n) for any catalogue size.",
+  "source": "06 mac_mini/scale_bench.py stream_push (executed in research/checks_06_mac.py)"
+ },
+ {
+  "id": "06-mac-06",
+  "level": "L600",
+  "lesson": 6,
+  "type": "design",
+  "difficulty": 2,
+  "question": "scale_bench.py --streaming gives the same root with flat memory. What does the publisher lose by building the tree streaming?",
+  "options": [
+   "Inclusion proofs cannot be served from memory; the tree levels must be written to disk (or recomputed) to answer proof requests",
+   "The root is no longer compatible with RFC 9162",
+   "The ML-DSA-65 signature becomes larger",
+   "Consistency proofs between releases become impossible"
+  ],
+  "answer": 0,
+  "explanation": "The streaming fold keeps only O(log n) subtree roots - enough for the root, not for a path to an arbitrary leaf. The root is identical (checked against merkle.mth), and the signature covers only the root.",
+  "source": "06 mac_mini/scale_bench.py; README experiment 2"
+ },
+ {
+  "id": "06-mac-07",
+  "level": "L600",
+  "lesson": 6,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "On the Mac, jcs_crosscheck.py reports one differing vector, 'numbers', between Python and the npm package, while the RFC 8785 sample matches in both. What does that mean for publishing?",
+  "options": [
+   "Nothing: values are equal, and signatures are checked on parsed values",
+   "Only the Node side must be upgraded; Python is the reference by definition",
+   "A release signed with one implementation would fail verification with the other for such numbers; find which one breaks ECMAScript Number::toString before signing anything with it",
+   "The catalogue must switch to strings for every number"
+  ],
+  "answer": 2,
+  "explanation": "Signatures cover bytes. RFC 8785 defines numbers via ECMAScript's Number::toString, so the vector itself decides who is wrong; neither side is right by default.",
+  "source": "06 mac_mini/jcs_crosscheck.py; RFC 8785 3.2.2.3; canonical.py"
+ },
+ {
+  "id": "06-mac-08",
+  "level": "L600",
+  "lesson": 6,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "H3 checks that the killed mirror came back with exactly the objects it had before the kill. Why can it recover them?",
+  "options": [
+   "The other mirrors re-send everything to it on restart before H3 is measured",
+   "The supervisor keeps a copy of each mirror's dictionary",
+   "http.server caches responses on disk",
+   "Every accepted object is appended to objects.jsonl when stored, and start-up replays that file through the same put() rules"
+  ],
+  "answer": 3,
+  "explanation": "Durable state is an append-only file written at put() time; recovery replays it. H3 is measured right after the restart, before any gossip round, so nothing was re-sent yet.",
+  "source": "06 mac_mini/mirror_server.py Store; http_world.run"
+ }
+]

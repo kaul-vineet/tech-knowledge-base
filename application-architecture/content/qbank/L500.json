@@ -1,0 +1,776 @@
+[
+  {
+    "id": "aa-L500-001",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "According to Parnas (1972), what should decide how a system is split into modules?",
+    "options": [
+      "Design decisions that are hard or likely to change, each hidden inside one module",
+      "The major processing steps, in the order in which the program's flowchart runs them one after another",
+      "The teams that are available, one module per team, to reduce coordination",
+      "Equal size, so that every module has roughly the same number of lines"
+    ],
+    "answer": 0,
+    "explanation": "Parnas's criterion is information hiding: each module owns a decision that may change. Splitting by processing steps is the 'conventional' decomposition he argues against, because a storage decision then leaks into almost every module.",
+    "source": "Lesson 23 concept note (Definitions; Intuition)"
+  },
+  {
+    "id": "aa-L500-002",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The proof that a strict layering rule rules out dependency cycles rests on which fact?",
+    "options": [
+      "Each layer holds at most one module, so two modules can never point at each other",
+      "Layers follow folder depth, and a cycle cannot change the depth of a folder",
+      "Every module must depend on at least one module in the layer directly below it, never skipping a layer",
+      "Each edge strictly lowers the layer number, so going round a cycle would give ℓ(v) > ℓ(v)"
+    ],
+    "answer": 3,
+    "explanation": "T23.1: along a cycle v₀ → … → v₀ the layer strictly decreases at every step, a contradiction. Layers may contain many modules; the proof only uses strictness.",
+    "source": "Lesson 23 theorem T23.1"
+  },
+  {
+    "id": "aa-L500-003",
+    "level": "L500",
+    "lesson": 23,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A team relaxes its rule to 'depend only on your own layer or lower'. What can you now conclude about the dependency graph?",
+    "options": [
+      "It stays acyclic because no import ever points upwards",
+      "Cycles become possible only if some import also points upwards",
+      "Cycles become possible between modules that share a layer",
+      "It stays acyclic as long as there are at least two layers"
+    ],
+    "answer": 2,
+    "explanation": "With ℓ(u) ≥ ℓ(v) two modules in one layer may import each other. In the lab, 1659 of 2000 random graphs with same-layer edges had a cycle, versus 0 of 2000 with strict layering.",
+    "source": "Lesson 23 lab check_modularity.py (T1)"
+  },
+  {
+    "id": "aa-L500-004",
+    "level": "L500",
+    "lesson": 23,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A component has Ca = 6, Ce = 2 and contains 5 classes, 2 of them abstract. What is Martin's normalised distance Dn = |A + I − 1|?",
+    "options": [
+      "0.65",
+      "0.35",
+      "0.25",
+      "0.15"
+    ],
+    "answer": 1,
+    "explanation": "I = 2/8 = 0.25, A = 2/5 = 0.40, Dn = |0.40 + 0.25 − 1| = 0.35. 0.65 is A + I, a forgotten '− 1'.",
+    "source": "Lesson 23 theorem T23.3"
+  },
+  {
+    "id": "aa-L500-005",
+    "level": "L500",
+    "lesson": 23,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "In the lab the hexagonal domain module has Ca = 5, Ce = 1 and A = 0. What is its Euclidean distance |A + I − 1|/√2 from the main sequence, to three decimals?",
+    "options": [
+      "0.833",
+      "0.589",
+      "0.167",
+      "0.707"
+    ],
+    "answer": 1,
+    "explanation": "I = 1/6, so |0 + 1/6 − 1|/√2 = (5/6)/√2 ≈ 0.589 – the value the lab's brute-force search printed. 0.833 is Dn, the normalised form without the √2.",
+    "source": "Lesson 23 lab output (T3 table)"
+  },
+  {
+    "id": "aa-L500-006",
+    "level": "L500",
+    "lesson": 23,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "edges = [(\"app\", \"svc\"), (\"app\", \"repo\"), (\"svc\", \"repo\"), (\"web\", \"svc\")]\n\n\ndef instability(m):\n    ca = sum(1 for a, b in edges if b == m)\n    ce = sum(1 for a, b in edges if a == m)\n    return ce / (ca + ce)\n\n\nprint(round(instability(\"svc\"), 2), instability(\"repo\"))",
+    "options": [
+      "0.33 0.0",
+      "0.67 1.0",
+      "0.5 0.0",
+      "0.33 1.0"
+    ],
+    "answer": 0,
+    "explanation": "svc has Ca = 2 (app, web) and Ce = 1 (repo): I = 1/3. repo depends on nothing: Ce = 0, so I = 0, maximally stable. Swapping Ca and Ce gives the 0.67 / 1.0 distractor.",
+    "source": "Lesson 23 glossary (Ca, Ce, instability)"
+  },
+  {
+    "id": "aa-L500-007",
+    "level": "L500",
+    "lesson": 23,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "This is Kahn's algorithm. What does it print?",
+    "code": "nodes = [\"a\", \"b\", \"c\", \"d\"]\nedges = [(\"a\", \"b\"), (\"b\", \"c\"), (\"c\", \"b\"), (\"c\", \"d\")]\nindeg = {n: 0 for n in nodes}\nfor _, v in edges:\n    indeg[v] += 1\nready, removed = [n for n in nodes if indeg[n] == 0], []\nwhile ready:\n    n = ready.pop()\n    removed.append(n)\n    for u, v in edges:\n        if u == n:\n            indeg[v] -= 1\n            if indeg[v] == 0:\n                ready.append(v)\nprint(removed, len(removed) == len(nodes))",
+    "options": [
+      "['a', 'b', 'c', 'd'] True",
+      "['a', 'b'] False",
+      "[] False",
+      "['a'] False"
+    ],
+    "answer": 3,
+    "explanation": "b has in-degree 2 (from a and c). Removing a lowers it to 1, so b never becomes ready: the b ⇄ c cycle blocks the topological order and the graph is reported cyclic.",
+    "source": "Lesson 23 lab modularity.is_acyclic"
+  },
+  {
+    "id": "aa-L500-008",
+    "level": "L500",
+    "lesson": 23,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "This fitness function is meant to enforce strict layering. What is wrong with it?",
+    "code": "def violations(edges, layer):\n    return [(u, v) for u, v in edges if not layer[u] >= layer[v]]",
+    "options": [
+      "It reports every downward edge as a violation, so it always fails",
+      "It swaps the edge direction, so upward edges pass and downward fail",
+      "It accepts same-layer edges, so a cycle inside one layer is never reported",
+      "It crashes with an IndexError when the edge list is empty"
+    ],
+    "answer": 2,
+    "explanation": "Strict layering needs layer[u] > layer[v]. With >=, a → b and b → a in one layer both pass. An empty edge list just returns [].",
+    "source": "Lesson 23 theorem T23.1 corollary"
+  },
+  {
+    "id": "aa-L500-009",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What did El Emam, Benlarbi, Goel and Rai (2001) find about object-oriented metrics and fault-proneness?",
+    "options": [
+      "Coupling metrics still predicted faults strongly even after class size had been controlled for in the analysis",
+      "Only inheritance depth stayed a strong predictor once class size was controlled",
+      "After controlling for class size, the metrics they studied were no longer associated with faults",
+      "Class size itself showed no association with faults in their telecom data"
+    ],
+    "answer": 2,
+    "explanation": "Their study of a large C++ framework showed a strong size confounding effect: the apparent validity of the metrics disappeared once size was controlled, casting doubt on earlier validations.",
+    "source": "Lesson 25 concept note (empirical evidence); El Emam et al. 2001"
+  },
+  {
+    "id": "aa-L500-010",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which change did ISO/IEC 25010:2023 make to the product quality model of 2011?",
+    "options": [
+      "It removed security and folded it into reliability",
+      "It added safety and renamed usability to interaction capability",
+      "It replaced maintainability with the new name flexibility",
+      "It cut the model down from eight characteristics to six"
+    ],
+    "answer": 1,
+    "explanation": "The 2023 foreword lists: safety added; usability → interaction capability; portability (not maintainability) → flexibility. The model now has nine characteristics.",
+    "source": "Lesson 24 concept note (Definitions)"
+  },
+  {
+    "id": "aa-L500-011",
+    "level": "L500",
+    "lesson": 24,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "A request needs three independent components with availabilities 99.9 %, 99.95 % and 99.99 %. What is the request path's availability?",
+    "options": [
+      "99.84%",
+      "99.95%",
+      "99.99%",
+      "99.90%"
+    ],
+    "answer": 0,
+    "explanation": "Series: 0.999 × 0.9995 × 0.9999 ≈ 0.9984. The path is below its weakest part (99.9 %), never at the average or the best part.",
+    "source": "Lesson 24 theorem T24.1"
+  },
+  {
+    "id": "aa-L500-012",
+    "level": "L500",
+    "lesson": 24,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "def parallel(avails):\n    down = 1.0\n    for a in avails:\n        down *= 1 - a\n    return 1 - down\n\n\nprint(f\"{parallel([0.99, 0.99]):.2%} {parallel([0.99, 0.99, 0.99]):.4%}\")",
+    "options": [
+      "98.01% 97.0299%",
+      "99.00% 99.0000%",
+      "99.98% 99.9700%",
+      "99.99% 99.9999%"
+    ],
+    "answer": 3,
+    "explanation": "Two independent replicas are down together with probability 0.01² = 10⁻⁴, three with 10⁻⁶. 98.01 % is the series formula, the wrong structure.",
+    "source": "Lesson 24 theorem T24.2"
+  },
+  {
+    "id": "aa-L500-013",
+    "level": "L500",
+    "lesson": 24,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "How much downtime does a 99.9 % availability SLO over 30 days allow?",
+    "options": [
+      "4.32 min",
+      "8.76 h",
+      "432 min",
+      "43.2 min"
+    ],
+    "answer": 3,
+    "explanation": "(1 − 0.999) × 30 × 24 × 60 = 43.2 minutes. 8.76 h is the yearly figure; 4.32 min is 99.99 %.",
+    "source": "Lesson 24 theorem T24.3"
+  },
+  {
+    "id": "aa-L500-014",
+    "level": "L500",
+    "lesson": 24,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A database has an MTTF of 500 h and an MTTR of 2 h. What is its steady-state availability?",
+    "options": [
+      "99.80%",
+      "99.40%",
+      "99.60%",
+      "99.20%"
+    ],
+    "answer": 2,
+    "explanation": "A = MTTF / (MTTF + MTTR) = 500 / 502 ≈ 0.9960. 99.40 % comes from 1 − 3/500, a mis-added repair time.",
+    "source": "Lesson 24 theorem T24.3"
+  },
+  {
+    "id": "aa-L500-015",
+    "level": "L500",
+    "lesson": 24,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "from math import comb\n\n\ndef k_of_n(k, n, a):\n    return sum(comb(n, j) * a**j * (1 - a)**(n - j) for j in range(k, n + 1))\n\n\nprint(f\"{k_of_n(2, 3, 0.9):.3f} {k_of_n(3, 3, 0.9):.3f}\")",
+    "options": [
+      "0.999 0.972",
+      "0.972 0.729",
+      "0.729 0.972",
+      "0.900 0.810"
+    ],
+    "answer": 1,
+    "explanation": "2-of-3: 3·0.9²·0.1 + 0.9³ = 0.243 + 0.729 = 0.972. 3-of-3 needs all up: 0.9³ = 0.729. 0.999 would be 1-of-3.",
+    "source": "Lesson 24 theorem T24.2"
+  },
+  {
+    "id": "aa-L500-016",
+    "level": "L500",
+    "lesson": 24,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Two API replicas (99.5 % each, independent) both read a shared configuration store (99.9 %) and fail if it is down. What is the API tier's availability?",
+    "options": [
+      "99.898%",
+      "99.998%",
+      "99.500%",
+      "99.400%"
+    ],
+    "answer": 0,
+    "explanation": "Store up AND at least one replica up: 0.999 × (1 − 0.005²) ≈ 0.998975. 99.998 % is the naive independent-replicas figure that ignores the common cause.",
+    "source": "Lesson 24 problem P24-5"
+  },
+  {
+    "id": "aa-L500-017",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In ATAM, what is a trade-off point?",
+    "options": [
+      "A property that is a sensitivity point for several qualities, moving them in different directions",
+      "Any important architectural decision that the team has not made yet",
+      "A leaf scenario ranked (H, H) in the quality attribute utility tree",
+      "The stakeholder weight at which two design options reach exactly the same weighted score"
+    ],
+    "answer": 0,
+    "explanation": "The SEI report defines a trade-off point as a parameter hosting several sensitivity points affected differently. An unmade decision is a risk; a break-even weight is a decision-analysis quantity (T24.4), not ATAM's term.",
+    "source": "Kazman, Klein & Clements 2000 (sect. 1.1, 7.2); Lesson 24 glossary"
+  },
+  {
+    "id": "aa-L500-018",
+    "level": "L500",
+    "lesson": 24,
+    "type": "design",
+    "difficulty": 2,
+    "question": "Which of these is a well-formed quality attribute scenario for Library Loans?",
+    "options": [
+      "The system shall be highly available, robust, secure and easy to operate for every library at all times",
+      "Use PostgreSQL streaming replication with one synchronous standby replica",
+      "Availability is the most important quality attribute for the library network",
+      "Primary database fails at peak; service is restored within 5 min, no committed loan lost"
+    ],
+    "answer": 3,
+    "explanation": "A scenario names a stimulus, environment and a measurable response. The first distractor is an untestable '-ility'; the second is a design decision, not a requirement.",
+    "source": "Lesson 24 concept note (Definitions)"
+  },
+  {
+    "id": "aa-L500-019",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Under the Liskov substitution rule, how may a subtype's contract differ from its supertype's?",
+    "options": [
+      "It may strengthen preconditions and weaken postconditions",
+      "It may change either one, provided the method signature stays the same",
+      "It may weaken preconditions and strengthen postconditions",
+      "It may strengthen both, so that it is always at least as strict"
+    ],
+    "answer": 2,
+    "explanation": "T25.2: pre_T ⇒ pre_S (accept at least what T accepts) and post_S ⇒ post_T (promise at least what T promises). A stronger precondition rejects calls correct clients make.",
+    "source": "Lesson 25 theorem T25.2; Liskov & Wing 1994"
+  },
+  {
+    "id": "aa-L500-020",
+    "level": "L500",
+    "lesson": 25,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A client was written against Limit. What does this print?",
+    "code": "class Limit:\n    def allowed(self, active): return active < 3\n\nclass Generous(Limit):\n    def allowed(self, active): return active < 5\n\ndef borrow_all(policy):\n    n = 0\n    while policy.allowed(n):\n        n += 1\n    return n\n\nprint(borrow_all(Limit()), borrow_all(Generous()))",
+    "options": [
+      "3 3",
+      "3 5",
+      "5 5",
+      "2 4"
+    ],
+    "answer": 1,
+    "explanation": "Generous weakens the postcondition 'allowed ⇒ fewer than 3 loans', so the client's guarantee breaks: it borrows 5. Python accepts the override; behaviour, not the signature, decides substitutability.",
+    "source": "Lesson 25 lab contracts.GenerousLimit"
+  },
+  {
+    "id": "aa-L500-021",
+    "level": "L500",
+    "lesson": 25,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "What does this print, and what does it show?",
+    "code": "class Member:\n    def __init__(self):\n        self.loans = []\n\n    def borrow(self, book):\n        self.loans.append(book)\n        if len(self.loans) > 2:\n            raise ValueError(\"limit\")\n\n\nm = Member()\nfor b in [\"b1\", \"b2\", \"b3\"]:\n    try: m.borrow(b)\n    except ValueError: pass\nprint(len(m.loans))",
+    "options": [
+      "2",
+      "3",
+      "1",
+      "0"
+    ],
+    "answer": 1,
+    "explanation": "The guard runs after the mutation, so the rejected call still appended b3: failure atomicity is broken and the invariant (≤ 2 loans) fails. T25.1 needs checks before state changes.",
+    "source": "Lesson 25 theorem T25.1"
+  },
+  {
+    "id": "aa-L500-022",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the L200 #8 Member aggregate expose its loans as a tuple rather than the internal list?",
+    "options": [
+      "So outside code cannot change loans except through the checked operations",
+      "Because tuples are faster to iterate over than lists in Python 3.12",
+      "So the repository can hash the loans for its optimistic version check",
+      "Because the JSON encoder only accepts immutable sequences of objects"
+    ],
+    "answer": 0,
+    "explanation": "Invariant induction (T25.1) covers only state changes made by public operations; a mutable list handed out would let code bypass the guards.",
+    "source": "Lesson 25 theorem T25.1; L200 #8 member.py"
+  },
+  {
+    "id": "aa-L500-023",
+    "level": "L500",
+    "lesson": 25,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "This BFS looks for the state 'bad'. What does it print?",
+    "code": "from collections import deque\ngraph = {\"s\": [\"a\", \"b\"], \"a\": [\"c\"], \"b\": [\"c\", \"bad\"], \"c\": [\"bad\"], \"bad\": []}\nparent, queue = {\"s\": None}, deque([\"s\"])\nwhile queue:\n    node = queue.popleft()\n    if node == \"bad\":\n        break\n    for nxt in graph[node]:\n        if nxt not in parent:\n            parent[nxt] = node\n            queue.append(nxt)\npath = [node]\nwhile parent[path[-1]]:\n    path.append(parent[path[-1]])\nprint(\" -> \".join(reversed(path)))",
+    "options": [
+      "s -> a -> c -> bad",
+      "s -> b -> c -> bad",
+      "s -> a -> bad",
+      "s -> b -> bad"
+    ],
+    "answer": 3,
+    "explanation": "BFS discovers 'bad' first from b at distance 2, and the parent chain gives that shortest trace (T25.3). A depth-first search could have returned the longer path through a and c.",
+    "source": "Lesson 25 theorem T25.3"
+  },
+  {
+    "id": "aa-L500-024",
+    "level": "L500",
+    "lesson": 25,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "In the buggy check-then-act workflow each member is idle, checked or holding, and every combination is reachable. How many reachable states are there with three members?",
+    "options": [
+      "20",
+      "9",
+      "27",
+      "81"
+    ],
+    "answer": 2,
+    "explanation": "3 local states per member and the loans set is determined by them: 3³ = 27. 20 is the fixed model, 9 is two members, 81 is four.",
+    "source": "Lesson 25 problem P25-6"
+  },
+  {
+    "id": "aa-L500-025",
+    "level": "L500",
+    "lesson": 25,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "In the fixed workflow at most one member holds the book, the others are idle or checked. How many reachable states are there with four members?",
+    "options": [
+      "81",
+      "32",
+      "48",
+      "64"
+    ],
+    "answer": 2,
+    "explanation": "No holder: 2⁴ = 16; one holder: 4 × 2³ = 32; total (n + 2)·2ⁿ⁻¹ = 48. 81 is the buggy count 3⁴.",
+    "source": "Lesson 25 problem P25-6"
+  },
+  {
+    "id": "aa-L500-026",
+    "level": "L500",
+    "lesson": 25,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "The model checker finds no violation in the fixed borrow workflow. What may you honestly claim?",
+    "options": [
+      "The production service can now never lend the same book to two members, whatever happens at run time",
+      "The modelled workflow is safe within its bounds; the code still needs a test of its atomicity",
+      "The database no longer needs a unique constraint on active loans per book",
+      "Safety now holds for any number of members, books and crash scenarios"
+    ],
+    "answer": 1,
+    "explanation": "Model checking proves properties of the model, for the bounds explored. Linking it to the code needs a test of the real atomic insert (e.g. a unique constraint exercised under concurrency).",
+    "source": "Lesson 25 problem P25-7"
+  },
+  {
+    "id": "aa-L500-027",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What did Zimmermann and Nagappan (2008) report for Windows Server 2003?",
+    "options": [
+      "Network measures on dependency graphs predicted defect-prone binaries better than complexity metrics",
+      "Refactoring dependency cycles out of the Windows code base halved the post-release defect count they observed",
+      "Complexity metrics achieved higher recall than any dependency network measure",
+      "Dependency structure had no link with defects once binary size was controlled"
+    ],
+    "answer": 0,
+    "explanation": "Recall was about 10 percentage points higher with network measures, which also found 60 % of the binaries developers considered critical. It is a prediction study, not an intervention.",
+    "source": "Lesson 25 concept note (empirical evidence)"
+  },
+  {
+    "id": "aa-L500-028",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which statement about WCAG 2.2 is correct?",
+    "options": [
+      "It replaces WCAG 2.1, which the W3C has now formally withdrawn and deprecated for all new web content",
+      "It adds nine new success criteria, and all nine are at level AAA",
+      "It is still an editor's draft and cannot yet be cited as a standard",
+      "It adds nine criteria to 2.1, removes 4.1.1 Parsing and is also ISO/IEC 40500:2025"
+    ],
+    "answer": 3,
+    "explanation": "WCAG 2.2 is a W3C Recommendation (2023, updated 2024) approved as ISO/IEC 40500:2025; six of the nine new criteria are A or AA, and W3C states 2.2 does not deprecate 2.1.",
+    "source": "Lesson 26 concept note; W3C WCAG 2 Overview"
+  },
+  {
+    "id": "aa-L500-029",
+    "level": "L500",
+    "lesson": 26,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "The Library Loans sign-in asks members to retype distorted text with no alternative. Which WCAG 2.2 success criterion does this fail?",
+    "options": [
+      "2.4.11 Focus Not Obscured (Minimum)",
+      "1.4.3 Contrast (Minimum)",
+      "2.5.8 Target Size (Minimum)",
+      "3.3.8 Accessible Authentication (Minimum)"
+    ],
+    "answer": 3,
+    "explanation": "A puzzle at sign-in is a cognitive function test; SC 3.3.8 (AA) requires an alternative or assistance. Target size and contrast are different criteria.",
+    "source": "Lesson 26 case study"
+  },
+  {
+    "id": "aa-L500-030",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does GDPR Article 25(2), data protection by default, require?",
+    "options": [
+      "That personal data are always encrypted with a key held by an outside party",
+      "That users can opt out of any processing after it has started by default, at any time and free of charge",
+      "That by default only the personal data needed for each purpose are processed and kept",
+      "That data may be kept indefinitely as long as they are pseudonymised first"
+    ],
+    "answer": 2,
+    "explanation": "Art. 25(2) covers the amount collected, extent of processing, storage period and accessibility. Opt-out after default-on processing is the opposite of 'by default'.",
+    "source": "GDPR Art. 25; Lesson 26 concept note"
+  },
+  {
+    "id": "aa-L500-031",
+    "level": "L500",
+    "lesson": 26,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "What did the Irish Data Protection Commission decide about Meta Platforms Ireland in November 2022?",
+    "options": [
+      "Only a late breach notification under Article 33, with a reprimand",
+      "Infringements of Articles 25(1) and 25(2), with fines totalling €265 million",
+      "No infringement, because the scraped data were already public",
+      "An Article 25 infringement with a reprimand but no administrative fine"
+    ],
+    "answer": 1,
+    "explanation": "The DPC inquiry into Facebook Search and the contact importers found infringements of data protection by design and by default and imposed €265 million in fines plus corrective orders.",
+    "source": "DPC decision IN-21-4-2; Lesson 26 concept note"
+  },
+  {
+    "id": "aa-L500-032",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "A product owner asks you to tell the council the service is 'WCAG 2.2 AA compliant' although three AA failures are known. Which ACM Code principle is most directly engaged?",
+    "options": [
+      "1.3 Be honest and trustworthy",
+      "1.5 Respect the work required to produce new ideas",
+      "2.8 Access computing resources only when authorized",
+      "3.3 Manage personnel and resources to enhance working life"
+    ],
+    "answer": 0,
+    "explanation": "1.3 calls deliberately false or misleading claims a violation and asks for full disclosure of limitations. 1.4 (accessibility) is also relevant, but the false statement is the honesty issue.",
+    "source": "ACM Code 2018, 1.3"
+  },
+  {
+    "id": "aa-L500-033",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which ACM Code principle states that failure to design for inclusiveness and accessibility may constitute unfair discrimination?",
+    "options": [
+      "1.4 Be fair and take action not to discriminate",
+      "1.6 Respect privacy",
+      "2.9 Design and implement systems that are robustly and usably secure",
+      "1.7 Honor confidentiality"
+    ],
+    "answer": 0,
+    "explanation": "The guideline under 1.4 says technologies should be as inclusive and accessible as possible and that failing to design for it may be unfair discrimination.",
+    "source": "ACM Code 2018, 1.4"
+  },
+  {
+    "id": "aa-L500-034",
+    "level": "L500",
+    "lesson": 26,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "This is a retention job for loan history. What does it print?",
+    "code": "from datetime import date, timedelta\ntoday = date(2026, 10, 30)\nloans = [(\"m1\", \"b1\", None), (\"m1\", \"b2\", date(2026, 10, 25)),\n         (\"m2\", \"b3\", date(2026, 9, 1)), (\"m3\", \"b4\", date(2026, 9, 20))]\nkeep_days = 30  # returned loans go after 30 days unless the member opted in\nopted_in = {\"m2\"}\nkept = [b for m, b, returned in loans\n        if returned is None or m in opted_in or today - returned <= timedelta(days=keep_days)]\nprint(kept)",
+    "options": [
+      "['b1', 'b2']",
+      "['b1']",
+      "['b1', 'b2', 'b3', 'b4']",
+      "['b1', 'b2', 'b3']"
+    ],
+    "answer": 3,
+    "explanation": "b1 is active, b2 was returned 5 days ago, b3 is kept because m2 opted in; b4 was returned 40 days ago and goes. Default deletion with opt-in history is privacy by default.",
+    "source": "Lesson 26 problem P26-3"
+  },
+  {
+    "id": "aa-L500-035",
+    "level": "L500",
+    "lesson": 26,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "When is it ethically acceptable to log unfinished work as technical debt?",
+    "options": [
+      "Whenever the delivery deadline has been fixed in a signed contract with the customer and cannot move",
+      "Whenever an automated accessibility checker reports no errors",
+      "When it is disclosed, owned and dated, and those who pay the interest were told",
+      "Whenever the fix would take longer than one full sprint"
+    ],
+    "answer": 2,
+    "explanation": "Cunningham's metaphor implies the borrower knows the debt. If the interest (exclusion, risk) falls on users who were not told, calling it 'minor tech debt' is misleading.",
+    "source": "Lesson 26 concept note (technical debt and honesty)"
+  },
+  {
+    "id": "aa-L500-036",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In Cunningham's 1992 debt metaphor, what is the 'interest'?",
+    "options": [
+      "The one-off cost of writing the first version quickly",
+      "Time spent on not-quite-right code until it is consolidated",
+      "Licence fees paid to vendors for faster tooling",
+      "The count of defects customers report after release"
+    ],
+    "answer": 1,
+    "explanation": "The report says every minute spent on not-quite-right code counts as interest; a little debt speeds development if it is repaid promptly with a rewrite.",
+    "source": "Cunningham 1992; Lesson 26 concept note"
+  },
+  {
+    "id": "aa-L500-037",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "In Parnas (1972), a 'module' is best described as:",
+    "options": [
+      "A compiled unit that has its own memory segment",
+      "A responsibility assignment rather than a subprogram",
+      "A group of subroutines called one after another",
+      "The area of code that one team owns and deploys"
+    ],
+    "answer": 1,
+    "explanation": "Parnas explicitly treats a module as a responsibility assignment; this is what lets one module hide a decision even if it is implemented by several routines.",
+    "source": "Lesson 27 reading 1"
+  },
+  {
+    "id": "aa-L500-038",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What kind of evidence does Parnas offer for his criterion?",
+    "options": [
+      "A reasoned comparison of two decompositions of one small example",
+      "A controlled experiment with several student programming teams",
+      "A survey of change costs across many industrial projects",
+      "A formal proof that holds for every possible software system"
+    ],
+    "answer": 0,
+    "explanation": "He compares the conventional and unconventional KWIC decompositions against likely changes. It is a persuasive argument on one example, which matters when you generalise.",
+    "source": "Lesson 27 concept note"
+  },
+  {
+    "id": "aa-L500-039",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does Parnas say about the efficiency of the information-hiding decomposition?",
+    "options": [
+      "It is always faster at run time than the conventional decomposition",
+      "Efficiency does not matter for small systems, so he leaves it out",
+      "The conventional decomposition is always the slower of the two",
+      "Implemented naively as subroutine calls, it may be less efficient"
+    ],
+    "answer": 3,
+    "explanation": "The abstract notes the unconventional decomposition, implemented with the conventional assumption that a module is one or more subroutines, will be less efficient in most cases, and sketches an alternative implementation.",
+    "source": "Parnas 1972 abstract; Lesson 27 reading 1"
+  },
+  {
+    "id": "aa-L500-040",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "According to its authors, what is the ATAM primarily for?",
+    "options": [
+      "Producing a numeric quality score that certifies an architecture for procurement",
+      "Replacing system testing with architecture analysis",
+      "Identifying architectural risks early, not predicting qualities precisely",
+      "Choosing the programming language and framework for a project"
+    ],
+    "answer": 2,
+    "explanation": "The SEI report calls ATAM a risk identification method that looks for trends and decisions that matter; precise prediction is impossible that early.",
+    "source": "Kazman, Klein & Clements 2000, sect. 1.1"
+  },
+  {
+    "id": "aa-L500-041",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Which three scenario types does the ATAM report use?",
+    "options": [
+      "Functional, non-functional and technical",
+      "Happy path, edge case and error path",
+      "Use case, growth and exploratory",
+      "Unit, integration and end-to-end"
+    ],
+    "answer": 2,
+    "explanation": "Use case scenarios describe typical use, growth scenarios anticipated change, exploratory scenarios extreme changes that stress the architecture.",
+    "source": "Kazman, Klein & Clements 2000, sect. 5.1"
+  },
+  {
+    "id": "aa-L500-042",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "How are leaf scenarios in an ATAM utility tree prioritised?",
+    "options": [
+      "By cost and schedule, each estimated in person-days",
+      "By importance to success and difficulty to achieve, each High/Medium/Low",
+      "By how many stakeholders mention the scenario",
+      "By a 0-1 weight per quality attribute, normalised so that all the weights sum to one"
+    ],
+    "answer": 1,
+    "explanation": "The report ranks two dimensions on H/M/L because stakeholders cannot reliably make finer distinctions than that.",
+    "source": "Kazman, Klein & Clements 2000, sect. 5.3"
+  },
+  {
+    "id": "aa-L500-043",
+    "level": "L500",
+    "lesson": 27,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Which Library Loans scenario is an exploratory scenario in ATAM's sense?",
+    "options": [
+      "The identity provider is down for a day; members can still return books",
+      "A member renews a loan at peak and gets a reply within 300 ms",
+      "400 more libraries join with p99 latency unchanged",
+      "A new 'two new releases' rule is added in one person-day"
+    ],
+    "answer": 0,
+    "explanation": "Exploratory scenarios push the system to extremes and expose implicit assumptions. Renewing at peak is a use case scenario; the other two are growth scenarios.",
+    "source": "Lesson 27 problem P27-3"
+  },
+  {
+    "id": "aa-L500-044",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "In ATAM, what is a non-risk?",
+    "options": [
+      "An important architectural decision that the team has not taken yet at the time of evaluation",
+      "A scenario ranked low on importance in the utility tree",
+      "A quality attribute that no stakeholder has mentioned",
+      "A good decision that rests on stated assumptions which must stay true"
+    ],
+    "answer": 3,
+    "explanation": "Non-risks are good decisions relying on often implicit assumptions; if the assumptions change the classification must be re-justified. An unmade decision is a risk.",
+    "source": "Kazman, Klein & Clements 2000, sect. 7.1"
+  },
+  {
+    "id": "aa-L500-045",
+    "level": "L500",
+    "lesson": 27,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "You want the ATAM report's sample utility tree in your critical response. What is the right practice?",
+    "options": [
+      "Copy the figure, since anyone can download the PDF for free",
+      "Copy it without a citation, since it is a public report",
+      "Paste it as an image so that it does not count as copying text",
+      "Describe it in your own words or draw your own, citing the report"
+    ],
+    "answer": 3,
+    "explanation": "Free to read is not free to reproduce: the report is © Carnegie Mellon University. Paraphrase or draw your own and cite (ACM Code 1.5).",
+    "source": "Lesson 27 problem P27-6"
+  }
+]

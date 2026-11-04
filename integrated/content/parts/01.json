@@ -1,0 +1,683 @@
+{
+ "id": "l600-01-pq-replicated-messaging",
+ "number": 1,
+ "level": "L600",
+ "title": "Post-quantum secure messaging over a replicated log",
+ "phase": "Integrate it",
+ "category": "Integrated project",
+ "combines": [
+  "cryptography",
+  "distributed-systems",
+  "application-architecture"
+ ],
+ "description": "A group-messaging service whose epoch keys reach members in hybrid X25519+ML-KEM-768 welcomes, whose sealed messages are committed on a 3-node Raft log with seeded leader crashes, and whose API uses Idempotency-Keys, a transactional outbox and a versioned envelope contract. The project is about the four seams where these meet, and it breaks each one on purpose.",
+ "outcome": "You can build an encrypted, replicated, retry-safe message service and prove its integration contracts. Nonces stay unique across failovers, rotation survives log replay, retries never show twice, and envelope versions switch on every replica at once. Each property has a seeded fault and a fitness function.",
+ "environment": "Python 3.12 (validated on Linux), cryptography 50.0.2 (ML-KEM-768, X25519, AES-GCM, ChaCha20-Poly1305, HKDF, AES-GCM-SIV for tryIt 1), stdlib sqlite3. Reuses cryptography L400 #17/#18/#20, L300 #15, L500 #24; distributed-systems L300 #12, L100 #5; application-architecture L200 #9, L300 #14 (imported in place through _kb.py). No network, no containers.",
+ "estimatedTime": "4-5 hours",
+ "overview": [
+  "Three tested building blocks (a hybrid PQ key exchange with AES-GCM, a Raft log, and retry-safe APIs with versioned contracts) become one messaging service. The bugs that matter appear only where they meet: a nonce counter that a new leader restarts, an epoch key a replay cannot find, a retry that becomes a second ciphertext, and a format version one replica accepts early. Each seam has a test that fails under its seeded fault."
+ ],
+ "prerequisites": [
+  "cryptography L400 #18 Post-quantum cryptography in practice: ML-KEM, ML-DSA and hybrids",
+  "cryptography L400 #17 Crypto agility: versioned envelopes, negotiation and dual signing",
+  "distributed-systems L300 #12 Replicated log with Raft (simplified): terms, commit index, re-election, election restriction",
+  "distributed-systems L100 #5 Idempotency keys: exactly-once effect over at-least-once delivery",
+  "application-architecture L200 #9 Event-driven integration: outbox, bus and AsyncAPI",
+  "application-architecture L300 #14 Consumer-driven contract testing"
+ ],
+ "buildsOn": [
+  {
+   "topic": "cryptography",
+   "lesson": 18,
+   "title": "Post-quantum cryptography in practice: ML-KEM, ML-DSA and hybrids",
+   "uses": "pq_hybrid.client_hello (1,216 B key package), server_respond (1,120 B encapsulation), and solution_strict.client_finish (exact-length check, no classical fallback) for every welcome"
+  },
+  {
+   "topic": "cryptography",
+   "lesson": 17,
+   "title": "Crypto agility: versioned envelopes, negotiation and dual signing",
+   "uses": "registry.aead() by identifier (A256GCM, C20P1305 for v3), LEGACY_V1_AEAD for v1 history, agile_envelope.canon() for the header-as-AAD bytes"
+  },
+  {
+   "topic": "cryptography",
+   "lesson": 20,
+   "title": "End-to-end encryption for groups: pairwise, sender keys and MLS-style epochs",
+   "uses": "group_keys.kdf() for the epoch-derived app and fingerprint keys; the epoch / removal model"
+  },
+  {
+   "topic": "cryptography",
+   "lesson": 15,
+   "title": "Misuse you can test: Wycheproof vectors, timing and nonce reuse",
+   "uses": "nonce_guard.scan_for_reuse(): the offline audit, run per epoch key over every envelope any sealer produced"
+  },
+  {
+   "topic": "distributed-systems",
+   "lesson": 12,
+   "title": "Replicated log with Raft (simplified): terms, commit index, re-election, election restriction",
+   "uses": "solution_raft.Node (with the election restriction), helpers.Cluster crash/restart/run_until_leader, helpers.SafetyChecker"
+  },
+  {
+   "topic": "distributed-systems",
+   "lesson": 5,
+   "title": "Idempotency keys: exactly-once effect over at-least-once delivery",
+   "uses": "idempotency.KEY_RE (quoted-UUID key format) and the 400 / 200 replay / 422 semantics, moved into replicated state"
+  },
+  {
+   "topic": "application-architecture",
+   "lesson": 9,
+   "title": "Event-driven integration: outbox, bus and AsyncAPI",
+   "uses": "outbox.SCHEMA and outbox.Relay (publish pending rows in order, mark after publish = at-least-once); Service.publish is the bus"
+  },
+  {
+   "topic": "application-architecture",
+   "lesson": 14,
+   "title": "Consumer-driven contract testing",
+   "uses": "contract.like() and _example() to express the reader's envelope contract (fields + types) that the writer's header is checked against"
+  }
+ ],
+ "glossary": [
+  {
+   "term": "Epoch",
+   "meaning": "One group key period. A log entry starts it with hybrid welcomes; every envelope names its epoch."
+  },
+  {
+   "term": "Welcome",
+   "meaning": "ML-KEM-768 + X25519 encapsulation to a member's key package plus the AES-GCM-wrapped epoch secret: 1,180 B."
+  },
+  {
+   "term": "Sealer",
+   "meaning": "The service identity on the Raft leader that encrypts messages; it learns epoch keys from its own welcome in the log."
+  },
+  {
+   "term": "Seam",
+   "meaning": "A boundary where two topics' assumptions meet; here each has a contract, a risk and a test that fails under a seeded fault."
+  },
+  {
+   "term": "Keyed fingerprint",
+   "meaning": "HMAC(kdf(epoch secret, 'fp'), sender || text): detects same-key-different-payload without putting a plain hash in the log."
+  },
+  {
+   "term": "Version gate",
+   "meaning": "A {type: contract, accept: [...]} log entry; the set of accepted envelope versions is replicated state."
+  },
+  {
+   "term": "Guard proven",
+   "meaning": "The seam test is also run against its seeded fault and must fail there, which shows it can catch the bug."
+  }
+ ],
+ "concepts": [
+  "Nonce uniqueness is a distributed property: no state (random) or state consensus already makes unique (term || counter).",
+  "Rotation must be replayable: keys travel in the log, envelopes name their epoch, log order defines membership.",
+  "Idempotency belongs in replicated state; with randomized encryption duplicates are different bytes.",
+  "Format versions are switched by the log, not by node config."
+ ],
+ "designBrief": {
+  "context": "A team chat for a small company stores every message for years on a 3-replica log that survives node crashes. Clients retry on any timeout. Members join and leave. Recorded traffic must stay confidential against a future quantum attacker, and the envelope format will change.",
+  "constraints": [
+   "0 reused (epoch key, nonce) pairs across 10,000 messages with seeded leader crashes (about 1% per request)",
+   "all 3 replicas show identical plaintext lists = exactly the acknowledged messages (0 lost, 0 duplicates)",
+   "no plaintext in any replica's log or any node's outbox; replicas hold no keys",
+   "per-member key package + welcome <= 2,400 B (lesson 18's key-share budget); welcome <= 1,200 B",
+   "a removed member reads 0 messages ordered after her removal; a fresh device replays history from index 1",
+   "retries: 400 without a key, 200 replay, 422 on a changed payload; one message shown per key even after failover",
+   "a new envelope version is enabled on every replica at the same log index; unknown versions refused, no fallback",
+   "at most 2^32 messages per epoch key (NIST SP 800-38D random-IV limit)"
+  ],
+  "question": "How do the crypto, replication and API patterns have to change so that their combination keeps these properties, and how do we prove each seam?"
+ },
+ "architecture": {
+  "diagram": "labs/L600/01-pq-replicated-messaging/architecture.mmd",
+  "summary": "Clients POST with an Idempotency-Key to the API on the Raft leader (pqmsg.Service.post). The API checks replicated state for the key. The sealer, a service identity welcomed into each epoch, encrypts under the current epoch key with a random 96-bit nonce, inside a v2 envelope whose header is the AAD. The sealed envelope goes into the node's SQLite outbox (lesson 9's schema), and lesson 9's Relay proposes it to lesson 12's Raft cluster until it commits. replicated_state.State.apply runs on every replica: it dedupes by key and keyed fingerprint, rejects stale epochs and non-members, and enforces the replicated version gate. Rotations and the gate are log entries too. Member devices and a new leader's sealer replay the log from index 1 to learn epoch keys from their hybrid welcomes."
+ },
+ "seams": [
+  {
+   "between": "cryptography ↔ distributed-systems",
+   "contract": "every (epoch key, 96-bit nonce) pair is used once, whoever is leader; the sealer keeps no nonce state (or derives it from the term, which consensus makes unique)",
+   "risk": "a leader-local counter restarts at 1 on every new leader: 109 reused nonces after 49 failovers, and keystream XOR reveals a message",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_failure_lab.py"
+  },
+  {
+   "between": "cryptography ↔ distributed-systems",
+   "contract": "epoch secrets travel in the log as hybrid welcomes; envelopes name their epoch; an envelope must match the epoch current at its log index",
+   "risk": "replay fails after rotation (newest key used for old ciphertexts), or a late epoch-1 envelope is shown to a member removed before its log position",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_m4_rotation_replay.py"
+  },
+  {
+   "between": "application-architecture ↔ distributed-systems",
+   "contract": "Idempotency-Key + keyed fingerprint are in every entry; dedupe happens in the replicated state machine; the outbox relays at least once",
+   "risk": "a retry after failover is sealed again (a new ciphertext) and the stuck outbox row is relayed later, so readers see the message twice (32 duplicates in 300 messages without apply-time dedupe)",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_m3_api_outbox.py"
+  },
+  {
+   "between": "application-architecture ↔ cryptography",
+   "contract": "envelope header {v, aead, kem, epoch, sender, ikey, n} checked against the reader contract; accepted versions are replicated state switched by a log entry",
+   "risk": "a renamed field breaks readers; a node-local version setting makes replicas show different messages (3 / 5 / 3)",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_m5_contract.py"
+  }
+ ],
+ "milestones": [
+  {
+   "title": "M1 Hybrid X25519MLKEM768 welcomes",
+   "deliverable": "group_crypto.Device key packages, welcome(), learn() through lesson 18's strict client; every member and the sealer derive one epoch secret",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_m1_welcome.py"
+  },
+  {
+   "title": "M2 Sealed envelopes on a 3-node Raft log",
+   "deliverable": "Service.post -> outbox -> Relay -> Raft; identical committed logs after a leader crash; no plaintext in any log",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_m2_replicated_log.py"
+  },
+  {
+   "title": "M3 Idempotency-Key + transactional outbox",
+   "deliverable": "400/201/200/422; crash after the outbox write -> 503 -> retry 201; 2 ciphertexts in the log, 1 message shown",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_m3_api_outbox.py"
+  },
+  {
+   "title": "M4 Key rotation vs log replay",
+   "deliverable": "remove carol -> epoch 2; replay from index 1: 20/20, 20/20, 10/20; late epoch-1 envelope rejected; carol's send refused",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_m4_rotation_replay.py"
+  },
+  {
+   "title": "M5 Versioned envelope contract + crypto agility",
+   "deliverable": "reader contract check; v3 (ChaCha20-Poly1305) 409 before and 201 after the gate entry; v1 history readable; unknown version refused",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_m5_contract.py"
+  }
+ ],
+ "rubric": [
+  {
+   "criterion": "Nonce uniqueness across failovers",
+   "measure": "reused (epoch, nonce) pairs over every sealed envelope, 10,000 messages, 205 seeded crashes",
+   "pass": "0 (F1); the leader-counter fault shows > 0"
+  },
+  {
+   "criterion": "Replica agreement",
+   "measure": "decrypted plaintext lists per replica vs the acknowledged set; lesson 12 safety violations",
+   "pass": "3 identical lists = 10,000 acked, 0 violations (F2)"
+  },
+  {
+   "criterion": "Ciphertext-only storage",
+   "measure": "plaintext substrings in any replica's log; outbox payloads",
+   "pass": "0 (M2); outbox holds sealed envelopes only"
+  },
+  {
+   "criterion": "Retry safety",
+   "measure": "status codes and messages shown per key after a crash between outbox and relay",
+   "pass": "400/201/200/422, 503 then 201, 1 shown (M3)"
+  },
+  {
+   "criterion": "Rotation and replay",
+   "measure": "messages readable per member on a fresh replay; post-removal reads by the removed member",
+   "pass": "20/20, 20/20, 10/20 and 0 (M4)"
+  },
+  {
+   "criterion": "Contract and agility",
+   "measure": "contract problems, gate behaviour, readable per replica",
+   "pass": "[], 409 then 201, 4/4/4 (M5)"
+  },
+  {
+   "criterion": "Handshake budget",
+   "measure": "key package + welcome bytes",
+   "pass": "2,396 <= 2,400 (F3)"
+  },
+  {
+   "criterion": "Guards are real",
+   "measure": "each seam line also runs its seeded fault",
+   "pass": "all 4 faults break their seam (guard_proven fields)"
+  }
+ ],
+ "fitnessFunctions": [
+  {
+   "what": "F1 no nonce reuse across 10k messages with random failovers",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_fitness.py::TestFitness::test_f1_f2_traffic_10k",
+   "threshold": "0 reused nonces in all sealed ciphertexts; > 100 failovers exercised"
+  },
+  {
+   "what": "F2 all replicas decrypt identical plaintexts",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_fitness.py::TestFitness::test_f1_f2_traffic_10k",
+   "threshold": "3/3 identical, equal to the 10,000 acknowledged messages, 0 safety violations"
+  },
+  {
+   "what": "F3 handshake size budget",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_fitness.py::TestFitness::test_f3_handshake_budget",
+   "threshold": "welcome <= 1,200 B; key package + welcome <= 2,400 B"
+  },
+  {
+   "what": "F4 rotate before the random-nonce limit",
+   "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_fitness.py::TestFitness::test_f4_key_limit",
+   "threshold": "message limit+1 under one epoch key -> 409 rotation_required; after rotation -> 201 (2^32 in production, 5 in the test)"
+  }
+ ],
+ "decisionRecords": [
+  "labs/L600/01-pq-replicated-messaging/decisions/ADR-01-1-random-nonces.md",
+  "labs/L600/01-pq-replicated-messaging/decisions/ADR-01-2-dedupe-in-replicated-state.md",
+  "labs/L600/01-pq-replicated-messaging/decisions/ADR-01-3-epochs-in-the-log.md",
+  "labs/L600/01-pq-replicated-messaging/decisions/ADR-01-4-versioned-envelope-gate.md"
+ ],
+ "failureLab": {
+  "inject": "python run_project.py --inject leader-counter: the sealer uses the shipped nonce_derived.DerivedNonce, a counter in the leader's memory that ignores the Raft term. It shows up only when AES-GCM (crypto) meets leader failover (Raft).",
+  "symptom": "seam and F1 lines FAIL. Lesson 15's offline scan finds 109 reused (epoch, nonce) pairs after 49 failovers in 1,500 messages, and XOR with one known message recovers 'msg 00010 from bob: status green'.",
+  "diagnose": "Group the reused nonces: their values are 1, 2, 3, 4, 5 ... under one epoch key, and every collision pairs envelopes sealed by different leaders. The counter restarted at 1 on each new leader, and on each restart, because it is volatile and not replicated.",
+  "fix": "Default: random 96-bit nonces with a per-epoch cap of 2^32 messages (ADR-01-1). Alternative (build task): nonce = term (4 B) || per-term counter (8 B). Raft's Election Safety makes it unique while only the leader seals; this is NIST SP 800-38D's deterministic construction with the term as the fixed field.",
+  "test": "labs/L600/01-pq-replicated-messaging/tests/test_p01_failure_lab.py (fault -> reuse and recovered plaintext; default -> 0 reuse on the same failovers) and labs/L600/01-pq-replicated-messaging/tests/test_p01_build_task.py (BUILD_TARGET=mine: FAILED (failures=4); solution: OK)"
+ },
+ "buildTask": {
+  "task": "Fix nonce_derived.py (shipped faulty: leader-local counter) so DerivedNonce.next(term) returns 12 bytes that never repeat across leaders or restarts under one epoch key and refuses a term that goes backwards. Keep the interface; the service passes the current Raft term.",
+  "acceptance": "tests/test_p01_build_task.py: 5 tests. Disjoint nonces for leaders in terms 3 and 4; no overlap after a restart in a later term; ValueError on term 5 -> 4; 12 bytes; 400 messages with seeded failovers through the real Service give 0 reuse. Switch: BUILD_TARGET=mine tests your nonce_derived.py; the default tests the solution.",
+  "solution": "labs/L600/01-pq-replicated-messaging/solution/nonce_derived.py"
+ },
+ "scalingLimits": [
+  "Per-key volume: random nonces cap an epoch key at 2^32 messages, which is 4.97 days at 10,000 messages/s. Signal: messages-per-epoch approaching the cap, or 409 rotation_required. Rotate by volume or move to term || counter.",
+  "Group size: pairwise welcomes are O(members). 100 members make a 164,659 B epoch entry (119,180 B raw welcomes) replicated to every node. Signal: rotation latency and Raft append size spikes on membership changes. Move to a ratchet tree (MLS, RFC 9420).",
+  "History and restarts: no snapshots, so every restart replays the log from index 1. The 10k run made 1,061,514 state-machine applies (about 106 per message) across 205 restarts. Signal: recovery time growing with log length, and an unbounded dedupe table. Add snapshots and a published key-expiry window."
+ ],
+ "steps": [
+  {
+   "title": "Set up and open the lab",
+   "detail": "Use the KB venv from shared/WORKSTATION-SETUP.md. Only cryptography 50.0.2 is needed. The lab imports the reused labs in place through _kb.py.",
+   "mac": "source .venv/bin/activate   # the venv from shared/WORKSTATION-SETUP.md\ncd kb/integrated/labs/L600/01-pq-replicated-messaging\npython -c \"import cryptography; print(cryptography.__version__)\"",
+   "windows": ".venv\\Scripts\\Activate.ps1   # the venv from shared/WORKSTATION-SETUP.md\n$env:PYTHONUTF8 = \"1\"\ncd kb\\integrated\\labs\\L600\\01-pq-replicated-messaging\npython -c \"import cryptography; print(cryptography.__version__)\"",
+   "expected": "50.0.2",
+   "ifNot": "pip install -r kb/cryptography/requirements.txt (cryptography==50.0.2) inside the venv."
+  },
+  {
+   "title": "Run the scorecard",
+   "detail": "Runs M1-M5, the 4 seams (each also checks its fault breaks it) and F1-F4, then prints the scorecard. The 10k-message traffic run dominates the run time.",
+   "mac": "python run_project.py",
+   "windows": "python run_project.py",
+   "expected": "{\"scorecard\": \"L600-01 pq-replicated-messaging\", \"injected\": null, \"passed\": 13, \"total\": 13, \"decided_by\": \"code\"}",
+   "ifNot": "Read the first line with \"pass\": false; each line names its milestone, seam or fitness function and has its own test file."
+  },
+  {
+   "title": "Reproduce the failure lab",
+   "detail": "Inject the leader-local nonce counter and read the failure_lab line: reused nonce values and the recovered plaintext.",
+   "mac": "python run_project.py --inject leader-counter --messages 2000; echo exit=$?",
+   "windows": "python run_project.py --inject leader-counter --messages 2000; \"exit=$LASTEXITCODE\"",
+   "expected": "\"reused_nonces\": 109, \"smallest_reused_nonce_values\": [1, 2, 3, 4, 5] ... \"recovered\": \"msg 00010 from bob: status green\" ... exit=1",
+   "ifNot": "If reused_nonces is 0 you are not running the shipped nonce_derived.py (check you did not already fix it)."
+  },
+  {
+   "title": "Do the build task",
+   "detail": "Make nonce_derived.py safe (term || counter), then run the build-task tests against YOUR file.",
+   "mac": "cd tests && BUILD_TARGET=mine python -m unittest -v test_p01_build_task; cd ..",
+   "windows": "cd tests; $env:BUILD_TARGET=\"mine\"; python -m unittest -v test_p01_build_task; Remove-Item Env:BUILD_TARGET; cd ..",
+   "expected": "Before the fix: FAILED (failures=4). After: OK (5 tests).",
+   "ifNot": "Compare with solution/nonce_derived.py; the term must be in the nonce and a backwards term must raise ValueError."
+  },
+  {
+   "title": "Break the other seams",
+   "detail": "Each seeded fault breaks exactly its seam line: dedupe outside replicated state, accepting stale epochs, and a node-local version setting.",
+   "mac": "for f in no-apply-dedupe accept-stale-epoch local-contract-config; do python run_project.py --inject $f --messages 300 | grep '\"pass\": false'; done",
+   "windows": "foreach ($f in 'no-apply-dedupe','accept-stale-epoch','local-contract-config') { python run_project.py --inject $f --messages 300 | Select-String '\"pass\": false' }",
+   "expected": "no-apply-dedupe: M3 + idempotency seam fail; accept-stale-epoch: M4 + rotation seam; local-contract-config: M5 + contract seam",
+   "ifNot": "If a fault breaks nothing, its seam test is not guarding anything; read the guard_proven field in the default run."
+  },
+  {
+   "title": "Run all tests",
+   "detail": "24 unittest tests: milestones, seams, failure lab, fitness (10k), build task, end to end. No wall-clock assertions.",
+   "mac": "python -m unittest discover -s tests -t tests",
+   "windows": "python -m unittest discover -s tests -t tests",
+   "expected": "Ran 24 tests ... OK",
+   "ifNot": "Run a single file with -p test_p01_m3_api_outbox.py to isolate; the scenarios are seeded."
+  }
+ ],
+ "code": "\"\"\"L600 #01 (main file): post-quantum secure group messaging over a replicated log.\nMembers get each epoch secret in a hybrid X25519+ML-KEM-768 welcome (group_crypto.py); messages are sealed under it,\nwritten to a transactional outbox, relayed onto a 3-node Raft log (in-process network, crashes) and applied by a\ndeterministic state machine that dedupes Idempotency-Keys, enforces epochs and gates envelope versions. Replicas\nonly store and order ciphertext. Seeded faults: leader-counter, no-apply-dedupe, accept-stale-epoch, local-contract-config.\"\"\"\nimport json\nimport os\nimport random\nimport sqlite3\n\nimport group_crypto as gc\nimport nonce_derived\nfrom _kb import load\nfrom harness import FastCluster\nfrom replicated_state import State\n\nraft = load(\"raft\", \"solution_raft\")  # Raft WITH the election restriction (lesson 12 build task)\nidem, outbox = load(\"idem\", \"idempotency\"), load(\"outbox\", \"outbox\")\nMAX_MSGS_PER_EPOCH = 2**32  # NIST SP 800-38D 8.3: random 96-bit IVs -> at most 2^32 encryptions per key\nFAULTS = (\"leader-counter\", \"no-apply-dedupe\", \"accept-stale-epoch\", \"local-contract-config\")\n\n\nclass RandomNonce:  # ADR-01-1: 96 random bits, nothing to replicate, safe up to the per-epoch message limit\n    def next(self, term: int) -> bytes:\n        return os.urandom(12)\n\n\nclass NotCommitted(Exception):\n    \"\"\"Outcome unknown (leader lost or no commit in time): the client retries with the SAME Idempotency-Key.\"\"\"\n\n\nclass Service:\n    def __init__(self, members, seed=1, nonce_factory=RandomNonce, faults=(), local_accept=None, chaos=0.0):\n        self.faults, self.local_accept, self.version = set(faults), local_accept or {}, 2\n        self.nonce_factory = nonce_derived.DerivedNonce if \"leader-counter\" in self.faults else nonce_factory\n        self.cluster, self.rng, self.chaos, self.chaos_on = FastCluster(raft.Node, seed), random.Random(seed), chaos, False\n        self.sealer, self.devices = gc.Device(\"svc\"), {m: gc.Device(m) for m in members}  # svc: key in every node's keystore\n        self.rt = {n: self._fresh(n) for n in self.cluster.nodes}\n        self.dbs = {n: sqlite3.connect(\":memory:\") for n in self.cluster.nodes}  # each node's local disk\n        for db in self.dbs.values():\n            db.executescript(outbox.SCHEMA)  # lesson 9's schema; Relay reads its outbox table\n        self.wire, self.failovers, self.to_drain = [], 0, []  # wire: every envelope any sealer ever produced\n        self.rotate(list(members))\n\n    def _fresh(self, name):  # volatile runtime of one node: rebuilt by replaying the log after a restart\n        return {\"state\": State(self.faults, self.local_accept.get(name, (1, 2))), \"nonce\": self.nonce_factory(),\n                \"sealer\": self.sealer.fork()}\n\n    def sync(self, name):\n        node, rt = self.cluster.nodes[name], self.rt[name]\n        for i in range(rt[\"state\"].applied + 1, node.commit + 1):\n            if rt[\"state\"].apply(i, node.log[i - 1][1]) == \"epoch\":\n                rt[\"sealer\"].learn(rt[\"state\"].epochs[-1])  # the sealer learns epoch keys from the log, like members\n        return rt\n\n    def leader(self):\n        return self.cluster.run_until_leader()\n\n    def crash_leader(self):\n        for n in list(self.cluster.net.down):\n            self.restart(n)  # at most one node down: a majority stays up\n        self.cluster.crash(self.leader().name)\n        self.failovers += 1\n\n    def restart(self, name):\n        self.cluster.restart(name)\n        self.rt[name], self.to_drain = self._fresh(name), self.to_drain + [name]\n\n    def publish(self, channel, payload):\n        \"\"\"The 'bus' lesson 9's Relay hands rows to: propose on the leader and wait for the commit.\"\"\"\n        leader = self.leader()\n        leader.propose(json.dumps(payload))\n        index = len(leader.log)\n        if self.chaos_on and self.rng.random() < self.chaos:\n            self.crash_leader()  # after propose, before commit: the entry may or may not survive\n        for _ in range(40):\n            self.cluster.run(1)\n            if leader.name in self.cluster.net.down or leader.role != \"leader\":\n                raise NotCommitted(\"leader lost\")\n            if leader.commit >= index:\n                return self.sync(leader.name)\n        raise NotCommitted(\"not committed in time\")\n\n    def relay(self, name):\n        try:\n            outbox.Relay(self.dbs[name], self).publish_pending()  # at-least-once: re-sends rows not marked published\n        except NotCommitted:\n            return False\n        return True\n\n    def post(self, key_header, sender, text):\n        \"\"\"POST /groups/g/messages. 201 created, 200 replay, 400 bad key, 409 refused, 422 key reuse, 503 retry.\"\"\"\n        if not (m := idem.KEY_RE.match(key_header or \"\")):\n            return 400, {\"title\": \"Idempotency-Key is missing or malformed\"}\n        ikey = m.group(1)\n        while self.to_drain:\n            self.relay(self.to_drain.pop())  # a restarted node relays rows stuck in its outbox\n        leader = self.leader()\n        rt = self.sync(leader.name)\n        st, keys = rt[\"state\"], rt[\"sealer\"].keys\n        if ikey in st.seen:\n            epoch, fp, index = st.seen[ikey]\n            if fp != gc.fingerprint(keys[epoch], sender, text):\n                return 422, {\"title\": \"Idempotency-Key already used for another message\"}\n            return 200, {\"msg_id\": ikey, \"index\": index, \"epoch\": epoch}\n        if self.version not in st.accepted() or st.epoch_msgs >= MAX_MSGS_PER_EPOCH:\n            return 409, {\"title\": \"envelope version not accepted yet\" if self.version not in st.accepted() else \"rotation_required\"}\n        env = gc.seal(keys[st.epoch], st.epoch, sender, ikey, text, rt[\"nonce\"].next(leader.term), self.version)\n        self.wire.append(env)\n        with self.dbs[leader.name] as db:  # outbox: store the sealed envelope (never plaintext), then relay it\n            db.execute(\"INSERT INTO outbox (channel, payload) VALUES (?, ?)\", (\"group-messages\", json.dumps(env)))\n        self.chaos_on = True\n        if self.chaos and self.rng.random() < self.chaos:\n            self.crash_leader()  # crash after the outbox write, before the relay: the row is stuck on that disk\n            ok = False\n        else:\n            ok = self.relay(leader.name)\n        self.chaos_on = False\n        st = self.sync(self.leader().name)[\"state\"] if ok else None\n        if st and ikey in st.seen:\n            epoch, fp, index = st.seen[ikey]\n            return (201, {\"msg_id\": ikey, \"index\": index, \"epoch\": epoch}) if fp == env[\"fp\"] else (422, {\"title\": \"key reused\"})\n        return (409, {\"title\": next((v for _, k, v in st.rejected[::-1] if k == ikey), \"rejected\")}) if st else (503, {\"title\": \"retry\"})\n\n    def control(self, entry):  # epoch and contract entries: no outbox, retried until applied (apply is idempotent)\n        for _ in range(10):\n            try:\n                return self.publish(\"control\", entry)\n            except NotCommitted:\n                continue\n        raise NotCommitted(\"control entry not committed\")\n\n    def rotate(self, members):\n        st = self.sync(self.leader().name)[\"state\"]\n        epoch, secret = st.epoch + 1, os.urandom(32)\n        to = {**{m: self.devices[m].key_package for m in members}, \"svc\": self.sealer.key_package}\n        entry = {\"type\": \"epoch\", \"epoch\": epoch, \"members\": sorted(members),\n                 \"welcomes\": {n: gc.welcome(kp, secret, epoch, n) for n, kp in to.items()}}\n        self.control(entry)\n        return entry\n\n    def settle(self, ticks=60):\n        for n in list(self.cluster.net.down):\n            self.restart(n)\n        while self.to_drain:\n            self.relay(self.to_drain.pop())\n        self.cluster.run(ticks)\n        return self.cluster.check()  # lesson 12's State Machine Safety checker over all replicas\n\n    def replay(self, reader, replica):\n        \"\"\"What `reader`'s fresh device shows after replaying `replica`'s committed log from index 1.\"\"\"\n        node, st = self.cluster.nodes[replica], State(self.faults, self.local_accept.get(replica, (1, 2)))\n        for i in range(1, node.commit + 1):\n            st.apply(i, node.log[i - 1][1])\n        dev = (self.sealer if reader == \"svc\" else self.devices[reader]).fork()\n        for e in st.epochs:\n            dev.learn(e)\n        return [(m[\"h\"][\"ikey\"], m[\"h\"][\"sender\"], gc.open_msg(dev.keys, m)) for m in st.messages]\n\n\n",
+ "codeLanguage": "python",
+ "codeWalkthrough": [
+  {
+   "title": "_kb.py",
+   "detail": "Loads modules from the other topics' labs by path. A cached module of the same name from another lab (helpers, solution_strict) is evicted first, so nothing clashes and nothing is copied."
+  },
+  {
+   "title": "group_crypto.py",
+   "detail": "Device = lesson 18 key package (1,216 B). welcome() = server_respond + AES-GCM-wrapped epoch secret (1,180 B). learn() uses the strict client (a 32-byte downgrade raises HandshakeError). seal() puts the whole header in the AAD and uses lesson 17's registry by id. contract_problems() checks the header against lesson 14-style like() matchers."
+  },
+  {
+   "title": "replicated_state.State.apply",
+   "detail": "Deterministic per committed entry: epoch entries advance the epoch; contract entries set accepted versions; messages are checked in the order version -> epoch -> membership -> dedupe (duplicate / conflict). Faults switch off one rule each."
+  },
+  {
+   "title": "pqmsg.Service.post",
+   "detail": "KEY_RE check (400), replay from replicated seen (200 or 422), version/limit gate (409), seal with the node's nonce source, outbox insert in one SQLite transaction, Relay to Raft. Chaos can crash the leader after the outbox write or after propose (503)."
+  },
+  {
+   "title": "pqmsg.Service.publish / sync / restart",
+   "detail": "publish is the bus lesson 9's Relay calls: propose, then tick until committed or raise NotCommitted. sync applies newly committed entries and lets the sealer learn epoch keys from its welcome. restart rebuilds all volatile state (state machine, sealer keys, nonce source) by replay."
+  },
+  {
+   "title": "harness.py + scenarios.py",
+   "detail": "FastCluster skips lesson 12's per-tick full safety scan (too slow at 10k entries) and runs the SafetyChecker on demand. send() is the client: one key per message, created before the retry loop. nonce_reuse() runs lesson 15's scan per epoch. scenarios.py holds the seeded milestones, seams and fitness functions."
+  },
+  {
+   "title": "run_project.py",
+   "detail": "Prints one JSON line per milestone, seam and fitness function plus the scorecard, and exits 1 on any failure. --inject applies a fault to every scenario; leader-counter also prints the failure_lab line with the keystream recovery."
+  }
+ ],
+ "projectFiles": [
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/pqmsg.py",
+   "purpose": "main file: Service (API, sealer, outbox + relay, Raft driver, rotation, replay)"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/replicated_state.py",
+   "purpose": "deterministic replicated state machine (dedupe, epoch check, version gate)"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/group_crypto.py",
+   "purpose": "key packages, hybrid welcomes, envelope seal/open, keyed fingerprint, reader contract"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/harness.py",
+   "purpose": "FastCluster, retrying client, nonce-reuse audit"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/_kb.py",
+   "purpose": "imports reused labs in place without name clashes"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/nonce_derived.py",
+   "purpose": "build task, shipped faulty (leader-local counter)"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/solution/nonce_derived.py",
+   "purpose": "build-task reference: term || counter"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/scenarios.py",
+   "purpose": "seeded milestones, seams and fitness functions"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/run_project.py",
+   "purpose": "scorecard; --inject FAULT; --messages N"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/tests/",
+   "purpose": "24 unittest tests (test_p01_*.py)"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/try_it/try_it_1.py",
+   "purpose": "tryIt 1: AES-GCM vs AES-GCM-SIV under nonce reuse"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/try_it/try_it_2.py",
+   "purpose": "tryIt 2: rotation cost vs group size; per-epoch message limit"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/decisions/",
+   "purpose": "4 ADRs (Nygard)"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/architecture.mmd",
+   "purpose": "architecture diagram (Mermaid)"
+  },
+  {
+   "path": "labs/L600/01-pq-replicated-messaging/README.md",
+   "purpose": "run commands and real output"
+  }
+ ],
+ "expectedResults": [
+  "{\"milestone\": \"M1 hybrid X25519MLKEM768 welcomes\", \"members_with_same_epoch_secret\": 3, \"distinct_secrets\": 1, \"key_package_B\": 1216, \"welcome_B\": 1180, \"epoch_entry_json_B\": 6577, \"downgraded_32B_share\": \"refused (HandshakeError)\", \"pass\": true}",
+  "{\"milestone\": \"M2 sealed envelopes on a 3-node Raft log\", \"messages\": 30, \"leader_crashed\": \"n1\", \"committed_per_replica\": [31, 31, 31], \"committed_logs_identical\": true, \"plaintext_in_any_log\": 0, \"safety_violations\": 0, \"alice_reads_per_replica\": {\"n1\": 30, \"n2\": 30, \"n3\": 30}, \"pass\": true}",
+  "{\"milestone\": \"M3 Idempotency-Key + transactional outbox\", \"status_codes\": {\"no key\": 400, \"first\": 201, \"retry\": 200, \"same key, new text\": 422}, \"crash_after_outbox_write\": 503, \"client_retry\": 201, \"sealed_ciphertexts_for_key\": 2, \"messages_shown_for_key\": 1, \"pass\": true}",
+  "{\"milestone\": \"M4 key rotation vs log replay\", \"epochs\": 2, \"late_epoch1_post\": 503, \"stale_epoch_rejected\": 1, \"carol_send_after_removal\": 409, \"replay_from_index_1\": {\"alice\": \"20/20\", \"bob\": \"20/20\", \"carol\": \"10/20\"}, \"carol_reads_after_removal\": 0, \"replicas_agree\": true, \"pass\": true}",
+  "{\"milestone\": \"M5 versioned envelope contract + crypto agility\", \"v2_contract_problems\": [], \"renamed_field_problems\": [\"missing n\"], \"v3_before_gate\": 409, \"v3_after_gate\": 201, \"v3_aead\": \"C20P1305\", \"readable_per_replica\": {\"n1\": 4, \"n2\": 4, \"n3\": 4}, \"unknown_version_9\": \"refused (EnvelopeError)\", \"pass\": true}",
+  "{\"seam\": \"crypto <-> distributed: nonce uniqueness vs leader failover\", \"messages\": 1500, \"failovers\": 49, \"reused_nonces\": 0, \"guard_proven_leader_counter_reuses\": 109, \"pass\": true}",
+  "{\"seam\": \"crypto <-> distributed: key rotation vs log replay\", \"stale_epoch_rejected\": 1, \"carol_reads_after_removal\": 0, \"guard_proven_accept_stale_epoch_carol_reads\": 1, \"pass\": true}",
+  "{\"seam\": \"application-architecture <-> distributed: idempotent retries vs duplicate ciphertexts\", \"messages\": 300, \"ciphertexts_sealed\": 316, \"duplicates_shown\": 0, \"every_acked_shown_once\": true, \"guard_proven_no_apply_dedupe_duplicates\": 32, \"pass\": true}",
+  "{\"seam\": \"application-architecture <-> crypto: envelope contract versioning across replicas\", \"readable_per_replica\": {\"n1\": 4, \"n2\": 4, \"n3\": 4}, \"guard_proven_local_config_readable\": {\"n1\": 3, \"n2\": 5, \"n3\": 3}, \"pass\": true}",
+  "{\"fitness\": \"F1 no nonce reuse across 10k messages with random failovers\", \"messages\": 10000, \"failovers\": 205, \"ciphertexts_sealed\": 10101, \"reused_nonces\": 0, \"birthday_bound_per_epoch\": \"4.0e-23\", \"pass\": true}",
+  "{\"fitness\": \"F2 all replicas decrypt identical plaintexts\", \"replicas\": 3, \"identical\": true, \"shown\": 10000, \"acked\": 10000, \"match_acked\": true, \"safety_violations\": 0, \"pass\": true}",
+  "{\"fitness\": \"F3 handshake size budget\", \"key_package_B\": 1216, \"welcome_B\": 1180, \"total_B\": 2396, \"budget\": \"welcome <= 1200 B, key package + welcome <= 2400 B\", \"pass\": true}",
+  "{\"fitness\": \"F4 rotate before the random-nonce limit (2^32 messages per epoch key)\", \"limit_in_test\": 5, \"codes\": [201, 201, 201, 201, 201, 409], \"after_rotation\": 201, \"pass\": true}",
+  "{\"scorecard\": \"L600-01 pq-replicated-messaging\", \"injected\": null, \"passed\": 13, \"total\": 13, \"decided_by\": \"code\"}"
+ ],
+ "testCases": [
+  {
+   "action": "python run_project.py",
+   "expected": "13/13 pass, exit 0"
+  },
+  {
+   "action": "python run_project.py --inject leader-counter",
+   "expected": "seam nonce + F1 fail, failure_lab line with reused nonces and recovered plaintext, exit 1"
+  },
+  {
+   "action": "POST the same Idempotency-Key with a different text",
+   "expected": "422; same text -> 200 with the original index"
+  },
+  {
+   "action": "Replay the log on a fresh device after removing carol",
+   "expected": "alice 20/20, bob 20/20, carol 10/20; 0 post-removal reads"
+  },
+  {
+   "action": "BUILD_TARGET=mine python -m unittest test_p01_build_task (shipped file)",
+   "expected": "FAILED (failures=4)"
+  }
+ ],
+ "tryIt": [
+  {
+   "task": "Misuse resistance: python try_it/try_it_1.py seals two different messages under one key and the reused leader-counter nonce 1, with AES-256-GCM and with AES-256-GCM-SIV (RFC 8452), then tries the keystream XOR recovery.",
+   "predict": "Does GCM-SIV stop the recovery? What does it still leak?",
+   "expected": "AES-256-GCM      recovered == secret: True | repeat of the same message is identical: True / AES-256-GCM-SIV  recovered == secret: False | repeat of the same message is identical: True"
+  },
+  {
+   "task": "Rotation cost: python try_it/try_it_2.py builds real epoch entries for 3, 30 and 100 members and computes the per-epoch message limit for random nonces.",
+   "predict": "How many bytes is a rotation for 100 members? How many messages before the collision risk reaches 2^-32?",
+   "expected": "3 members: 4,720 B raw / 6,563 B JSON; 30: 36,580 / 50,559; 100: 119,180 / 164,659; risk 2^-32 after 6.074e+09 messages per epoch key (cap 2^32 = 4,294,967,296)"
+  }
+ ],
+ "troubleshooting": [
+  {
+   "symptom": "ModuleNotFoundError for pq_hybrid / solution_raft / outbox",
+   "action": "Run from inside the lab folder of an intact KB checkout; _kb.py finds the reused labs relative to its own path (kb/<topic>/labs/...)."
+  },
+  {
+   "symptom": "run_project.py takes minutes",
+   "action": "Expected: F1/F2 send 10,000 messages and every one of about 200 restarts replays the log (no snapshots). Use --messages 300 while iterating."
+  },
+  {
+   "symptom": "HandshakeError: illegal_parameter ... share",
+   "action": "A welcome's kem_ct is not 1,120 bytes, from truncation or a classical-only share. This is correct behaviour; regenerate the welcome."
+  },
+  {
+   "symptom": "409 'envelope version not accepted yet'",
+   "action": "Commit the gate entry first: svc.control({'type': 'contract', 'accept': [1, 2, 3]}); never flip versions in node config."
+  }
+ ],
+ "learningTools": [
+  {
+   "name": "CyberChef",
+   "role": "CHECK / SEE",
+   "licence": "Apache-2.0 (OSI)",
+   "url": "https://github.com/gchq/CyberChef/releases",
+   "mac": "Browser, or the offline release zip",
+   "windows": "Browser, or the offline release zip",
+   "exercise": "Reproduce the failure lab's keystream recovery without code. Print two reused-nonce ciphertexts as hex (from the failure_lab run), then use From Hex -> XOR (key = second ciphertext, hex) -> XOR (key = the known plaintext, UTF8).",
+   "expected": "Should match the lab's printed value: the output starts with 'msg 00010 from bob: status green'. Pending a manual run: the tool was not run in the sandbox."
+  },
+  {
+   "name": "AsyncAPI Studio",
+   "role": "SEE / CHECK",
+   "licence": "Apache-2.0 (OSI)",
+   "url": "https://github.com/asyncapi/studio",
+   "mac": "Browser (studio.asyncapi.com) or a self-built image",
+   "windows": "Browser (same)",
+   "exercise": "Describe the group-messages channel in AsyncAPI 3.x with the v2 envelope as the message payload schema (v, aead, kem, epoch, sender, ikey, n, ct, fp) and the epoch and contract entries as two more messages. Compare the required fields with READER_CONTRACT.",
+   "expected": "The rendered docs list the same 6 header fields the reader contract requires (v, aead, epoch, sender, ikey, n) plus kem. Pending a manual run: the tool was not run in the sandbox."
+  }
+ ],
+ "inRealSystems": [
+  "Messaging Layer Security (RFC 9420) binds every message to an epoch, and members process Commits in one agreed order. That is the epoch-in-the-log idea, with a ratchet tree instead of pairwise welcomes.",
+  "TLS 1.3 deployments negotiate X25519MLKEM768 (RFC 10024, IANA 0x11EC) for the same harvest-now-decrypt-later reason as the welcomes here.",
+  "Raft-based stores (etcd, Consul) dedupe client retries inside the state machine with client sessions, as the Raft paper section 8 describes and as ADR-01-2 does."
+ ],
+ "useWhen": "Use this shape whenever encrypted data is written through a replicated or retried pipeline: keep nonce state out of leader memory, put keys and versions where replay can find them, and dedupe by key in replicated state. Avoid it for a single-writer, single-node store, where a plain counter nonce and a local table are enough.",
+ "simulatorVsReal": "Raft is lesson 12's in-process simulation: ticks instead of time, no disk, no snapshots, crashes chosen by a seeded RNG. Real deployments add fsync, network partitions with clocks, and snapshot transfer. The sealer is a service-side identity (an encryption gateway). In a pure end-to-end app the sender's device seals, and the nonce lesson applies to multi-device senders. The welcome is a teaching construction modelled on lesson 18. Production would use HPKE with a PQ/T KEM or MLS.",
+ "caution": "Learning code. Never ship a nonce scheme that has not been tested under failover. Never reuse these keys, and never log epoch secrets or plaintext. RFC 10024 notes that its hybrid analysis relies on the TLS transcript, so do not assume this welcome construction is secure in other protocols without review. No agent is used: every verdict here is a deterministic audit.",
+ "checkpoint": "PASS if run_project.py prints 13/13 and exits 0, --inject leader-counter exits 1 with reused nonces and a recovered plaintext, all 24 tests pass, the build task passes against your nonce_derived.py, and you can name each seam's contract, risk and test.",
+ "checkYourself": [
+  {
+   "q": "Why is 'only the leader seals' an assumption of the term || counter nonce but not of random nonces?",
+   "a": "Term || counter is unique because Raft gives at most one leader per term. Two sealers in one term would share a prefix and restart counters. Random nonces have no shared state, so any node may seal."
+  },
+  {
+   "q": "Why can't the outbox relay simply re-seal a stale-epoch envelope?",
+   "a": "The outbox stores only sealed envelopes, so there is no plaintext on disk. The client resends after a 409."
+  },
+  {
+   "q": "Why must the dedupe table be replicated state rather than a cache on the API node?",
+   "a": "A failover moves the API to a node that never saw the key. A re-sealed retry is a different ciphertext, so only the key in replicated state identifies the duplicate."
+  },
+  {
+   "q": "What does the version gate entry give you that a config flag does not?",
+   "a": "A single log index at which every replica switches, so they apply identically and never diverge."
+  }
+ ],
+ "sources": [
+  {
+   "title": "RFC 10024 - PQ/T Hybrid Key Agreement Mechanisms for TLS 1.3 (X25519MLKEM768)",
+   "url": "https://datatracker.ietf.org/doc/draft-ietf-tls-ecdhe-mlkem/"
+  },
+  {
+   "title": "NIST FIPS 203 - ML-KEM",
+   "url": "https://csrc.nist.gov/pubs/fips/203/final"
+  },
+  {
+   "title": "NIST SP 800-38D - GCM and GMAC (IV uniqueness, constructions, invocation limits)",
+   "url": "https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf"
+  },
+  {
+   "title": "RFC 8452 - AES-GCM-SIV: Nonce Misuse-Resistant Authenticated Encryption",
+   "url": "https://www.rfc-editor.org/rfc/rfc8452"
+  },
+  {
+   "title": "Ongaro & Ousterhout - In Search of an Understandable Consensus Algorithm (Raft, extended)",
+   "url": "https://raft.github.io/raft.pdf"
+  },
+  {
+   "title": "draft-ietf-httpapi-idempotency-key-header-08",
+   "url": "https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/"
+  },
+  {
+   "title": "RFC 9420 - The Messaging Layer Security (MLS) Protocol",
+   "url": "https://www.rfc-editor.org/rfc/rfc9420.html"
+  },
+  {
+   "title": "pyca/cryptography - ML-KEM and AEAD (AESGCM, AESGCMSIV) APIs",
+   "url": "https://cryptography.io/en/latest/hazmat/primitives/aead/"
+  }
+ ],
+ "next": "Back to the L600 project list. For further study: replace pairwise welcomes with an MLS ratchet tree (cryptography L400 #20), add snapshots and key expiry to bound replay, and run the Raft cluster against Maelstrom's lin-kv checker (distributed-systems L300 #12 stretch).",
+ "validation": {
+  "status": "validated-local",
+  "how": "Ran here (Linux, Python 3.12, cryptography 50.0.2): run_project.py 13/13, exit 0. --inject leader-counter --messages 2000: 11/13, exit 1, 109 reused nonces and the recovered plaintext. python -m unittest discover -s tests -t tests: Ran 24 tests, OK. BUILD_TARGET=mine on the shipped nonce_derived.py: FAILED (failures=4); solution: OK. try_it_1.py and try_it_2.py outputs as shown. research/checks_01.py recomputes every lesson and question number and exits 0. No test asserts on wall-clock time; the scenarios are seeded and gave identical numbers on repeated runs.",
+  "pendingCi": [
+   "macOS (arm64) and Windows runs (matrix); cryptography 50.0.2 wheels with ML-KEM are expected on both but untested here",
+   "CyberChef and AsyncAPI Studio learning-tool exercises (manual)",
+   "Interop of the welcome with a real HPKE PQ/T KEM or an MLS library (not available offline)"
+  ]
+ },
+ "conceptNote": "content/concepts/L600/01-pq-replicated-messaging.md",
+ "conceptSummary": "Three correct building blocks (a hybrid X25519+ML-KEM-768 key exchange with AES-GCM, a Raft log, and retry-safe APIs with versioned contracts) fail where they meet. A leader-local nonce counter reuses nonces after failover (109 reuses, plaintext recovered). This project fixes and guards four seams: random or term-prefixed nonces, epochs in the log, dedupe in replicated state, and a replicated version gate. It proves them over 10,000 messages and 205 seeded crashes.",
+ "platforms": {
+  "mac": "expected",
+  "windows": "expected"
+ },
+ "macMini": {
+  "gains": "Three replicas become real OS processes that are killed with SIGKILL and restarted from their own fsynced logs, so the nonce-uniqueness and exactly-once fitness functions are re-run across genuine failover for 100,000+ messages overnight; Apple-silicon timings of X25519, ML-KEM-768, HKDF and AES-GCM turn the rotation and per-key limits of ADR-01-1 into numbers.",
+  "needs": {
+   "minRamGB": 16,
+   "tools": [
+    {
+     "name": "Python 3.12",
+     "licence": "PSF-2.0",
+     "install": "brew install python@3.12 (or the python.org macOS installer: https://www.python.org/downloads/macos/)"
+    },
+    {
+     "name": "cryptography 50.0.2",
+     "licence": "Apache-2.0 OR BSD-3-Clause",
+     "install": "python3.12 -m pip install cryptography==50.0.2 numpy (inside the venv of shared/WORKSTATION-SETUP.md)"
+    },
+    {
+     "name": "Colima (optional, experiment 3)",
+     "licence": "MIT",
+     "install": "brew install colima (or MacPorts: sudo port install colima); colima start --cpu 4 --memory 4"
+    },
+    {
+     "name": "docker CLI (optional, experiment 3)",
+     "licence": "Apache-2.0",
+     "install": "brew install docker - or skip it: colima start --runtime containerd, then colima nerdctl install and use nerdctl with the same flags"
+    }
+   ]
+  },
+  "experiments": [
+   {
+    "title": "What does the crypto cost on Apple silicon?",
+    "why": "A rotation seals one hybrid X25519+ML-KEM-768 welcome per member, and random 96-bit GCM nonces cap an epoch key at 2^32 messages (SP 800-38D 8.3). Both limits only mean something next to this machine's timings.",
+    "steps": [
+     {
+      "title": "Time the primitives and the project's own operations",
+      "detail": "bench_crypto.py times X25519, ML-KEM-768/1024, HKDF-SHA256, AES-256-GCM at 64 B / 1 KiB / 64 KiB, then group_crypto.welcome and group_crypto.seal (median of 7 batches).",
+      "mac": "cd integrated/labs/L600/01-pq-replicated-messaging\npython mac_mini/bench_crypto.py --out ~/kb-runs/01-bench.jsonl",
+      "expected": "First line: arch arm64, apple_silicon true, cryptography 50.0.2. Every us_per_call below the sandbox's (sandbox: ML-KEM-768 encapsulate 33.7 us, project welcome 165.6 us, project seal 24.3 us); AES-GCM at 64 KiB in GB/s."
+     },
+     {
+      "title": "Read the budget line",
+      "detail": "max_members_in_rotate_budget = floor(100 ms / welcome us); days_to_2^32 = 2^32 / seals per second / 86,400.",
+      "mac": "tail -1 ~/kb-runs/01-bench.jsonl",
+      "expected": "Sandbox values for comparison: 603 members and 1.2 days at one saturated core. Expect a larger member count and a SHORTER time to 2^32 on the Mac (faster sealing reaches the cap sooner)."
+     }
+    ],
+    "measure": "welcome us, seal us, max_members_in_rotate_budget, days_to_2^32_at_that_rate",
+    "decides": "ADR-01-1: if max_members_in_rotate_budget is below the largest group, rotation leaves the request path (batched or asynchronous); if days_to_2^32 is shorter than the rotation period, the counter rule F4 (409 rotation_required) stays the binding limit and a timer alone is not enough."
+   },
+   {
+    "title": "Nonce uniqueness across REAL process failover",
+    "why": "In the lab a 'crash' is a flag in one Python process. Here the leader is SIGKILLed - half the time with a seal request in flight - and restarted from its own disk, so volatile nonce state really disappears.",
+    "steps": [
+     {
+      "title": "Random nonces, 2,000 messages, 20 kills",
+      "detail": "multiproc.py starts 3 replica.py processes on 127.0.0.1, kills the leader at seeded points, elects the most up-to-date live replica in a higher persisted term, restarts the dead one, then audits every envelope any process sealed.",
+      "mac": "cd integrated/labs/L600/01-pq-replicated-messaging\npython mac_mini/multiproc.py --messages 2000 --kills 20",
+      "expected": "F1 reused_nonces 0 and F2 pass (logs identical, every acked message exactly once); ciphertexts_on_wire slightly above messages (requests in flight when their leader died were sealed twice, under fresh nonces)."
+     },
+     {
+      "title": "The failure lab and the build-task solution across processes",
+      "detail": "--nonce leader-counter uses the shipped nonce_derived.DerivedNonce (counter in RAM); --nonce derived uses solution/nonce_derived.py (term || counter).",
+      "mac": "python mac_mini/multiproc.py --here --nonce leader-counter; echo $?\npython mac_mini/multiproc.py --here --nonce derived; echo $?",
+      "expected": "leader-counter: F1 fails (sandbox: 62 reused nonces, first one 000000000000000000000001), exit 1. derived: 0 reused, exit 0."
+     },
+     {
+      "title": "fsync cost",
+      "detail": "Same run with and without fsync (each message = 3 fsynced appends: leader + 2 followers).",
+      "mac": "python mac_mini/multiproc.py --messages 2000 --kills 20 --no-fsync",
+      "expected": "msgs_per_s several times higher without fsync; F1/F2 unchanged (no power loss happens in this experiment)."
+     }
+    ],
+    "measure": "reused_nonces, acked_missing, logs_identical, msgs_per_s with and without fsync",
+    "decides": "F1/F2 must hold across real kill -9 or the nonce scheme / log repair is rejected; msgs_per_s with fsync sets the throughput line of a durability decision (fsync per message vs group commit)."
+   },
+   {
+    "title": "Latency and loss between the replicas (optional, Colima + tc netem)",
+    "why": "Loopback on a Mac never loses packets. Inside one Linux container, netem on the loopback interface delays and drops the 127.0.0.1 traffic between the three replicas without changing the code.",
+    "steps": [
+     {
+      "title": "Run the experiment in a container with netem on lo",
+      "detail": "tc needs NET_ADMIN; python:3.12-slim needs iproute2. The kb folder is mounted read-write at /kb.",
+      "mac": "colima start --cpu 4 --memory 4\ncd integrated/labs/L600/01-pq-replicated-messaging\ndocker run --rm --cap-add NET_ADMIN -v \"$PWD/../../../..\":/kb -w /kb/integrated/labs/L600/01-pq-replicated-messaging python:3.12-slim bash -c \"apt-get update -qq && apt-get install -y -qq iproute2 && pip install -q numpy cryptography==50.0.2 && tc qdisc add dev lo root netem delay 5ms 2ms loss 1% && python mac_mini/multiproc.py --messages 2000 --kills 20 --no-fsync\"",
+      "expected": "client_retries > 0 and a much lower msgs_per_s than experiment 2; F1 and F2 still pass. Loss may cost availability, never nonce uniqueness or acknowledged messages."
+     }
+    ],
+    "measure": "client_retries and msgs_per_s at 5 ms +- 2 ms delay and 1 % loss; F1/F2",
+    "decides": "The client retry budget (20 attempts, 10 ms apart) and the 'outcome unknown' timeout: if retries run out under 1 % loss, raise them before trusting the design on a real network."
+   }
+  ],
+  "overnight": "caffeinate -i python mac_mini/multiproc.py --messages 100000 --kills 400 --out ~/kb-runs/01-multiproc.jsonl: about 300,000 fsynced appends and 400 SIGKILL/restart cycles, half of them mid-request. It shows what the in-process lab cannot: torn last lines after a kill, long log repairs for a follower that was down across several failovers, and any acknowledged message missing from a replica's disk (F2).",
+  "validation": {
+   "here": "Ran in the Linux sandbox (Python 3.12.15, cryptography 50.0.2, 2026-11-02): bench_crypto.py --here; multiproc.py --here with random (300 messages, 4 kills, 301 ciphertexts on the wire, 0 reused, F2 pass, exit 0), leader-counter (62 reused nonces, exit 1) and derived (0 reused, exit 0); python -m unittest discover -s mac_mini/tests: 7 tests OK; research/checks_01_mac.py OK. run_project.py, --inject leader-counter and the 24 lab tests are unchanged.",
+   "pendingMac": [
+    "bench_crypto.py timings on Apple silicon (cryptography 50.0.2 arm64 wheel)",
+    "multiproc.py at 100,000 messages / 400 kills with fsync on APFS (overnight)",
+    "Colima + tc netem run (experiment 3)",
+    "collection of the JSONL by integrated/mac-mini/scripts/nightly.sh"
+   ]
+  }
+ }
+}

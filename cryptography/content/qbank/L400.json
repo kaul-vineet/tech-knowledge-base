@@ -1,0 +1,828 @@
+[
+  {
+    "id": "cr-L400-001",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A v2 envelope carries an Ed25519 signature and an ML-DSA-65 signature. How many signature bytes is that per envelope?",
+    "options": [
+      "3,309 B",
+      "128 B",
+      "4,691 B",
+      "3,373 B"
+    ],
+    "answer": 3,
+    "explanation": "Ed25519 gives 64 B and ML-DSA-65 gives 3,309 B, so dual signing adds 3,373 B. 3,309 B counts the post-quantum signature only.",
+    "source": "Lesson 17 options / scalingLimits"
+  },
+  {
+    "id": "cr-L400-002",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A format has 2 AEADs and 2 signature algorithms; the signature phase can be Ed25519, ML-DSA-65 or both. After adding a third AEAD, how many ids does each design need?",
+    "options": [
+      "9 suite ids vs 5 algorithm ids",
+      "6 suite ids vs 4 algorithm ids",
+      "9 suite ids vs 9 algorithm ids",
+      "12 suite ids vs 5 algorithm ids"
+    ],
+    "answer": 0,
+    "explanation": "Suite ids multiply (3 AEADs x 3 signature phases = 9) while per-algorithm ids add (3 + 2 = 5). That combinatorial growth is why suites were rejected for this format.",
+    "source": "Lesson 17 options (C)"
+  },
+  {
+    "id": "cr-L400-003",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "In the v2 envelope, what is the job of the 'aead' label in the header?",
+    "options": [
+      "It tells the reader which algorithm it must accept",
+      "It names the algorithm; the verifier's policy decides if it is acceptable",
+      "It is a hint the reader can ignore and guess instead",
+      "It encrypts the header under the chosen algorithm"
+    ],
+    "answer": 1,
+    "explanation": "Labels let readers dispatch without guessing, but a message's own field must never decide what is allowed. Policy is the gate.",
+    "source": "Lesson 17 concepts / caution"
+  },
+  {
+    "id": "cr-L400-004",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Client and server share no active algorithm during negotiation. What should happen?",
+    "options": [
+      "Fall back to the oldest algorithm that both sides still support today",
+      "Pick the client's first choice anyway",
+      "Send the data unencrypted with a warning",
+      "Fail with an error; never fall back to something outside policy"
+    ],
+    "answer": 3,
+    "explanation": "Negotiation fails closed: no common active algorithm means an error. Fallbacks are what downgrade attacks exploit.",
+    "source": "Lesson 17 concepts"
+  },
+  {
+    "id": "cr-L400-005",
+    "level": "L400",
+    "lesson": 17,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A256GCM is deprecated and C20P1305 is the new default. When may A256GCM move to disallowed?",
+    "options": [
+      "When envelopes_by_aead shows 0 records still using it",
+      "Immediately, since the default has already changed to C20P1305",
+      "After a fixed 90 days, whatever the metric says",
+      "When no new A256GCM records were sealed this week"
+    ],
+    "answer": 0,
+    "explanation": "Disallowing an algorithm makes every record that still uses it unreadable, so wait for the per-algorithm count to reach zero. Changing the default does not migrate old data.",
+    "source": "Lesson 17 checkYourself"
+  },
+  {
+    "id": "cr-L400-006",
+    "level": "L400",
+    "lesson": 17,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "A forged envelope with only an Ed25519 signature passes this verifier. What is the bug?",
+    "code": "def verify(env: dict, data: bytes, keys: dict) -> bool:\n    for alg, sig in env[\"sigs\"]:\n        keys[alg].verify(sig, data)  # raises if invalid\n    return True",
+    "options": [
+      "It should verify ML-DSA-65 before Ed25519",
+      "It checks whatever signatures the envelope lists instead of the ones policy requires",
+      "It must catch InvalidSignature and return False",
+      "It should verify the payload hash, not the payload"
+    ],
+    "answer": 1,
+    "explanation": "The envelope is attacker-controlled, so removing the ML-DSA entry removes that check (signature stripping). The verifier must require the policy's signatures and fail if one is missing.",
+    "source": "Lesson 17 failureLab"
+  },
+  {
+    "id": "cr-L400-007",
+    "level": "L400",
+    "lesson": 17,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Why is each data key bound to exactly one algorithm id in the registry?",
+    "options": [
+      "It lets one key serve every algorithm, which saves key storage space",
+      "It is needed for the header to fit in 74 bytes",
+      "A relabelled header cannot reuse the key under another algorithm",
+      "It allows the reader to try algorithms until one works"
+    ],
+    "answer": 2,
+    "explanation": "Using one key across algorithms invites cross-algorithm attacks; open_ refuses a header whose label disagrees with the key's binding. Trial decryption is what the design avoids.",
+    "source": "Lesson 17 checkYourself / troubleshooting"
+  },
+  {
+    "id": "cr-L400-008",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Millions of 200-byte records are each dual-signed (3,373 B of signatures, computed from the real sizes). What is the ratio of signature bytes to payload bytes?",
+    "options": [
+      "about 168.6x",
+      "about 1.0x",
+      "about 16.9x",
+      "about 3.4x"
+    ],
+    "answer": 2,
+    "explanation": "3,373 / 200 is about 16.9, far above the scaling signal of 1. The lesson's answer is to sign batches or manifests instead of each record.",
+    "source": "Lesson 17 scalingLimits"
+  },
+  {
+    "id": "cr-L400-009",
+    "level": "L400",
+    "lesson": 18,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "In X25519MLKEM768, the client share is the ML-KEM-768 encapsulation key plus an X25519 public key; the server share is the ML-KEM ciphertext plus an X25519 public key. What sizes result?",
+    "options": [
+      "client 1,184 B, server 1,088 B",
+      "client 1,120 B, server 1,216 B",
+      "client 1,216 B, server 1,120 B",
+      "client 2,336 B, server 2,336 B"
+    ],
+    "answer": 2,
+    "explanation": "1,184 + 32 = 1,216 B and 1,088 + 32 = 1,120 B, 2,336 B on the wire. Forgetting the 32-byte X25519 part gives the pure ML-KEM sizes.",
+    "source": "Lesson 18 expectedResults"
+  },
+  {
+    "id": "cr-L400-010",
+    "level": "L400",
+    "lesson": 18,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Roughly how many times larger is an ML-DSA-65 signature than an Ed25519 signature?",
+    "options": [
+      "about 2x",
+      "about 52x",
+      "about 10x",
+      "about 200x"
+    ],
+    "answer": 1,
+    "explanation": "3,309 B / 64 B is about 52x, which is why PQ signatures cost far more bytes than PQ key exchange. Key-exchange shares grow much less.",
+    "source": "Lesson 18 concepts"
+  },
+  {
+    "id": "cr-L400-011",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does key exchange migrate to post-quantum before signatures?",
+    "options": [
+      "PQ signatures are not yet standardised",
+      "Key exchange is cheaper to change in every protocol",
+      "Recorded exchanges can be decrypted later; signatures only need to hold while verified",
+      "Signatures are already quantum-safe"
+    ],
+    "answer": 2,
+    "explanation": "Harvest now, decrypt later threatens today's recorded traffic, while a forged signature needs a quantum computer at verification time. ML-DSA is standardised; that is not the reason.",
+    "source": "Lesson 18 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L400-012",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does the hybrid combine the two shared secrets by concatenation and a KDF over the transcript, rather than XOR?",
+    "options": [
+      "XOR is too slow for 64-byte secrets",
+      "Concatenation makes the key twice as long, so it is twice as strong against attacks",
+      "XOR would reveal both secrets to an eavesdropper",
+      "It stays secure if either secret is strong and binds the key to the exact shares"
+    ],
+    "answer": 3,
+    "explanation": "Concatenate-then-KDF with the shares is the RFC 10024 construction and keeps security if either part holds. Key length alone is not the point.",
+    "source": "Lesson 18 checkYourself"
+  },
+  {
+    "id": "cr-L400-013",
+    "level": "L400",
+    "lesson": 18,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "The client expects a 1,120-byte server share but receives 32 bytes. What does a correct client do?",
+    "options": [
+      "Use the 32 bytes as an X25519-only exchange",
+      "Pad the share to 1,120 bytes and continue",
+      "Retry the handshake without ML-KEM",
+      "Abort with illegal_parameter and log it"
+    ],
+    "answer": 3,
+    "explanation": "A short share is a downgrade attempt; deriving a classical-only key lets a future quantum attacker recover it. Retrying without ML-KEM is the same downgrade by another route.",
+    "source": "Lesson 18 failureLab / checkYourself"
+  },
+  {
+    "id": "cr-L400-014",
+    "level": "L400",
+    "lesson": 18,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "What does this print?",
+    "code": "EXPECTED = 1088 + 32\n\ndef check_share(share: bytes) -> str:\n    if len(share) != EXPECTED:\n        return \"abort: illegal_parameter\"\n    return \"ok\"\n\nprint(check_share(bytes(32)), \"|\", check_share(bytes(1120)))",
+    "options": [
+      "ok | ok",
+      "ok | abort: illegal_parameter",
+      "abort: illegal_parameter | abort: illegal_parameter",
+      "abort: illegal_parameter | ok"
+    ],
+    "answer": 3,
+    "explanation": "A 32-byte share is not the expected 1,088 + 32 = 1,120 bytes, so it aborts; a 1,120-byte share passes. Exact length checks are what stop the downgrade.",
+    "source": "Lesson 18 failureLab (fix)"
+  },
+  {
+    "id": "cr-L400-015",
+    "level": "L400",
+    "lesson": 18,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Traffic must stay confidential for 10 years and ML-KEM is still young. Which key exchange does ADR-0018 choose?",
+    "options": [
+      "Hybrid X25519MLKEM768 with strict share checks",
+      "X25519 only, because it is fastest",
+      "ML-KEM-768 only, because it is already post-quantum",
+      "X25519 now, switching to ML-KEM in 10 years"
+    ],
+    "answer": 0,
+    "explanation": "Hybrid stays secure if either component holds, covering both a quantum attacker and an early lattice break. ML-KEM alone has no safety net, and X25519 alone fails the 10-year constraint.",
+    "source": "Lesson 18 options / tradeOffs"
+  },
+  {
+    "id": "cr-L400-016",
+    "level": "L400",
+    "lesson": 18,
+    "type": "design",
+    "difficulty": 3,
+    "question": "ML-DSA certificate chains are about 30x larger than classical ones. What does the lesson advise for certificates today?",
+    "options": [
+      "Keep classical certificates until signature migration is planned",
+      "Switch every chain to ML-DSA now, together with the key exchange move",
+      "Drop certificates and rely on the hybrid KEM",
+      "Use ML-KEM keys inside certificates instead"
+    ],
+    "answer": 0,
+    "explanation": "Signature migration is less urgent and costs handshake bytes and latency, so watch those signals first. A KEM does not authenticate the server.",
+    "source": "Lesson 18 scalingLimits"
+  },
+  {
+    "id": "cr-L400-017",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "With a PKCS#11 token, what does the application hold?",
+    "options": [
+      "An encrypted copy of the private key",
+      "The private key, unlocked by the PIN",
+      "A handle that asks the token to use the key",
+      "A certificate that contains the encrypted private key"
+    ],
+    "answer": 2,
+    "explanation": "The key stays inside the token and the app sends sign requests by handle. The PIN unlocks the session, not the key bytes.",
+    "source": "Lesson 19 concepts"
+  },
+  {
+    "id": "cr-L400-018",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "An attacker controls the build host that uses a non-exportable token key. What does non-exportability still give you?",
+    "options": [
+      "The attacker cannot sign anything at all while they are on the host",
+      "The token wipes itself when the host is compromised",
+      "Signatures made by the attacker are marked invalid",
+      "No signing after clean-up, and audit events for what they signed"
+    ],
+    "answer": 3,
+    "explanation": "While in, the attacker can ask the token to sign; non-exportability turns theft into bounded, logged misuse. It does not stop signing during the compromise.",
+    "source": "Lesson 19 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L400-019",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why must the token, not the application, decide CKA_EXTRACTABLE?",
+    "options": [
+      "Defaults vary by token and an application template can be wrong or compromised",
+      "Applications cannot set attributes in PKCS#11",
+      "The token runs faster when it chooses attributes",
+      "Extractable keys cannot sign data"
+    ],
+    "answer": 0,
+    "explanation": "In the failure lab the app trusted token defaults (extractable) and the key was read out. Token policy is the boundary because it does not depend on application code.",
+    "source": "Lesson 19 checkYourself / failureLab"
+  },
+  {
+    "id": "cr-L400-020",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What does CKA_NEVER_EXTRACTABLE=True prove that CKA_EXTRACTABLE=False does not?",
+    "options": [
+      "The key cannot be used for signing",
+      "The key was never extractable at any point in its life",
+      "The key was imported from a backup",
+      "The key can still be copied to another token by the security officer"
+    ],
+    "answer": 1,
+    "explanation": "EXTRACTABLE=False describes now; NEVER_EXTRACTABLE shows the key was not imported or switched later. An imported key can have EXTRACTABLE=False and still have existed outside.",
+    "source": "Lesson 19 checkYourself"
+  },
+  {
+    "id": "cr-L400-021",
+    "level": "L400",
+    "lesson": 19,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Generating a key on the hardened token fails with CKR_TEMPLATE_INCONSISTENT. What does it mean?",
+    "code": "template = {\"CKA_SENSITIVE\": False, \"CKA_EXTRACTABLE\": True, \"CKA_SIGN\": True}\nkey = session.generate_keypair(\"Ed25519\", private_template=template)\n# -> CKR_TEMPLATE_INCONSISTENT",
+    "options": [
+      "The template asked for an extractable or non-sensitive private key",
+      "The user PIN was entered wrongly three times, so the token is locked",
+      "The PKCS11_MODULE path is not set",
+      "The token has run out of storage"
+    ],
+    "answer": 0,
+    "explanation": "The hardened token refuses opt-outs from SENSITIVE/non-EXTRACTABLE by design; fix the template. A wrong PIN gives CKR_PIN_INCORRECT and a missing module gives a KeyError.",
+    "source": "Lesson 19 troubleshooting"
+  },
+  {
+    "id": "cr-L400-022",
+    "level": "L400",
+    "lesson": 19,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Twenty services must sign or decrypt, and key use must be centrally revocable. Which option fits?",
+    "options": [
+      "A PKCS#11 token on each of the twenty hosts",
+      "A PEM key file per service, protected with a password",
+      "One shared PEM key mounted into all services",
+      "A KMS-style service (OpenBao transit or cloud KMS)"
+    ],
+    "answer": 3,
+    "explanation": "Central policy, audit and instant disable fit many consumers; per-host tokens multiply ceremonies and PINs. A PEM file gives permanent signing power to whoever reads it.",
+    "source": "Lesson 19 tradeOffs / scalingLimits"
+  },
+  {
+    "id": "cr-L400-023",
+    "level": "L400",
+    "lesson": 19,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Signing takes about 40.1 µs via the token and about 5001.5 µs via the KMS over HTTP. Signing one at a time, how many signatures per second is each?",
+    "options": [
+      "about 40 vs about 5,002",
+      "about 24,938 vs about 200",
+      "about 2,494 vs about 20",
+      "about 24,938 vs about 2,000"
+    ],
+    "answer": 1,
+    "explanation": "1,000,000 µs / 40.1 µs is about 24,938 and 1,000,000 / 5001.5 is about 200. The KMS misses a 1 ms budget without connection reuse.",
+    "source": "Lesson 19 options"
+  },
+  {
+    "id": "cr-L400-024",
+    "level": "L400",
+    "lesson": 19,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "An inventory fitness check scans token keys. What does this print?",
+    "code": "keys = [\n    {\"label\": \"release\", \"ALWAYS_SENSITIVE\": True, \"NEVER_EXTRACTABLE\": True},\n    {\"label\": \"legacy\", \"ALWAYS_SENSITIVE\": False, \"NEVER_EXTRACTABLE\": False},\n    {\"label\": \"imported\", \"ALWAYS_SENSITIVE\": True, \"NEVER_EXTRACTABLE\": False},\n]\nbad = [k[\"label\"] for k in keys if not (k[\"ALWAYS_SENSITIVE\"] and k[\"NEVER_EXTRACTABLE\"])]\nprint(bad)",
+    "options": [
+      "['legacy', 'imported']",
+      "['legacy']",
+      "['imported']",
+      "[]"
+    ],
+    "answer": 0,
+    "explanation": "A key passes only if it is ALWAYS_SENSITIVE and NEVER_EXTRACTABLE; the imported key fails because it was once extractable. Checking only EXTRACTABLE would miss it.",
+    "source": "Lesson 19 fitnessFunction"
+  },
+  {
+    "id": "cr-L400-025",
+    "level": "L400",
+    "lesson": 19,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A single HSM holds the production release key, generated non-exportable. What does the lesson warn about?",
+    "options": [
+      "It must be exported once a year for safekeeping",
+      "Its key should be copied to a PEM file as a backup",
+      "It cannot be restored from software backups; provision a second device in the ceremony",
+      "It needs a longer PIN to survive hardware failure"
+    ],
+    "answer": 2,
+    "explanation": "Non-exportable keys cannot come back from a file backup, so plan a second device and rehearse rotation. Exporting it defeats the point of the token.",
+    "source": "Lesson 19 scalingLimits"
+  },
+  {
+    "id": "cr-L400-026",
+    "level": "L400",
+    "lesson": 20,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "With sender keys, removing a member costs (n-1)(n-2) encryptions. How many for a group of n = 64?",
+    "options": [
+      "63",
+      "4,032",
+      "10",
+      "3,906"
+    ],
+    "answer": 3,
+    "explanation": "63 x 62 = 3,906: every remaining member sends a new sender key to every other remaining member. 10 is the MLS-style tree cost at the same size.",
+    "source": "Lesson 20 options / checkYourself"
+  },
+  {
+    "id": "cr-L400-027",
+    "level": "L400",
+    "lesson": 20,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "For a group of 256, how many encryptions does pairwise fan-out need per message, and how many HPKE encryptions does a full-tree MLS-style commit need?",
+    "options": [
+      "1 and 8",
+      "255 and 8",
+      "255 and 255",
+      "256 and 16"
+    ],
+    "answer": 1,
+    "explanation": "Pairwise sends the message to each of the n - 1 = 255 others; a commit costs about log2(256) = 8 encryptions. MLS still needs only 1 encryption per application message.",
+    "source": "Lesson 20 concepts / options"
+  },
+  {
+    "id": "cr-L400-028",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why can't a new epoch secret simply be HKDF(old epoch secret)?",
+    "options": [
+      "HKDF output is too short for an epoch secret",
+      "HKDF cannot run on every member at once",
+      "The removed member knows the old secret and could derive the new one",
+      "The new epoch must use a different hash function"
+    ],
+    "answer": 2,
+    "explanation": "Only fresh entropy delivered to the remaining members excludes someone who knew the old secret. HKDF is deterministic, so it gives the removed member the same result.",
+    "source": "Lesson 20 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L400-029",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What is the difference between forward secrecy (FS) and post-compromise security (PCS)?",
+    "options": [
+      "FS protects future messages; PCS protects past messages",
+      "FS protects past messages; PCS restores secrecy after the compromised member updates",
+      "FS needs a tree; PCS works only for pairwise chats",
+      "They are two names for the same property"
+    ],
+    "answer": 1,
+    "explanation": "Forward secrecy means a compromise today does not reveal yesterday's messages; PCS heals the group once fresh keys replace the stolen ones. FS alone does not heal.",
+    "source": "Lesson 20 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L400-030",
+    "level": "L400",
+    "lesson": 20,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "After frank removes dave, dave can still read the next epoch. What is wrong with this _remove?",
+    "code": "def _remove(self, leaf: int) -> None:\n    self.tree[leaf] = None  # blank the removed member's leaf\n    # parents of the leaf keep their old secrets\n    self.commit(fresh_path_from=self.me)",
+    "options": [
+      "It blanks dave's leaf but not the parents on his direct path",
+      "It should delete dave's stored messages from the delivery server",
+      "It must re-encrypt all past epochs",
+      "It should send dave a new path secret"
+    ],
+    "answer": 0,
+    "explanation": "Dave still knows the old secrets of his parent nodes; blank the leaf and its direct path (RFC 9420 12.1.3) so the commit uses fresh secrets he never sees.",
+    "source": "Lesson 20 failureLab"
+  },
+  {
+    "id": "cr-L400-031",
+    "level": "L400",
+    "lesson": 20,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "In an array-based tree with 8 leaves, leaf i is node i + 8 and a node's parent is node // 2. What does this print?",
+    "code": "def direct_path(leaf: int, n_leaves: int) -> list:\n    node, path = leaf + n_leaves, []\n    while node > 1:\n        node //= 2\n        path.append(node)\n    return path\n\nprint(direct_path(3, 8))",
+    "options": [
+      "[11, 5, 2]",
+      "[5, 2]",
+      "[1, 2, 5]",
+      "[5, 2, 1]"
+    ],
+    "answer": 3,
+    "explanation": "Leaf 3 is node 11; its parents are 5, 2 and the root 1, so three nodes (log2 8) must be blanked or re-keyed. The list starts at the parent, not the leaf itself.",
+    "source": "Lesson 20 concepts (direct path)"
+  },
+  {
+    "id": "cr-L400-032",
+    "level": "L400",
+    "lesson": 20,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Members of one group end up in different epochs. What is the cause and fix?",
+    "options": [
+      "Commits were applied in different orders; the delivery service must order commits per group",
+      "Some members have slow clocks; sync NTP",
+      "HPKE failed for one member; retry the commit",
+      "The group grew too large; split it in two"
+    ],
+    "answer": 0,
+    "explanation": "Commits must be totally ordered per group, otherwise two committers in one epoch fork the state. Clock sync does not order commits.",
+    "source": "Lesson 20 troubleshooting / scalingLimits"
+  },
+  {
+    "id": "cr-L400-033",
+    "level": "L400",
+    "lesson": 20,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Some members never send updates. Which policy does the lesson recommend to keep post-compromise security?",
+    "options": [
+      "Rely on forward secrecy, which already covers members who stay idle",
+      "Rotate the group's root secret with HKDF each day",
+      "Re-send old messages so idle members stay in sync",
+      "Require updates on a schedule and remove members who never update"
+    ],
+    "answer": 3,
+    "explanation": "PCS only arrives when members update, so track leaf-key age and enforce updates (RFC 9420 3.2). A deterministic HKDF ratchet does not add fresh entropy.",
+    "source": "Lesson 20 scalingLimits"
+  },
+  {
+    "id": "cr-L400-034",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "In the threat-model-as-code checker, when does a control count?",
+    "options": [
+      "When its description is in model.json",
+      "Only when its test exists and passes",
+      "When a reviewer has approved its name",
+      "When an agent confirms it exists"
+    ],
+    "answer": 1,
+    "explanation": "Descriptions survive refactors that delete the protection; a missing or failing test is detectable in CI. Names and approvals do not prove the control still works.",
+    "source": "Lesson 21 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L400-035",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Which STRIDE threats must every boundary-crossing flow have in this model?",
+    "options": [
+      "Spoofing and Repudiation",
+      "Denial of service and Elevation of privilege",
+      "Repudiation and Information disclosure",
+      "Tampering and Information disclosure"
+    ],
+    "answer": 3,
+    "explanation": "Data that crosses a trust boundary can be changed or read by whoever controls the wire or the other side. Spoofing applies to the parties, not to the flow itself.",
+    "source": "Lesson 21 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L400-036",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What does an attack tree add to STRIDE per element?",
+    "options": [
+      "A complete list of every possible threat to each element of the system",
+      "Proof that every control has a test",
+      "Prioritisation: which control closes the cheapest path to a goal",
+      "Automatic fixes for each threat"
+    ],
+    "answer": 2,
+    "explanation": "STRIDE gives coverage; the attack tree shows which control matters most for a concrete attacker goal. The checker, not the tree, proves controls have tests.",
+    "source": "Lesson 21 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L400-037",
+    "level": "L400",
+    "lesson": 21,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "OR nodes take the cheapest child, AND nodes add their children, and closed leaves cost infinity. What does this print?",
+    "code": "def cost(n):\n    if \"leaf\" in n:\n        return float(\"inf\") if n.get(\"closed\") else n[\"leaf\"]\n    kids = [cost(c) for c in n[\"kids\"]]\n    return min(kids) if n[\"op\"] == \"OR\" else sum(kids)\n\nguard = {\"leaf\": 1, \"closed\": True}\ntree = {\"op\": \"OR\", \"kids\": [{\"leaf\": 9},\n        {\"op\": \"AND\", \"kids\": [{\"leaf\": 2}, guard, {\"leaf\": 5}]}]}\nfirst = cost(tree)\nguard[\"closed\"] = False  # the control's test was deleted\nprint(first, cost(tree))",
+    "options": [
+      "9 9",
+      "8 8",
+      "9 8",
+      "8 9"
+    ],
+    "answer": 2,
+    "explanation": "With the control closed the AND path is infinite, so the cheapest path is 9; once its test is deleted the leaf reopens and 2 + 1 + 5 = 8 wins. The cost drops from 9 to 8, as in the lab.",
+    "source": "Lesson 21 failureLab / options (B)"
+  },
+  {
+    "id": "cr-L400-038",
+    "level": "L400",
+    "lesson": 21,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "After a refactor deleted the test behind C-NO-FALLBACK, this checker still reports no problems. Why?",
+    "code": "def check(model: dict) -> list:\n    problems = []\n    for c in model[\"controls\"]:\n        if not c.get(\"test\"):\n            problems.append(f\"{c['id']}: no test named\")\n    return problems",
+    "options": [
+      "It should check the control ids in alphabetical order",
+      "It checks only that a test name is recorded, not that the test exists and passes",
+      "It must run before the refactor, not after",
+      "Controls need two tests each to be counted"
+    ],
+    "answer": 1,
+    "explanation": "A name-only check misses drift; controls must point to existing (and in CI, passing) tests. The order of checks is irrelevant.",
+    "source": "Lesson 21 failureLab"
+  },
+  {
+    "id": "cr-L400-039",
+    "level": "L400",
+    "lesson": 21,
+    "type": "design",
+    "difficulty": 3,
+    "question": "How does ADR-0021 use agent brainstorming in threat modelling?",
+    "options": [
+      "As input to a human session; code classifies and nothing merges automatically",
+      "As the threat model of record, updated each sprint",
+      "To decide which controls pass, replacing the checker",
+      "To auto-merge new threats when confidence is high"
+    ],
+    "answer": 0,
+    "explanation": "Agents give breadth but invent elements and controls; in the lab 3 of 6 proposals were rejected. The checker decides and a human accepts.",
+    "source": "Lesson 21 options (C) / tradeOffs"
+  },
+  {
+    "id": "cr-L400-040",
+    "level": "L400",
+    "lesson": 21,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A control test fails in the fitness run. What should you do?",
+    "options": [
+      "Remove the control mapping so the build passes",
+      "Mark the test as skipped until next sprint",
+      "Fix the code the control protects; keep the mapping",
+      "Replace the failing test with a description of the control"
+    ],
+    "answer": 2,
+    "explanation": "A failing control test means the control is broken. Removing the mapping hides the gap that the threat model exists to show.",
+    "source": "Lesson 21 troubleshooting"
+  },
+  {
+    "id": "cr-L400-041",
+    "level": "L400",
+    "lesson": 22,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Milestone M4 shares a 32-byte DEK with HPKE using the MLKEM768_X25519 (X-Wing) KEM and AES-256-GCM. How large is the wrapped DEK?",
+    "options": [
+      "1,168 bytes",
+      "1,120 bytes",
+      "80 bytes",
+      "1,216 bytes"
+    ],
+    "answer": 0,
+    "explanation": "HPKE output is the 1,120-byte encapsulated key plus 32 bytes of ciphertext and a 16-byte tag. 1,120 counts only the KEM part.",
+    "source": "Lesson 22 expectedResults (M4)"
+  },
+  {
+    "id": "cr-L400-042",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "An attacker owns the doc-service host. Why can they still read documents, and what limits it?",
+    "options": [
+      "They cannot read anything, because documents are encrypted",
+      "They can ask the KMS to unwrap while in; the KEK stays in the KMS and audit rules flag bursts",
+      "They can copy the KEK and read documents forever",
+      "They can read only documents that were never rotated"
+    ],
+    "answer": 1,
+    "explanation": "Access while on the host is possible but bounded and visible: the KEK never leaves the KMS and unwrap bursts are flagged. Encryption at rest does not stop a host that can call the KMS.",
+    "source": "Lesson 22 checkYourself"
+  },
+  {
+    "id": "cr-L400-043",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The audit log is signed per entry and hash-chained. What does the hash chain detect that signatures alone do not?",
+    "options": [
+      "Entries signed with the wrong key",
+      "Deleted or reordered entries",
+      "Entries with a changed message body",
+      "Entries written by the agent"
+    ],
+    "answer": 1,
+    "explanation": "Each entry commits to the previous one, so removing or moving an entry breaks the chain and the sequence. A per-entry signature already catches a changed entry.",
+    "source": "Lesson 22 checkYourself"
+  },
+  {
+    "id": "cr-L400-044",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The agent's explanation lists an anomaly A99 that no rule reported. What happens to it?",
+    "options": [
+      "It is added to the scorecard as a new finding for the next review",
+      "It triggers a page to on-call for review",
+      "It is rejected: the agent explains, code decides what is an anomaly",
+      "It replaces the rule output for that entry"
+    ],
+    "answer": 2,
+    "explanation": "Audit rules decide and the agent only explains, so unknown anomaly ids are rejected. Letting the agent add findings would make verdicts non-reproducible.",
+    "source": "Lesson 22 checkYourself / concepts"
+  },
+  {
+    "id": "cr-L400-045",
+    "level": "L400",
+    "lesson": 22,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "An attacker deletes entry e2 from a hash-chained log but keeps the stored hashes of e1 and e3. What does this print?",
+    "code": "import hashlib\ndef link(prev, entry):\n    return hashlib.sha256(prev + entry).digest()\nentries, chain, h = [b\"e1\", b\"e2\", b\"e3\"], [], b\"\\0\" * 32\nfor e in entries:\n    h = link(h, e)\n    chain.append(h)\nkept = [(entries[0], chain[0]), (entries[2], chain[2])]\nh, ok = b\"\\0\" * 32, []\nfor e, stored in kept:\n    h = link(h, e)\n    ok.append(h == stored)\nprint(ok)",
+    "options": [
+      "[True, True]",
+      "[False, False]",
+      "[True, False]",
+      "[False, True]"
+    ],
+    "answer": 2,
+    "explanation": "e1 still links to the genesis value, but e3's stored hash was computed over e2's hash, so recomputing from e1 gives a different value. That is the chain_break finding.",
+    "source": "Lesson 22 expectedResults (M3)"
+  },
+  {
+    "id": "cr-L400-046",
+    "level": "L400",
+    "lesson": 22,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Your own test client gets SSLEOFError when calling the capstone KMS. What is the likely cause?",
+    "code": "ctx = ssl.create_default_context(cafile=\"pki/ca.pem\")\nwith socket.create_connection((\"127.0.0.1\", 9443)) as raw:\n    with ctx.wrap_socket(raw, server_hostname=\"kms.local\") as tls:\n        tls.sendall(b'{\"op\": \"unwrap\"}')",
+    "options": [
+      "The KMS certificate expired during the test",
+      "The KEK was retired while the client was still connected to the KMS",
+      "The client used TLS 1.3 instead of TLS 1.2",
+      "It did not load the client certificate and key from the capstone PKI"
+    ],
+    "answer": 3,
+    "explanation": "The KMS requires mTLS and closes the connection when no valid client certificate is presented. Expiry would show a verify error, not an EOF.",
+    "source": "Lesson 22 troubleshooting"
+  },
+  {
+    "id": "cr-L400-047",
+    "level": "L400",
+    "lesson": 22,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Retiring docs-kek:v1 raises PermissionError: KeyInUse ... still wraps 3 record(s). What should you do?",
+    "options": [
+      "Run svc.rewrap() to finish moving records, then retire again",
+      "Delete the 3 records so v1 can be retired",
+      "Force retire; the records will switch over to v2 automatically",
+      "Restore v1 from backup after retiring it"
+    ],
+    "answer": 0,
+    "explanation": "The refusal is the safety check working: finish the rewrap, see the count reach zero, then retire. Forcing it makes those records unreadable, as lesson 12 showed.",
+    "source": "Lesson 22 troubleshooting / expectedResults (M1)"
+  },
+  {
+    "id": "cr-L400-048",
+    "level": "L400",
+    "lesson": 22,
+    "type": "design",
+    "difficulty": 3,
+    "question": "How does the KMS in the capstone know which service is calling?",
+    "options": [
+      "From a service name sent in the JSON request body",
+      "From the client certificate presented in mTLS",
+      "From the caller's source IP address",
+      "From an API key in an environment variable"
+    ],
+    "answer": 1,
+    "explanation": "Identity comes from the verified client certificate, so it cannot be claimed by editing a request. Body fields and IP addresses are easy to fake or change.",
+    "source": "Lesson 22 concepts"
+  }
+]

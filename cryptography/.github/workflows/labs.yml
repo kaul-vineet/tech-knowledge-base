@@ -1,0 +1,215 @@
+name: crypto-labs
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Path of the cryptography KB inside the repository ("." if this folder is the repo root,
+  # e.g. "working/kb/cryptography" otherwise; GitHub only reads workflows from the repo root .github/).
+  DOMAIN_DIR: "."
+
+jobs:
+  labs:
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-latest = Apple-silicon (arm64) like the Mac mini; windows-latest = Windows x64.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash   # Git Bash on Windows, so one script serves all three OSes
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install pinned dependencies
+        working-directory: ${{ env.DOMAIN_DIR }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt   # cryptography==50.0.2
+      - name: Show platform (expect Darwin arm64 / Windows AMD64 / Linux x86_64)
+        run: python -c "import platform; print(platform.system(), platform.machine(), platform.python_version())"
+      - name: Shared local-agent helper (fake model server only, no model download)
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/_shared/local_agent
+        run: python -m unittest -v
+      - name: Run every lab script and its unittest suite
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L100
+        run: |
+          set -e
+          for d in */; do
+            echo "::group::$d"
+            ( cd "$d"
+              for f in *.py; do
+                case "$f" in test_*) ;; *) python "$f" ;; esac
+              done
+              python -m unittest -v )
+            echo "::endgroup::"
+          done
+      # ---- L200 "Build it" (lessons 7-11): same matrix ----
+      - name: Install L200 extras (PyJWT for lesson 11 equivalence test)
+        working-directory: ${{ env.DOMAIN_DIR }}
+        run: python -m pip install -r requirements-L200.txt   # PyJWT==2.15.1
+      - name: Install age CLI for lesson 8 equivalence test (ubuntu/macOS; skipped on Windows)
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update -q && sudo apt-get install -y -q age; fi
+          if [ "$RUNNER_OS" = "macOS" ]; then brew install age; fi
+          command -v age || echo "age not installed: test_age_cli.py will be skipped"
+          command -v openssl && openssl version || echo "no openssl: test_openssl_cli.py will be skipped"
+      - name: Run every L200 lab script, its unittests and the build-task checks (solutions)
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L200
+        run: |
+          set -e
+          for d in */; do
+            echo "::group::$d"
+            ( cd "$d"
+              for f in *.py; do
+                case "$f" in test_*) ;; *) python "$f" ;; esac
+              done
+              python -m unittest -v )
+            echo "::endgroup::"
+          done
+      # ---- L300 "Harden it" (lessons 12-16): same matrix ----
+      - name: Start an OpenBao dev server for lesson 12's live transit test (ubuntu only; container)
+        if: runner.os == 'Linux'
+        run: |
+          docker run -d --name bao --network host docker.io/openbao/openbao:2.7.2 server -dev -dev-root-token-id=root
+          for i in $(seq 1 30); do docker exec -e BAO_ADDR=http://127.0.0.1:8200 bao bao status >/dev/null 2>&1 && break; sleep 1; done
+          docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN=root bao bao secrets enable transit
+          echo "BAO_ADDR=http://127.0.0.1:8200" >> "$GITHUB_ENV"
+          echo "BAO_TOKEN=root" >> "$GITHUB_ENV"   # dev-mode token for a throwaway in-memory server only
+      - name: Install minisign for lesson 14's equivalence test (macOS; skipped elsewhere)
+        if: runner.os == 'macOS'
+        run: brew install minisign
+      - name: Run every L300 lab script, its unittests and the failure-lab proofs (solutions)
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L300
+        run: |
+          set -e
+          for d in */; do
+            echo "::group::$d"
+            ( cd "$d"
+              for f in *.py; do
+                case "$f" in test_*) ;; *) python "$f" ;; esac
+              done
+              python -m unittest -v )
+            echo "::endgroup::"
+          done
+      # ---- L400 "Design it" (lessons 17-21) + capstone 22: same matrix ----
+      - name: Run every L400 lab script, its unittests, fitness functions and failure-lab proofs (solutions)
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L400
+        run: |
+          set -e
+          for d in */; do
+            echo "::group::$d"
+            ( cd "$d"
+              for f in *.py; do
+                case "$f" in test_*) ;; *) python "$f" ;; esac
+              done
+              python -m unittest -v
+              if [ -f test_build_task.py ]; then
+                # the shipped lab file is the unfixed one: the proof MUST fail against it
+                if BUILD_TARGET=mine python -m unittest test_build_task; then echo "unfixed file passed?"; exit 1; fi
+              fi )
+            echo "::endgroup::"
+          done
+      # ---- L500 "Theory & Rigour" (lessons 23-25 labs; 26-27 have no code): same matrix ----
+      - name: Run every L500 theory lab, its unittests and the L500 / question-bank validators
+        working-directory: ${{ env.DOMAIN_DIR }}
+        run: |
+          set -e
+          for d in labs/L500/*/; do
+            echo "::group::$d"
+            ( cd "$d"
+              for f in *.py; do
+                case "$f" in test_*) ;; *) python "$f" ;; esac
+              done
+              python -m unittest -v )
+            echo "::endgroup::"
+          done
+          python research/l500_checks.py        # theorem outputs match content/L500.json; problem answers recomputed
+          python research/check_l500_qbank.py   # qbank L500 + concept inventory rules
+          python research/qbank_checks.py       # every calculation / code-reading answer, L100-L500
+  # ---- Provenance of lesson 15's vendored Wycheproof cases (REVIEW-L300 R3-03) ----
+  # Downloads upstream C2SP/wycheproof and fails if any vendored case is not found verbatim in testvectors_v1/.
+  # A separate job, so a provenance mismatch does not hide lab results; the log records the upstream commit and date.
+  wycheproof-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Download upstream Wycheproof (shallow clone of main) and diff the vendored cases
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L300/15-testable-misuse
+        run: |
+          git clone --depth 1 https://github.com/C2SP/wycheproof.git "$RUNNER_TEMP/wycheproof"
+          REF="$(git -C "$RUNNER_TEMP/wycheproof" log -1 --format='%H %cs')"
+          echo "upstream C2SP/wycheproof main at $REF"
+          python upstream_diff.py --upstream "$RUNNER_TEMP/wycheproof/testvectors_v1" --ref "$REF"
+  # ---- L400 equivalents that need software the sandbox lacks (pending CI) ----
+  l400-equivalents:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install SoftHSM2 and the optional Python packages (liboqs-python builds liboqs on first import)
+        working-directory: ${{ env.DOMAIN_DIR }}
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q softhsm2 cmake ninja-build
+          python -m pip install -r requirements-L400-ci.txt
+      - name: Lesson 18 - liboqs-python interop with cryptography's ML-KEM-768
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L400/18-post-quantum
+        run: |
+          python oqs_crosscheck.py
+          python -m unittest -v test_pending_ci
+      - name: Lesson 19 - SoftHSM2 token, non-exportable key, sign via handle (python-pkcs11)
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L400/19-hsm-pkcs11
+        run: |
+          mkdir -p "$RUNNER_TEMP/softhsm/tokens"
+          echo "directories.tokendir = $RUNNER_TEMP/softhsm/tokens" > "$RUNNER_TEMP/softhsm/softhsm2.conf"
+          export SOFTHSM2_CONF="$RUNNER_TEMP/softhsm/softhsm2.conf"
+          softhsm2-util --init-token --free --label kb-l19 --so-pin 5678 --pin 1234   # throwaway CI token, demo PINs
+          export PKCS11_MODULE="$(ls /usr/lib/softhsm/libsofthsm2.so /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so 2>/dev/null | head -1)"
+          echo "PKCS11_MODULE=$PKCS11_MODULE"
+          python pkcs11_softhsm.py
+          python -m unittest -v test_pending_ci
+  pq-tls-probe:
+    # Lesson 18: a real TLS 1.3 handshake on 127.0.0.1 and the negotiated group. Needs Python 3.15 (SSLSocket.group())
+    # linked to OpenSSL >= 3.5; the test skips (and the log says why) when the runner's Python links an older OpenSSL.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.15"
+      - working-directory: ${{ env.DOMAIN_DIR }}
+        run: python -m pip install -r requirements.txt
+      - working-directory: ${{ env.DOMAIN_DIR }}/labs/L400/18-post-quantum
+        run: |
+          python -c "import ssl; print(ssl.OPENSSL_VERSION)"
+          python pq_tls_probe.py
+          python -m unittest -v test_pending_ci
+  openmls-equivalent:
+    # Lesson 20: the production-grade equivalent (OpenMLS, RFC 9420). Runs upstream's remove-related tests; the test
+    # filter was not run in the sandbox (no Rust toolchain), so a mismatch here is a documentation gap, not a lab failure.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone OpenMLS and run its remove tests
+        run: |
+          git clone --depth 1 https://github.com/openmls/openmls.git "$RUNNER_TEMP/openmls"
+          cd "$RUNNER_TEMP/openmls"
+          echo "openmls main at $(git log -1 --format='%H %cs')"
+          cargo test -p openmls remove

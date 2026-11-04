@@ -1,0 +1,745 @@
+[
+ {
+  "id": "mb-L200-001",
+  "level": "L200",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Board A calls radio.send() once. What does the micro:bit radio guarantee about that message?",
+  "options": [
+   "It is delivered once to every board in range",
+   "It is retried until one board acknowledges it",
+   "Nothing: it is a broadcast with no delivery guarantee",
+   "It reaches only boards that are polling right now"
+  ],
+  "answer": 2,
+  "explanation": "The radio broadcasts small packets to every board on the group with no acknowledgement, so your code must design for loss and validate what arrives. Retries and acks are something you add yourself (lesson 12).",
+  "source": "Lesson 7 overview / concepts"
+ },
+ {
+  "id": "mb-L200-002",
+  "level": "L200",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Your receiver is busy for a while and four messages arrive meanwhile. With the default radio settings, what happens to the fourth?",
+  "options": [
+   "It replaces the oldest message in the queue",
+   "It waits in the sender until the queue has room",
+   "It is merged into the third message",
+   "It is dropped: the receive queue holds 3"
+  ],
+  "answer": 3,
+  "explanation": "The default queue holds 3 messages and a full queue drops new arrivals. Nothing tells the sender, which is why the lab polls every 50 ms.",
+  "source": "Lesson 7 checkYourself"
+ },
+ {
+  "id": "mb-L200-003",
+  "level": "L200",
+  "lesson": 7,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this print?",
+  "code": "KINDS = (\"btn\", \"tmp\")\n\ndef decode(text):\n    parts = text.split(\":\")\n    if len(parts) != 3 or parts[0] not in KINDS:\n        return None\n    try:\n        seq = int(parts[1])\n    except ValueError:\n        return None\n    return parts[0], seq, parts[2]\n\nprint(decode(\"tmp:4:21\"), decode(\"btn:x:A\"), decode(\"tmp:5:2:1\"))",
+  "options": [
+   "('tmp', 4, '21') None None",
+   "('tmp', 4, '21') ('btn', 'x', 'A') None",
+   "('tmp', 4, '21') None ('tmp', 5, '2')",
+   "('tmp', 4, '21') None ('tmp', 5, '2:1')"
+  ],
+  "answer": 0,
+  "explanation": "\"btn:x:A\" fails int() and \"tmp:5:2:1\" splits into 4 fields, so both are rejected; only the first decodes, with seq converted to int. Nothing from the air is trusted.",
+  "source": "Lesson 7 code (decode)"
+ },
+ {
+  "id": "mb-L200-004",
+  "level": "L200",
+  "lesson": 7,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "A packet arrives that was sent with radio.send_bytes(b'\\x02hello'). What does this print?",
+  "code": "import radio\n\ntry:\n    text = radio.receive()\nexcept ValueError:\n    text = \"?\"\nprint(\"got\", text)",
+  "options": [
+   "got hello",
+   "got None",
+   "got ?",
+   "got \\x02hello"
+  ],
+  "answer": 2,
+  "explanation": "receive() only accepts packets with the 01 00 01 string header that radio.send() adds; anything else raises ValueError, which the lab turns into '?'. Without the try, the program would crash.",
+  "source": "Lesson 7 codeWalkthrough (ValueError)"
+ },
+ {
+  "id": "mb-L200-005",
+  "level": "L200",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "With the default radio length of 32 bytes, how many characters of a radio.send() string can arrive? (send() adds a 3-byte header)",
+  "options": [
+   "32 characters",
+   "35 characters",
+   "31 characters",
+   "29 characters"
+  ],
+  "answer": 3,
+  "explanation": "The 3-byte string header counts towards the 32-byte length, leaving 29 characters; longer text is cut. Assuming the header is extra gives 32 or 35.",
+  "source": "Lesson 7 concepts (32-byte packets); radio stub truncation"
+ },
+ {
+  "id": "mb-L200-006",
+  "level": "L200",
+  "lesson": 7,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "Messages arrive with these sequence numbers. Which ones does the lab's duplicate rule pass on?",
+  "code": "last = 0\nout = []\nfor seq in [1, 2, 2, 4, 3, 5]:\n    if seq <= last:\n        continue\n    last = seq\n    out.append(seq)\nprint(out)",
+  "options": [
+   "[1, 2, 4, 3, 5]",
+   "[1, 2, 3, 4, 5]",
+   "[1, 2, 2, 4, 3, 5]",
+   "[1, 2, 4, 5]"
+  ],
+  "answer": 3,
+  "explanation": "seq <= last drops both the duplicate 2 and the late 3, which arrived after 4. The rule cannot reorder, so [1, 2, 3, 4, 5] is impossible.",
+  "source": "Lesson 7 codeWalkthrough (seq <= last_rx)"
+ },
+ {
+  "id": "mb-L200-007",
+  "level": "L200",
+  "lesson": 7,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "The sending board is reset and starts again at sequence number 1. The receiver had last seen 57. What happens?",
+  "options": [
+   "The receiver detects the reset and starts again at 1",
+   "Its messages are ignored until its seq passes 57",
+   "Messages 1-57 are delivered twice to the receiver",
+   "The receiver raises ValueError on the first one"
+  ],
+  "answer": 1,
+  "explanation": "The rule seq <= last_rx treats the restarted numbers as old duplicates. This is the trade-off the walkthrough names; it needs a session id or persisted counter to fix.",
+  "source": "Lesson 7 codeWalkthrough (trade-off)"
+ },
+ {
+  "id": "mb-L200-008",
+  "level": "L200",
+  "lesson": 7,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "Board A runs radio.config(group=7) and board B runs radio.config(group=8). Both poll often. What does B receive from A?",
+  "options": [
+   "Everything, because groups only filter acks",
+   "Everything, with a ValueError for the group",
+   "Nothing: boards only hear their own group",
+   "Only messages shorter than 29 characters"
+  ],
+  "answer": 2,
+  "explanation": "Both boards must use the same group number (0-255) or they ignore each other. 'Same group?' is the first check in the lab's troubleshooting.",
+  "source": "Lesson 7 troubleshooting"
+ },
+ {
+  "id": "mb-L200-009",
+  "level": "L200",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "A classmate's board joins group 7 and sends 'btn:99:A'. What does the lab receiver do?",
+  "options": [
+   "Accepts it: the radio has no authentication",
+   "Rejects it because the radio is encrypted",
+   "Rejects it because the sender is unknown",
+   "Accepts it only if it was sent with send_bytes"
+  ],
+  "answer": 0,
+  "explanation": "Radio messages are neither encrypted nor authenticated, so any well-formed message on the group is accepted. Never send secrets, and validate every message (lesson 19 adds a MAC).",
+  "source": "Lesson 7 caution"
+ },
+ {
+  "id": "mb-L200-010",
+  "level": "L200",
+  "lesson": 8,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "MY_DATA on your board shows two separate header sections. What most likely happened?",
+  "options": [
+   "The log filled up and started a new file",
+   "Two boards wrote to the same MY_DATA file",
+   "Labels or the timestamp unit changed mid-run",
+   "log.add() was called with a dict, not keywords"
+  ],
+  "answer": 2,
+  "explanation": "Set labels and the timestamp unit once, before the first row; changing them starts a new header. A full log raises OSError 28 rather than starting a new section.",
+  "source": "Lesson 8 troubleshooting"
+ },
+ {
+  "id": "mb-L200-011",
+  "level": "L200",
+  "lesson": 8,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "What does log.add() do when the V2 data log is full?",
+  "options": [
+   "Silently overwrites the oldest rows",
+   "Returns False and keeps the row in RAM",
+   "Raises OSError with code 28 (ENOSPC)",
+   "Raises OSError with code 19 (ENODEV)"
+  ],
+  "answer": 2,
+  "explanation": "A full log raises OSError 28, a normal state your code must handle (or call log.delete()). Error 19 is the I2C 'no device' error from lesson 10.",
+  "source": "Lesson 8 checkYourself"
+ },
+ {
+  "id": "mb-L200-012",
+  "level": "L200",
+  "lesson": 8,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What line does this print?",
+  "code": "LABELS = (\"temp\", \"light\")\n\ndef to_csv(t_ms, row):\n    return \",\".join([str(t_ms)] + [str(row[k]) for k in LABELS])\n\nprint(to_csv(1500, {\"light\": 110, \"temp\": 22}))",
+  "options": [
+   "1500,22,110",
+   "1500,110,22",
+   "1.5,22,110",
+   "22,110,1500"
+  ],
+  "answer": 0,
+  "explanation": "Columns follow LABELS (temp, then light) after the time in ms, joined with commas and no quotes. A dict's own order or seconds would break the CSV header.",
+  "source": "Lesson 8 code (to_csv)"
+ },
+ {
+  "id": "mb-L200-013",
+  "level": "L200",
+  "lesson": 8,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "An export script reads serial lines like this. What does it print?",
+  "code": "def parse(line):\n    t, temp, light = line.split(\",\")\n    return int(t), int(temp), int(light)\n\nrows = []\nfor line in [\"time_ms,temp,light\", \"1000,21,90\", \"1.00,22,110\", \"2000,22,95\"]:\n    try:\n        rows.append(parse(line))\n    except ValueError:\n        pass\nprint(len(rows), rows[-1])",
+  "options": [
+   "3 (2000, 22, 95)",
+   "2 (2000, 22, 95)",
+   "4 (2000, 22, 95)",
+   "2 (1, 22, 110)"
+  ],
+  "answer": 1,
+  "explanation": "The header and the mirrored log row '1.00,22,110' both fail int() and are skipped, leaving 2 rows. time_ms must be an integer, which is how the lab tells serial rows from log rows in seconds.",
+  "source": "Lesson 8 checkYourself (export_csv skips '1.00,22,110')"
+ },
+ {
+  "id": "mb-L200-014",
+  "level": "L200",
+  "lesson": 8,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "Where do rows written with log.add() end up on a real V2 board?",
+  "options": [
+   "Only on the serial port as CSV lines",
+   "In MY_DATA.HTM on the MICROBIT drive",
+   "In main.py's folder in the Python Editor",
+   "In a cloud dashboard linked to the board"
+  ],
+  "answer": 1,
+  "explanation": "The V2 log module stores rows on the board, viewable as MY_DATA.HTM on the USB drive. Serial CSV is the lab's separate export path for the simulator.",
+  "source": "Lesson 8 simulatorVsReal"
+ },
+ {
+  "id": "mb-L200-015",
+  "level": "L200",
+  "lesson": 8,
+  "type": "design",
+  "difficulty": 2,
+  "question": "Why does the lab wrap import log in try/except ImportError?",
+  "options": [
+   "log is slow to import and may time out",
+   "log is V2 only, so a V1 falls back to serial CSV",
+   "The simulator blocks imports of the log module",
+   "It hides errors from set_labels() at start-up"
+  ],
+  "answer": 1,
+  "explanation": "On a V1 the import fails, log becomes None, and the lab still prints CSV. Catching ImportError is about board version, not speed or set_labels errors.",
+  "source": "Lesson 8 codeWalkthrough"
+ },
+ {
+  "id": "mb-L200-016",
+  "level": "L200",
+  "lesson": 8,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "You are working only in the browser simulator and need the readings in a spreadsheet. Which path does the lab use?",
+  "options": [
+   "Download MY_DATA.HTM from the simulator",
+   "Print each row as CSV on serial and save it",
+   "Call log.export() to write readings.csv",
+   "Read the rows back with log.get_rows()"
+  ],
+  "answer": 1,
+  "explanation": "The same rows printed as CSV are the export path in the simulator; MY_DATA exists on a real V2 board. log.export() and log.get_rows() are not part of the lab's API.",
+  "source": "Lesson 8 overview"
+ },
+ {
+  "id": "mb-L200-017",
+  "level": "L200",
+  "lesson": 8,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "The log becomes full partway through this loop. What is printed?",
+  "code": "import log\nlog.set_labels(\"temp\")\ntry:\n    for t in range(100):\n        log.add(temp=20 + t % 3)\nexcept OSError as e:\n    print(\"full, errno\", e.args[0])",
+  "options": [
+   "full, errno 19",
+   "Nothing: add() drops extra rows silently",
+   "full, errno 5",
+   "full, errno 28"
+  ],
+  "answer": 3,
+  "explanation": "A full log raises OSError 28 (ENOSPC), which this loop catches and reports. 19 is the I2C no-device code, and the log never drops rows silently.",
+  "source": "Lesson 8 code comment (log.add raises OSError(28))"
+ },
+ {
+  "id": "mb-L200-018",
+  "level": "L200",
+  "lesson": 9,
+  "type": "calculation",
+  "difficulty": 1,
+  "question": "The lab sets duty = level * 1023 // LEVELS with LEVELS = 4. What duty does level 3 give?",
+  "options": [
+   "768",
+   "750",
+   "1023",
+   "767"
+  ],
+  "answer": 3,
+  "explanation": "3 * 1023 = 3069 and 3069 // 4 = 767 (integer division rounds down). 768 is 3/4 of 1024, the off-by-one range.",
+  "source": "Lesson 9 code (duty_for)"
+ },
+ {
+  "id": "mb-L200-019",
+  "level": "L200",
+  "lesson": 9,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "What average voltage does pin2.write_analog(767) give on a 3.3 V board?",
+  "options": [
+   "1.65 V",
+   "2.47 V",
+   "2.51 V",
+   "3.30 V"
+  ],
+  "answer": 1,
+  "explanation": "Average = duty / 1023 x 3.3 V = 767 / 1023 x 3.3 = 2.47 V. 1.65 V is the 50 % value (511).",
+  "source": "Lesson 9 code comment / checkYourself"
+ },
+ {
+  "id": "mb-L200-020",
+  "level": "L200",
+  "lesson": 9,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "You change the lab's PWM to pin2.set_analog_period(5). What is the PWM frequency now?",
+  "options": [
+   "50 Hz",
+   "200 Hz",
+   "5 Hz",
+   "500 Hz"
+  ],
+  "answer": 1,
+  "explanation": "The period is in milliseconds: 1000 / 5 ms = 200 Hz. The lab's 20 ms period gives 50 Hz.",
+  "source": "Lesson 9 codeWalkthrough (set_analog_period)"
+ },
+ {
+  "id": "mb-L200-021",
+  "level": "L200",
+  "lesson": 9,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "What does pin1.write_digital(1) put on the pin?",
+  "options": [
+   "1 V, steady",
+   "3.3 V pulses at 50 % duty",
+   "5 V, steady",
+   "3.3 V, steady"
+  ],
+  "answer": 3,
+  "explanation": "Digital output is either 0 V or 3.3 V. Pulses with a duty cycle come from write_analog (PWM), and the board never outputs 5 V.",
+  "source": "Lesson 9 overview"
+ },
+ {
+  "id": "mb-L200-022",
+  "level": "L200",
+  "lesson": 9,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "The logo is read on six polls as shown. What does this print?",
+  "code": "on, was, n = False, False, 0\nfor touched in [False, True, True, True, False, True]:\n    if touched and not was:\n        on = not on\n        n += 1\n    was = touched\nprint(\"toggles\", n, \"on\", on)",
+  "options": [
+   "toggles 4 on False",
+   "toggles 2 on False",
+   "toggles 1 on True",
+   "toggles 6 on False"
+  ],
+  "answer": 1,
+  "explanation": "Edge detection toggles only when touch starts (poll 2 and poll 6), so 2 toggles ending off. Toggling on every touched poll gives 4, the 'flicker while touching' bug.",
+  "source": "Lesson 9 code (edge detect on is_touched)"
+ },
+ {
+  "id": "mb-L200-023",
+  "level": "L200",
+  "lesson": 9,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "A student wants 'full on' and writes this. What happens?",
+  "code": "pin2.write_analog(1024)",
+  "options": [
+   "ValueError: write_analog accepts 0 to 1023",
+   "The LED is fully on, same as write_analog(1023)",
+   "The value wraps round to 0 and the LED goes off",
+   "TypeError: write_analog needs a float duty"
+  ],
+  "answer": 0,
+  "explanation": "write_analog takes 0-1023 and values outside raise ValueError. 1023 is 100 % duty; nothing wraps.",
+  "source": "Lesson 9 codeWalkthrough"
+ },
+ {
+  "id": "mb-L200-024",
+  "level": "L200",
+  "lesson": 9,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "On a real board, touching pin 0 never registers as a touch, though the logo works. What is the most likely fix?",
+  "options": [
+   "Touch GND as well, or set_touch_mode(CAPACITIVE)",
+   "Call pin0.write_digital(1) before is_touched()",
+   "Use pin0.read_analog() and compare with 512",
+   "Raise the PWM period to 20 ms on pin 0"
+  ],
+  "answer": 0,
+  "explanation": "Pins 0-2 are resistive by default, so you must close the circuit through GND or switch to capacitive mode. The logo is capacitive, which is why it works.",
+  "source": "Lesson 9 troubleshooting"
+ },
+ {
+  "id": "mb-L200-025",
+  "level": "L200",
+  "lesson": 9,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "You want the lab's PWM output to run a small DC motor. What does the lesson say?",
+  "options": [
+   "Connect it to pin 2; write_analog sets its speed",
+   "Use pin 0, which can drive the speaker load",
+   "Power it from pin 1 with write_digital(1)",
+   "Drive it through a motor driver; never exceed 3.3 V on a pin"
+  ],
+  "answer": 3,
+  "explanation": "A pin can only supply small currents at 3.3 V; motors need a driver and their own supply. Connecting a motor directly can damage the board.",
+  "source": "Lesson 9 caution"
+ },
+ {
+  "id": "mb-L200-026",
+  "level": "L200",
+  "lesson": 9,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does the lab's simulator check look only at serial output, not at the pin voltages?",
+  "options": [
+   "Pin values are hidden by the browser for safety",
+   "PWM runs too fast for the simulator to show",
+   "The simulator's pins take touch 0/1 only, no analog",
+   "The stub refuses to record pin outputs"
+  ],
+  "answer": 2,
+  "explanation": "The simulator models pin touch as 0/1 and has no analog input yet, so the harness checks the serial log. The stub does record outputs for the unit tests.",
+  "source": "Lesson 9 concepts / simulatorVsReal"
+ },
+ {
+  "id": "mb-L200-027",
+  "level": "L200",
+  "lesson": 10,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does read_register() call i2c.write(ADDR, bytes([reg])) before i2c.read()?",
+  "options": [
+   "The write sets the pointer register the read returns",
+   "The write wakes the sensor from sleep mode",
+   "The write checks that the address is valid",
+   "I2C needs one write per read to clock the bus"
+  ],
+  "answer": 0,
+  "explanation": "The sensor is a register map: writing the register number moves its pointer, and the next read returns that register's bytes. Without it you read whatever the pointer last pointed to.",
+  "source": "Lesson 10 checkYourself / codeWalkthrough"
+ },
+ {
+  "id": "mb-L200-028",
+  "level": "L200",
+  "lesson": 10,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A TMP102 returns MSB 0x15, LSB 0x80. Using raw = (msb << 4) | (lsb >> 4) and 0.0625 °C per step, what is the temperature?",
+  "options": [
+   "21.5 °C",
+   "344 °C",
+   "86.0 °C",
+   "5.5 °C"
+  ],
+  "answer": 0,
+  "explanation": "raw = 0x158 = 344, and 344 x 0.0625 = 21.5 °C. Forgetting the 0.0625 scale gives 344, and shifting the wrong way gives 86.",
+  "source": "Lesson 10 code (decode_temp)"
+ },
+ {
+  "id": "mb-L200-029",
+  "level": "L200",
+  "lesson": 10,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "The TMP102 returns MSB 0xFF, LSB 0x00 (12-bit two's complement). What temperature does decode_temp() give?",
+  "options": [
+   "-1.0 °C",
+   "255.0 °C",
+   "-0.0625 °C",
+   "-16.0 °C"
+  ],
+  "answer": 0,
+  "explanation": "raw = 0xFF0 = 4080, the sign bit 0x800 is set, so raw - 4096 = -16 and -16 x 0.0625 = -1.0 °C. Skipping the sign step gives 255 °C, the 'values near 256' bug.",
+  "source": "Lesson 10 code (two's complement)"
+ },
+ {
+  "id": "mb-L200-030",
+  "level": "L200",
+  "lesson": 10,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "In a unit test you want the simulated TMP102 to report 30.5 °C. Which two bytes (MSB, LSB) must it return?",
+  "options": [
+   "0x01 0xE8",
+   "0xE8 0x01",
+   "0x1E 0x08",
+   "0x1E 0x80"
+  ],
+  "answer": 3,
+  "explanation": "30.5 / 0.0625 = 488 = 0x1E8; left-justified, the MSB holds bits 11..4 (0x1E) and the LSB holds bits 3..0 in its top nibble (0x80). 0x01 0xE8 is the raw value without the shift.",
+  "source": "Lesson 10 checkYourself (bytes for 25 C)"
+ },
+ {
+  "id": "mb-L200-031",
+  "level": "L200",
+  "lesson": 10,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "On a real board read_temp_c() raises OSError 19. What should you check first?",
+  "options": [
+   "Wiring, power and address, then run i2c.scan()",
+   "The sign handling in decode_temp()",
+   "That the board is a V2 with a speaker",
+   "That the PWM period is 20 ms"
+  ],
+  "answer": 0,
+  "explanation": "Errno 19 (ENODEV) means nothing answered at the address; scan() shows which addresses do answer. Sign handling affects values, not whether the device responds.",
+  "source": "Lesson 10 troubleshooting"
+ },
+ {
+  "id": "mb-L200-032",
+  "level": "L200",
+  "lesson": 10,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "Nothing is connected to the I2C pins. What does this print?",
+  "code": "try:\n    i2c.write(0x48, bytes([0]))\n    print(\"ok\")\nexcept OSError as e:\n    print(\"errno\", e.args[0])",
+  "options": [
+   "ok",
+   "errno 28",
+   "errno 19",
+   "None"
+  ],
+  "answer": 2,
+  "explanation": "With no device at 0x48 the write is not acknowledged and raises OSError 19 (ENODEV). Error 28 is the full data log, not I2C.",
+  "source": "Lesson 10 concepts (OSError 19)"
+ },
+ {
+  "id": "mb-L200-033",
+  "level": "L200",
+  "lesson": 10,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "You run the lab in the browser simulator with nothing else attached. What should you expect?",
+  "options": [
+   "'temp_c=21.50' from the simulator's TMP102",
+   "A crash with an uncaught OSError traceback",
+   "'i2c: no device at 0x48 (errno 19)', no traceback",
+   "A light level reading on the I2C pins"
+  ],
+  "answer": 2,
+  "explanation": "The simulator has no I2C devices, and the lab catches OSError, so it logs the no-device line. The simulated TMP102 exists only in the PC-side stub tests.",
+  "source": "Lesson 10 code comment / simulatorVsReal"
+ },
+ {
+  "id": "mb-L200-034",
+  "level": "L200",
+  "lesson": 10,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "A student decodes the TMP102 bytes like this. At 25 °C the sensor returns 0x19 0x00. What is printed?",
+  "code": "def decode_temp(msb, lsb):\n    raw = (msb << 8) | lsb\n    return raw * 0.0625\n\nprint(decode_temp(0x19, 0x00))",
+  "options": [
+   "25.0",
+   "1600.0",
+   "400.0",
+   "6400.0"
+  ],
+  "answer": 2,
+  "explanation": "(0x19 << 8) | 0 = 6400 and 6400 x 0.0625 = 400: 16 times too big, because the 12-bit value is left-justified and must be shifted by 4, not 8. The correct join gives 25.0.",
+  "source": "Lesson 10 codeWalkthrough (raw = (msb << 4) | (lsb >> 4))"
+ },
+ {
+  "id": "mb-L200-035",
+  "level": "L200",
+  "lesson": 10,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does decode_temp() subtract 4096 when raw & 0x800 is non-zero?",
+  "options": [
+   "0x800 marks an error reading to be discarded",
+   "Bit 11 means the reading is in Fahrenheit",
+   "Bit 11 is the sign bit of a 12-bit two's complement value",
+   "The sensor adds 4096 when its pointer is wrong"
+  ],
+  "answer": 2,
+  "explanation": "In 12-bit two's complement the top bit (0x800) means negative, and subtracting 2^12 = 4096 gives the signed value. Without it, -1 °C reads as 255 °C.",
+  "source": "Lesson 10 codeWalkthrough"
+ },
+ {
+  "id": "mb-L200-036",
+  "level": "L200",
+  "lesson": 11,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "In the lab's game, what happens when an event arrives that has no (state, event) row in TRANSITIONS?",
+  "options": [
+   "The game resets to the idle state",
+   "A KeyError stops the program",
+   "It is ignored: the state stays the same",
+   "The previous action runs again"
+  ],
+  "answer": 2,
+  "explanation": "next_state() uses TRANSITIONS.get(..., (state, None)), so a missing pair means 'ignore'. A plain dict lookup would raise KeyError, which is why .get is used.",
+  "source": "Lesson 11 concepts / codeWalkthrough"
+ },
+ {
+  "id": "mb-L200-037",
+  "level": "L200",
+  "lesson": 11,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "Starting in 'idle', these events arrive in order. What state is printed?",
+  "code": "T = {(\"idle\", \"a\"): \"play\", (\"idle\", \"shake\"): \"play\",\n     (\"play\", \"a\"): \"play\", (\"play\", \"shake\"): \"idle\",\n     (\"play\", \"timeout\"): \"over\", (\"over\", \"a\"): \"idle\"}\n\nstate = \"idle\"\nfor event in [\"shake\", \"a\", \"timeout\", \"shake\", \"a\"]:\n    state = T.get((state, event), state)\nprint(state)",
+  "options": [
+   "over",
+   "idle",
+   "play",
+   "KeyError"
+  ],
+  "answer": 1,
+  "explanation": "shake starts play, a scores a hit, timeout goes to over, shake in over is ignored (no row), and a returns to idle. Expecting KeyError forgets the .get default.",
+  "source": "Lesson 11 code (TRANSITIONS)"
+ },
+ {
+  "id": "mb-L200-038",
+  "level": "L200",
+  "lesson": 11,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "The dot moves one column every 300 ms: dot_x = ((now - started) // 300) % 5. The round started at 1000 ms. Where is the dot at 3700 ms?",
+  "options": [
+   "column 9",
+   "column 2",
+   "column 0",
+   "column 4"
+  ],
+  "answer": 3,
+  "explanation": "(3700 - 1000) // 300 = 9 steps, and 9 % 5 = 4. Forgetting the % 5 gives 9, which is off the display.",
+  "source": "Lesson 11 code (dot_x)"
+ },
+ {
+  "id": "mb-L200-039",
+  "level": "L200",
+  "lesson": 11,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does the lab time the 6 s round with running_time() instead of counting loop passes of sleep(20)?",
+  "options": [
+   "A pass can take longer than 20 ms, so counts drift",
+   "sleep() is not available inside the game loop",
+   "running_time() is faster to call than sleep()",
+   "Counting passes needs more RAM than the board has"
+  ],
+  "answer": 0,
+  "explanation": "Each pass also draws and polls, so 300 passes take more than 6 s; the real clock does not drift. Measuring with running_time() turns time into an exact 'timeout' event.",
+  "source": "Lesson 11 checkYourself / troubleshooting"
+ },
+ {
+  "id": "mb-L200-040",
+  "level": "L200",
+  "lesson": 11,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "In play, holding A down scores many points from one press. What is wrong?",
+  "options": [
+   "The A event uses is_pressed() (level), not was_pressed() (edge)",
+   "TRANSITIONS has two rows for ('play', 'a')",
+   "dot_x() is computed before the event is handled",
+   "ROUND_MS is too long for the dot speed"
+  ],
+  "answer": 0,
+  "explanation": "A level is True on every poll while held, so each poll creates another 'a' event. was_pressed() gives one event per press.",
+  "source": "Lesson 11 troubleshooting"
+ },
+ {
+  "id": "mb-L200-041",
+  "level": "L200",
+  "lesson": 11,
+  "type": "design",
+  "difficulty": 2,
+  "question": "You want B to pause and resume a round. With the lab's table-driven design, what is the cleanest change?",
+  "options": [
+   "Add a global paused flag checked in every handler",
+   "Add rows ('play','b') -> 'paused' and ('paused','b') -> 'play'",
+   "Call sleep() in a loop until B is pressed again",
+   "Replace the table with nested if/else blocks"
+  ],
+  "answer": 1,
+  "explanation": "The behaviour is data, so a new state is new rows (plus emitting 'b' events and adjusting the timer on resume). Extra flags bring back the tangle the table replaced, and sleep() blocks everything.",
+  "source": "Lesson 11 overview / codeWalkthrough"
+ },
+ {
+  "id": "mb-L200-042",
+  "level": "L200",
+  "lesson": 11,
+  "type": "code-reading",
+  "difficulty": 1,
+  "question": "What does this print?",
+  "code": "TRANSITIONS = {(\"over\", \"a\"): (\"idle\", None),\n               (\"play\", \"timeout\"): (\"over\", \"score\")}\n\ndef next_state(state, event):\n    return TRANSITIONS.get((state, event), (state, None))\n\nprint(next_state(\"over\", \"shake\"))",
+  "options": [
+   "('idle', None)",
+   "('over', 'score')",
+   "None",
+   "('over', None)"
+  ],
+  "answer": 3,
+  "explanation": "There is no ('over', 'shake') row, so .get returns the default: stay in 'over' with no action. 'idle' would need a matching row.",
+  "source": "Lesson 11 checkYourself"
+ },
+ {
+  "id": "mb-L200-043",
+  "level": "L200",
+  "lesson": 11,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "The stub tests check that a round ends at exactly 6000 ms, but the simulator harness checks only the printed transitions. Why the difference?",
+  "options": [
+   "The simulator has no running_time() function",
+   "In the stub time moves only with sleep(); the simulator runs in real time",
+   "Transitions are printed only in the simulator",
+   "The stub cannot run the transition table"
+  ],
+  "answer": 1,
+  "explanation": "The stub's virtual clock makes timing exact and repeatable, while the simulator's real time varies with the browser. So the harness asserts the order of transitions, not milliseconds.",
+  "source": "Lesson 11 simulatorVsReal"
+ }
+]

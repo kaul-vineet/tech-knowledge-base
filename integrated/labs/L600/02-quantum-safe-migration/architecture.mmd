@@ -1,0 +1,31 @@
+flowchart LR
+  subgraph Q["quantum-computing"]
+    SIM["shor_sim.py<br/>order finding N=15, 21<br/>(qsim statevector, L500 #25)"]
+    EST["estimates.py<br/>published RSA-2048 estimates<br/>(GE2019, G2025, L400 #19 formulas)"]
+  end
+  subgraph C["cryptography"]
+    INV["inventory.py<br/>AST + config scanner<br/>(quantum L400 #21 scanner)"]
+    ADP["adapters.py<br/>X25519 | X25519MLKEM768 (L400 #18)<br/>Ed25519 | ML-DSA-65/87 | AES-256-GCM"]
+    LINT["agility_lint (crypto L400 #17)"]
+  end
+  subgraph A["application-architecture"]
+    PLAN["migration_plan.py<br/>Mosca x + y > z, priorities"]
+    REG["crypto_registry.py<br/>ports: kex / sig / aead<br/>policy + AUDIT"]
+    FLAGS["flags.json<br/>owned, expiring flags (L400 #20)"]
+    SVC["migrated/messaging/channel.py<br/>(service: names no algorithm)"]
+    FLEET["fleet.py<br/>v1 / v2 servers, rollout phases"]
+  end
+  REPO[("sample_repo/<br/>services + config<br/>services.json (x, y)")]
+  WIRE{{"wire.py + Tap<br/>bytes on the wire"}}
+  SIM -- "S1: evidence of mechanism only" --> PLAN
+  EST -- "S1: labelled published numbers" --> PLAN
+  REPO --> INV
+  INV -- "S2: findings -> owned plan rows" --> PLAN
+  SVC -- "asks by purpose" --> REG
+  FLAGS --> REG
+  REG --> ADP
+  SVC -- "handshake + data" --> WIRE
+  WIRE --> FLEET
+  REG -. "S3: offers + sizes == registry" .- WIRE
+  FLAGS -. "S4: pq_required vs v1 servers" .- FLEET
+  LINT -. "F3 static" .- SVC

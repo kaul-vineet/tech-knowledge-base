@@ -1,0 +1,139 @@
+[
+ {
+  "id": "03-mac-01",
+  "level": "L600",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Experiment 3 runs a Sobol' screening of the 4 help-desk inputs at base size n = 8192, with 1,000 simulated customers per run. How many simulated customers does that one size cost?",
+  "options": [
+   "40,960,000",
+   "49,152,000",
+   "57,344,000",
+   "32,768,000"
+  ],
+  "answer": 1,
+  "explanation": "The Saltelli design needs n(d + 2) = 8192 x 6 = 49,152 runs (A, B and one AB_i matrix per input), each of 1,000 customers. 8192 x 5 is the Morris-style count n(d + 1), not Sobol'.",
+  "source": "integrated/labs/L600/03-agent-driven-simulation/mac_mini/README.md Experiment 3; pipeline._screening (runs = size x (d + 2))"
+ },
+ {
+  "id": "03-mac-02",
+  "level": "L600",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "The overnight coverage study gives coverage 0.930 at rho 0.9 from 2,000 independent experiments. Using z = (coverage - 0.95) / sqrt(0.95 x 0.05 / 2000), what is z (2 decimals) and what does it suggest?",
+  "options": [
+   "-1.03: consistent with 95 %",
+   "-0.42: consistent with 95 %",
+   "-4.10: clearly below 95 %",
+   "-2.00: borderline, rerun"
+  ],
+  "answer": 2,
+  "explanation": "The binomial standard error at 95 % with 2,000 trials is 0.00487, so a 2-point shortfall is about 4.1 standard errors: the CI procedure under-covers at rho 0.9. Treating 0.93 as 'close enough' ignores how small the standard error is with 2,000 experiments.",
+  "source": "integrated/labs/L600/03-agent-driven-simulation/mac_mini/README.md Experiment 2 (z_vs_95)"
+ },
+ {
+  "id": "03-mac-03",
+  "level": "L600",
+  "lesson": 3,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "overnight_sweep.py prints the same values_sha256_16 with --workers 1 and --workers 10. Why is that guaranteed?",
+  "options": [
+   "Each run's seed comes from (root, experiment, replication), and pool.map returns results in task order",
+   "The spawn start method copies the parent's random state into every worker process",
+   "numpy's global random generator is reseeded once before the pool starts",
+   "The hash only covers the coverage rates, which are rounded to four decimals"
+  ],
+  "answer": 0,
+  "explanation": "model.seed_for derives a SeedSequence child from the task's identity, never from the worker, and map preserves order, so splitting the work differently cannot change any value. Copying one random state into each worker would make workers repeat the same stream.",
+  "source": "integrated/labs/L600/03-agent-driven-simulation/mac_mini/README.md Experiment 2; overnight_sweep.py docstring"
+ },
+ {
+  "id": "03-mac-04",
+  "level": "L600",
+  "lesson": 3,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "On the Mac, compare_models.py shows a real model with proposals 3, contract_rejected 0 and claims_dropped 0: it silently skipped the lam 0.97 comparison. What is the right conclusion?",
+  "options": [
+   "The model is safe, so the contract gate can be relaxed for it",
+   "The model is the best one and should replace the fake in the scorecard",
+   "The claim checker is broken because it dropped nothing",
+   "No gate was exercised; M2 needs a scripted bad proposal instead of relying on the model"
+  ],
+  "answer": 3,
+  "explanation": "Zero rejections can mean a careful model or an untested gate; a seam test must not depend on a model choosing to misbehave. Relaxing the gate because one model behaved once confuses the proposer with the decider.",
+  "source": "integrated/labs/L600/03-agent-driven-simulation/mac_mini/README.md Experiment 1 (how to read it); KNOWN-GAPS (M2 expects a rejection)"
+ },
+ {
+  "id": "03-mac-05",
+  "level": "L600",
+  "lesson": 3,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "compare_models.py exits 1 and prints GATE VIOLATION for one model whose row has numbers_found 7 and published_traced 6. Where is the bug?",
+  "options": [
+   "In the model: it invented a number, which is expected behaviour",
+   "In the claim checker or registry: a number reached the published text without tracing to a run",
+   "In Ollama: the endpoint returned the wrong token count",
+   "In the budget gate: it let the model spend more than 300,000 customers"
+  ],
+  "answer": 1,
+  "explanation": "Models are allowed to invent numbers; the checker must drop them. An untraced number in the PUBLISHED text means the deterministic side failed, which is why the script treats it as a gate failure rather than a model score.",
+  "source": "integrated/labs/L600/03-agent-driven-simulation/mac_mini/README.md Experiment 1; compare_models.py (GATE VIOLATION rule)"
+ },
+ {
+  "id": "03-mac-06",
+  "level": "L600",
+  "lesson": 3,
+  "type": "design",
+  "difficulty": 2,
+  "question": "export_rejections.py builds LoRA data from rejected proposals but skips those refused only by the budget gate. Why?",
+  "options": [
+   "Budget refusals depend on what ran earlier in the session, so the proposal alone does not determine the label",
+   "mlx-lm cannot train on messages that contain numbers above 100,000",
+   "Budget refusals are always caused by Ollama timeouts",
+   "The contract would label them as invalid JSON"
+  ],
+  "answer": 0,
+  "explanation": "A training label must be a function of the input; the same sobol 64 proposal is fine in a fresh session and refused after other jobs spent the budget. Contract errors, by contrast, are recomputed from the proposal alone with contract.validate.",
+  "source": "integrated/labs/L600/03-agent-driven-simulation/mac_mini/README.md Optional LoRA experiment; export_rejections.py"
+ },
+ {
+  "id": "03-mac-07",
+  "level": "L600",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "SIM_BUDGET is 300,000 customers and a Sobol' screening run uses 1,000 customers with d = 4 inputs. What is the largest base size n the budget allows in a fresh session?",
+  "options": [
+   "75",
+   "60",
+   "64",
+   "50"
+  ],
+  "answer": 3,
+  "explanation": "n x (d + 2) x 1,000 <= 300,000 gives n <= 50. That is why the brief's sobol 64 (384,000 customers) is refused by the budget gate, and why raising the schema minimum must move together with the budget.",
+  "source": "integrated/labs/L600/03-agent-driven-simulation/mac_mini/README.md Experiment 3 (decides)"
+ },
+ {
+  "id": "03-mac-08",
+  "level": "L600",
+  "lesson": 3,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print?",
+  "code": "import math\nexperiments, covered = 500, 481\nrate = covered / experiments\nse = math.sqrt(0.95 * 0.05 / experiments)\nprint(round(rate, 3), round((rate - 0.95) / se, 2))",
+  "options": [
+   "0.962 0.52",
+   "0.95 0.0",
+   "0.962 1.23",
+   "0.962 2.46"
+  ],
+  "answer": 2,
+  "explanation": "481/500 = 0.962 and the standard error is sqrt(0.0475/500) = 0.00975, so z = 0.012/0.00975 = 1.23: consistent with 95 % coverage. Over-coverage within 2 standard errors is not a problem to fix.",
+  "source": "integrated/labs/L600/03-agent-driven-simulation/mac_mini/README.md Experiment 2; overnight_sweep.coverage"
+ }
+]

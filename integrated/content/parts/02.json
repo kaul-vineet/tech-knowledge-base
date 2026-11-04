@@ -1,0 +1,720 @@
+{
+ "id": "02-quantum-safe-migration",
+ "number": 2,
+ "level": "L600",
+ "title": "Quantum-safe migration: from Shor in a simulator to a crypto inventory",
+ "phase": "Integrate it",
+ "category": "Integrated project",
+ "combines": [
+  "quantum-computing",
+  "cryptography",
+  "application-architecture"
+ ],
+ "description": "Run Shor's order finding for N = 15 and 21 on a statevector, put published RSA-2048 estimates next to it without extrapolating, inventory a sample codebase's public-key crypto, rank it with Mosca's inequality, and move one service to hybrid X25519MLKEM768 + ML-DSA-65 behind a registry with flag-driven rollout.",
+ "outcome": "You can run and honestly scope a toy Shor experiment, build a code + config crypto inventory and a prioritised migration plan, migrate a service behind a crypto-agility port, and prove the seams with wire-level contract tests, fitness functions and a reproducible failure lab.",
+ "environment": "Python 3.12 + numpy + cryptography 50.0.2 (ML-KEM, ML-DSA) on macOS (Apple silicon) or Windows 11; quantum topic's numpy statevector simulator (qsim) instead of hardware; Qiskit 2.x optional (CI cross-check).",
+ "estimatedTime": "4-6 hours",
+ "overview": [
+  "Migration to post-quantum cryptography fails at the joins between disciplines: a toy quantum result read as a timeline, an inventory finding no plan picks up, a service that looks migrated in code but negotiates X25519 on the wire.",
+  "This project wires three topics together and tests each join: quantum evidence -> risk model, inventory -> plan, agility layer <-> wire format, rollout flags <-> crypto policy."
+ ],
+ "prerequisites": [
+  "quantum-computing L500 #25 (order finding, QFT) and L400 #19, #21",
+  "cryptography L400 #17 (crypto agility) and #18 (ML-KEM, ML-DSA, hybrids)",
+  "application-architecture L200 #7 (ports and adapters) and L400 #20 (flags, fitness over time)",
+  "A venv with numpy and cryptography==50.0.2"
+ ],
+ "designBrief": {
+  "context": "Six services and three config files use RSA, ECDH, ECDSA, X25519 and Ed25519. Messaging carries patient messages that must stay confidential for 12 years; traffic may be recorded today. Servers are upgraded one at a time, so v1 (X25519 only) and v2 servers coexist for weeks. Management asks 'when does RSA break - your simulator factored 21?'.",
+  "constraints": [
+   "0 claims about RSA-2048 that do not quote a published source; z (years to a CRQC) is a labelled assumption",
+   "inventory recall = precision = 1.0 against the hand-written ground truth (10 uses; docstrings and comments are not uses)",
+   "0 classical-only key exchanges for data with x + y > z outside a dated baseline",
+   "client first flight <= 1,400 B and handshake <= 6,144 B",
+   "0 algorithm names in service code; >= 1 registry resolution per handshake",
+   "0 classical sessions for messaging once pq_required is on, even with a v1 server left",
+   "every feature flag owned and not expired (fake clock 2026-10-30)"
+  ],
+  "question": "In what order do we migrate, and how do we move messaging to a quantum-safe handshake through a crypto-agility layer and a mixed-version rollout - and prove it on the wire, not just in the code?"
+ },
+ "architecture": {
+  "diagram": "labs/L600/02-quantum-safe-migration/architecture.mmd",
+  "summary": "shor_sim.py runs order finding on the quantum topic's qsim (12 and 15 qubits, compiled oracle, inverse QFT from L500 #25) and estimates.py holds only cited RSA-2048 estimates; both feed the risk model as evidence, never as z. inventory.py reuses quantum L400 #21's AST scanner plus config and registry-call rules over sample_repo/; migration_plan.py joins findings with services.json (x, y) and applies x + y > z against a labelled Horizon. The migrated messaging channel names no algorithm: it asks crypto_registry.py (policy + owned, expiring flags from app-arch L400 #20) for adapters (X25519, X25519MLKEM768 from cryptography L400 #18, Ed25519, ML-DSA-65/87, AES-256-GCM). fleet.py drives v1/v2 servers through four rollout phases while wire.Tap records every flight; seams.py and fitness.py judge the result and run_project.py prints the scorecard."
+ },
+ "buildsOn": [
+  {
+   "topic": "quantum-computing",
+   "lesson": 25,
+   "title": "Foundations III: algorithms and complexity",
+   "uses": "theorems.qft_ops / inverse_ops for the inverse QFT, order(), and order_finding_distribution() as the closed-form cross-check"
+  },
+  {
+   "topic": "quantum-computing",
+   "lesson": 9,
+   "title": "The QFT as a building block",
+   "uses": "the period-reading idea behind order finding and the shared numpy statevector simulator (labs/_shared/qsim)"
+  },
+  {
+   "topic": "quantum-computing",
+   "lesson": 19,
+   "title": "Resource estimation: logical vs physical qubits and feasibility",
+   "uses": "estimate_lab.rsa_logical() to evaluate Gidney-Ekera's published formulas at n = 2048"
+  },
+  {
+   "topic": "quantum-computing",
+   "lesson": 21,
+   "title": "Quantum and post-quantum: crypto inventory and migration plan",
+   "uses": "solution_scanner.scan_python() - the AST inventory for Python code, extended here with config and registry rules"
+  },
+  {
+   "topic": "cryptography",
+   "lesson": 18,
+   "title": "Post-quantum cryptography in practice: ML-KEM, ML-DSA and hybrids",
+   "uses": "pq_hybrid (RFC 10024 share layout, derive) and solution_strict.client_finish (no silent fallback) inside the hybrid adapter"
+  },
+  {
+   "topic": "cryptography",
+   "lesson": 17,
+   "title": "Crypto agility: versioned envelopes, negotiation and dual signing",
+   "uses": "agility_lint.scan_source() as the static half of fitness F3; the algorithm-named-in-the-header envelope idea in wire.py"
+  },
+  {
+   "topic": "application-architecture",
+   "lesson": 7,
+   "title": "Hexagonal architecture: ports and adapters",
+   "uses": "ports named by purpose (key exchange, signature, AEAD) with adapters behind a registry"
+  },
+  {
+   "topic": "application-architecture",
+   "lesson": 20,
+   "title": "Evolutionary architecture: expand/contract migrations, API versions, flags, fitness over time",
+   "uses": "flags.Flags (owner, expiry, runtime override) and gate_flags() for the rollout and fitness F4"
+  }
+ ],
+ "seams": [
+  {
+   "between": "quantum-computing ↔ cryptography (risk model)",
+   "contract": "Simulator results cross as scoped evidence {N, qubits, gates, p_success, scope}; z crosses only as a Horizon(z, source in {planning-assumption, policy date}); RSA-2048 statements must cite GE2019/G2025.",
+   "risk": "Over-claiming: reading 'factored 21' as safety or extrapolating qubit counts into a date; a too-large z silently empties the P1 list (z = 15 -> 0 items).",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_seam_quantum_risk.py"
+  },
+  {
+   "between": "cryptography inventory ↔ application-architecture plan",
+   "contract": "Findings {file, line, algorithm, usage, service, pq} are joined with services.json (owner, x, y); one plan row per finding; unowned files become P1-review.",
+   "risk": "A finding outside every service path disappears in the join; lifetimes from the wrong service mis-rank HNDL exposure.",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_seam_inventory_plan.py"
+  },
+  {
+   "between": "application-architecture agility layer ↔ cryptography wire format",
+   "contract": "On the wire, messaging offers exactly registry.expected_offers() and every share/signature has its adapter's advertised size (1216/1120 B hybrid, 3309 B ML-DSA-65); >= 1 client registry resolution per handshake.",
+   "risk": "Code that bypasses the registry (dynamic import, library default) negotiates classical X25519 while every static check stays green.",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_seam_wire_contract.py"
+  },
+  {
+   "between": "application-architecture rollout flags ↔ cryptography policy",
+   "contract": "pq_required.messaging changes client offers and v2 server acceptance; it may only be switched on for an all-v2 fleet (can_require_pq); with it on, a leftover v1 server is refused, never downgraded.",
+   "risk": "A compatibility shim re-adds X25519 and a v1 server accepts it: silent downgrade of 12-year data.",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_seam_rollout_downgrade.py"
+  }
+ ],
+ "milestones": [
+  {
+   "title": "M1 Shor order finding on a statevector (N = 15, 21)",
+   "deliverable": "shor_sim.py: 12/15-qubit runs, gate counts, P(success per run) 0.5 / 0.3222, seeded shots, CX/CCX oracle for N = 15",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_m1_shor.py"
+  },
+  {
+   "title": "M2 Published estimates, labelled",
+   "deliverable": "estimates.py: GE2019 and G2025 verbatim with assumptions, GE2019 formula at n = 2048, NIST IR 8547 timeline; claim checker",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_m2_estimates.py"
+  },
+  {
+   "title": "M3 Crypto inventory (code + config)",
+   "deliverable": "inventory.py: 10 findings, recall = precision = 1.0; registry calls reported as what they resolve to",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_m3_inventory.py"
+  },
+  {
+   "title": "M4 Mosca risk + prioritised plan",
+   "deliverable": "migration_plan.py: P1 = messaging X25519, payments RSA-3072 and TLS groups; records (7 + 3 = 10) P2-kex",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_m4_plan.py"
+  },
+  {
+   "title": "M5 Hybrid X25519MLKEM768 + ML-DSA-65 behind the registry, flag-driven rollout",
+   "deliverable": "migrated messaging channel, registry, adapters, fleet: all-v1 / mixed / all-v2 / rollback-v1 phases",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_m5_agility.py"
+  }
+ ],
+ "rubric": [
+  {
+   "criterion": "Honest quantum claims",
+   "measure": "claims checked by estimates.check_claims; sim result passed as z",
+   "pass": "0 bad claims; TypeError for the sim result (S1)"
+  },
+  {
+   "criterion": "Inventory quality",
+   "measure": "recall/precision vs EXPECTED_INVENTORY.json",
+   "pass": "1.0 / 1.0 (M3)"
+  },
+  {
+   "criterion": "Risk ordering",
+   "measure": "plan priorities with z = 10",
+   "pass": "3 P1 before, 2 after; records at the boundary is P2-kex (M4)"
+  },
+  {
+   "criterion": "Quantum-safe messaging",
+   "measure": "sessions in the all-v2 phase",
+   "pass": "6/6 X25519MLKEM768 with ML-DSA-65 transcript signatures (M5)"
+  },
+  {
+   "criterion": "No silent downgrade",
+   "measure": "classical sessions with pq_required on and a v1 server left",
+   "pass": "0 (2 refusals) (S4)"
+  },
+  {
+   "criterion": "Integration proven on the wire",
+   "measure": "S3 + F3 in every rollout phase; --inject bypass",
+   "pass": "pass normally; exit 1 with the bypass"
+  }
+ ],
+ "fitnessFunctions": [
+  {
+   "what": "No classical-only key exchange in the inventory for data with x + y > z, outside a dated baseline (ratchet)",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_fitness.py::TestFitness::test_f1_after_migration_passes_before_fails",
+   "threshold": "0 violations; baseline entries fail after their due date (2027-06-30 / 2027-03-31)"
+  },
+  {
+   "what": "Handshake byte budget",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_fitness.py::TestFitness::test_f2_budget",
+   "threshold": "client flight <= 1,400 B; client + server hello <= 6,144 B (measured 1,352 / 5,871)"
+  },
+  {
+   "what": "All services resolve algorithms via the registry (static lint + runtime resolutions per handshake)",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_fitness.py::TestFitness::test_f3_lint_flags_the_unmigrated_service",
+   "threshold": "0 static violations; client kex resolutions >= handshakes in every phase"
+  },
+  {
+   "what": "Feature flags owned and not expired",
+   "test": "labs/L600/02-quantum-safe-migration/tests/test_fitness.py::TestFitness::test_f4_flags_expire_on_the_fake_clock",
+   "threshold": "0 expired, 0 unowned"
+  }
+ ],
+ "decisionRecords": [
+  "labs/L600/02-quantum-safe-migration/decisions/ADR-0001-hybrid-x25519mlkem768-for-messaging.md",
+  "labs/L600/02-quantum-safe-migration/decisions/ADR-0002-registry-ports-and-flags.md",
+  "labs/L600/02-quantum-safe-migration/decisions/ADR-0003-mosca-horizon-is-a-labelled-assumption.md",
+  "labs/L600/02-quantum-safe-migration/decisions/ADR-0004-runtime-wire-contract.md"
+ ],
+ "glossary": [
+  {
+   "term": "order finding",
+   "meaning": "Finding the smallest r with a^r = 1 (mod N); Shor turns it into factors via gcd(a^(r/2) - 1, N)."
+  },
+  {
+   "term": "compiled oracle",
+   "meaning": "A modular-multiplication circuit built using answers (a^(2^j) mod N) that a real attack would have to compute."
+  },
+  {
+   "term": "Mosca's inequality",
+   "meaning": "If secrecy years x plus migration years y exceed years to a quantum computer z, data is exposed now."
+  },
+  {
+   "term": "harvest now, decrypt later (HNDL)",
+   "meaning": "Recording encrypted traffic today to decrypt it once key establishment can be broken."
+  },
+  {
+   "term": "X25519MLKEM768",
+   "meaning": "RFC 10024 TLS 1.3 hybrid group (0x11EC): ML-KEM-768 + X25519, 1216 B client / 1120 B server share."
+  },
+  {
+   "term": "crypto-agility registry",
+   "meaning": "The one place that maps a purpose (key exchange for messaging) to an algorithm via policy and flags."
+  },
+  {
+   "term": "seam test",
+   "meaning": "A test of the contract where two subsystems meet, run on their real exchanged data."
+  },
+  {
+   "term": "ratchet baseline",
+   "meaning": "A list of accepted exceptions that may shrink but not grow, each with a due date."
+  }
+ ],
+ "steps": [
+  {
+   "title": "Set up the venv",
+   "detail": "Create a venv in the kb folder and install numpy and cryptography 50.0.2 (ML-KEM, ML-DSA).",
+   "mac": "python3 -m venv .venv && source .venv/bin/activate && pip install numpy cryptography==50.0.2",
+   "windows": "py -3.12 -m venv .venv; .venv\\Scripts\\Activate.ps1; pip install numpy cryptography==50.0.2",
+   "expected": "python -c \"from cryptography.hazmat.primitives.asymmetric import mlkem, mldsa\" prints nothing",
+   "ifNot": "Upgrade pip; on Windows run Set-ExecutionPolicy -Scope Process RemoteSigned before activating."
+  },
+  {
+   "title": "Run the scorecard",
+   "detail": "From integrated/labs/L600/02-quantum-safe-migration run the end-to-end project.",
+   "mac": "cd integrated/labs/L600/02-quantum-safe-migration && python run_project.py",
+   "windows": "cd integrated\\labs\\L600\\02-quantum-safe-migration; python run_project.py",
+   "expected": "{\"scorecard\": {\"milestones\": \"5/5\", \"seams\": \"4/4\", \"fitness\": \"4/4\"}, \"inject\": null, \"all_pass\": true, \"decided_by\": \"code\"}",
+   "ifNot": "Read the first line with \"pass\": false; each has its own test in tests/."
+  },
+  {
+   "title": "Read the quantum evidence (M1, M2, S1)",
+   "detail": "Compare the simulated N = 15 / 21 runs with the cited RSA-2048 lines; note the 'scope' and the compiled-oracle gate counts.",
+   "mac": "python shor_sim.py && python estimates.py",
+   "windows": "python shor_sim.py; python estimates.py",
+   "expected": "N = 15: 12 qubits, p_success_per_run 0.5; N = 21: 15 qubits, 0.3222; matches_L500_fft true",
+   "ifNot": "MemoryError at 15 qubits: pass an explicit |0> state to sv.run (see troubleshooting)."
+  },
+  {
+   "title": "Inventory and plan (M3, M4, S2)",
+   "detail": "Scan before/after and print the prioritised plan with x, y, z and slack.",
+   "mac": "python inventory.py && python migration_plan.py",
+   "windows": "python inventory.py; python migration_plan.py",
+   "expected": "{\"stage\": \"before\", \"summary\": {\"P1\": 3, \"P2-kex\": 2, \"P2-sig\": 3, \"none\": 2}} ... after: P1 2, done 2",
+   "ifNot": "A finding with service 'unowned' means a path is missing from sample_repo/services.json."
+  },
+  {
+   "title": "Failure lab: inject the bypass",
+   "detail": "Reproduce the hard-coded fast path, then the failing seam test, then the passing one.",
+   "mac": "python run_project.py --inject bypass; cd tests && INJECT=bypass python -m unittest test_seam_wire_contract; python -m unittest test_seam_wire_contract",
+   "windows": "python run_project.py --inject bypass; cd tests; $env:INJECT='bypass'; python -m unittest test_seam_wire_contract; Remove-Item Env:INJECT; python -m unittest test_seam_wire_contract",
+   "expected": "exit 1 with S3/F3 failing (F1 and M3 still pass); FAILED (failures=2) then OK",
+   "ifNot": "If S3 passes with INJECT=bypass, check that the variable is set in the same shell (PowerShell: $env:INJECT)."
+  },
+  {
+   "title": "Run all tests",
+   "detail": "Milestones, seams, fitness, failure lab, build task, try it and end-to-end runs.",
+   "mac": "python -m unittest discover -s tests",
+   "windows": "python -m unittest discover -s tests",
+   "expected": "Ran 45 tests ... OK (skipped=1)",
+   "ifNot": "The one skip is the Qiskit cross-check; install qiskit to run it."
+  }
+ ],
+ "codeLanguage": "python",
+ "code": "\"\"\"L600 #02 - Quantum-safe migration: from Shor in a simulator to a crypto inventory (end-to-end runner).\n\nRun:  python run_project.py                    milestones, seams and fitness functions as JSON lines; exit 1 on any fail\n      python run_project.py --inject bypass     failure lab: messaging's \"fast path\" skips the registry\n      python run_project.py --inject downgrade  rollout fault: a compat shim re-adds X25519 when PQ is required\nnumpy + cryptography 50.0.2 + stdlib; Qiskit not needed (qsim statevector). Seeded; flags/baseline use a fake clock.\n\"\"\"\nimport argparse\nimport json\nimport sys\n\nimport crypto_registry as registry\nimport estimates\nimport fitness\nimport fleet\nimport inventory\nimport migration_plan\nimport seams\nimport shor_sim\nimport wire\n\nPHASES = [(\"all-v1\", [1, 1, 1], False), (\"mixed\", [2, 2, 1], False), (\"all-v2\", [2, 2, 2], True),\n          (\"rollback-v1\", [2, 2, 1], True)]          # last phase: one server rolled back while PQ is required\n\n\ndef collect(inject=None):\n    sims = [shor_sim.shor(15, 7), shor_sim.shor(15, 7, gate_level=True), shor_sim.shor(21, 2)]\n    expected = json.loads((registry.HERE / \"EXPECTED_INVENTORY.json\").read_text(encoding=\"utf-8\"))[\"before\"]\n    variant = inject or \"migrated\"\n    folder = fleet.FOLDERS[variant]\n    before, after = inventory.scan(\"before\"), inventory.scan(\"after\", messaging=folder)\n    registry.reset()\n    channel, phases, all_flights = fleet.load_channel(variant), {}, wire.Tap()\n    for name, versions, required in PHASES:\n        registry.AUDIT.clear()\n        registry.FLAGS.set(\"pq_required.messaging\", required)\n        servers = fleet.make_fleet(versions)\n        stats = fleet.run_traffic(channel, servers)\n        stats.update(servers=servers, s3=seams.s3_agility_to_wire(stats[\"tap\"]),\n                     f3=fitness.f3_registry_only(registry.HERE / folder / \"channel.py\", stats[\"tap\"]))\n        all_flights.flights += stats[\"tap\"].flights\n        phases[name] = stats\n    registry.reset()\n    return {\"sims\": sims, \"expected\": expected, \"before\": before, \"after\": after, \"phases\": phases, \"tap\": all_flights}\n\n\ndef milestones(c):\n    s15, s15g, s21 = c[\"sims\"]\n    score = inventory.score(c[\"before\"], c[\"expected\"])\n    plan_b, plan_a = migration_plan.plan(c[\"before\"]), migration_plan.plan(c[\"after\"])\n    msg_after = sorted({r[\"priority\"] for r in plan_a if r[\"service\"] == \"messaging\" and r[\"usage\"] != \"symmetric\"})\n    ph = c[\"phases\"]\n    sessions = {k: v[\"sessions\"] for k, v in ph.items()}\n    return [\n        (\"M1 Shor order finding on a statevector (N = 15, 21)\",\n         s15[\"factors\"] == [3, 5] and s21[\"factors\"] == [3, 7] and s15g[\"p_success_per_run\"] == s15[\"p_success_per_run\"]\n         and all(shor_sim.matches_fft_shortcut(s) for s in c[\"sims\"]),\n         {f\"N={s['N']}{' gate-level' if 'ccx' in s['gates'] else ''}\": {\"qubits\": s[\"qubits\"], \"p_success\": s[\"p_success_per_run\"],\n          \"successes\": f\"{s['successes']}/{s['shots']}\", \"factors\": s[\"factors\"], \"oracle_gates\": {k: v for k, v in s[\"gates\"].items()\n          if k in (\"cx\", \"ccx\", \"controlled_mult_permutations\")}} for s in c[\"sims\"]}),\n        (\"M2 published estimates, labelled\", not estimates.check_claims(estimates.claims(c[\"sims\"])),\n         {\"RSA-2048\": {k: f\"{v['physical_qubits']}, {v['runtime']}\" for k, v in estimates.CITED.items()},\n          \"GE2019_formula_logical_qubits\": estimates.ge_formula()[\"logical_qubits\"],\n          \"NIST_IR_8547\": estimates.NIST_IR_8547[\"timeline\"]}),\n        (\"M3 crypto inventory (code + config)\", score[\"recall\"] == 1.0 and score[\"precision\"] == 1.0,\n         {\"findings_before\": len(c[\"before\"]), \"recall\": score[\"recall\"], \"precision\": score[\"precision\"],\n          \"findings_after\": len(c[\"after\"])}),\n        (\"M4 Mosca risk + prioritised plan\", migration_plan.summary(plan_b).get(\"P1\") == 3 and msg_after == [\"done\"],\n         {\"z\": migration_plan.HORIZON.z_years, \"before\": migration_plan.summary(plan_b), \"after\": migration_plan.summary(plan_a),\n          \"first_P1\": f\"{plan_b[0]['service']} {plan_b[0]['algorithm']} (x+y-z = {plan_b[0]['slack']})\"}),\n        (\"M5 hybrid X25519MLKEM768 + ML-DSA-65 behind the registry, flag-driven rollout\",\n         ph[\"all-v2\"][\"sessions\"] == {\"X25519MLKEM768\": 6} and ph[\"mixed\"][\"sessions\"] == {\"X25519MLKEM768\": 4, \"X25519\": 2}\n         and all(v[\"delivered\"] + v[\"refused\"] == 6 for v in ph.values()),\n         {\"sessions\": sessions, \"refused\": {k: v[\"refused\"] for k, v in ph.items()}}),\n    ]\n\n\ndef seam_rows(c):\n    ph = c[\"phases\"]\n    s3 = {k: v[\"s3\"] for k, v in ph.items()}\n    return [\n        (\"S1 quantum -> risk model: no extrapolation, z is a labelled assumption\", seams.s1_quantum_to_risk(c[\"sims\"])),\n        (\"S2 inventory -> plan: every finding owned and planned\", seams.s2_inventory_to_plan(c[\"after\"])),\n        (\"S3 agility layer <-> wire format: offers and sizes match the registry\",\n         {\"ok\": all(v[\"ok\"] for v in s3.values()), **{k: v[\"problems\"] or \"ok\" for k, v in s3.items()},\n          \"adapters_match_advertised\": all(v[\"adapters_match_advertised\"] for v in s3.values())}),\n        (\"S4 rollout flags <-> crypto policy: no downgrade when PQ is required\",\n         seams.s4_rollout_to_policy(ph[\"rollback-v1\"], ph[\"rollback-v1\"][\"servers\"])),\n    ]\n\n\ndef fitness_rows(c):\n    f3 = {k: v[\"f3\"] for k, v in c[\"phases\"].items()}\n    return [\n        (\"F1 no classical-only key exchange for data with x + y > z (outside the dated baseline)\",\n         fitness.f1_no_classical_kex_for_exposed_data(c[\"after\"])),\n        (\"F2 handshake byte budget\", fitness.f2_handshake_budget(c[\"tap\"])),\n        (\"F3 every service resolves algorithms via the registry\",\n         {\"ok\": all(v[\"ok\"] for v in f3.values()), \"static_violations\": max(v[\"static_violations\"] for v in f3.values()),\n          \"handshakes\": sum(v[\"handshakes\"] for v in f3.values()),\n          \"client_kex_resolutions\": sum(v[\"client_kex_resolutions\"] for v in f3.values())}),\n        (\"F4 feature flags owned and not expired\", fitness.f4_flags_owned_and_live()),\n    ]\n\n\ndef main(argv=None):\n    ap = argparse.ArgumentParser()\n    ap.add_argument(\"--inject\", choices=[\"bypass\", \"downgrade\"])\n    args = ap.parse_args(argv)\n    c = collect(args.inject)\n    passed = {\"milestones\": 0, \"seams\": 0, \"fitness\": 0}\n    totals = {\"milestones\": 0, \"seams\": 0, \"fitness\": 0}\n    for kind, rows in ((\"milestones\", milestones(c)), (\"seams\", seam_rows(c)), (\"fitness\", fitness_rows(c))):\n        for row in rows:\n            name, ok, measure = (row[0], row[1], row[2]) if len(row) == 3 else (row[0], row[1][\"ok\"], row[1])\n            measure = {k: v for k, v in measure.items() if k != \"ok\"}\n            print(json.dumps({kind[:-1] if kind != \"fitness\" else \"fitness\": name, \"pass\": bool(ok), \"measure\": measure}))\n            passed[kind] += bool(ok)\n            totals[kind] += 1\n    ok = passed == totals\n    print(json.dumps({\"scorecard\": {k: f\"{passed[k]}/{totals[k]}\" for k in totals}, \"inject\": args.inject,\n                      \"all_pass\": ok, \"decided_by\": \"code\"}))\n    return 0 if ok else 1\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+ "codeWalkthrough": [
+  {
+   "title": "_kb.py - reuse by import",
+   "detail": "Seven folders from three topics are appended to sys.path (this lab's modules win clashes); load_file() imports service variants that share the name channel.py."
+  },
+  {
+   "title": "shor_sim.py - honest order finding",
+   "detail": "Permutation oracle on the work register, inverse QFT from L500 #25, continued fractions; the N = 15 CX/CCX oracle is checked state-by-state against the permutation, and every result carries a 'scope'."
+  },
+  {
+   "title": "inventory.py + migration_plan.py",
+   "detail": "Lesson 21's AST scanner plus config rules and registry calls; plan() joins services.json and applies the strict x + y > z against a labelled Horizon; unowned findings become P1-review."
+  },
+  {
+   "title": "crypto_registry.py + adapters.py - ports and adapters",
+   "detail": "Services ask by purpose; policy + two owned flags decide offers; adapters advertise wire sizes; AUDIT records every resolution for the runtime check."
+  },
+  {
+   "title": "migrated/messaging/channel.py + fleet.py",
+   "detail": "Client offers registry groups, verifies the ML-DSA-65 transcript signature with a pinned key, refuses classical when PQ is required; v2 servers enforce the same rule."
+  },
+  {
+   "title": "seams.py + fitness.py",
+   "detail": "S3 compares tapped bytes with the registry; F3 adds the lint and resolution count; F1 is a dated ratchet; F2 the byte budget; F4 flag hygiene."
+  },
+  {
+   "title": "run_project.py",
+   "detail": "Runs four rollout phases per variant (migrated, bypass, downgrade), evaluates S3/F3 while each phase's flags are set, prints JSON lines and exits 1 on any failure."
+  }
+ ],
+ "projectFiles": [
+  {
+   "path": "labs/L600/02-quantum-safe-migration/run_project.py",
+   "purpose": "end-to-end runner and scorecard (--inject bypass|downgrade)"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/_kb.py",
+   "purpose": "imports the reused labs from three topics"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/shor_sim.py",
+   "purpose": "order finding N = 15 / 21 on qsim"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/shor_qiskit.py",
+   "purpose": "Qiskit cross-check (pending CI)"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/estimates.py",
+   "purpose": "published estimates + claim checker"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/inventory.py",
+   "purpose": "crypto inventory (code + config + registry calls)"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/migration_plan.py",
+   "purpose": "Mosca risk + priorities"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/crypto_registry.py",
+   "purpose": "registry: purpose -> adapter via policy + flags; AUDIT"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/adapters.py",
+   "purpose": "X25519, X25519MLKEM768, Ed25519, ML-DSA-65/87, AES-256-GCM"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/wire.py",
+   "purpose": "wire format, tap, network"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/fleet.py",
+   "purpose": "v1/v2 servers, traffic, channel variants"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/seams.py",
+   "purpose": "seam checks S1-S4"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/fitness.py",
+   "purpose": "fitness functions F1-F4"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/migrated/messaging/channel.py",
+   "purpose": "the migrated service"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/faults/messaging_bypass/channel.py",
+   "purpose": "seeded fault: registry bypass (failure lab)"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/faults/messaging_downgrade/channel.py",
+   "purpose": "seeded fault: downgrade shim"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/sample_repo/",
+   "purpose": "fake codebase + services.json"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/EXPECTED_INVENTORY.json",
+   "purpose": "hand-written ground truth"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/flags.json",
+   "purpose": "owned, expiring rollout flags"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/migration_baseline.json",
+   "purpose": "dated ratchet baseline for F1"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/solution/inventory_dynamic.py",
+   "purpose": "build-task reference solution"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/try_it/experiments.py",
+   "purpose": "try-it experiments"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/decisions/",
+   "purpose": "ADR-0001..0004 (Nygard)"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/architecture.mmd",
+   "purpose": "architecture diagram (Mermaid)"
+  },
+  {
+   "path": "labs/L600/02-quantum-safe-migration/tests/",
+   "purpose": "milestone, seam, fitness, failure-lab, build-task, try-it and end-to-end tests"
+  }
+ ],
+ "expectedResults": [
+  "{\"milestone\": \"M1 Shor order finding on a statevector (N = 15, 21)\", \"pass\": true, \"measure\": {\"N=15\": {\"qubits\": 12, \"p_success\": 0.5, \"successes\": \"101/200\", \"factors\": [3, 5], \"oracle_gates\": {\"controlled_mult_permutations\": 8}}, \"N=15 gate-level\": {\"qubits\": 12, \"p_success\": 0.5, \"successes\": \"101/200\", \"factors\": [3, 5], \"oracle_gates\": {\"cx\": 14, \"ccx\": 5}}, \"N=21\": {\"qubits\": 15, \"p_success\": 0.3222, \"successes\": \"66/200\", \"factors\": [3, 7], \"oracle_gates\": {\"controlled_mult_permutations\": 10}}}}",
+  "{\"milestone\": \"M2 published estimates, labelled\", \"pass\": true, \"measure\": {\"RSA-2048\": {\"GE2019\": \"20 million noisy qubits, 8 hours\", \"G2025\": \"less than a million noisy qubits, less than a week\"}, \"GE2019_formula_logical_qubits\": 6190, \"NIST_IR_8547\": \"deprecated after 2030, disallowed after 2035\"}}",
+  "{\"milestone\": \"M3 crypto inventory (code + config)\", \"pass\": true, \"measure\": {\"findings_before\": 10, \"recall\": 1.0, \"precision\": 1.0, \"findings_after\": 10}}",
+  "{\"milestone\": \"M4 Mosca risk + prioritised plan\", \"pass\": true, \"measure\": {\"z\": 10, \"before\": {\"P1\": 3, \"P2-kex\": 2, \"P2-sig\": 3, \"none\": 2}, \"after\": {\"P1\": 2, \"P2-kex\": 2, \"P2-sig\": 2, \"done\": 2, \"none\": 2}, \"first_P1\": \"messaging X25519 (x+y-z = 4)\"}}",
+  "{\"milestone\": \"M5 hybrid X25519MLKEM768 + ML-DSA-65 behind the registry, flag-driven rollout\", \"pass\": true, \"measure\": {\"sessions\": {\"all-v1\": {\"X25519\": 6}, \"mixed\": {\"X25519MLKEM768\": 4, \"X25519\": 2}, \"all-v2\": {\"X25519MLKEM768\": 6}, \"rollback-v1\": {\"X25519MLKEM768\": 4}}, \"refused\": {\"all-v1\": 0, \"mixed\": 0, \"all-v2\": 0, \"rollback-v1\": 2}}}",
+  "{\"seam\": \"S1 quantum -> risk model: no extrapolation, z is a labelled assumption\", \"pass\": true, \"measure\": {\"bad_claims\": 0, \"sim_result_as_z_refused\": true, \"z_source\": \"planning-assumption\"}}",
+  "{\"seam\": \"S2 inventory -> plan: every finding owned and planned\", \"pass\": true, \"measure\": {\"findings\": 10, \"plan_rows\": 10, \"unowned\": 0, \"stray_file_priority\": \"P1-review\"}}",
+  "{\"seam\": \"S3 agility layer <-> wire format: offers and sizes match the registry\", \"pass\": true, \"measure\": {\"all-v1\": \"ok\", \"mixed\": \"ok\", \"all-v2\": \"ok\", \"rollback-v1\": \"ok\", \"adapters_match_advertised\": true}}",
+  "{\"seam\": \"S4 rollout flags <-> crypto policy: no downgrade when PQ is required\", \"pass\": true, \"measure\": {\"classical_sessions\": 0, \"refused\": 2, \"flip_gate_allows_pq_required\": false}}",
+  "{\"fitness\": \"F1 no classical-only key exchange for data with x + y > z (outside the dated baseline)\", \"pass\": true, \"measure\": {\"violations\": [], \"baseline_used\": 2, \"threshold\": \"0 outside baseline\"}}",
+  "{\"fitness\": \"F2 handshake byte budget\", \"pass\": true, \"measure\": {\"client_flight_bytes\": 1352, \"handshake_bytes\": 5871, \"threshold\": {\"client_flight_bytes\": 1400, \"handshake_bytes\": 6144}}}",
+  "{\"fitness\": \"F3 every service resolves algorithms via the registry\", \"pass\": true, \"measure\": {\"static_violations\": 0, \"handshakes\": 24, \"client_kex_resolutions\": 58}}",
+  "{\"fitness\": \"F4 feature flags owned and not expired\", \"pass\": true, \"measure\": {\"expired\": [], \"unowned\": [], \"threshold\": \"0 expired, 0 unowned\"}}",
+  "{\"scorecard\": {\"milestones\": \"5/5\", \"seams\": \"4/4\", \"fitness\": \"4/4\"}, \"inject\": null, \"all_pass\": true, \"decided_by\": \"code\"}"
+ ],
+ "testCases": [
+  {
+   "action": "python run_project.py",
+   "expected": "{\"scorecard\": {\"milestones\": \"5/5\", \"seams\": \"4/4\", \"fitness\": \"4/4\"}, \"inject\": null, \"all_pass\": true, \"decided_by\": \"code\"}"
+  },
+  {
+   "action": "python run_project.py --inject bypass",
+   "expected": "{\"scorecard\": {\"milestones\": \"4/5\", \"seams\": \"2/4\", \"fitness\": \"3/4\"}, \"inject\": \"bypass\", \"all_pass\": false, \"decided_by\": \"code\"} (exit 1; S3, S4, F3 and M5 fail; F1 and M3 pass)"
+  },
+  {
+   "action": "python run_project.py --inject downgrade",
+   "expected": "{\"scorecard\": {\"milestones\": \"5/5\", \"seams\": \"2/4\", \"fitness\": \"4/4\"}, \"inject\": \"downgrade\", \"all_pass\": false, \"decided_by\": \"code\"} (exit 1; S3 and S4 fail)"
+  },
+  {
+   "action": "Compare the N = 15 gate-level oracle state with the permutation oracle",
+   "expected": "equal statevectors (tests/test_m1_shor.py)"
+  },
+  {
+   "action": "Move the fake clock to 2027-07-01 for F1",
+   "expected": "2 violations: both payments baseline entries overdue"
+  }
+ ],
+ "tryIt": [
+  {
+   "task": "Vary the horizon: try_it/experiments.py horizon_sweep() plans with z = 5, 10, 15.",
+   "predict": "How many P1 items at each z, and which service enters first as z shrinks?",
+   "expected": "{\"horizon_sweep\": {\"5\": [\"edge:ECDHE X25519/P-256\", \"messaging:X25519\", \"payments:ECDHE X25519/P-256\", \"payments:RSA-3072\", \"records:ECDH P-384\"], \"10\": [\"messaging:X25519\", \"payments:ECDHE X25519/P-256\", \"payments:RSA-3072\"], \"15\": []}} - z = 15 hides every exposure, which is why z stays a labelled, reviewed assumption."
+  },
+  {
+   "task": "Raise the signature to ML-DSA-87: try_it/experiments.py bigger_signature().",
+   "predict": "Does the handshake still fit 6,144 B?",
+   "expected": "{\"bigger_signature\": {\"sig\": \"ML-DSA-87\", \"delivered\": 6, \"ok\": false, \"client_flight_bytes\": 1308, \"handshake_bytes\": 7145, \"threshold\": {\"client_flight_bytes\": 1400, \"handshake_bytes\": 6144}}} - delivery still works; the budget fitness function says no (ADR-0001 keeps ML-DSA-65)."
+  }
+ ],
+ "failureLab": {
+  "inject": "python run_project.py --inject bypass loads faults/messaging_bypass/channel.py: a 'latency fast path' that importlib.import_module()s the X25519 module named in a config string and builds the class name at run time, skipping the registry for key exchange (signatures and AEAD still use it). It only exists because the crypto-agility layer (app-arch) meets a static inventory (crypto) and a staged rollout.",
+  "symptom": "Exit 1, but the inventory says messaging is done, F1 passes and the lint finds 0 violations. {\"seam\": \"S3 agility layer <-> wire format: offers and sizes match the registry\", \"pass\": false, \"measure\": {\"all-v1\": [\"offered ['X25519'], registry says ['X25519MLKEM768', 'X25519']\"], \"mixed\": [\"offered ['X25519'], registry says ['X25519MLKEM768', 'X25519']\"], \"all-v2\": [\"offered ['X25519'], registry says ['X25519MLKEM768']\"], \"rollback-v1\": [\"offered ['X25519'], registry says ['X25519MLKEM768']\"], \"adapters_match_advertised\": true}} | {\"seam\": \"S4 rollout flags <-> crypto policy: no downgrade when PQ is required\", \"pass\": false, \"measure\": {\"classical_sessions\": 2, \"refused\": 4, \"flip_gate_allows_pq_required\": false}} | {\"fitness\": \"F3 every service resolves algorithms via the registry\", \"pass\": false, \"measure\": {\"static_violations\": 0, \"handshakes\": 24, \"client_kex_resolutions\": 0}}",
+  "diagnose": "S3 shows offered ['X25519'] where the registry says ['X25519MLKEM768', 'X25519']; F3 counts 0 client kex resolutions for 24 handshakes, so the wire was not chosen by the registry. grep for import_module finds the fast path.",
+  "fix": "Delete the fast path and call registry.kex_offers() (migrated/messaging/channel.py). Defence in depth: the build task teaches the inventory to report crypto modules loaded by name.",
+  "test": "cd tests; INJECT=bypass python -m unittest test_seam_wire_contract -> FAILED (failures=2); python -m unittest test_seam_wire_contract -> OK; tests/test_failure_lab.py documents both halves."
+ },
+ "buildTask": {
+  "task": "Write my_inventory.py (lab folder) with scan(stage, messaging) that adds findings for importlib.import_module / __import__ calls whose argument is a string constant, or a module-level name bound to a constant or an os.environ.get default, naming cryptography.hazmat.primitives.*; usage from the module name.",
+  "acceptance": "Finds faults/messaging_bypass/channel.py:24 'dynamic: cryptography.hazmat.primitives.asymmetric.x25519' (key-establishment); F1 then fails for the bypass; precision on sample_repo stays 1.0; no dynamic finding for the migrated channel. Run: cd tests; BUILD_TARGET=mine python -m unittest test_build_task (shipped scanner: BUILD_TASK_MODULE=inventory -> FAILED (failures=2)).",
+  "solution": "labs/L600/02-quantum-safe-migration/solution/inventory_dynamic.py"
+ },
+ "scalingLimits": [
+  "Statevector simulation doubles memory per qubit: 15 qubits = 512 KiB here, about 30 qubits = 16 GiB. Signal: MemoryError or swapping; the shared sv.run(n, ops) without a state already fails at 15 qubits (16 GiB identity).",
+  "A static inventory stops at what it can parse: modules loaded by name, other languages, TLS library defaults and vendored binaries. Signal: groups on the wire (tap / TLS telemetry) that no inventory row explains.",
+  "PQ handshakes grow with every signature in the chain: one ML-DSA-65 signature already takes 3,309 of 4,519 server bytes; ML-DSA-87 alone breaks the 6,144 B budget. Signal: F2 failures, fragmented first flights, latency p99 rising."
+ ],
+ "troubleshooting": [
+  {
+   "symptom": "numpy _ArrayMemoryError: Unable to allocate 16.0 GiB for an array with shape (32768, 32768)",
+   "action": "qsim's sv.run(n, ops) builds np.eye(2**n) when no state is given; pass an explicit |0...0> vector (shor_sim does)."
+  },
+  {
+   "symptom": "Imports take tens of seconds",
+   "action": "The lab imports seven folders from three topics; on a network or synced drive each directory scan is slow. Work on a local disk."
+  },
+  {
+   "symptom": "INJECT=bypass has no effect on Windows",
+   "action": "Use $env:INJECT='bypass' in PowerShell and Remove-Item Env:INJECT afterwards."
+  },
+  {
+   "symptom": "A finding shows service 'unowned' / priority P1-review",
+   "action": "Add the file's folder to the right service's paths in sample_repo/services.json."
+  },
+  {
+   "symptom": "F4 fails with an expired flag",
+   "action": "The owner decides: make the behaviour permanent and delete the flag, or renew with a reason - never just delete the expiry."
+  }
+ ],
+ "learningTools": [
+  {
+   "name": "Wireshark",
+   "role": "INSPECT",
+   "licence": "GPL-2.0 (OSI)",
+   "url": "https://www.wireshark.org/download.html",
+   "mac": "brew install --cask wireshark-app (or the official universal .dmg)",
+   "windows": "Official x64/Arm64 installer (bundles Npcap)",
+   "exercise": "Capture a real TLS 1.3 handshake that negotiates X25519MLKEM768 (e.g. openssl s_client -groups X25519MLKEM768 against a local OpenSSL 3.5+ s_server) and read the key_share sizes.",
+   "expected": "Should match the lab's wire tap: a 1216-byte client key_share and a 1120-byte server key_share for group 0x11EC. Pending a manual run: not run in the sandbox."
+  },
+  {
+   "name": "import-linter",
+   "role": "CHECK",
+   "licence": "BSD-2-Clause (OSI)",
+   "url": "https://github.com/seddonym/import-linter",
+   "mac": "pip install import-linter",
+   "windows": "pip install import-linter",
+   "exercise": "Package migrated/messaging and write a forbidden contract: it may not import cryptography.hazmat.primitives or adapters; run lint-imports and compare with F3's static half.",
+   "expected": "0 broken contracts for the migrated channel; the original sample_repo/services/messaging/channel.py breaks it. Pending a manual run."
+  },
+  {
+   "name": "Qiskit visualization (qiskit.visualization)",
+   "role": "SEE",
+   "licence": "Apache-2.0 (OSI)",
+   "url": "https://pypi.org/project/qiskit/",
+   "mac": "pip install 'qiskit[visualization]'",
+   "windows": "pip install \"qiskit[visualization]\"",
+   "exercise": "Draw shor_qiskit.circuit(15, 7) and plot_histogram of its counting-register probabilities.",
+   "expected": "Four equal peaks at 0, 64, 128, 192 (0.25 each), as in shor_sim. Pending CI (Qiskit not installed here)."
+  }
+ ],
+ "inRealSystems": [
+  "Crypto inventories for a PQC migration combine code and config scanning with runtime TLS telemetry, because the negotiated group shows what code scans miss.",
+  "IANA lists X25519MLKEM768 (0x11EC) as Recommended in the TLS Supported Groups registry (RFC 10024); servers that enable it next to X25519 face the same mixed-fleet negotiation as the rollout phases here.",
+  "Migration programmes rank systems by data lifetime and migration effort (Mosca), as NIST IR 8547 recommends for key establishment first."
+ ],
+ "useWhen": "Use this pattern to plan and execute a PQC migration across many services: inventory, rank by HNDL exposure, migrate behind a registry with owned flags, and verify on the wire. Do not use the simulator to predict dates; do not deploy the lab's TLS-shaped protocol - use a real TLS 1.3 library.",
+ "simulatorVsReal": "The quantum part runs a noiseless numpy statevector with compiled oracles (12-15 qubits); real factoring of RSA-2048 needs fault-tolerant machines estimated at < 1 million (2025) to 20 million (2019) noisy qubits under stated assumptions. The handshake is a TLS-shaped toy over in-process objects; RFC 10024 notes its security analysis relies on the real TLS 1.3 transcript.",
+ "caution": "Never deploy the lab's wire format: the hybrid's security argument holds for TLS 1.3, not for home-made protocols (RFC 10024 sec. 6). Do not quote the toy N = 15/21 numbers as threat evidence. Keep classical fallback windows short, owned and expiring.",
+ "checkpoint": "run_project.py prints 5/5 milestones, 4/4 seams, 4/4 fitness and exits 0; --inject bypass exits 1 with S3 and F3 failing while F1 and M3 still pass; tests: Ran 45, OK (skipped=1).",
+ "checkYourself": [
+  {
+   "q": "Why can't the N = 21 run set z?",
+   "a": "It uses a compiled oracle and 15 qubits; it shows the mechanism, not a date. z is a labelled assumption; RSA-2048 costs come from cited papers."
+  },
+  {
+   "q": "Why is records P2-kex although its data lives 7 years?",
+   "a": "7 + 3 = 10 is not greater than z = 10; Mosca's inequality is strict."
+  },
+  {
+   "q": "What does the wire seam see that the inventory cannot?",
+   "a": "What was negotiated: the bypass offers only X25519 and makes no registry resolution, although the code passes every static check."
+  },
+  {
+   "q": "Why must v2 servers also enforce pq_required?",
+   "a": "A shimmed or bypassing client could still offer X25519; enforcement on both ends plus the all-v2 flip gate prevents a downgrade."
+  }
+ ],
+ "sources": [
+  {
+   "title": "NIST IR 8547 (final, October 2026): Transition to Post-Quantum Cryptography Standards",
+   "url": "https://nvlpubs.nist.gov/nistpubs/ir/2026/NIST.IR.8547.pdf"
+  },
+  {
+   "title": "Gidney & Ekerå: How to factor 2048 bit RSA integers in 8 hours using 20 million noisy qubits (Quantum 5, 433)",
+   "url": "https://arxiv.org/abs/1905.09749"
+  },
+  {
+   "title": "Gidney: How to factor 2048 bit RSA integers with less than a million noisy qubits (2025)",
+   "url": "https://arxiv.org/abs/2505.15917"
+  },
+  {
+   "title": "RFC 10024: PQ/T Hybrid Key Agreement Mechanisms for TLS 1.3",
+   "url": "https://www.rfc-editor.org/rfc/rfc10024.html"
+  },
+  {
+   "title": "FIPS 204: Module-Lattice-Based Digital Signature Standard",
+   "url": "https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.204.pdf"
+  },
+  {
+   "title": "Mosca: Cybersecurity in an era with quantum computers: will we be ready? (ePrint 2015/1075)",
+   "url": "https://eprint.iacr.org/2015/1075"
+  },
+  {
+   "title": "Smolin, Smith & Vargo: Pretending to factor large numbers on a quantum computer (Nature 499, 2013)",
+   "url": "https://arxiv.org/abs/1301.7007"
+  }
+ ],
+ "next": "Go deeper: cryptography L500 #23 Foundations I: number theory for public-key cryptography (why order finding breaks RSA), or pick another L600 project.",
+ "validation": {
+  "status": "validated-local",
+  "how": "Ran here (Python 3.12, numpy, cryptography 50.0.2, Linux): run_project.py -> 5/5 milestones, 4/4 seams, 4/4 fitness, exit 0; --inject bypass and --inject downgrade -> exit 1 with the lines shown; python -m unittest discover -s tests -> Ran 45 tests, OK (skipped=1: Qiskit); INJECT=bypass test_seam_wire_contract -> FAILED (failures=2) then OK without it; BUILD_TASK_MODULE=inventory test_build_task -> FAILED (failures=2), reference solution OK; integrated/research/checks_02.py -> OK. Real ML-KEM-768, X25519, ML-DSA-65/87 and AES-GCM; in-process network; fake clock.",
+  "pendingCi": [
+   "shor_qiskit.py / tests/test_pending_ci.py (Qiskit 2.x statevector cross-check of the N = 15 and 21 distributions)",
+   "macOS (arm64) and Windows 11 runs of the full test suite",
+   "Wireshark capture of a real X25519MLKEM768 TLS 1.3 handshake (manual)",
+   "import-linter contract for migrated/messaging (manual)",
+   "Runtime wire contract against real TLS telemetry instead of the in-process tap"
+  ]
+ },
+ "conceptNote": "content/concepts/L600/02-quantum-safe-migration.md",
+ "conceptSummary": "A toy Shor run shows the mechanism, published estimates give the cost, and only a labelled z feeds Mosca's x + y > z; the inventory joins findings with data lifetimes to rank HNDL exposure. Migrating behind a registry with owned flags is only proven when the wire matches the registry - static checks miss a service that loads X25519 by name.",
+ "platforms": {
+  "mac": "expected",
+  "windows": "expected"
+ },
+ "macMini": {
+  "gains": "The official arm64 wheels of Qiskit 2.6.1 and Aer 0.18.2 run the shor_qiskit.py cross-check the sandbox could not, Apple-silicon timings of ML-KEM and ML-DSA give ADR-0001 a CPU line next to its byte budget, and the RAM lets order finding run up to its measured memory wall (predicted: N = 143 on 16 GB, N = 323 on 24 GB and more).",
+  "needs": {
+   "minRamGB": 16,
+   "tools": [
+    {
+     "name": "Python 3.12",
+     "licence": "PSF-2.0",
+     "install": "brew install python@3.12 (or the python.org macOS installer: https://www.python.org/downloads/macos/)"
+    },
+    {
+     "name": "cryptography 50.0.2",
+     "licence": "Apache-2.0 OR BSD-3-Clause",
+     "install": "python3.12 -m pip install cryptography==50.0.2 numpy (inside the venv of shared/WORKSTATION-SETUP.md)"
+    },
+    {
+     "name": "qiskit 2.6.1",
+     "licence": "Apache-2.0",
+     "install": "python3.12 -m pip install qiskit==2.6.1"
+    },
+    {
+     "name": "qiskit-aer 0.18.2",
+     "licence": "Apache-2.0",
+     "install": "python3.12 -m pip install qiskit-aer==0.18.2"
+    }
+   ]
+  },
+  "experiments": [
+   {
+    "title": "Qiskit and Aer agree with the numpy order finding",
+    "why": "shor_qiskit.py was written for pending CI; KNOWN-GAPS lists the Qiskit cross-check for 02 as not run. The numpy distribution is already checked against the L500 FFT formula, so it is the reference.",
+    "steps": [
+     {
+      "title": "Install the pinned wheels without compiling anything",
+      "detail": "--only-binary=:all: makes pip fail instead of building from source if an arm64 wheel is missing.",
+      "mac": "cd integrated/labs/L600/02-quantum-safe-migration\npython -m pip install --dry-run --only-binary=:all: qiskit==2.6.1 qiskit-aer==0.18.2\npython -m pip install qiskit==2.6.1 qiskit-aer==0.18.2",
+      "expected": "The dry run lists two macosx arm64 wheels (qiskit 2.6.1 publishes qiskit-2.6.1-cp310-abi3-macosx_11_0_arm64.whl); no 'Building wheel' line."
+     },
+     {
+      "title": "Run C1 (exact) and C2 (Aer sampled)",
+      "detail": "N = 15 (a = 7), 21 (a = 2), 35 (a = 2); C2 samples 100,000 shots with seed_simulator 2026.",
+      "mac": "python mac_mini/qiskit_crosscheck.py --out ~/kb-runs/02-qiskit.jsonl; echo $?",
+      "expected": "machine arm64; C1_statevector_equal true for all three; C2_aer_tvd about 0.005-0.015 (sampling alone stays below ~0.015 at 100k shots); exit 0."
+     }
+    ],
+    "measure": "C1 per N, C2 total-variation distance per N, wall time numpy vs Qiskit vs Aer",
+    "decides": "C1 false: fix the circuit or bit order in shor_qiskit.py (the numpy reference is checked twice). C2 above 0.025 with C1 true: an Aer/transpile issue to record in KNOWN-GAPS. Both true: the 'SDK cross-checks not run: Qiskit (02)' gap is closed for macOS."
+   },
+   {
+    "title": "PQ algorithm costs for ADR-0001",
+    "why": "ADR-0001 chose X25519MLKEM768 + ML-DSA-65 on BYTES (client flight 1,352 B of 1,400 B, handshake 5,871 B of 6,144 B). A server also pays CPU per handshake, which only a benchmark on the target machine shows.",
+    "steps": [
+     {
+      "title": "Benchmark KEMs and signatures",
+      "detail": "200 calls x 7 batches each; ML-DSA signing uses rejection sampling, so single calls vary and only medians of many calls mean anything.",
+      "mac": "cd integrated/labs/L600/02-quantum-safe-migration\npython mac_mini/pq_bench.py --out ~/kb-runs/02-pq.jsonl",
+      "expected": "ML-KEM-512 reported unavailable (cryptography 50.x ships 768 and 1024 only); exact sizes 1184/1088 B (ML-KEM-768), 3309 B (ML-DSA-65), 4627 B (ML-DSA-87); ML-KEM operations in tens of us; ML-DSA-65 signing the largest server cost."
+     },
+     {
+      "title": "Read the decision line",
+      "detail": "Per KEM x signature option: client key share vs the 1,400 B client flight, server us per handshake, handshakes/s per core, cores at PEAK_HANDSHAKES_PER_S = 500 (an assumption).",
+      "mac": "tail -1 ~/kb-runs/02-pq.jsonl",
+      "expected": "ML-KEM-1024 options: client_key_share_B 1600, share_fits_client_flight false (ruled out by bytes). ML-KEM-768 + ML-DSA-65: cores_at_peak well below the sandbox's 1.47."
+     }
+    ],
+    "measure": "server_us and cores_at_peak for ML-KEM-768 + ML-DSA-44/65/87",
+    "decides": "If cores_at_peak > 1 for the chosen option, ADR-0001 gets a capacity line (dedicated handshake cores or session resumption); ML-KEM-1024 stays rejected by bytes regardless of speed."
+   },
+   {
+    "title": "Where is the memory wall for order finding?",
+    "why": "Each extra bit of N adds 3 qubits (t = 2n counting + n work), i.e. x8 memory. The wall depends on what the simulator really allocates, not on the textbook 16 B per amplitude.",
+    "steps": [
+     {
+      "title": "Measure bytes per amplitude and predict",
+      "detail": "tracemalloc peak / 2^qubits at N = 21 and 35; walls for 16/24/32/64 GB from mac_profile.py budgets.",
+      "mac": "cd integrated/labs/L600/02-quantum-safe-migration\npython mac_mini/order_wall.py --here",
+      "expected": "bytes_per_amplitude about 122 (sandbox 121.9): predicted largest N = 143 (24 qubits, 2.0 GB) on 16 GB and N = 323 (27 qubits, 16.4 GB) on 24, 32 and 64 GB; N = 899 would need about 131 GB."
+     },
+     {
+      "title": "Run up to this Mac's wall",
+      "detail": "Runs every semiprime that fits min(this machine's budget, --ram budget); never past it.",
+      "mac": "caffeinate -i python mac_mini/order_wall.py --out ~/kb-runs/02-wall.jsonl",
+      "expected": "Every N up to largest_N factors (p_success_per_run 0.3-0.5); seconds grow roughly x8-10 per bit; the last line names the N it stopped before."
+     }
+    ],
+    "measure": "bytes_per_amplitude, largest N run, seconds per N, max_rss_B",
+    "decides": "scalingLimits of the lesson: the simulator wall is quoted as measured on this machine (bytes/amplitude x 2^(3n)), and nothing about RSA-2048 is inferred from it (estimates.py rule)."
+   }
+  ],
+  "overnight": "caffeinate -i python mac_mini/order_wall.py: the largest N that fit take minutes to hours each (N = 323 runs 27 qubits). It shows both walls a laptop-scale simulator hits - memory (x8 per bit of N) and time - and records them for the lesson's scalingLimits.",
+  "validation": {
+   "here": "Ran in the Linux sandbox (Python 3.12.15, cryptography 50.0.2, numpy 2.5.3, 2026-11-02): pq_bench.py --here (sizes exact, ML-KEM-512 unavailable, ML-KEM-1024 ruled out by bytes); order_wall.py --here (N = 15, 21, 35 factored; 121.9 B per amplitude; predictions for 16/24/32/64 GB); qiskit_crosscheck.py --here -> skipped (qiskit missing), exit 0, and exit 2 without --here; mac_mini/tests: 12 tests OK (1 skipped: needs Qiskit); research/checks_02_mac.py OK.",
+   "pendingMac": [
+    "qiskit_crosscheck.py with qiskit 2.6.1 + qiskit-aer 0.18.2 arm64 wheels (C1 and C2)",
+    "pq_bench.py timings on Apple silicon",
+    "order_wall.py beyond N = 35 (up to the RAM wall, overnight)"
+   ]
+  }
+ }
+}

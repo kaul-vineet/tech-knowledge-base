@@ -1,0 +1,23 @@
+flowchart LR
+  subgraph Devices["20 micro:bits (microbit stub, firmware/node.py)"]
+    S[temperature + light<br/>every 60 s] --> L[(flash log<br/>dot = dev, boot, seq<br/>max 400)]
+    L -->|"delta frames <= 32 B<br/>(unacked only)"| R((radio on<br/>only while syncing))
+  end
+  R -->|"30% loss, 5% dup, 5% reorder<br/>d15-d19 out of range 2-5 h"| G1[gateway g1]
+  R --> G2["gateway g2<br/>(clock 300 s slow)"]
+  G1 -->|"ack: epoch + (boot, contiguous hw)"| R
+  G2 -->|ack| R
+  subgraph Backend["delta-state CRDT replicas (ReadingStore)"]
+    B1[(b1)]
+    B2[(b2)]
+    B3[(b3)]
+  end
+  G1 <-->|"push-pull gossip:<br/>digest = version vector + dot cloud"| B1
+  G2 <-.->|"partitioned 4-8 h"| B2
+  B1 <--> B3
+  B2 <--> B3
+  B1 --> API["Fleet API<br/>/v1 (Deprecation, Sunset)<br/>/v2 latest + paged prefix"]
+  API --> D1[dashboard-v1]
+  API --> D2[dashboard-v2]
+  D1 -. "consumer contract" .-> API
+  D2 -. "consumer contract" .-> API

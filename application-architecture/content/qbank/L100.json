@@ -1,0 +1,813 @@
+[
+  {
+    "id": "aa-L100-001",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Why do you `cd` into a lab folder before running `python -m unittest`?",
+    "options": [
+      "The virtual environment is only active while your shell is inside a lab folder",
+      "Python 3.12 only searches the home directory for test files by default",
+      "unittest refuses to run unless the current folder contains a README.md file",
+      "Discovery imports test*.py from the current folder; tests import siblings"
+    ],
+    "answer": 3,
+    "explanation": "Test discovery starts in the current directory and the tests import modules that sit next to them. The venv is active in every folder once activated, so moving folders has nothing to do with it.",
+    "source": "Lesson 1 checkYourself"
+  },
+  {
+    "id": "aa-L100-002",
+    "level": "L100",
+    "lesson": 1,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "What does this version check print?",
+    "code": "MIN_PYTHON = (3, 12)\n\ndef check_python(version):\n    return tuple(version[:2]) >= MIN_PYTHON\n\nprint(check_python((3, 11, 9)), check_python((3, 12, 0)), check_python((4, 0, 0)))",
+    "options": [
+      "False True True",
+      "False False True",
+      "True True True",
+      "False True False"
+    ],
+    "answer": 0,
+    "explanation": "Tuples compare element by element: (3, 11) < (3, 12), while (3, 12) and (4, 0) are >= (3, 12). A newer major version is not 'too new' for a >= check.",
+    "source": "Lesson 1 code (check_env.py)"
+  },
+  {
+    "id": "aa-L100-003",
+    "level": "L100",
+    "lesson": 1,
+    "type": "debugging",
+    "difficulty": 1,
+    "question": "You rename test_check_env.py to checks_env_test.py and `python -m unittest` now prints `NO TESTS RAN` (exit 5). What is the cause?",
+    "options": [
+      "unittest needs pytest installed to find files ending in _test.py",
+      "The default pattern test*.py no longer matches the name",
+      "The virtual environment was deactivated by renaming a file",
+      "The renamed file now contains a syntax error that hides the tests"
+    ],
+    "answer": 1,
+    "explanation": "`python -m unittest` discovers files matching test*.py; checks_env_test.py starts with 'checks'. Nothing in the file changed, so it is not a syntax error.",
+    "source": "Lesson 1 tryIt"
+  },
+  {
+    "id": "aa-L100-004",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "check_env.py prints `optional podman not found (ok)` while Python, stdlib and sqlite are OK. What exit code does it return to CI?",
+    "options": [
+      "0, because optional tools never affect the exit code",
+      "2, the code reserved for missing optional tools",
+      "1, because any missing tool means the workspace is not ready",
+      "It depends on whether the machine is macOS or Windows"
+    ],
+    "answer": 0,
+    "explanation": "The exit code is the contract with CI: 0 when Python is new enough and no required module is missing. Optional tools only render diagrams in lesson 6, so their absence is reported but not fatal.",
+    "source": "Lesson 1 code (check_env.py main)"
+  },
+  {
+    "id": "aa-L100-005",
+    "level": "L100",
+    "lesson": 1,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "On Windows, `.venv\\Scripts\\Activate.ps1` fails with 'running scripts is disabled'. What is the recommended fix?",
+    "options": [
+      "Reinstall Python from the Microsoft Store so PowerShell trusts it",
+      "Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, or run the venv's python.exe",
+      "Delete the .venv folder and run the labs with the system Python instead",
+      "Rename Activate.ps1 to activate.bat so PowerShell runs it as a classic batch file"
+    ],
+    "answer": 1,
+    "explanation": "The lesson's troubleshooting row allows scripts for the current user only, or bypasses activation by calling the venv's python.exe. Using the system Python would drop the isolated, pinned environment.",
+    "source": "Lesson 1 troubleshooting"
+  },
+  {
+    "id": "aa-L100-006",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Why does the setup pin versions such as Python 3.12, mermaid-cli 11.17.0 and the Structurizr image 2026.09.19?",
+    "options": [
+      "Because pinned versions run noticeably faster than the latest ones",
+      "Because newer versions of these tools are no longer open source",
+      "Because CI runners are not allowed to download the latest versions",
+      "So every machine and CI run produces the same results"
+    ],
+    "answer": 3,
+    "explanation": "Pinning makes outputs comparable across the Mac mini, the Windows PC and CI. It is about reproducibility, not speed or licensing.",
+    "source": "Lesson 1 concepts"
+  },
+  {
+    "id": "aa-L100-007",
+    "level": "L100",
+    "lesson": 2,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "In the layered lab, which file changes when you switch from in-memory storage to SQLite?",
+    "options": [
+      "service.py, because the rules must know which database they use",
+      "handler.py, because HTTP responses differ per storage engine",
+      "All three layers, because every layer touches the data",
+      "Only app.py, where build_service picks the repository class"
+    ],
+    "answer": 3,
+    "explanation": "The composition root in app.py chooses the concrete repository; the new SqliteLoanRepository is additive. The service only talks to the repository interface, so it does not change.",
+    "source": "Lesson 2 checkYourself"
+  },
+  {
+    "id": "aa-L100-008",
+    "level": "L100",
+    "lesson": 2,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Why does the service raise `LoanLimitReached` instead of returning HTTP 409 itself?",
+    "options": [
+      "Python exceptions are faster than returning status codes from functions",
+      "409 is not a valid status code for business-rule violations in OpenAPI",
+      "The repository layer is the only layer allowed to know about HTTP status codes and errors",
+      "HTTP is a presentation concern; the handler maps it, a CLI could map it differently"
+    ],
+    "answer": 3,
+    "explanation": "The service holds rules only; translating them to 409 is the handler's job. Putting HTTP knowledge in the repository would break the downward dependency direction even worse.",
+    "source": "Lesson 2 checkYourself"
+  },
+  {
+    "id": "aa-L100-009",
+    "level": "L100",
+    "lesson": 2,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Lab 02 runs 5 rule tests against each repository, plus 1 HTTP test and 1 dependency-direction test (12 in total). You add a third repository and run the same rule tests on it. How many tests run now?",
+    "options": [
+      "15",
+      "13",
+      "21",
+      "17"
+    ],
+    "answer": 3,
+    "explanation": "Rule tests multiply by the number of repositories: 5 x 3 = 15, plus the 2 single tests = 17. 15 forgets the HTTP and dependency tests, which run once regardless of storage.",
+    "source": "Lesson 2 steps (Run the tests)"
+  },
+  {
+    "id": "aa-L100-010",
+    "level": "L100",
+    "lesson": 2,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "This mirrors InMemoryLoanRepository. What does it print?",
+    "code": "class Repo:\n    def __init__(self):\n        self._loans = {}\n\n    def add(self, book):\n        loan_id = len(self._loans) + 1\n        self._loans[loan_id] = {\"book\": book, \"returned\": False}\n        return loan_id\n\nr = Repo()\nfor b in [\"b1\", \"b2\", \"b3\"]:\n    r.add(b)\nr._loans[2][\"returned\"] = True\nprint(r.add(\"b4\"), sum(not l[\"returned\"] for l in r._loans.values()))",
+    "options": [
+      "3 3",
+      "4 4",
+      "4 3",
+      "2 3"
+    ],
+    "answer": 2,
+    "explanation": "The id is len(loans) + 1 and returning keeps the row, so b4 gets id 4; three loans (1, 3, 4) are still active. Answering 2 assumes the returned id is reused, but the row was never removed.",
+    "source": "Lesson 2 tryIt"
+  },
+  {
+    "id": "aa-L100-011",
+    "level": "L100",
+    "lesson": 2,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "With `max_active_per_member=3`, member m1 borrows b1, b2, b3 and b4 in that order and returns nothing. Which borrow fails, and how many active loans does m1 have afterwards?",
+    "options": [
+      "No borrow fails; m1 has 4 active loans",
+      "b4 fails; m1 has 3 active loans",
+      "b4 fails; m1 has 4 active loans",
+      "b3 fails; m1 has 2 active loans"
+    ],
+    "answer": 1,
+    "explanation": "The check `active >= max` runs before the change, so the fourth borrow is refused and nothing is added. '4 active loans' assumes the loan is stored before the rule is checked.",
+    "source": "Lesson 2 testCases"
+  },
+  {
+    "id": "aa-L100-012",
+    "level": "L100",
+    "lesson": 2,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A rule test passes for InMemoryLoanRepository but fails only for SQLite: it expects `returned is False` and gets `0`. Which change fixes it at the right place?",
+    "code": "def get(self, loan_id):\n    row = self._db.execute(\n        \"SELECT id, book_id, member_id, returned FROM loans WHERE id = ?\", (loan_id,)).fetchone()\n    return Loan(row[0], row[1], row[2], row[3]) if row else None",
+    "options": [
+      "Change the test to accept both 0 and False for every repository",
+      "Make the service layer convert integers to booleans after each get()",
+      "Store returned as TEXT 'False' in SQLite so the types line up",
+      "In SqliteLoanRepository.get, return bool(row[3]) for returned"
+    ],
+    "answer": 3,
+    "explanation": "Both repositories must return equal Loan values; SQLite stores booleans as integers, so the repository converts. Fixing it in the service would leak storage details upward.",
+    "source": "Lesson 2 troubleshooting"
+  },
+  {
+    "id": "aa-L100-013",
+    "level": "L100",
+    "lesson": 2,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Which problem does this repository method have?",
+    "code": "def add(self, book_id, member_id):\n    cur = self._db.execute(\n        f\"INSERT INTO loans (book_id, member_id) VALUES ('{book_id}', '{member_id}')\")\n    self._db.commit()\n    return Loan(cur.lastrowid, book_id, member_id)",
+    "options": [
+      "commit() must be called before execute(), so nothing is saved",
+      "Values go into the SQL text, so a crafted book id can inject SQL",
+      "f-strings are not supported by sqlite3 and raise ProgrammingError",
+      "The INSERT runs in the wrong layer; SQL belongs in the service"
+    ],
+    "answer": 1,
+    "explanation": "Values must be bound with ? placeholders so they travel apart from the SQL text. The SQL itself is in the right layer: the repository is the only code that knows how loans are stored.",
+    "source": "Lesson 2 concepts"
+  },
+  {
+    "id": "aa-L100-014",
+    "level": "L100",
+    "lesson": 2,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "A colleague writes a 20-line script that reads one CSV file and prints totals. Should they split it into presentation, service and repository layers?",
+    "options": [
+      "No: layers only make sense once the app runs on several separate servers",
+      "Yes: every Python program needs three layers to be testable",
+      "No: layers pay off when rules, I/O and storage mix in a growing service",
+      "Yes, and each layer should also run as a separate process"
+    ],
+    "answer": 2,
+    "explanation": "The lesson's useWhen says to skip layers for a small script. Layers are logical, not physical tiers, so needing several servers is not the trigger either.",
+    "source": "Lesson 2 useWhen"
+  },
+  {
+    "id": "aa-L100-015",
+    "level": "L100",
+    "lesson": 3,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Code in library/loans needs catalog data. Which import keeps the module boundary?",
+    "options": [
+      "from ..catalog.internal import store",
+      "from library.catalog.internal import store",
+      "from library.catalog.internal.store import BOOKS",
+      "from library import catalog"
+    ],
+    "answer": 3,
+    "explanation": "Other modules may only use catalog's public interface, its __init__.py. The relative import looks different but still resolves to library.catalog.internal and is flagged.",
+    "source": "Lesson 3 checkYourself"
+  },
+  {
+    "id": "aa-L100-016",
+    "level": "L100",
+    "lesson": 3,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "This is the boundary rule from check_boundaries.py, evaluated for code owned by `loans`. What does it print?",
+    "code": "def is_violation(target, owner, modules={\"catalog\", \"loans\"}):\n    parts = target.split(\".\")\n    return (len(parts) >= 3 and parts[0] == \"library\" and parts[1] in modules\n            and parts[1] != owner and parts[2] == \"internal\")\n\ntargets = [\"library.catalog\", \"library.catalog.internal.store\",\n           \"library.loans.internal.rules\", \"library.catalog.public\"]\nprint([is_violation(t, \"loans\") for t in targets])",
+    "options": [
+      "[True, True, False, False]",
+      "[False, True, True, False]",
+      "[False, True, False, False]",
+      "[False, True, True, True]"
+    ],
+    "answer": 2,
+    "explanation": "Only another module's internal package is off limits. library.loans.internal belongs to the owner itself, and library.catalog.public is not an internal package.",
+    "source": "Lesson 3 code (violations)"
+  },
+  {
+    "id": "aa-L100-017",
+    "level": "L100",
+    "lesson": 3,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "check_boundaries.py resolves relative imports like this. What does it print?",
+    "code": "def resolve(package, level, module):\n    parts = package.split(\".\")\n    base = parts[:len(parts) - level + 1] if level else []\n    return \".\".join(base + ([module] if module else []))\n\nprint(resolve(\"library.loans\", 2, \"catalog.internal\"),\n      resolve(\"library.loans.internal\", 1, \"rules\"), sep=\" | \")",
+    "options": [
+      "library.loans.catalog.internal | library.loans.internal.rules",
+      "library.catalog.internal | library.loans.internal.rules",
+      "library.catalog.internal | library.loans.rules",
+      "catalog.internal | rules"
+    ],
+    "answer": 1,
+    "explanation": "`level` counts the dots: two dots from package library.loans go up to library, one dot stays in the current package. Keeping the full package for level 2 forgets to go up one level.",
+    "source": "Lesson 3 code (imported_targets)"
+  },
+  {
+    "id": "aa-L100-018",
+    "level": "L100",
+    "lesson": 3,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A file in loans calls `importlib.import_module(\"library.catalog.internal.store\")` and check_boundaries.py reports 0 violations. Why?",
+    "options": [
+      "The check reads static imports with ast; a dynamic import is a function call",
+      "importlib imports are allowed by the rule because they are resolved at runtime",
+      "ast cannot parse files that contain string literals with dots",
+      "The checker skips files that import importlib for performance"
+    ],
+    "answer": 0,
+    "explanation": "The fitness function walks ast.Import and ast.ImportFrom nodes only, so the lesson says to keep imports static. The import is not 'allowed'; the tool simply cannot see it.",
+    "source": "Lesson 3 tryIt"
+  },
+  {
+    "id": "aa-L100-019",
+    "level": "L100",
+    "lesson": 3,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Run on Linux, this simulates a Windows path. What does it print?",
+    "code": "from pathlib import PureWindowsPath\n\np = PureWindowsPath(r\"library\\loans\\internal\\rules.py\")\nby_slash = \".\".join(str(p).split(\"/\")[:-1]) or \"<empty>\"\nby_parts = \".\".join(p.parts[:-1])\nprint(by_slash, by_parts, sep=\" | \")",
+    "options": [
+      "<empty> | library.loans.internal.rules.py",
+      "library.loans.internal.rules | library.loans.internal",
+      "<empty> | library.loans.internal",
+      "library.loans.internal | library.loans.internal"
+    ],
+    "answer": 2,
+    "explanation": "A Windows path string holds backslashes, so splitting on '/' yields one element and the join is empty. Path.parts splits on the right separator on every OS, which is why the lab uses it.",
+    "source": "Lesson 3 code (package_of)"
+  },
+  {
+    "id": "aa-L100-020",
+    "level": "L100",
+    "lesson": 3,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Why is check_boundaries.py called a fitness function?",
+    "options": [
+      "It is an automated, objective check of the module rule, run on every change",
+      "It measures how fast each module's functions run under load",
+      "It rewrites forbidden imports into allowed ones before each commit",
+      "It is a manual review checklist that architects fill in at the end of each sprint"
+    ],
+    "answer": 0,
+    "explanation": "A fitness function guards an architectural rule automatically, here via tests and a CI step with exit code 1. It does not fix code or measure speed.",
+    "source": "Lesson 3 checkYourself"
+  },
+  {
+    "id": "aa-L100-021",
+    "level": "L100",
+    "lesson": 3,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the modular-monolith lab need a check script instead of relying on Python itself?",
+    "options": [
+      "A leading underscore makes a package private, but only on Windows",
+      "Python's compiler enforces internal/ folders only in optimized mode",
+      "Python cannot hide names, so any module's internal package stays importable",
+      "Python forbids imports across packages unless a check script explicitly allows them"
+    ],
+    "answer": 2,
+    "explanation": "Any importable name can be imported in Python; the boundary is enforced by a check, not the compiler. Underscore names are a convention, not an enforced rule on any OS.",
+    "source": "Lesson 3 concepts"
+  },
+  {
+    "id": "aa-L100-022",
+    "level": "L100",
+    "lesson": 3,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "A two-week-old prototype changes its module split almost weekly. What does the lesson advise about enforcing module boundaries?",
+    "options": [
+      "Postpone strict enforcement until boundaries settle",
+      "Enforce them now so the prototype can never drift",
+      "Rely on underscore names; Python enforces those",
+      "Split the prototype into separate deployable services now"
+    ],
+    "answer": 0,
+    "explanation": "The useWhen says to postpone while boundaries are still unknown and to enforce once several people change one codebase. Splitting into services would freeze unknown boundaries into network calls.",
+    "source": "Lesson 3 useWhen"
+  },
+  {
+    "id": "aa-L100-023",
+    "level": "L100",
+    "lesson": 4,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Which top-level fields must every OpenAPI 3.1 document have?",
+    "options": [
+      "openapi, info and components, where every schema and path must be defined",
+      "openapi, servers and paths, plus a security section",
+      "info and paths only; openapi is optional in 3.1",
+      "openapi, info (title, version), and one of paths/components/webhooks"
+    ],
+    "answer": 3,
+    "explanation": "The 3.1 rules require openapi and info and at least one of paths/components/webhooks. servers and security are optional, so a document without them is still valid.",
+    "source": "Lesson 4 checkYourself"
+  },
+  {
+    "id": "aa-L100-024",
+    "level": "L100",
+    "lesson": 4,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "A document starts with `\"openapi\": \"3.1.2\"` and `\"info\": {\"version\": \"1.4.0\"}`. What does each number mean?",
+    "options": [
+      "3.1.2 is the OpenAPI spec version; 1.4.0 versions your API document",
+      "3.1.2 is the server software version; 1.4.0 is the client version",
+      "3.1.2 is your API's version; 1.4.0 is the OpenAPI version it follows",
+      "Both describe your API; the higher one wins at runtime"
+    ],
+    "answer": 0,
+    "explanation": "`openapi` names the specification version the document follows; `info.version` versions your own document. Swapping them is the classic mistake.",
+    "source": "Lesson 4 concepts"
+  },
+  {
+    "id": "aa-L100-025",
+    "level": "L100",
+    "lesson": 4,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A developer changes the duplicate-loan response in server.py from 409 to 422 because it 'feels more semantic'. What happens when the contract tests run?",
+    "options": [
+      "Nothing fails: any 4xx status satisfies the contract",
+      "Only the client demo fails, because tests ignore status codes",
+      "The contract test fails: 422 is not declared for POST /loans",
+      "The server refuses to start because 422 is not in openapi.json"
+    ],
+    "answer": 2,
+    "explanation": "Every status the server returns must be declared in responses; an undeclared status is drift. The server still starts fine, which is exactly why a contract test is needed.",
+    "source": "Lesson 4 steps (Create drift on purpose)"
+  },
+  {
+    "id": "aa-L100-026",
+    "level": "L100",
+    "lesson": 4,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A simplified contract checker. What does it print?",
+    "code": "spec = {\"201\": [\"id\", \"bookId\", \"memberId\", \"status\"], \"409\": [\"error\"]}\n\ndef check(status, body):\n    if str(status) not in spec:\n        return [f\"status {status} not declared\"]\n    return [f\"missing required field {f!r}\" for f in spec[str(status)] if f not in body]\n\nprint(check(201, {\"id\": 1, \"bookId\": \"b1\", \"member\": \"m1\", \"status\": \"active\"}),\n      check(500, {}))",
+    "options": [
+      "[\"missing required field 'member'\"] []",
+      "[\"missing required field 'memberId'\"] ['status 500 not declared']",
+      "[] ['status 500 not declared']",
+      "[\"missing required field 'memberId'\"] []"
+    ],
+    "answer": 1,
+    "explanation": "The 201 body has `member` instead of the required `memberId`, and 500 is not a declared status. Extra fields are not reported, only missing required ones.",
+    "source": "Lesson 4 testCases"
+  },
+  {
+    "id": "aa-L100-027",
+    "level": "L100",
+    "lesson": 4,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "The lab's contract declares getHealth: 200; createLoan: 201, 400, 409; getLoan: 200, 404. A test that exercises every declared response needs at least how many (operation, status) cases?",
+    "options": [
+      "5",
+      "7",
+      "3",
+      "6"
+    ],
+    "answer": 3,
+    "explanation": "Count each declared status per operation: 1 + 3 + 2 = 6. Counting distinct status codes gives 5 because 200 appears twice, but each operation's 200 must be exercised separately.",
+    "source": "Lesson 4 steps (Read the contract)"
+  },
+  {
+    "id": "aa-L100-028",
+    "level": "L100",
+    "lesson": 4,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "server.py gives each new loan `id = len(LOANS) + 1` and answers 409 if the book is already on loan. A client POSTs bookId b1, then b1 again, then b2. What are the three responses?",
+    "options": [
+      "201 id=1, 409, 201 id=3",
+      "201 id=1, 409 id=2, 201 id=2",
+      "201 id=1, 201 id=2, 201 id=3",
+      "201 id=1, 409, 201 id=2"
+    ],
+    "answer": 3,
+    "explanation": "A 409 stores nothing, so LOANS still has one entry when b2 arrives and it gets id 2. Expecting id 3 assumes the rejected request consumed an id.",
+    "source": "Lesson 4 code (server.py do_POST)"
+  },
+  {
+    "id": "aa-L100-029",
+    "level": "L100",
+    "lesson": 4,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A tester wants to run Schemathesis, which generates many requests from openapi.json, directly against production to 'test with real data'. What does the lesson advise?",
+    "options": [
+      "Use dev or staging only; such tools create and delete real data",
+      "Skip it; generated requests cannot find any drift a contract test misses",
+      "Run it in production but only outside business hours",
+      "Run it in production; read-only GET requests are generated first"
+    ],
+    "answer": 0,
+    "explanation": "The caution says such tools send real requests that create and delete data, so never point them at production. Timing the run differently does not remove the side effects.",
+    "source": "Lesson 4 caution"
+  },
+  {
+    "id": "aa-L100-030",
+    "level": "L100",
+    "lesson": 4,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "How does a provider contract test (this lab) differ from a consumer-driven contract (Pact)?",
+    "options": [
+      "It checks the provider against its own spec; a CDC comes from consumer tests",
+      "It is written by the consumer team and run only in the consumer team's build",
+      "It replaces the OpenAPI document, which is generated from test results",
+      "It checks only response time, while a CDC checks the response body"
+    ],
+    "answer": 0,
+    "explanation": "Here the spec is the source of truth and the provider is checked against it. A consumer-driven contract is 'contract by example', derived from what consumers actually call.",
+    "source": "Lesson 4 glossary"
+  },
+  {
+    "id": "aa-L100-031",
+    "level": "L100",
+    "lesson": 5,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "load_settings() checks LOANS_PORT (1-65535), LOANS_MAX_ACTIVE_LOANS (1-50), LOANS_LOG_LEVEL (upper-cased, one of DEBUG/INFO/WARNING/ERROR) and LOANS_DB_PATH (not blank). A deploy sets PORT=0, MAX_ACTIVE_LOANS=51, LOG_LEVEL=info and DB_PATH to a single space. How many errors does the one ConfigError list?",
+    "options": [
+      "4",
+      "1",
+      "3",
+      "2"
+    ],
+    "answer": 2,
+    "explanation": "Port 0 and 51 loans are out of range and a blank path is rejected: 3 errors, all reported together. 'info' is upper-cased to INFO and accepted, so 4 is wrong; 1 would mean stopping at the first error.",
+    "source": "Lesson 5 code (load_settings)"
+  },
+  {
+    "id": "aa-L100-032",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Is the list of HTTP routes 'config' in the 12-factor sense?",
+    "options": [
+      "No: it does not vary between deploys, so it stays in code",
+      "Yes: anything that could ever change is config",
+      "No: only secrets count as config",
+      "Yes: routes should come from LOANS_* variables like the port"
+    ],
+    "answer": 0,
+    "explanation": "12-factor config is what varies between deploys: backing-service handles, credentials, per-deploy values. Ports and DB paths are config but are not secrets, so 'only secrets' is too narrow.",
+    "source": "Lesson 5 checkYourself"
+  },
+  {
+    "id": "aa-L100-033",
+    "level": "L100",
+    "lesson": 5,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A trimmed version of load_settings(). What does it print?",
+    "code": "LOG_LEVELS = {\"DEBUG\", \"INFO\", \"WARNING\", \"ERROR\"}\n\ndef check(env):\n    errors = []\n    try:\n        if not 1 <= int(env.get(\"LOANS_PORT\", \"8080\")) <= 65535:\n            errors.append(\"port range\")\n    except ValueError:\n        errors.append(\"port not int\")\n    if env.get(\"LOANS_LOG_LEVEL\", \"INFO\").upper() not in LOG_LEVELS:\n        errors.append(\"log level\")\n    return errors\n\nprint(check({\"LOANS_PORT\": \"70000\", \"LOANS_LOG_LEVEL\": \"warn\"}))",
+    "options": [
+      "['log level']",
+      "['port range', 'log level']",
+      "['port not int', 'log level']",
+      "['port range']"
+    ],
+    "answer": 1,
+    "explanation": "70000 is an integer outside 1-65535, and 'warn' upper-cases to WARN, which is not in the set. Accepting 'warn' assumes a shortened name of WARNING would match.",
+    "source": "Lesson 5 tryIt"
+  },
+  {
+    "id": "aa-L100-034",
+    "level": "L100",
+    "lesson": 5,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "What does this print?",
+    "code": "from dataclasses import dataclass, field\n\n@dataclass(frozen=True)\nclass Settings:\n    port: int\n    smtp_password: str | None = field(default=None, repr=False)\n\nprint(Settings(9000, \"example-only\"))",
+    "options": [
+      "Settings(port=9000)",
+      "Settings(port=9000, smtp_password='example-only')",
+      "Settings(port=9000, smtp_password=None)",
+      "Settings(port=9000, smtp_password=***)"
+    ],
+    "answer": 0,
+    "explanation": "repr=False removes the field from the generated repr entirely, so logging the settings never shows the secret. Nothing is masked with stars; the field is simply left out.",
+    "source": "Lesson 5 code (Settings)"
+  },
+  {
+    "id": "aa-L100-035",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Why does load_settings() collect every error and raise one ConfigError at the end?",
+    "options": [
+      "Because Python allows only one exception per function",
+      "So the first request, not startup, reveals the problem",
+      "So a bad deploy fails at startup, listing every problem at once",
+      "So the app can start with defaults and log the errors later for the operator"
+    ],
+    "answer": 2,
+    "explanation": "Fail fast means refusing to run at startup instead of failing on the first request, and reporting all errors together avoids one redeploy per mistake.",
+    "source": "Lesson 5 concepts"
+  },
+  {
+    "id": "aa-L100-036",
+    "level": "L100",
+    "lesson": 5,
+    "type": "debugging",
+    "difficulty": 1,
+    "question": "You start app.py, then run `export LOANS_PORT=9000` in another terminal. The running app still uses 8080. Why?",
+    "options": [
+      "export only works for variables that already have a default value in code",
+      "The Settings object is frozen, so it rejects new ports at runtime",
+      "os.environ is copied when Python starts; set variables before launching",
+      "LOANS_PORT must be written in lower case on macOS"
+    ],
+    "answer": 2,
+    "explanation": "Each process gets a copy of the environment at start, and the app reads it once. A frozen dataclass prevents edits in code, but the cause here is the environment copy.",
+    "source": "Lesson 5 troubleshooting"
+  },
+  {
+    "id": "aa-L100-037",
+    "level": "L100",
+    "lesson": 5,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A team wants to put `ENV SMTP_PASSWORD=...` in the Dockerfile so production 'just works'. What does the lesson recommend?",
+    "options": [
+      "Fine, as long as the image registry is private",
+      "Fine, if the value is base64-encoded in the Dockerfile so nobody can read it",
+      "Never bake secrets into images; use secret files or a secrets manager",
+      "Use ARG instead of ENV so the secret is not stored"
+    ],
+    "answer": 2,
+    "explanation": "Values set with ENV or ARG end up in the image and its history. Base64 is encoding, not protection, and ARG is named in the caution too.",
+    "source": "Lesson 5 caution"
+  },
+  {
+    "id": "aa-L100-038",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does 12-factor prefer independent variables like LOANS_PORT over named groups such as 'dev' and 'prod'?",
+    "options": [
+      "Named groups make the app start more slowly",
+      "Independent variables are encrypted by the operating system",
+      "Groups multiply as deploys grow; separate variables set exactly what differs",
+      "Groups are not supported by environment variables on Windows or in containers"
+    ],
+    "answer": 2,
+    "explanation": "Each env var is an independent control; bundled environments do not scale as new deploys appear. The choice is about manageability, not encryption or speed.",
+    "source": "Lesson 5 concepts"
+  },
+  {
+    "id": "aa-L100-039",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A process sets `os.environ['loans_case_probe'] = '1'` and then checks `'LOANS_CASE_PROBE' in os.environ`. What is the result?",
+    "options": [
+      "True on Windows, False on macOS and Linux",
+      "False on every OS",
+      "False on Windows, True on macOS and Linux",
+      "True on every OS"
+    ],
+    "answer": 0,
+    "explanation": "Windows environment variable names are case-insensitive, while macOS and Linux treat them as case-sensitive. That is why the lab uses upper-case names consistently.",
+    "source": "Lesson 5 testCases"
+  },
+  {
+    "id": "aa-L100-040",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "In the C4 model, is the SQLite database file a 'container'?",
+    "options": [
+      "No: only Docker containers count as containers in the C4 model",
+      "Yes: it is a data store the system needs in order to work",
+      "No: databases appear only in the code view",
+      "Only if it runs on a separate server"
+    ],
+    "answer": 1,
+    "explanation": "A C4 container is an application or data store that must run for the system to work, not a Docker container. Physical placement does not decide it.",
+    "source": "Lesson 6 checkYourself"
+  },
+  {
+    "id": "aa-L100-041",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which relationship from workspace.dsl does **NOT** appear on the system context view?",
+    "options": [
+      "member -> api, because people are not shown on context views",
+      "api -> db, because both ends are inside Library Loans",
+      "librarian -> api, because librarians are internal users",
+      "api -> email, because external systems are hidden"
+    ],
+    "answer": 1,
+    "explanation": "At system level api -> db is internal to Library Loans. People and external systems are exactly what a context view shows.",
+    "source": "Lesson 6 checkYourself"
+  },
+  {
+    "id": "aa-L100-042",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "ADR 1 chose SQLite behind a repository. Months later the team moves to PostgreSQL. What should happen to ADR 1?",
+    "options": [
+      "Keep it, mark it 'Superseded by ADR 2', and write ADR 2",
+      "Delete ADR 1 and reuse number 1 for the new decision",
+      "Set ADR 1's status to 'Reversed.' and keep the number",
+      "Edit ADR 1's Decision section so that it describes PostgreSQL instead"
+    ],
+    "answer": 0,
+    "explanation": "ADRs are numbered, never reused and never rewritten; a reversed decision is marked superseded. 'Reversed.' is not a valid status in the lab's linter.",
+    "source": "Lesson 6 concepts"
+  },
+  {
+    "id": "aa-L100-043",
+    "level": "L100",
+    "lesson": 6,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "check_docs.py validates ADR status lines like this. What does it print?",
+    "code": "VALID = (\"Proposed\", \"Accepted\", \"Deprecated\", \"Superseded\")\n\nstatuses = [\"Reversed.\", \"Superseded by ADR 2.\", \"accepted\", \"Accepted.\"]\nprint(*[s.startswith(VALID) for s in statuses])",
+    "options": [
+      "False True True True",
+      "False True False True",
+      "False False False True",
+      "True True False True"
+    ],
+    "answer": 1,
+    "explanation": "str.startswith accepts a tuple and is case-sensitive: 'Reversed.' is not a valid status and 'accepted' does not match 'Accepted'. 'Superseded by ADR 2.' starts with a valid status.",
+    "source": "Lesson 6 tryIt"
+  },
+  {
+    "id": "aa-L100-044",
+    "level": "L100",
+    "lesson": 6,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A mini linter for Mermaid C4 relationships. What does it print?",
+    "code": "import re\n\ntext = \"\"\"Person(member, \"Member\")\nSystem(loans, \"Library Loans\")\nSystem_Ext(email, \"E-mail system\")\nRel(member, loans, \"Borrows\")\nRel(loans, mail, \"Sends reminders\")\"\"\"\n\ndefined = set(re.findall(r\"^(?!Rel)\\w+\\((\\w+),\", text, re.M))\nused = re.findall(r\"^Rel\\((\\w+), (\\w+),\", text, re.M)\nprint(sorted({i for pair in used for i in pair} - defined))",
+    "options": [
+      "['email', 'mail']",
+      "['loans', 'mail']",
+      "['mail']",
+      "[]"
+    ],
+    "answer": 2,
+    "explanation": "Element ids come from non-Rel lines (member, loans, email); a Rel naming 'mail' uses an undefined id. 'email' is defined, so it is not reported.",
+    "source": "Lesson 6 steps (Break a relationship)"
+  },
+  {
+    "id": "aa-L100-045",
+    "level": "L100",
+    "lesson": 6,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "The local model's ADR draft says 'all modules already comply with the boundary rule'. What decides whether the code really obeys it?",
+    "options": [
+      "A second model asked to review the first draft",
+      "The ADR's Status line once it says Accepted",
+      "The model's statement, if the draft passes validate_draft()",
+      "The exit code of lesson 3's check_boundaries.py"
+    ],
+    "answer": 3,
+    "explanation": "The model only proposes text; its claims about the code count for nothing. Passing validate_draft() only proves the format, and only a human accepts an ADR.",
+    "source": "Lesson 6 agentAssist"
+  },
+  {
+    "id": "aa-L100-046",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Mermaid places the C4 boxes in an awkward order. What does the lesson suggest?",
+    "options": [
+      "Switch to a code-level C4 diagram, which Mermaid lays out fully automatically",
+      "Reorder statements or add UpdateLayoutConfig; Mermaid C4 lays out by order",
+      "Add more Rel lines so the layout engine has hints",
+      "Render with Structurizr, which reads .mmd files directly"
+    ],
+    "answer": 1,
+    "explanation": "Mermaid C4 is experimental and has no fully automatic layout. Structurizr uses its own DSL, not Mermaid files.",
+    "source": "Lesson 6 troubleshooting"
+  },
+  {
+    "id": "aa-L100-047",
+    "level": "L100",
+    "lesson": 6,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "Which of these decisions deserves an ADR?",
+    "options": [
+      "Rewording one log message in the handler",
+      "Keeping SQLite behind a repository interface",
+      "Re-running the code formatter on every file in the repo",
+      "Renaming a local variable in service.py"
+    ],
+    "answer": 1,
+    "explanation": "Write ADRs for decisions that affect structure, interfaces or qualities. Trivial, easily reversed choices do not need one.",
+    "source": "Lesson 6 useWhen"
+  }
+]

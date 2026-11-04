@@ -1,0 +1,1132 @@
+[
+  {
+    "id": "foundations-probability-stochastic",
+    "number": 23,
+    "level": "L500",
+    "title": "Foundations I: probability and stochastic processes for simulation",
+    "category": "theory",
+    "description": "The probability every earlier lesson leaned on: the weak law of large numbers (proved with Chebyshev), the central limit theorem, the Poisson process and its exponential gaps, Markov chains, and the M/M/1 steady state derived from birth-death balance - each followed by a seeded numerical check.",
+    "outcome": "You can state the LLN and CLT precisely, prove the weak LLN, derive exponential inter-arrival times from the Poisson process axioms, compute a stationary distribution, and derive pi_n = (1 - rho) rho^n for the M/M/1 queue - and check each result with code.",
+    "estimatedTime": "6-8 hours (reading 2 h, checks 1 h, problem set 3-5 h)",
+    "prerequisites": [
+      "probability: random variables, expectation, variance, independence",
+      "calculus: Taylor series, the ODE y' = -lam y and its solution",
+      "linear algebra: solving a linear system, row vectors times matrices",
+      "L100 #2 and #3, L200 #8 and #10 (the places these results are used)"
+    ],
+    "learningObjectives": [
+      "Prove the weak law of large numbers from Markov's and Chebyshev's inequalities and explain why the bound is loose.",
+      "Explain what the central limit theorem does and does not promise (distributional limit, finite variance, rate ~1/sqrt(n)) and evaluate when a normal confidence interval is trustworthy.",
+      "Derive P(T > t) = exp(-lam t) and the memoryless property from the Poisson process axioms.",
+      "Derive the M/M/1 stationary distribution from cut (birth-death) balance and analyze how L and W explode as rho -> 1.",
+      "Critique a simulation output claim by checking which of these theorems it silently relies on."
+    ],
+    "glossary": [
+      {
+        "term": "convergence in probability",
+        "meaning": "X_n -> c if P(|X_n - c| >= eps) -> 0 for every eps > 0; the sense of the weak law of large numbers."
+      },
+      {
+        "term": "convergence in distribution",
+        "meaning": "The CDF of X_n converges to a limit CDF at its continuity points; the sense of the central limit theorem."
+      },
+      {
+        "term": "Chebyshev's inequality",
+        "meaning": "P(|X - mu| >= eps) <= Var(X) / eps^2; follows from Markov's inequality applied to (X - mu)^2."
+      },
+      {
+        "term": "Poisson process",
+        "meaning": "A counting process with independent, stationary increments and P(one event in dt) = lam dt + o(dt), P(two or more) = o(dt)."
+      },
+      {
+        "term": "memoryless",
+        "meaning": "P(T > s + t | T > s) = P(T > t); among continuous distributions only the exponential has it."
+      },
+      {
+        "term": "stationary distribution",
+        "meaning": "A probability row vector pi with pi P = pi (discrete time) or pi Q = 0 (continuous time, generator Q)."
+      },
+      {
+        "term": "birth-death process",
+        "meaning": "A continuous-time Markov chain on 0, 1, 2, ... that only moves up by one (rate lam_n) or down by one (rate mu_n)."
+      },
+      {
+        "term": "cut balance",
+        "meaning": "In steady state the probability flow across any cut between {0..n} and {n+1, ...} is equal in both directions: lam_n pi_n = mu_(n+1) pi_(n+1)."
+      }
+    ],
+    "theorems": [
+      {
+        "name": "Theorem 23.1 - Weak law of large numbers (Chebyshev proof)",
+        "statement": "Let X_1, ..., X_n be pairwise uncorrelated with common mean mu and variance sigma^2 < inf, and let mean_n = (X_1 + ... + X_n)/n. Then for every eps > 0, P(|mean_n - mu| >= eps) <= sigma^2 / (n eps^2), which tends to 0 as n -> inf.",
+        "proof": "**Markov's inequality.** For Y >= 0 and a > 0 we have Y >= a 1{Y >= a} pointwise; taking expectations, E[Y] >= a P(Y >= a), so P(Y >= a) <= E[Y]/a.\n\n**Chebyshev.** Apply Markov to Y = (mean_n - mu)^2 and a = eps^2: P(|mean_n - mu| >= eps) = P((mean_n - mu)^2 >= eps^2) <= E[(mean_n - mu)^2] / eps^2 = Var(mean_n) / eps^2.\n\n**Variance of the mean.** Var(mean_n) = (1/n^2) [sum_i Var(X_i) + sum_(i != j) Cov(X_i, X_j)] = (1/n^2)(n sigma^2 + 0) = sigma^2 / n, because the covariances vanish.\n\nCombining: P(|mean_n - mu| >= eps) <= sigma^2/(n eps^2) -> 0. QED.\n\n*Remarks.* Only the variance was used, so the bound holds for every distribution with that variance - which is why it is loose for any particular one (the check shows 0.0427 observed against a bound of 0.25 at n = 100). The strong law (almost-sure convergence) needs more work; see Grinstead & Snell ch. 8 for the discussion.",
+        "check": "labs/L500/23-probability/t1_wlln.py",
+        "checkOutput": "n      Chebyshev bound  observed P(|mean - 1| >= 0.2)\n25     1.0000           0.3220\n100    0.2500           0.0427\n400    0.0625           0.0003\n1600   0.0156           0.0000\nbound holds for every n; it is loose (Chebyshev uses only the variance)"
+      },
+      {
+        "name": "Theorem 23.2 - Central limit theorem (Lindeberg-Levy)",
+        "statement": "Let X_1, X_2, ... be iid with mean mu and variance 0 < sigma^2 < inf, and Z_n = (X_1 + ... + X_n - n mu) / (sigma sqrt(n)). Then P(Z_n <= z) -> Phi(z) for every z, where Phi is the standard normal CDF. If also E|X|^3 < inf, the Berry-Esseen theorem gives sup_z |P(Z_n <= z) - Phi(z)| = O(1/sqrt(n)).",
+        "proof": "**Proof sketch (characteristic functions).** Let Y = (X - mu)/sigma, so E[Y] = 0, E[Y^2] = 1, and let phi(s) = E[exp(i s Y)]. Because E[Y^2] < inf, phi is twice differentiable at 0 and phi(s) = 1 - s^2/2 + o(s^2). By independence the characteristic function of Z_n = (Y_1 + ... + Y_n)/sqrt(n) is phi(t/sqrt(n))^n = (1 - t^2/(2n) + o(1/n))^n -> exp(-t^2/2), the characteristic function of N(0, 1). Levy's continuity theorem turns convergence of characteristic functions into convergence in distribution. QED (sketch).\n\nA full proof (continuity theorem included) is in Grinstead & Snell ch. 9 and standard measure-theoretic texts; we use the result, not the machinery.\n\n*What the theorem does not say.* It gives no rate without a third moment; it says nothing about the tails at fixed n (the check shows P(Z_n <= 1.96) = 0.9631 at n = 16 for skewed exponential data, not 0.975); and it fails without finite variance (a Pareto with alpha = 1.5 has a mean but no variance, so the usual mean +/- 1.96 s/sqrt(n) interval is not justified).",
+        "check": "labs/L500/23-probability/t2_clt.py",
+        "checkOutput": "n     P(Z_n <= 1.96)  KS distance to N(0,1)  skewness 2/sqrt(n)\n1     0.9482          0.1587                 2.000\n4     0.9524          0.0651                 1.000\n16    0.9631          0.0324                 0.500\n64    0.9696          0.0231                 0.250\n256   0.9728          0.0121                 0.125\nexact P(Z <= 1.96) = 0.9750; KS noise floor for 20,000 draws ~ 0.0096"
+      },
+      {
+        "name": "Theorem 23.3 - Poisson process has exponential inter-arrival times",
+        "statement": "Let N(t) be a counting process with N(0) = 0, independent and stationary increments, P(N(h) = 1) = lam h + o(h) and P(N(h) >= 2) = o(h). Then P(N(t) = n) = exp(-lam t)(lam t)^n / n!, and the inter-arrival times T_1, T_2, ... are iid Exponential(lam): P(T_k > t) = exp(-lam t), with mean 1/lam.",
+        "proof": "**Step 1 (no events).** Let P_0(t) = P(N(t) = 0). By independent and stationary increments, P_0(t + h) = P_0(t) P(N(h) = 0) = P_0(t)(1 - lam h + o(h)). Rearranging, (P_0(t + h) - P_0(t))/h = -lam P_0(t) + o(1); letting h -> 0 gives P_0'(t) = -lam P_0(t) with P_0(0) = 1, so P_0(t) = exp(-lam t).\n\n**Step 2 (first gap).** The first arrival is after t exactly when there is no event in [0, t]: P(T_1 > t) = P_0(t) = exp(-lam t). That is the Exponential(lam) survival function.\n\n**Step 3 (later gaps).** Given T_1 = s, the event {T_2 > t} is {no event in (s, s + t]}. By independent increments it does not depend on what happened in [0, s]; by stationarity its probability is P_0(t) = exp(-lam t). So T_2 is Exponential(lam) and independent of T_1; induction gives the rest.\n\n**Step 4 (counts).** The same argument gives P_n'(t) = -lam P_n(t) + lam P_(n-1)(t); induction from P_0 gives P_n(t) = exp(-lam t)(lam t)^n/n!.\n\n**Memoryless.** P(T > s + t | T > s) = exp(-lam(s + t))/exp(-lam s) = exp(-lam t) = P(T > t). QED.\n\nThe check builds the process from the axioms alone (independent Bernoulli(lam dt) cells, dt = 0.001) and never draws an exponential number, yet the gaps come out with mean 0.5025 against 1/lam = 0.5 and P(T > 1) = 0.1375 against exp(-2) = 0.1353.",
+        "check": "labs/L500/23-probability/t3_poisson.py",
+        "checkOutput": "events 9943 in 5000 time units (expected 10000)\nmean gap 0.5025 (theory 1/lam = 0.5000); var 0.2550 (theory 1/lam^2 = 0.2500)\nP(T > 0.25) observed 0.6063 theory exp(-lam t) = 0.6065\nP(T > 0.5) observed 0.3692 theory exp(-lam t) = 0.3679\nP(T > 1.0) observed 0.1375 theory exp(-lam t) = 0.1353\nmemoryless: P(T > 1.5 | T > 0.5) = 0.1411 vs P(T > 1.0) = 0.1375\nN(1) per unit interval: mean 1.9886 var 2.0237 (Poisson: both = lam = 2.0)\nP(N(1) = 0) observed 0.1388 theory 0.1353"
+      },
+      {
+        "name": "Theorem 23.4 - Stationary distributions; the M/M/1 queue from birth-death balance",
+        "statement": "(a) A finite, irreducible, aperiodic Markov chain with transition matrix P has a unique stationary distribution pi (pi P = pi, sum pi = 1), and every row of P^n converges to pi. (b) For a birth-death process with birth rates lam_n and death rates mu_n, a stationary distribution satisfies lam_n pi_n = mu_(n+1) pi_(n+1) for all n. For the M/M/1 queue (lam_n = lam, mu_n = mu, rho = lam/mu < 1): pi_n = (1 - rho) rho^n, L = rho/(1 - rho) and, by Little's law, W = 1/(mu - lam).",
+        "proof": "**(a)** is the Perron-Frobenius / ergodic theorem for finite chains; a full proof is in Grinstead & Snell ch. 11. We use it and check it: the linear solve, P^50 and a 200,000-step simulation agree.\n\n**(b) Cut balance.** A stationary distribution of a continuous-time chain with generator Q satisfies the global balance equations pi Q = 0, i.e. for every state j: pi_j sum_(k != j) q_jk = sum_(i != j) pi_i q_ij (flow out of j = flow into j). Sum these equations over the set A = {0, 1, ..., n}. Every transition between two states inside A appears once as an outflow and once as an inflow and cancels. What remains is the flow across the cut between A and its complement. In a birth-death process the only transitions across that cut are n -> n+1 (rate lam_n) and n+1 -> n (rate mu_(n+1)). So lam_n pi_n = mu_(n+1) pi_(n+1).\n\n**M/M/1.** With constant rates, pi_(n+1) = rho pi_n, so pi_n = rho^n pi_0. Normalising, sum_n rho^n pi_0 = pi_0/(1 - rho) = 1 needs rho < 1 and gives pi_0 = 1 - rho. Then L = sum_n n (1 - rho) rho^n = (1 - rho) rho / (1 - rho)^2 = rho/(1 - rho). Little's law L = lam W gives W = rho/(lam(1 - rho)) = 1/(mu - lam). QED.\n\n*Why it matters for simulation.* L = rho/(1 - rho) is the verification oracle that L100 #3 and L200 #8 compared their discrete-event simulations against; its pole at rho = 1 explains why heavy-traffic runs need far longer warm-up and more replications (L200 #10). The check solves pi Q = 0 for a 200-state truncation (agrees to 1e-12) and simulates 1,000,000 transitions (L = 3.919 against 4.000; simulated L converges slowly near rho = 1).",
+        "check": "labs/L500/23-probability/t4_birth_death.py",
+        "checkOutput": "(a) pi from pi P = pi : [0.2439 0.4634 0.2927]\n    every row of P^50 : [0.2439 0.4634 0.2927] max row spread < 1e-12\n    simulated 200,000 : [0.2457 0.4633 0.2909]\n(b) n:                  0       1       2       3       4      L\n    (1-rho) rho^n    0.2000 0.1600 0.1280 0.1024 0.0819  4.000\n    generator solve  0.2000 0.1600 0.1280 0.1024 0.0819  4.000\n    CTMC simulation  0.2003 0.1612 0.1285 0.1025 0.0823  3.919\n    Little's law: W = L / lam = 5.000 = 1/(mu - lam) = 5.000"
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "23-P1",
+        "type": "proof",
+        "difficulty": 1,
+        "marks": 6,
+        "problem": "Prove Markov's inequality P(Y >= a) <= E[Y]/a for Y >= 0, a > 0, and use it to prove Chebyshev's inequality. Where exactly does the proof use Y >= 0?",
+        "solution": "For Y >= 0: Y >= a 1{Y >= a} at every outcome (if Y >= a the right side is a <= Y; otherwise it is 0 <= Y - this is where Y >= 0 is used). Take expectations: E[Y] >= a P(Y >= a). For Chebyshev put Y = (X - mu)^2 >= 0 and a = eps^2: P(|X - mu| >= eps) = P((X - mu)^2 >= eps^2) <= E[(X - mu)^2]/eps^2 = Var(X)/eps^2. Marking: pointwise inequality with the role of Y >= 0 (3), Chebyshev substitution (2), equality of events (1)."
+      },
+      {
+        "id": "23-P2",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 6,
+        "problem": "Service times are iid Exponential with mean 1 minute (variance 1). (a) Using Chebyshev, what sample size n guarantees P(|mean_n - 1| >= 0.1) <= 0.05? (b) Using the CLT normal approximation instead, what n gives a 95% interval of half-width 0.1? (c) Explain the gap.",
+        "solution": "(a) Need sigma^2/(n eps^2) <= 0.05, i.e. n >= 1/(0.05 x 0.01) = 2,000. (b) Need 1.96 sigma/sqrt(n) <= 0.1, i.e. n >= (1.96/0.1)^2 = 384.16, so n = 385. (c) Chebyshev holds for every distribution with variance 1, including the worst case, so it is conservative; the CLT uses the (approximate) normal shape of the mean and is only asymptotically valid - for skewed data at small n it under-covers slightly (Theorem 23.2 check: 0.9631 instead of 0.975 at n = 16). Marking: (a) 2, (b) 2, (c) 2."
+      },
+      {
+        "id": "23-P3",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Calls arrive at a help desk as a Poisson process with rate 3 per minute. (a) P(no call in a 40-second window)? (b) Expected time until the 5th call? (c) P(exactly 2 calls in one minute)? (d) Given no call in the last 30 s, what is P(no call in the next 40 s)?",
+        "solution": "(a) lam t = 3 x (40/60) = 2, so P = exp(-2) = 0.1353. (b) The 5th arrival time is a sum of 5 iid Exponential(3) gaps: mean 5/3 = 1.667 min. (c) exp(-3) 3^2/2! = 0.2240. (d) Memoryless: the past 30 s are irrelevant, so again exp(-2) = 0.1353. Marking: 1 + 2 + 1 + 2 (the memoryless argument must be stated)."
+      },
+      {
+        "id": "23-P4",
+        "type": "proof",
+        "difficulty": 2,
+        "marks": 8,
+        "problem": "Show that the exponential distribution is memoryless. Then prove the converse: if T > 0 has a continuous distribution with P(T > s + t) = P(T > s) P(T > t) for all s, t >= 0, then T is exponential.",
+        "solution": "Memoryless: P(T > s + t | T > s) = exp(-lam(s+t))/exp(-lam s) = exp(-lam t). Converse: let g(t) = P(T > t), which is right-continuous, non-increasing, g(0) = 1 and g(s + t) = g(s) g(t). Then g(m/n) = g(1/n)^m and g(1) = g(1/n)^n, so g(q) = g(1)^q for every positive rational q. By right-continuity (monotonicity) g(t) = g(1)^t for all real t >= 0. Since T is a genuine positive random variable 0 < g(1) < 1, so g(t) = exp(-lam t) with lam = -ln g(1) > 0. Marking: forward direction 2, functional equation on rationals 3, extension to reals 2, lam > 0 justified 1."
+      },
+      {
+        "id": "23-P5",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "A system alternates between states Idle, Busy and Overloaded with transition matrix P = [[0.5, 0.4, 0.1], [0.2, 0.6, 0.2], [0.1, 0.3, 0.6]] (rows = from). Find the exact stationary distribution and the long-run fraction of steps spent Overloaded.",
+        "solution": "Solve pi P = pi with pi_1 + pi_2 + pi_3 = 1. From the first and third columns: 0.5 pi_1 = 0.2 pi_2 + 0.1 pi_3 and 0.4 pi_3 = 0.1 pi_1 + 0.2 pi_2. Solving gives pi = (10/41, 19/41, 12/41) = (0.2439, 0.4634, 0.2927). The chain is finite, irreducible and aperiodic (self-loops), so by Theorem 23.4(a) the long-run fraction Overloaded is 12/41 = 0.2927 (the check's simulation gives 0.2909). Marking: equations 2, exact solution 3, ergodicity justification 1."
+      },
+      {
+        "id": "23-P6",
+        "type": "derivation",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "An M/M/1/K queue has room for at most K customers in the system; arrivals that find K present are lost. (a) Derive pi_n using cut balance. (b) For rho = 0.8 and K = 5 compute the blocking probability pi_K. (c) Why does this model have a stationary distribution even when rho >= 1?",
+        "solution": "(a) Cut balance between {0..n} and {n+1..K} gives lam pi_n = mu pi_(n+1) for n = 0..K-1, so pi_n = rho^n pi_0. Normalising over the finite set: pi_0 sum_(n=0..K) rho^n = 1, so pi_n = (1 - rho) rho^n / (1 - rho^(K+1)) for rho != 1 (and 1/(K+1) for rho = 1). (b) pi_5 = 0.2 x 0.8^5/(1 - 0.8^6) = 0.08882: about 8.9% of arrivals are lost (PASTA: Poisson arrivals see time averages). (c) The state space is finite, so the normalising sum is always finite; the chain is irreducible on {0..K}, so a unique stationary distribution exists for any rho. Marking: (a) 5, (b) 3, (c) 2."
+      },
+      {
+        "id": "23-P7",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "An M/M/1 server has lam = 0.9 and mu = 1.0 per minute. Compute L, W, Lq = rho^2/(1 - rho) and P(N >= 5). By what factor does W grow if lam rises from 0.8 to 0.9?",
+        "solution": "rho = 0.9. L = 0.9/0.1 = 9 customers; W = 1/(mu - lam) = 10 min; Lq = 0.81/0.1 = 8.1; P(N >= 5) = sum_(n>=5) (1 - rho) rho^n = rho^5 = 0.5905. At lam = 0.8, W = 5 min, so a 12.5% rise in load doubles W (factor 2.00). Marking: 1 each for L, W, Lq, P(N >= 5); 2 for the growth factor with the pole at rho = 1 named."
+      },
+      {
+        "id": "23-P8",
+        "type": "calculation",
+        "difficulty": 3,
+        "marks": 8,
+        "problem": "S is the sum of 100 iid Exponential(1) service times (mean 100, SD 10). (a) Use the CLT to approximate P(S > 130). (b) Compute the exact value using the Poisson-process identity P(S_n > t) = P(N(t) < n) for a rate-1 process. (c) Compare with the same two calculations at t = 110 and explain what this says about where the CLT can be trusted.",
+        "solution": "(a) z = (130 - 100)/10 = 3, so P ~ 1 - Phi(3) = 0.00135. (b) S_100 > 130 exactly when fewer than 100 events of a rate-1 Poisson process occur by time 130 (the 100th arrival comes after 130): P = sum_(k=0..99) exp(-130) 130^k/k! = 0.00275, about twice the CLT value. (c) At t = 110 (1 SD) the CLT gives 0.1587 and the exact value is 0.1583 - nearly identical. The sum of exponentials is right-skewed (skewness 2/sqrt(100) = 0.2), so its far right tail is heavier than the normal's: the CLT is accurate near the centre and under-estimates rare upper-tail events (all values recomputed in research/l500_checks.py). Marking: (a) 2, (b) 4 (identity justified via Theorem 23.3), (c) 2."
+      },
+      {
+        "id": "23-P9",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "A colleague reports 'mean response time 312 ms +/- 9 ms (95% CI, n = 50 runs)' for a service whose response times follow a Pareto distribution with tail index alpha = 1.5. Critique the claim using the hypotheses of Theorems 23.1 and 23.2.",
+        "solution": "With alpha = 1.5 the mean exists but the variance is infinite, so the CLT (finite variance) does not apply and the s/sqrt(n) interval has no justification: the sample SD is itself unstable and typically under-states the uncertainty because rare huge values dominate. The weak LLN still holds in its general (Khinchin) form, but convergence is slow. Better: report medians/quantiles with bootstrap or order-statistic intervals, many more runs, or a model of the tail. Marking: identifies infinite variance (2), consequence for the CI (1), a sound alternative (1)."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Correctness of derivations and proofs",
+        "excellent": "Every step valid, hypotheses (independence, finite variance, rho < 1) stated where used",
+        "adequate": "Main steps right, one hypothesis unstated or a minor gap",
+        "inadequate": "Key step missing or invalid (e.g. assumes the result)",
+        "weight": 40
+      },
+      {
+        "criterion": "Numerical answers",
+        "excellent": "All correct to the stated precision and reproduced in code",
+        "adequate": "Method right, one arithmetic slip",
+        "inadequate": "Wrong method or no working",
+        "weight": 25
+      },
+      {
+        "criterion": "Interpretation for simulation practice",
+        "excellent": "Links each result to the lab where it is used and states its limits (rate, tails, rho -> 1)",
+        "adequate": "Generic interpretation",
+        "inadequate": "No interpretation",
+        "weight": 20
+      },
+      {
+        "criterion": "Clarity of mathematical writing",
+        "excellent": "Defines symbols, readable chain of reasoning, ends with what was shown",
+        "adequate": "Readable with some undefined notation",
+        "inadequate": "Hard to follow",
+        "weight": 15
+      }
+    ],
+    "conceptNote": "content/concepts/L500/23-probability-foundations.md",
+    "conceptSummary": "The laws behind every confidence interval and queue check in this course: the weak LLN (Chebyshev: loose but universal), the CLT (shape, not tails, and only with finite variance), the Poisson process (exponential gaps follow from the axioms) and Markov chains, where cut balance gives the M/M/1 law pi_n = (1 - rho) rho^n and L = rho/(1 - rho). Each is checked in code: 0.0427 <= 0.25, mean gap 0.5025 vs 0.5, L 3.919 vs 4.000.",
+    "sources": [
+      {
+        "title": "Grinstead & Snell, Introduction to Probability (2nd ed., AMS 2003; free version, GNU FDL) - ch. 8 LLN, ch. 9 CLT, ch. 11 Markov chains",
+        "url": "https://math.dartmouth.edu/~prob/prob/prob.pdf"
+      },
+      {
+        "title": "Gallager, MIT OCW 6.262 Discrete Stochastic Processes (Spring 2011), ch. 2 Poisson processes (located via search; not fetched)",
+        "url": "https://ocw.mit.edu/courses/6-262-discrete-stochastic-processes-spring-2011/resources/mit6_262s11_chap02/"
+      },
+      {
+        "title": "MIT OCW 2.854 (Fall 2016): M/M/1 queue notes",
+        "url": "https://ocw.mit.edu/courses/2-854-introduction-to-manufacturing-systems-fall-2016/927056a1af54772a587fd84ad4951e71_MIT2_854F16_Mm1Queue.pdf"
+      },
+      {
+        "title": "NIST/SEMATECH e-Handbook: Confidence limits for the mean",
+        "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda352.htm"
+      }
+    ],
+    "seeAlso": [
+      "simulation L100 #2 Monte Carlo: estimate a project's completion time: the 1/sqrt(N) shrinkage is Theorem 23.1-23.2 in action.",
+      "simulation L100 #3 Discrete-event simulation: a single-server queue: verified against L = rho/(1 - rho) from Theorem 23.4.",
+      "simulation L200 #8 Resources and queues: c desks, one line, Erlang C: the same cut-balance argument with mu_n = min(n, c) mu.",
+      "simulation L200 #10 Warm-up, replications and confidence: t intervals rely on the CLT; heavy traffic (rho -> 1) needs longer runs.",
+      "simulation L400 #22 Capstone: a digital twin of a service centre: Poisson arrivals (thinning) and Erlang C verification."
+    ],
+    "next": "Foundations II: numerical methods (L500 #24)",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "Every theorem check (t1_wlln.py, t2_clt.py, t3_poisson.py, t4_birth_death.py) ran locally on Python 3.12.15 + numpy 2.5.3 on Linux; each script asserts the theorem's prediction and checkOutput is its real stdout. research/l500_checks.py re-runs them, compares the output byte for byte and recomputes every numeric problem-set answer; labs/L500/23-probability/test_theorems.py passes (python -m unittest).",
+      "pendingCi": [
+        "macOS and Windows runs of labs/L500/23-probability (seeded; outputs expected identical)"
+      ]
+    }
+  },
+  {
+    "id": "foundations-numerical-methods",
+    "number": 24,
+    "level": "L500",
+    "title": "Foundations II: numerical methods - truncation error, order, stability, stiffness and floating point",
+    "category": "theory",
+    "description": "Why Euler is first order and RK4 fourth order (derived, then measured), why a step size can be accurate yet unstable (the stability region of explicit Euler on y' = lam y), what makes a problem stiff, and how IEEE 754 rounding sets a floor under every error.",
+    "outcome": "You can derive local and global truncation errors for Euler, verify RK4's order conditions, compute stability limits, recognise stiffness and choose an implicit method, and predict the round-off floor of a computation.",
+    "estimatedTime": "6-8 hours (reading 2 h, checks 1 h, problem set 3-5 h)",
+    "prerequisites": [
+      "calculus: Taylor's theorem with remainder, the mean value theorem",
+      "ODEs: y' = f(t, y), the solution of y' = lam y",
+      "complex numbers: modulus, the complex plane (for stability regions)",
+      "L100 #4 and L200 #9 (where these methods run)"
+    ],
+    "learningObjectives": [
+      "Derive the local truncation error of explicit Euler and prove the O(h) global error bound using a Lipschitz constant.",
+      "Verify that classical RK4 satisfies the order-4 conditions and explain why local O(h^5) becomes global O(h^4).",
+      "Derive the stability region of explicit Euler on y' = lam y and evaluate whether a given step size is stable.",
+      "Explain stiffness as a stability-limited (not accuracy-limited) step size and justify choosing an implicit method.",
+      "Analyze the truncation/round-off trade-off and predict the best step for a finite difference."
+    ],
+    "glossary": [
+      {
+        "term": "local truncation error",
+        "meaning": "The error made in ONE step started from the exact solution: tau = y(t + h) - Phi(t, y(t), h)."
+      },
+      {
+        "term": "global error",
+        "meaning": "e_n = y(t_n) - y_n after n steps: local errors propagated and accumulated."
+      },
+      {
+        "term": "order p",
+        "meaning": "Global error O(h^p); for a one-step method this follows from local error O(h^(p+1))."
+      },
+      {
+        "term": "Lipschitz constant L",
+        "meaning": "|f(t, y) - f(t, z)| <= L |y - z|; controls how fast nearby solutions separate."
+      },
+      {
+        "term": "stability function R(z)",
+        "meaning": "For y' = lam y, one step multiplies y by R(z), z = h lam; explicit Euler R = 1 + z, implicit Euler R = 1/(1 - z)."
+      },
+      {
+        "term": "region of absolute stability",
+        "meaning": "The set of z with |R(z)| <= 1; for explicit Euler the disc |1 + z| <= 1."
+      },
+      {
+        "term": "stiff problem",
+        "meaning": "One whose step size is limited by stability rather than accuracy, typically because it has fast decaying modes (large negative lam) next to slow ones."
+      },
+      {
+        "term": "unit roundoff u",
+        "meaning": "For IEEE 754 binary64 with round-to-nearest, u = 2^-53 ~ 1.1e-16; fl(x) = x(1 + d) with |d| <= u. Machine epsilon is 2u = 2^-52."
+      }
+    ],
+    "theorems": [
+      {
+        "name": "Theorem 24.1 - Explicit Euler: local error O(h^2), global error O(h)",
+        "statement": "Let f be Lipschitz in y with constant L and let the exact solution have |y''| <= M on [t_0, T]. Explicit Euler y_(n+1) = y_n + h f(t_n, y_n) has local truncation error tau_(n+1) = (h^2/2) y''(xi_n) and global error |e_n| <= (h M / (2L)) (exp(L (t_n - t_0)) - 1) = O(h).",
+        "proof": "**Local.** By Taylor's theorem with remainder, y(t_n + h) = y(t_n) + h y'(t_n) + (h^2/2) y''(xi_n) for some xi_n, and y'(t_n) = f(t_n, y(t_n)). So the step started from the exact value misses by tau_(n+1) = (h^2/2) y''(xi_n), and |tau| <= M h^2/2.\n\n**Propagation.** Subtract the method from the Taylor expansion: e_(n+1) = e_n + h [f(t_n, y(t_n)) - f(t_n, y_n)] + tau_(n+1). The Lipschitz condition gives |e_(n+1)| <= (1 + hL)|e_n| + M h^2/2.\n\n**Induction.** With e_0 = 0, |e_n| <= (M h^2/2) sum_(k=0..n-1) (1 + hL)^k = (M h^2/2) ((1 + hL)^n - 1)/(hL) = (h M/(2L)) ((1 + hL)^n - 1). Since 1 + hL <= exp(hL), (1 + hL)^n <= exp(L n h) = exp(L (t_n - t_0)). QED.\n\n*Reading the result.* n = (T - t_0)/h steps each add O(h^2), and the factor exp(L(T - t_0)) bounds how much earlier errors are amplified - so the global order is one less than the local order. On the test problem y' = y - t^2 + 1 (L = 1, M = 0.5 e^2 - 2 = 1.695) the bound at h = 0.1 is 0.541, the true error 0.242: valid, pessimistic by about 2x. The check measures local-error ratios of 3.95-4.00 (O(h^2)) and global ratios approaching 2 (order 0.990 at the finest pair).",
+        "check": "labs/L500/24-numerics/t1_euler_order.py",
+        "checkOutput": "h         local err   ratio  global err   ratio  observed order\n0.20000   2.930e-02    -    4.397e-01    -    -\n0.10000   7.415e-03   3.95  2.420e-01   1.82  0.862\n0.05000   1.864e-03   3.98  1.275e-01   1.90  0.925\n0.02500   4.674e-04   3.99  6.550e-02   1.95  0.961\n0.01250   1.170e-04   3.99  3.321e-02   1.97  0.980\n0.00625   2.928e-05   4.00  1.672e-02   1.99  0.990\nlocal error falls ~4x per halving (O(h^2)); global ~2x (O(h)): N = 2/h steps each add O(h^2)"
+      },
+      {
+        "name": "Theorem 24.2 - Classical RK4 is fourth order",
+        "statement": "The classical Runge-Kutta method (c = (0, 1/2, 1/2, 1), b = (1/6, 1/3, 1/3, 1/6)) satisfies the eight order conditions for order 4. For smooth f its local truncation error is O(h^5) and its global error O(h^4). On y' = lam y one step multiplies y by R(z) = 1 + z + z^2/2 + z^3/6 + z^4/24, z = h lam.",
+        "proof": "**Linear test equation (full derivation).** With f = lam y and z = h lam: k1 = lam y; k2 = lam (y + (h/2) k1) = lam y (1 + z/2); k3 = lam y (1 + z/2 + z^2/4); k4 = lam (y + h k3) = lam y (1 + z + z^2/2 + z^3/4). Then y_(n+1) = y + (h/6)(k1 + 2k2 + 2k3 + k4) = y [1 + (z/6)(1 + 2 + z + 2 + z + z^2/2 + 1 + z + z^2/2 + z^3/4)] = y [1 + (z/6)(6 + 3z + z^2 + z^3/4)] = y (1 + z + z^2/2 + z^3/6 + z^4/24). The exact factor is e^z, whose Taylor series agrees up to z^4, so the local error is z^5/120 + O(z^6) = O(h^5).\n\n**General f.** Matching the Taylor expansion of the exact flow with that of the method (Butcher trees) gives one condition per rooted tree up to order 4: sum b = 1, b.c = 1/2, b.c^2 = 1/3, b.Ac = 1/6, b.c^3 = 1/4, b.(c * Ac) = 1/8, b.Ac^2 = 1/12, b.A^2 c = 1/24. The check verifies all eight in exact rational arithmetic; the derivation of the conditions themselves is in standard texts (see the UIC MCS 471 notes cited, which also state the local/global rule).\n\n**Local to global.** RK4 is a one-step method y_(n+1) = y_n + h Phi(t_n, y_n, h) whose increment Phi is Lipschitz in y when f is. The argument of Theorem 24.1 then applies word for word with M h^2/2 replaced by C h^5, giving |e_n| <= (C h^4/L')(exp(L'(t_n - t_0)) - 1) = O(h^4). QED.\n\nThe check finds e^z - R(z) = -3.028e-07 against z^5/120 = -3.094e-07 at z = -0.13, and global error ratios of 15.59 -> 15.96 per halving (observed order 3.996).",
+        "check": "labs/L500/24-numerics/t2_rk4_order.py",
+        "checkOutput": "(0) order conditions satisfied: 8/8 (sum b = 1, b.c = 1/2, b.c^2 = 1/3, b.Ac = 1/6, b.c^3 = 1/4, b.(c*Ac) = 1/8, b.Ac^2 = 1/12, b.AAc = 1/24)\n(a) z = -0.130: RK4 step = R(z) to 0e+00; e^z - R(z) = -3.028e-07; z^5/120 = -3.094e-07\n(a) z = -0.065: RK4 step = R(z) to 0e+00; e^z - R(z) = -9.565e-09; z^5/120 = -9.669e-09\n(b) h         global err   ratio   observed order\n    0.20000   1.089e-04        -   -\n    0.10000   6.990e-06    15.59   3.962\n    0.05000   4.421e-07    15.81   3.983\n    0.02500   2.779e-08    15.91   3.992\n    0.01250   1.742e-09    15.96   3.996\nglobal error ~16x smaller per halving: O(h^4) (N = 2/h steps x O(h^5) local error)"
+      },
+      {
+        "name": "Theorem 24.3 - Absolute stability of explicit Euler; stiffness",
+        "statement": "On y' = lam y (Re lam < 0, so the exact solution decays) explicit Euler gives y_n = (1 + z)^n y_0 with z = h lam; the numerical solution decays iff |1 + z| < 1 (the open disc of radius 1 centred at -1). For real lam < 0 this means h < 2/|lam|. Implicit Euler gives y_n = (1 - z)^-n y_0, which decays for every z with Re z < 0 (A-stability). RK4's interval on the negative real axis is (-2.785, 0].",
+        "proof": "**Explicit Euler.** y_(n+1) = y_n + h lam y_n = (1 + z) y_n, so y_n = (1 + z)^n y_0, and |y_n| -> 0 iff |1 + z| < 1; |1 + z| = 1 gives bounded non-decaying oscillation and |1 + z| > 1 exponential growth, whatever the accuracy at small n. For real z = h lam < 0: |1 + z| < 1 iff -2 < z < 0 iff h < 2/|lam|.\n\n**Implicit Euler.** y_(n+1) = y_n + h lam y_(n+1) gives y_(n+1) = y_n/(1 - z). If Re z < 0 then |1 - z| >= Re(1 - z) = 1 - Re z > 1, so |1/(1 - z)| < 1 for every step size.\n\n**RK4.** The interval endpoint is the negative real root of |R(z)| = 1, found by bisection in the check: z = -2.7853.\n\n**Stiffness.** For y' = -1000 (y - cos t) - sin t the exact solution is cos t: smooth, so accuracy alone would allow h ~ 0.1. But the error obeys e' = -1000 e, so explicit Euler needs h < 2/1000 = 0.002, i.e. at least 1,000 steps on [0, 2]. The check confirms: h = 0.0021 explodes to 2.7e33, h = 0.0019 gives 6.4e-4, and implicit Euler with h = 0.1 (20 steps) gives 1.9e-5. A problem is stiff exactly when stability, not accuracy, sets the step - which is why L200 #9's explicit adaptive solver took 3,027 steps on the stiff RC circuit and the implicit one 1,000. QED.",
+        "check": "labs/L500/24-numerics/t3_stability.py",
+        "checkOutput": "(a) explicit Euler, lam = -50 (limit h = 2/50 = 0.04), |y| after 200 steps from y0 = 1:\n    h = 0.039  |1 + h lam| = 0.950  |y_200| = 3.505e-05\n    h = 0.040  |1 + h lam| = 1.000  |y_200| = 1.000e+00\n    h = 0.041  |1 + h lam| = 1.050  |y_200| = 1.729e+04\n(b) RK4 real-axis stability limit: z = -2.7853 (explicit Euler: -2)\n(c) stiff y' = -1000(y - cos t) - sin t on [0, 2]; the solution cos t is smooth but lam = -1000:\n    explicit Euler h = 0.0021  steps   952  error 2.673e+33\n    explicit Euler h = 0.0019  steps  1053  error 6.368e-04\n    implicit Euler h = 0.1    steps    20  error 1.923e-05\n    implicit Euler h = 0.01   steps   200  error 2.061e-06"
+      },
+      {
+        "name": "Theorem 24.4 - IEEE 754 rounding model and its consequences",
+        "statement": "In binary64 with round-to-nearest, every real x in the normal range satisfies fl(x) = x (1 + d) with |d| <= u = 2^-53, and each basic operation is correctly rounded: fl(a op b) = (a op b)(1 + d), |d| <= u. Consequences: (i) subtracting nearly equal numbers amplifies their relative errors by (|a| + |b|)/|a - b|; (ii) a forward difference (f(x + h) - f(x))/h has total error about (h/2)|f''| + 2u|f|/h, minimised near h* = 2 sqrt(u |f|/|f''|).",
+        "proof": "**Representation.** A normal x lies in [2^e, 2^(e+1)) where the binary64 numbers are spaced 2^(e - 52) apart (53 significant bits). Rounding to nearest moves x by at most half a spacing: |fl(x) - x| <= 2^(e - 53) <= 2^-53 |x| = u |x|. Correct rounding of operations (an IEEE 754 requirement) applies the same bound to the exact result of +, -, x, /, sqrt.\n\n**(i) Cancellation.** If a~ = a(1 + d1), b~ = b(1 + d2) with |d_i| <= u, then |(a~ - b~) - (a - b)| = |a d1 - b d2| <= u (|a| + |b|), a relative error up to u(|a| + |b|)/|a - b|. The check's (1 - cos x)/x^2 at x = 1e-8 returns 0.0 instead of 0.5: cos x rounds to exactly 1. The algebraically equal 2 sin^2(x/2)/x^2 has no cancellation and returns 0.5.\n\n**(ii) Trade-off.** Taylor gives truncation (h/2)|f''(xi)|; the two function values each carry error <= u|f|, and dividing their difference by h gives round-off <= 2u|f|/h. Minimising E(h) = (h/2) M + 2u|f|/h: E'(h) = M/2 - 2u|f|/h^2 = 0 at h* = 2 sqrt(u|f|/M), with E(h*) = 2 sqrt(u |f| M). For f = e^x at x = 1 (f = f'' = e): h* = 2 sqrt(u) = 2.1e-8 and E(h*) = 2e sqrt(u) = 5.7e-8; the check's decade grid finds its smallest error 1.4e-7 at h = 1e-7, and the error grows again for smaller h. QED.\n\nThe same trade-off appears in time stepping: in float32 (u = 2^-24) explicit Euler stops improving beyond about 10^4 steps, while float64 keeps its O(h) behaviour to 10^6 steps.",
+        "check": "labs/L500/24-numerics/t4_floating_point.py",
+        "checkOutput": "machine epsilon 2.220446049250313e-16 = 2^-52; unit roundoff u = 1.1102230246251565e-16\n20,000 random decimals: max relative representation error 1.104e-16 <= u: True\n0.1 + 0.2 == 0.3: False; ten x (acc += 0.1) = 0.9999999999999999; math.fsum = 1.0\ncancellation: (1 - cos x)/x^2 at x = 1e-8 -> 0.0; stable 2 sin^2(x/2)/x^2 -> 0.5\nforward difference of e^x at x = 1 (exact e):\n    h = 1e-01  error 1.41e-01\n    h = 1e-03  error 1.36e-03\n    h = 1e-05  error 1.36e-05\n    h = 1e-07  error 1.40e-07\n    h = 1e-09  error 2.15e-07\n    h = 1e-11  error 3.26e-05\n    h = 1e-13  error 4.56e-04\n    smallest error at h = 1e-07 (sqrt(eps) = 1.5e-08)\nexplicit Euler on y' = -y to t = 1, float32 vs float64 (truncation O(h) vs accumulated round-off):\n    steps        10  float32 error 1.92e-02  float64 error 1.92e-02\n    steps     1,000  float32 error 1.84e-04  float64 error 1.84e-04\n    steps    10,000  float32 error 1.89e-05  float64 error 1.84e-05\n    steps   100,000  float32 error 4.26e-07  float64 error 1.84e-06\n    steps 1,000,000  float32 error 2.57e-05  float64 error 1.84e-07\nfloat32 stops following O(h) beyond ~10^4 steps (u32 = 6e-8 per step accumulates; signs vary, so 10^5 is a lucky\npartial cancellation); float64 keeps O(h) here because its round-off floor is ~10^9 times lower"
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "24-P1",
+        "type": "derivation",
+        "difficulty": 1,
+        "marks": 5,
+        "problem": "Derive the local truncation error of explicit Euler using Taylor's theorem with remainder, and state the assumption on y that you need.",
+        "solution": "Assume y is twice continuously differentiable on [t_n, t_n + h]. Taylor: y(t_n + h) = y(t_n) + h y'(t_n) + (h^2/2) y''(xi) for some xi in (t_n, t_n + h). Since y' = f(t, y), the Euler step from the exact value gives y(t_n) + h f(t_n, y(t_n)), so tau = (h^2/2) y''(xi) = O(h^2). Marking: assumption 1, expansion 2, identification of tau 2."
+      },
+      {
+        "id": "24-P2",
+        "type": "proof",
+        "difficulty": 2,
+        "marks": 8,
+        "problem": "Starting from |e_(n+1)| <= (1 + hL)|e_n| + M h^2/2 with e_0 = 0, prove |e_n| <= (hM/(2L))(exp(L n h) - 1).",
+        "solution": "Unroll: |e_n| <= (M h^2/2) [1 + (1 + hL) + ... + (1 + hL)^(n-1)] by induction (base n = 1: |e_1| <= M h^2/2). The geometric sum is ((1 + hL)^n - 1)/(hL). Hence |e_n| <= (h M/(2L)) ((1 + hL)^n - 1). Finally 1 + x <= e^x for all real x gives (1 + hL)^n <= exp(nhL). Marking: induction 3, geometric sum 3, exponential bound 2."
+      },
+      {
+        "id": "24-P3",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "For y' = y - t^2 + 1, y(0) = 0.5 on [0, 2] (exact y = (t + 1)^2 - 0.5 e^t), compute L, M = max|y''| and the Theorem 24.1 bound at T = 2 for h = 0.1. Compare with the measured error 0.2420 from the check.",
+        "solution": "df/dy = 1, so L = 1. y'' = 2 - 0.5 e^t, which runs from 1.5 at t = 0 to 2 - 0.5e^2 = -1.695 at t = 2, so M = 0.5e^2 - 2 = 1.695. Bound = (0.1 x 1.695/2)(e^2 - 1) = 0.5413. The actual error 0.2420 is below the bound (valid) by a factor of about 2.2: the bound assumes errors always add in the worst direction. Marking: L 1, M 2, bound 2, comparison 1."
+      },
+      {
+        "id": "24-P4",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 4,
+        "problem": "For y' = -50 y, what is the largest step size for which explicit Euler does not grow, and the corresponding limit for RK4 (real-axis interval endpoint -2.7853)?",
+        "solution": "Explicit Euler: |1 - 50h| <= 1 gives h <= 2/50 = 0.04 (the check: 0.039 decays, 0.040 stays at 1.000, 0.041 grows to 1.7e4). RK4: h <= 2.7853/50 = 0.05571. Marking: 2 + 2."
+      },
+      {
+        "id": "24-P5",
+        "type": "proof",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Prove that implicit Euler is A-stable: |1/(1 - z)| < 1 for every complex z with Re z < 0. Then explain in one sentence why A-stability does not make implicit Euler accurate.",
+        "solution": "|1 - z| >= |Re(1 - z)| = 1 - Re z > 1 when Re z < 0, so |1/(1 - z)| < 1. A-stability only says the numerical solution decays when the true one does; the method is still first order (local error O(h^2)), so with large h it damps fast transients correctly but tracks the slow solution with O(h) error. Marking: inequality 4, accuracy remark 2."
+      },
+      {
+        "id": "24-P6",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "y' = -1000 (y - cos t) - sin t on [0, 2]. What is the minimum number of equal explicit Euler steps that keeps |1 + h lam| <= 1? How many implicit Euler steps of h = 0.1 does the check use, and what error do they achieve?",
+        "solution": "lam = -1000, so h <= 2/1000 = 0.002 and N = 2/h >= 1,000 steps (the check: 952 steps blow up, 1,053 steps give 6.4e-4). Implicit Euler: 20 steps, error 1.923e-05 - a 50x saving with better accuracy. Marking: limit 2, steps 1, implicit figures 2."
+      },
+      {
+        "id": "24-P7",
+        "type": "calculation",
+        "difficulty": 3,
+        "marks": 8,
+        "problem": "(a) How many significant decimal digits does binary64 carry (53 bits)? (b) For the forward difference of f = e^x at x = 1, derive h* and the minimum total error from E(h) = (h/2)|f''| + 2u|f|/h with u = 2^-53. (c) Why does the check find its smallest error at h = 1e-7 rather than h*?",
+        "solution": "(a) 53 log10 2 = 15.95 digits. (b) f = f'' = e, so h* = 2 sqrt(u) = 2.107e-08 and E(h*) = 2 e sqrt(u) = 5.73e-08. (c) The check uses a coarse decade grid (1e-1, 1e-3, ..., 1e-13); h = 1e-7 is the grid point closest to the optimum on the truncation side, and the bound is a worst case - actual rounding errors partly cancel. Marking: (a) 1, (b) 5, (c) 2."
+      },
+      {
+        "id": "24-P8",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "An engineer says: 'My adaptive explicit RK45 solver takes millions of tiny steps on this chemical kinetics model even though the concentrations change slowly. I will tighten the tolerance to fix it.' Explain what is happening and what to do instead.",
+        "solution": "The model is stiff: fast-decaying modes (large negative eigenvalues of the Jacobian) force the explicit method's step into its stability region even though accuracy would allow large steps; the error controller detects the incipient instability and shrinks h. Tightening the tolerance makes it worse. Use an implicit (A-stable or L-stable) method such as BDF or Radau (SciPy solve_ivp method='BDF'/'Radau', as in L200 #9), ideally with a Jacobian. Marking: names stiffness and the stability limit 3, correct remedy 2."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Correctness of derivations",
+        "excellent": "Taylor/Lipschitz/induction steps complete with hypotheses stated",
+        "adequate": "Correct outline, one step asserted without justification",
+        "inadequate": "Confuses local and global error or assumes the order",
+        "weight": 40
+      },
+      {
+        "criterion": "Numerical answers and code evidence",
+        "excellent": "All values right and reproduced by running code; order estimated from data",
+        "adequate": "One slip",
+        "inadequate": "Values guessed or missing",
+        "weight": 25
+      },
+      {
+        "criterion": "Stability/stiffness judgement",
+        "excellent": "Distinguishes accuracy-limited from stability-limited steps and picks a method with reasons",
+        "adequate": "Correct method, weak reasons",
+        "inadequate": "Treats instability as an accuracy problem",
+        "weight": 20
+      },
+      {
+        "criterion": "Floating-point awareness",
+        "excellent": "Predicts the round-off floor and avoids cancellation",
+        "adequate": "Mentions round-off qualitatively",
+        "inadequate": "Assumes smaller h is always better",
+        "weight": 15
+      }
+    ],
+    "conceptNote": "content/concepts/L500/24-numerical-methods.md",
+    "conceptSummary": "Local error is what one step gets wrong; global error is what n = T/h steps accumulate, so Euler (local O(h^2)) is first order and RK4 (local O(h^5), eight order conditions) fourth order - measured as error ratios 2 and 16 per halving. Stability is a separate question: explicit Euler on y' = lam y needs |1 + h lam| < 1, so stiff problems force tiny steps unless you go implicit; and IEEE 754 rounding (u = 2^-53) puts a floor under every error.",
+    "sources": [
+      {
+        "title": "Verschelde, MCS 471 Lecture 30: Runge-Kutta methods (UIC, 2022) - local vs global error and RK4 order",
+        "url": "https://homepages.math.uic.edu/~jan/mcs471/rungekutta.pdf"
+      },
+      {
+        "title": "Princeton COS 323 (Fall 2011) lecture 19 notes - stability region of Euler, implicit Euler, stiffness",
+        "url": "https://www.cs.princeton.edu/courses/archive/fall11/cos323/notes/cos323_f11_lecture19_pde2.pdf"
+      },
+      {
+        "title": "Python Numerical Methods (UC Berkeley) 22.4 Numerical Error and Instability",
+        "url": "https://pythonnumericalmethods.berkeley.edu/notebooks/chapter22.04-Numerical-Error-and-Instability.html"
+      },
+      {
+        "title": "Goldberg (1991), What Every Computer Scientist Should Know About Floating-Point Arithmetic, ACM Computing Surveys (Oracle reprint)",
+        "url": "https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html"
+      },
+      {
+        "title": "Python docs: Floating-Point Arithmetic: Issues and Limitations",
+        "url": "https://docs.python.org/3/tutorial/floatingpoint.html"
+      }
+    ],
+    "seeAlso": [
+      "simulation L100 #4 Time-stepped physics: a parcel dropped from a drone: the Euler error 1.47 -> 0.0147 m is Theorem 24.1's O(h).",
+      "simulation L200 #9 ODE solvers in practice: adaptive steps, tolerances, stiffness: the stiff RC circuit is Theorem 24.3.",
+      "simulation L300 #15 Co-simulation with FMI: master algorithm and communication step: the communication step is a stability limit too.",
+      "simulation L300 #16 Performance and scale: vectorise, parallelise, keep streams independent: numpy = loop to 9.1e-14 is floating-point reassociation (Theorem 24.4)."
+    ],
+    "next": "Foundations III: random number generation and Monte Carlo theory (L500 #25)",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "Every theorem check (t1_euler_order.py, t2_rk4_order.py, t3_stability.py, t4_floating_point.py) ran locally on Python 3.12.15 + numpy 2.5.3 on Linux; each script asserts the theorem's prediction and checkOutput is its real stdout. research/l500_checks.py re-runs them, compares the output byte for byte and recomputes every numeric problem-set answer; labs/L500/24-numerics/test_theorems.py passes (python -m unittest).",
+      "pendingCi": [
+        "macOS and Windows runs of labs/L500/24-numerics (float32 last-digit values may differ on other CPUs/libm; the tests check the conclusions, l500_checks the exact text on Linux)"
+      ]
+    }
+  },
+  {
+    "id": "foundations-rng-monte-carlo",
+    "number": 25,
+    "level": "L500",
+    "title": "Foundations III: random number generation and Monte Carlo theory",
+    "category": "theory",
+    "description": "Where the 'random' numbers come from and why the estimates built on them work: LCG period (Hull-Dobell) and RANDU's planes, modern PCG64 and counter-based Philox, chi-square and KS tests on generators, the variance of the Monte Carlo estimator and its 1/sqrt(N) law, importance sampling derived from a change of measure, and the covariance argument behind antithetic variates.",
+    "outcome": "You can prove when an LCG has full period, show why RANDU fails in three dimensions, run and interpret goodness-of-fit tests on a generator, derive the variance of plain, importance-sampled and antithetic estimators, and predict their efficiency before running them.",
+    "estimatedTime": "6-8 hours (reading 2 h, checks 1 h, problem set 3-5 h)",
+    "prerequisites": [
+      "number theory: modular arithmetic, gcd, prime factors",
+      "probability: expectation, variance, covariance, correlation; Theorems 23.1-23.2",
+      "calculus: integrals as expectations, change of variables",
+      "L100 #2, L300 #12 and L300 #16 (where these generators and estimators are used)"
+    ],
+    "learningObjectives": [
+      "Prove the RANDU three-term identity and explain why it confines triples to 15 planes; apply the Hull-Dobell conditions to judge an LCG's period.",
+      "Derive E[X^2] = k - 1 for Pearson's statistic and evaluate a generator with chi-square and Kolmogorov-Smirnov tests, explaining what a pass does and does not show.",
+      "Derive the variance of the Monte Carlo mean and explain why its error is O(1/sqrt(N)) independent of dimension.",
+      "Derive the importance-sampling identity, its variance and the zero-variance proposal, and critique a poor proposal.",
+      "Prove that antithetic variates reduce variance for monotone integrands and predict the gain 1/(1 + rho)."
+    ],
+    "glossary": [
+      {
+        "term": "LCG",
+        "meaning": "Linear congruential generator x_(k+1) = (a x_k + c) mod m; output u_k = x_k/m."
+      },
+      {
+        "term": "period",
+        "meaning": "Length of the cycle the generator's state eventually repeats; at most the number of states (m for an LCG)."
+      },
+      {
+        "term": "PCG64",
+        "meaning": "NumPy's default bit generator: a 128-bit LCG state with a permutation (xorshift + rotation) applied to the output; period 2^128, cheap advance()."
+      },
+      {
+        "term": "counter-based generator (Philox)",
+        "meaning": "Output = a keyed bijection applied to a counter; the n-th value is computable directly, so parallel streams need only distinct keys/counters (Salmon et al. 2011)."
+      },
+      {
+        "term": "Pearson chi-square statistic",
+        "meaning": "X^2 = sum (O_j - E_j)^2/E_j over k cells; approximately chi-square with k - 1 degrees of freedom under H0."
+      },
+      {
+        "term": "Kolmogorov-Smirnov statistic",
+        "meaning": "D_n = sup |F_n(x) - F(x)|; sqrt(n) D_n has a distribution-free limit under H0."
+      },
+      {
+        "term": "importance sampling",
+        "meaning": "Sample from q instead of p and weight by p/q: E_p[f] = E_q[f p/q]."
+      },
+      {
+        "term": "antithetic variates",
+        "meaning": "Pair each U with 1 - U; averaging f(U) and f(1 - U) cancels error when the two are negatively correlated."
+      }
+    ],
+    "theorems": [
+      {
+        "name": "Theorem 25.1 - Full period of an LCG (Hull-Dobell) and the RANDU planes",
+        "statement": "The mixed LCG x_(k+1) = (a x_k + c) mod m has period m for every seed iff (i) gcd(c, m) = 1, (ii) p | (a - 1) for every prime p dividing m, and (iii) 4 | (a - 1) if 4 | m. Corollary: RANDU (a = 65539 = 2^16 + 3, c = 0, m = 2^31) satisfies x_(k+2) = 6 x_(k+1) - 9 x_k (mod 2^31), so all its consecutive triples (u_k, u_(k+1), u_(k+2)) lie on at most 15 parallel planes.",
+        "proof": "**Necessity of (i).** If d = gcd(c, m) > 1 and the seed is 0, every iterate a x + c is a multiple of d modulo m (both terms are), so the state 1 is never visited: the period is below m. Sufficiency of (i)-(iii) and necessity of (ii)-(iii) are Theorem 1 of Hull & Dobell (1962), proved with the multiplicative structure of Z/mZ; we cite it and check it exhaustively instead: for m = 64, 60 and 81, all 4,096 + 3,600 + 6,561 (a, c) pairs were classified by brute force, and the conditions predict every one.\n\n**RANDU identity (full proof).** a^2 = (2^16 + 3)^2 = 2^32 + 6 x 2^16 + 9. Since 2^32 = 2 x 2^31 = 0 (mod 2^31), a^2 = 6 x 2^16 + 9 (mod 2^31). Also 6a - 9 = 6 x 2^16 + 18 - 9 = 6 x 2^16 + 9. So a^2 = 6a - 9 (mod 2^31), and x_(k+2) = a^2 x_k = (6a - 9) x_k = 6 x_(k+1) - 9 x_k (mod 2^31).\n\n**Planes.** Divide by 2^31: 9 u_k - 6 u_(k+1) + u_(k+2) = j for some integer j. With all u in [0, 1) the left side lies strictly between -6 and 10, so j is one of -5, ..., 9: 15 planes. QED.\n\nThe check confirms 0 violations in 99,998 triples and exactly 15 planes used. The same structure explains the second failure it shows: with m = 2^32 the lowest bit of any LCG has period 2 (it alternates 1010...), because x mod 2 follows its own LCG with modulus 2. RANDU's period from an odd seed is only 2^29 (the multiplicative group modulo 2^31 has no element of order above 2^29).",
+        "check": "labs/L500/25-rng-monte-carlo/t1_lcg_period.py",
+        "checkOutput": "m = 64: 4096 (a, c) pairs, full period for 512; Hull-Dobell predicts all 4096/4096\nm = 60: 3600 (a, c) pairs, full period for 16; Hull-Dobell predicts all 3600/3600\nm = 81: 6561 (a, c) pairs, full period for 1458; Hull-Dobell predicts all 6561/6561\nRANDU: a^2 mod 2^31 = 393225, (6a - 9) mod 2^31 = 393225\nRANDU triples violating x2 = 6 x1 - 9 x0 (mod 2^31): 0 of 99998; distinct planes used: 15\nlowest bit of an m = 2^32 LCG (a = 1664525, c = 1013904223): 10101010101010101 -> period 2"
+      },
+      {
+        "name": "Theorem 25.2 - Goodness-of-fit tests for generators",
+        "statement": "Draw n values into k cells with probabilities p_1..p_k. Under H0, Pearson's X^2 = sum (O_j - n p_j)^2/(n p_j) has E[X^2] = k - 1 exactly, and X^2 converges in distribution to chi-square(k - 1) as n -> inf. For a continuous F, sqrt(n) sup_x |F_n(x) - F(x)| converges to the Kolmogorov distribution, whatever F is.",
+        "proof": "**Mean (exact).** Each O_j ~ Binomial(n, p_j), so E[(O_j - n p_j)^2] = Var(O_j) = n p_j (1 - p_j). Dividing by n p_j gives 1 - p_j, and summing, E[X^2] = k - sum p_j = k - 1.\n\n**Limit (sketch).** By the multivariate CLT the vector Z_j = (O_j - n p_j)/sqrt(n p_j) is asymptotically normal with covariance I - s s^T, where s = (sqrt(p_1), ..., sqrt(p_k)) is a unit vector (the constraint sum O_j = n). That matrix is the projection onto the (k - 1)-dimensional subspace orthogonal to s, so |Z|^2 = X^2 tends to a sum of k - 1 independent squared standard normals: chi-square(k - 1). (NIST/SEMATECH e-Handbook 1.3.5.15.)\n\n**KS is distribution-free.** If X has continuous CDF F then F(X) ~ U(0, 1), so D_n has the same law as for uniform data; Kolmogorov's limit theorem gives its asymptotic distribution (e-Handbook 1.3.5.16). QED.\n\n*Reading the check.* The mean X^2 over 400 PCG64 runs is 99.06 against k - 1 = 99. PCG64, Philox and MT19937 pass all three tests. RANDU passes the 1-D chi-square (p = 0.958) and KS (p = 0.814) and then fails the 3-D test catastrophically (X^2 = 151,465 on 7,999 df) - exactly the planes of Theorem 25.1. A tested pass never proves quality; tests can only reject, which is why batteries such as TestU01 run many of them.",
+        "check": "labs/L500/25-rng-monte-carlo/t2_gof_tests.py",
+        "checkOutput": "mean X^2 over 400 PCG64 runs (k = 100): 99.06 (theory k - 1 = 99)\ngenerator  1-D X^2 (99 df)  p      KS sqrt(n)D  p      3-D X^2 (7999 df)  p\nPCG64      87.8             0.782  1.064       0.208  7868.5             0.849\nPhilox     116.5            0.111  0.997       0.273  7906.3             0.767\nMT19937    83.8             0.863  0.597       0.869  8122.8             0.164\nRANDU      76.1             0.958  0.636       0.814  151465.4           0\nLCG low-bit serial pairs 00/01/10/11: [0, 10000, 0, 0]  X^2 = 30000 (3 df), p = 0\na pass is not proof of quality: tests can only reject; batteries (TestU01 BigCrush) run hundreds of them"
+      },
+      {
+        "name": "Theorem 25.3 - The Monte Carlo estimator, its 1/sqrt(N) error, and importance sampling",
+        "statement": "(a) If f(X) has mean mu and variance sigma^2 < inf, the estimator mu_N = (1/N) sum f(X_i) over iid X_i is unbiased with Var(mu_N) = sigma^2/N, so its RMSE is sigma/sqrt(N) whatever the dimension of X. (b) If q > 0 wherever f p != 0, then mu = E_p[f(X)] = E_q[f(Y) w(Y)] with w = p/q, the importance-sampling estimator (1/N) sum f(Y_i) w(Y_i) is unbiased with variance (1/N)(E_q[f^2 w^2] - mu^2), and for f >= 0 the proposal q* = f p / mu gives zero variance.",
+        "proof": "**(a)** Linearity: E[mu_N] = (1/N) sum E[f(X_i)] = mu. Independence: Var(mu_N) = (1/N^2) sum Var(f(X_i)) = sigma^2/N. Nothing in this depends on the dimension of X - only on sigma^2 - which is why Monte Carlo beats grid quadrature in high dimension, and why the only levers are N (slowly: 4x the samples for half the error) and sigma^2 (variance reduction). Theorem 23.2 then gives the interval mu_N +/- 1.96 s/sqrt(N).\n\n**(b) Change of measure.** E_q[f w] = integral f(y) (p(y)/q(y)) q(y) dy = integral f(y) p(y) dy = mu, valid because q > 0 wherever the integrand f p is non-zero. Its second moment is E_q[f^2 p^2/q^2] = integral f^2 p^2 / q dy, so Var = (1/N)(integral f^2 p^2/q - mu^2). With q* = f p/mu (a density when f >= 0) the weighted value f p/q* = mu is constant: zero variance. q* needs mu, so it is never usable directly; it says 'sample where f p is large'.\n\n**Worked closed form.** For mu = P(Z > 4) with p = N(0, 1), f = 1{x > 4}, q = N(4, 1): w(x) = phi(x)/phi(x - 4) = exp(8 - 4x), and phi(x)^2/phi(x - 4) = e^16 phi(x + 4) (complete the square: -x^2/2 - 4x + 8 = -(x + 4)^2/2 + 16), so E_q[f^2 w^2] = e^16 P(Z > 8). The check computes 4.525e-09 per sample against the naive p(1 - p) = 3.167e-05: about 7,000x fewer samples for the same precision. QED.",
+        "check": "labs/L500/25-rng-monte-carlo/t3_mc_variance_is.py",
+        "checkOutput": "(a) e - 1 = 1.71828; sigma^2 = 0.24204\n    N      sd of 2,000 estimates   sigma/sqrt(N)   mean of estimates\n    100    0.05046                 0.04920         1.71770\n    400    0.02413                 0.02460         1.71978\n    1600   0.01245                 0.01230         1.71859\n    6400   0.00625                 0.00615         1.71844\n    log-log slope of sd vs N: -0.500 (theory -0.5)\n(b) exact P(Z > 4) = 3.1671e-05\n    naive,  N = 100,000: estimate 3.0000e-05; theory relative SE 0.562\n    IS N(4,1), N = 10,000: estimate 3.1924e-05; sample relative SE 0.0212; theory 0.0212\n    variance per sample: naive 3.167e-05 vs IS 4.525e-09 -> 6,999x fewer samples"
+      },
+      {
+        "name": "Theorem 25.4 - Antithetic variates: the covariance argument",
+        "statement": "For U ~ U(0, 1) and sigma^2 = Var f(U), Var[(f(U) + f(1 - U))/2] = (sigma^2/2)(1 + rho) with rho = Corr(f(U), f(1 - U)). Compared with two independent evaluations (variance sigma^2/2), the variance ratio is 1/(1 + rho): a gain iff rho < 0. If f is monotone, rho <= 0.",
+        "proof": "**Variance.** U and 1 - U have the same distribution, so Var f(U) = Var f(1 - U) = sigma^2. Then Var[(A + B)/2] = (1/4)(sigma^2 + sigma^2 + 2 Cov(A, B)) = (sigma^2/2)(1 + rho).\n\n**Monotone f gives rho <= 0 (Chebyshev's association inequality).** Let g(u) = f(1 - u); if f is increasing, g is decreasing (and vice versa). Take an independent copy V of U. For every pair (u, v), (f(u) - f(v)) and (g(u) - g(v)) have opposite signs (or one is zero), so (f(U) - f(V))(g(U) - g(V)) <= 0 pointwise. Expanding the expectation: E[f(U)g(U)] - E[f(U)]E[g(V)] - E[f(V)]E[g(U)] + E[f(V)g(V)] = 2 Cov(f(U), g(U)) <= 0. QED.\n\n**Prediction then check.** For f(u) = e^u: E[e^U e^(1-U)] = e, so Cov = e - (e - 1)^2 and rho = -0.9677, predicting a 30.9x variance reduction; the check observes 30.1x at equal cost. For a symmetric f(u) = (u - 0.5)^2, f(U) = f(1 - U) exactly, rho = +1, and antithetics double the variance (0.53x observed vs 0.50x theory) - the failure mode L300 #12 warns about.",
+        "check": "labs/L500/25-rng-monte-carlo/t4_antithetic.py",
+        "checkOutput": "f(u) = e^u: rho = (e - (e-1)^2) / sigma^2 = -0.9677; predicted gain 1/(1 + rho) = 30.9x\n  same 1,000 evaluations: var plain 2.384e-04, antithetic 7.922e-06, observed gain 30.1x\nf(u) = (u - 0.5)^2 (symmetric): observed gain 0.53x (theory 1/(1 + 1) = 0.50x)"
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "25-P1",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "(a) Does the LCG with m = 2^32, a = 1664525, c = 1013904223 have full period? Check each Hull-Dobell condition. (b) What is the longest period RANDU (a = 65539, c = 0, m = 2^31) can reach from an odd seed?",
+        "solution": "(a) m = 2^32 has the single prime factor 2. (i) c = 1013904223 is odd, so gcd(c, 2^32) = 1. (ii) a - 1 = 1664524 is even. (iii) 4 | m and 1664524/4 = 416131, so 4 | (a - 1). All hold: full period 2^32. (b) With c = 0, condition (i) fails (gcd(0, m) = m), so full period is impossible; the multiplicative order of 65539 modulo 2^31 is 2^29 = 536,870,912 (computed in research/l500_checks.py), the maximum for any multiplier modulo 2^31. Marking: (a) 4, (b) 2."
+      },
+      {
+        "id": "25-P2",
+        "type": "proof",
+        "difficulty": 2,
+        "marks": 8,
+        "problem": "Prove that RANDU's triples satisfy 9 u_k - 6 u_(k+1) + u_(k+2) in {-5, ..., 9} and explain what this means for a simulation that uses three consecutive numbers as an (x, y, z) position.",
+        "solution": "a^2 = 2^32 + 6 x 2^16 + 9 = 6 x 2^16 + 9 = 6a - 9 (mod 2^31), hence x_(k+2) = 6 x_(k+1) - 9 x_k (mod 2^31) and 9x_k - 6x_(k+1) + x_(k+2) = j 2^31 for an integer j. Dividing by 2^31 gives 9u_k - 6u_(k+1) + u_(k+2) = j; the left side lies in (-6, 10), so j in {-5, ..., 9}. Consequence: the points occupy only 15 planes in the unit cube; any 3-D quantity (a spatial sample, a 3-input integrand) sees large empty slabs, biasing results without any visible failure in 1-D tests. Marking: algebra 4, range argument 2, consequence 2."
+      },
+      {
+        "id": "25-P3",
+        "type": "derivation",
+        "difficulty": 1,
+        "marks": 5,
+        "problem": "Show that E[X^2] = k - 1 for Pearson's statistic under H0 with k equiprobable cells and n draws. What would E[X^2] be if you accidentally used k - 1 cells' worth of expected counts but k cells?",
+        "solution": "O_j ~ Binomial(n, 1/k): E[(O_j - n/k)^2] = n (1/k)(1 - 1/k); dividing by n/k gives 1 - 1/k; summing over k cells gives k - 1. (Second part: if each expected count were n/(k - 1) the cell means would be wrong, E[(O_j - n/(k-1))^2] picks up a squared bias term n^2(1/k - 1/(k - 1))^2 per cell, so E[X^2] grows with n and the test rejects a perfect generator.) Marking: derivation 4, bias remark 1."
+      },
+      {
+        "id": "25-P4",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "A generator's 1,000 outputs fall into 10 equal cells with counts 112, 95, 88, 104, 99, 91, 118, 97, 100, 96. Compute X^2, its degrees of freedom and the p-value (use a chi-square tail function). State your conclusion and its limits.",
+        "solution": "Expected 100 per cell. X^2 = (144 + 25 + 144 + 16 + 1 + 81 + 324 + 9 + 0 + 16)/100 = 7.60 on 9 df; p = 0.575 (chi2_sf in labs/L500/25-rng-monte-carlo/stats_util.py). No evidence against uniformity at any usual level - but a pass on a 1-D frequency test says nothing about serial or higher-dimensional structure (RANDU passes this kind of test). Marking: X^2 2, df 1, p-value 2, limits 1."
+      },
+      {
+        "id": "25-P5",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "You estimate integral_0^1 e^x dx by plain Monte Carlo (sigma^2 = (e^2 - 1)/2 - (e - 1)^2 = 0.24204). How many samples give a 95% half-width of 0.001? How many to halve that half-width?",
+        "solution": "N = (1.96 sigma/0.001)^2 = 1.96^2 x 0.24204 / 1e-6 = 929,804 samples (rounded up). Halving the half-width needs 4x: about 3.72 million. This is the 1/sqrt(N) law of Theorem 25.3(a). Marking: 3 + 2."
+      },
+      {
+        "id": "25-P6",
+        "type": "derivation",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "For mu = P(Z > 4), Z ~ N(0, 1), use the proposal q = N(4, 1). (a) Derive the weight w(x). (b) Derive the exact per-sample variance e^16 P(Z > 8) - mu^2. (c) Why would q = N(0, 4) (variance 4: wider, same centre) be a poor choice, and what goes wrong if q has lighter tails than f p?",
+        "solution": "(a) w = phi(x)/phi(x - 4) = exp(-x^2/2 + (x - 4)^2/2) = exp(8 - 4x). (b) E_q[1{x > 4} w^2] = integral_4^inf phi(x)^2/phi(x - 4) dx; the exponent -x^2 + (x - 4)^2/2 = -x^2/2 - 4x + 8 = -(x + 4)^2/2 + 16, so the integrand is e^16 phi(x + 4) and the integral e^16 P(Z > 8). Variance = e^16 P(Z > 8) - mu^2 = 4.525e-09 vs naive 3.167e-05. (c) N(0, 4) still puts most samples where f = 0 (it hits x > 4 only ~2.3% of the time) - a modest gain at best. If q's tails are lighter than f p, w = p/q is unbounded where q is tiny, E_q[f^2 w^2] can be infinite, and the estimator has infinite variance: estimates look stable until a rare huge weight arrives. Marking: (a) 2, (b) 5, (c) 3."
+      },
+      {
+        "id": "25-P7",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "For f(u) = e^u, rho = Corr(e^U, e^(1-U)) = -0.9677. (a) Predict the variance reduction of antithetic pairs at equal cost. (b) How many function evaluations does the antithetic estimator need for a 95% half-width of 0.001 (compare with 25-P5)?",
+        "solution": "(a) 1/(1 + rho) = 30.9x. (b) Each pair has variance (sigma^2/2)(1 + rho); pairs needed = 1.96^2 x (0.24204/2)(1 - 0.9677)/1e-6 -> 15,031 pairs = 30,062 evaluations, against 929,804 for plain Monte Carlo. Marking: (a) 2, (b) 4."
+      },
+      {
+        "id": "25-P8",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Compare PCG64 and Philox as generators for 1,000 parallel simulation replications. Address: how the next value is produced, how independent streams are obtained, and why 'it has a period of 2^128' is not by itself evidence of quality.",
+        "solution": "PCG64 is state-transition: a 128-bit LCG advances the state and a permutation (xorshift + rotation) scrambles the output; streams come from distinct increments or SeedSequence.spawn, and advance(n) jumps in O(log n). Philox is counter-based: output = a keyed bijection (Feistel-like rounds) of a counter, so value n of stream key k is computable directly - ideal for massive parallelism and reproducible random access (Salmon et al. 2011). Period is necessary but not sufficient: RANDU has period 2^29 and fails a 3-D test badly; quality comes from structure (equidistribution, test batteries), not cycle length. Marking: each generator 2, period argument 2."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Proof quality (number theory and probability)",
+        "excellent": "Complete modular arithmetic and expectation steps; hypotheses (q > 0, finite variance) stated",
+        "adequate": "Correct with minor gaps",
+        "inadequate": "Asserts the identity or the variance",
+        "weight": 35
+      },
+      {
+        "criterion": "Statistical testing judgement",
+        "excellent": "Computes statistics and p-values correctly and states what a pass cannot show",
+        "adequate": "Correct numbers, thin interpretation",
+        "inadequate": "Treats a pass as proof of randomness",
+        "weight": 25
+      },
+      {
+        "criterion": "Estimator design",
+        "excellent": "Predicts gains from variance formulas before running, identifies failure modes (light-tailed q, symmetric f)",
+        "adequate": "Uses the formulas correctly",
+        "inadequate": "Tries methods without analysis",
+        "weight": 25
+      },
+      {
+        "criterion": "Reproducible evidence",
+        "excellent": "Every number backed by seeded code",
+        "adequate": "Most numbers backed",
+        "inadequate": "Unsupported numbers",
+        "weight": 15
+      }
+    ],
+    "conceptNote": "content/concepts/L500/25-rng-monte-carlo.md",
+    "conceptSummary": "A generator is a deterministic map that must look random in every dimension you use: Hull-Dobell says when an LCG has full period, and a three-line proof shows RANDU's triples sit on 15 planes - it passes 1-D chi-square and KS tests and fails a 3-D one with X^2 = 151,465. Monte Carlo error is sigma/sqrt(N) in any dimension, so the levers are sigma: importance sampling (change of measure, zero-variance ideal) and antithetics (gain 1/(1 + rho), proven for monotone f).",
+    "sources": [
+      {
+        "title": "Hull & Dobell (1962), Random Number Generators, SIAM Review 4(3) (UVic repository copy, reprinted with SIAM permission)",
+        "url": "https://dspace.library.uvic.ca/bitstream/handle/1828/3142/Random_Number_Generators.pdf?sequence=3"
+      },
+      {
+        "title": "O'Neill (2014), PCG: A Family of Simple Fast Space-Efficient Statistically Good Algorithms for Random Number Generation, HMC-CS-2014-0905",
+        "url": "https://www.pcg-random.org/paper.html"
+      },
+      {
+        "title": "Salmon, Moraes, Dror & Shaw (2011), Parallel Random Numbers: As Easy as 1, 2, 3, SC11",
+        "url": "https://www.thesalmons.org/john/random123/papers/random123sc11.pdf"
+      },
+      {
+        "title": "NumPy docs: PCG64 bit generator",
+        "url": "https://numpy.org/doc/stable/reference/random/bit_generators/pcg64.html"
+      },
+      {
+        "title": "NumPy docs: Philox counter-based bit generator",
+        "url": "https://numpy.org/doc/stable/reference/random/bit_generators/philox.html"
+      },
+      {
+        "title": "NIST/SEMATECH e-Handbook 1.3.5.15 Chi-Square Goodness-of-Fit Test",
+        "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda35f.htm"
+      },
+      {
+        "title": "NIST/SEMATECH e-Handbook 1.3.5.16 Kolmogorov-Smirnov Goodness-of-Fit Test",
+        "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda35g.htm"
+      },
+      {
+        "title": "Owen, Monte Carlo theory, methods and examples: ch. 8 Variance reduction (antithetics) and ch. 9 Importance sampling (link only; author asks not to redistribute)",
+        "url": "https://artowen.su.domains/mc/"
+      }
+    ],
+    "seeAlso": [
+      "simulation L100 #2 Monte Carlo: estimate a project's completion time: the 1/sqrt(N) shrinkage is Theorem 25.3(a).",
+      "simulation L300 #12 Variance reduction: same precision, fewer runs: antithetic 1.46x and the reseeding fault (rho -0.00) are Theorem 25.4.",
+      "simulation L300 #16 Performance and scale: vectorise, parallelise, keep streams independent: SeedSequence.spawn and stream independence.",
+      "simulation L400 #20 Large-scale and parallel simulation: reproducible streams, checkpoints and result storage: counter/key-addressed streams survive a resume."
+    ],
+    "next": "Ethics, society and professional responsibility: models that make decisions about people (L500 #26)",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "Every theorem check (t1_lcg_period.py, t2_gof_tests.py, t3_mc_variance_is.py, t4_antithetic.py) ran locally on Python 3.12.15 + numpy 2.5.3 on Linux; each script asserts the theorem's prediction and checkOutput is its real stdout. research/l500_checks.py re-runs them, compares the output byte for byte and recomputes every numeric problem-set answer; labs/L500/25-rng-monte-carlo/test_theorems.py passes (python -m unittest).",
+      "pendingCi": [
+        "macOS and Windows runs of labs/L500/25-rng-monte-carlo (NumPy bit generators are platform-independent by design; expected identical)"
+      ]
+    }
+  },
+  {
+    "id": "ethics-models-deciding-about-people",
+    "number": 26,
+    "level": "L500",
+    "title": "Ethics and professional responsibility: models that make decisions about people",
+    "category": "ethics",
+    "description": "When a simulation or statistical model allocates grades, benefits, staff or public-health restrictions, its errors land on people. Using the 2020 England exam-grading model as the main case (with Robodebt and CovidSim as contrasts), you analyse transparency, uncertainty communication, the duty to validate and misuse, against the ACM Code, the IEEE Code, the UK Aqua Book, NASA-STD-7009B and the UK statistics regulator's lessons.",
+    "outcome": "You can run a structured case analysis (facts, stakeholders, harms, obligations, options, recommendation) of a model-informed decision about people, cite the relevant clauses of professional codes and government standards, and write an honest uncertainty statement for a model's output.",
+    "estimatedTime": "5-6 hours (reading 2 h, seminar 1 h, case analysis 2-3 h)",
+    "prerequisites": [
+      "L100 #6 and L400 #21 (verification, validation, model cards)",
+      "statistics: proportions and their standard errors (Theorem 23.1), confidence intervals",
+      "no legal background needed; read the cited primary sources"
+    ],
+    "learningObjectives": [
+      "Analyze a model-informed decision about people into facts, stakeholders, harms and professional obligations using a structured method.",
+      "Evaluate a model's documentation against specific clauses (ACM 1.2, 1.3, 2.5; IEEE I.5; Aqua Book roles and proportionality; NASA-STD-7009B credibility and reporting).",
+      "Explain why aggregate validation (correct grade distribution) does not establish individual accuracy, and quantify the gap with a simulation.",
+      "Critique an uncertainty statement and rewrite it so that a non-specialist decision maker can act on it.",
+      "Evaluate safeguards against misuse: human review, appeal, scope limits, publication of method and code."
+    ],
+    "glossary": [
+      {
+        "term": "commissioner / analyst / assurer / approver",
+        "meaning": "The four roles in the 2025 AQuA Book (the 2015 Aqua Book had three); analyst and assurer must be separate people."
+      },
+      {
+        "term": "proportionality",
+        "meaning": "Quality-assurance effort scaled to the risk of the intended use and the complexity of the analysis (AQuA Book); in NASA-STD-7009B, rigour scaled to the decision's consequence."
+      },
+      {
+        "term": "credibility",
+        "meaning": "How far a decision maker can trust M&S results for a purpose; NASA-STD-7009B assesses it by factors such as verification, validation, input pedigree, uncertainty characterization and results robustness."
+      },
+      {
+        "term": "automation bias",
+        "meaning": "The tendency to accept a model's output because it came from a model; it shifts the burden of proof onto the people affected."
+      },
+      {
+        "term": "individual vs aggregate validity",
+        "meaning": "A model can reproduce totals or distributions exactly while assigning many individuals the wrong value."
+      },
+      {
+        "term": "appeal / contestability",
+        "meaning": "A route for an affected person to challenge a model-informed decision and have it reviewed by a human with power to change it."
+      }
+    ],
+    "caseStudy": {
+      "case": "England, summer 2020. Exams were cancelled because of COVID-19 and, under a ministerial direction (Apprenticeships, Skills, Children and Learning Act 2009, s.129(6)), the regulator Ofqual had to award GCSE, AS and A level grades that kept national standards in line with previous years. Teachers submitted a centre assessment grade (CAG) and a rank order for each student. Ofqual's analysis found the CAGs optimistic: awarding them directly would have raised the share of A* grades from 7.7% (2019) to 13.9%. The chosen 'Direct Centre Performance' model predicted each school's grade distribution in each subject from its historical results, adjusted for the prior attainment of this year's students, and then assigned grades down the teacher's rank order. Where a centre had fewer than 15 students in a subject (current plus historical), the model put more weight on the CAGs, because 'no statistical model can reliably predict grades for particularly small groups'. In back-testing on 2019 data, 51 of 55 A level subjects predicted more than 90% of students within one grade; 96.4% of calculated grades were the same as, or within one grade of, the CAG. Aggregate equality analyses found no evidence that the process introduced bias. Ofqual had refined its aims after consultation so that transparency and ease of explanation were a lower priority than its other aims. Results were published on 13 August 2020 with the technical report. On 17 August 2020 Ofqual apologised and announced that students would receive their CAG or the calculated grade, whichever was higher. In March 2021 the Office for Statistics Regulation (OSR) concluded that the limitations and uncertainty of the models were 'not fully communicated', that full methodology was not published in advance, that there was 'limited human review of outputs of the models at an individual level', and that acceptability testing focused on the process rather than on the impact on individuals. Contrasts for discussion: Australia's Robodebt scheme averaged annual tax-office income across fortnights to raise welfare debts - an invalid model assumption for people with irregular earnings; in a 2019 test case the Federal Court declared, with the government's consent, that a debt raised this way 'was not validly made', and a Royal Commission reported in 2023; and Imperial College's CovidSim, the individual-based microsimulation used for its COVID-19 Report 9 on non-pharmaceutical interventions (16 March 2020), whose cleaned-up code was released publicly at the end of April 2020 and independently re-run (CODECHECK, reported in Nature, June 2020).",
+      "stakeholders": [
+        "Students (about 718,000 A level and 4.8 million GCSE entries in 2020), especially those in small or atypical cohorts and in centres whose history did not reflect them",
+        "Parents and carers",
+        "Teachers and heads of centre, who produced CAGs and rank orders under guidance and could not discuss them with students",
+        "Schools and colleges (centres) with very different sizes and historical results",
+        "Ofqual (regulator, model developer) and the four exam boards (implementers)",
+        "The Secretary of State and Department for Education (commissioner, under the statutory direction)",
+        "Universities, sixth forms and employers who rely on grades as comparable signals",
+        "Future cohorts and the public, whose confidence in qualifications and in public-sector models was at stake (OSR's concern that bodies may avoid models after a backlash)"
+      ],
+      "questions": [
+        "What exactly was the model's intended use, and was that use a prediction about groups or a decision about individuals? Where did the two get conflated?",
+        "Back-testing showed more than 90% of students within one grade for most A level subjects. Rewrite that result as an uncertainty statement for (a) a student, (b) a university admissions officer, (c) the Secretary of State. What does each need to know that the headline hides?",
+        "The small-cohort rule (fewer than 15: more weight on CAGs) was statistically reasonable. Who did it advantage, and how should the trade-off between statistical reliability and equal treatment have been surfaced and decided?",
+        "Which validation evidence was aggregate and which individual? Using labs/L500/26-ethics/aggregate_vs_individual.py, explain how a model can match the grade distribution exactly and still give 60% of students a different grade from the exam.",
+        "Map the case onto the AQuA Book roles (commissioner, analyst, assurer, approver). Was there independent assurance proportionate to the consequence?",
+        "Which ACM Code principles (1.1, 1.2, 1.3, 2.5, 3.1) and which IEEE item (I.5) are engaged? Where do they conflict with the commissioner's direction to maintain standards?",
+        "What safeguards against misuse (human review of outlier cases, appeals designed before release, publication of the method in advance, a decision rule for when not to use the model) would you have required as the analyst? Which would have changed the outcome?",
+        "Compare with Robodebt (a model assumption that was invalid for the people affected) and CovidSim (a model whose code transparency was challenged and then tested). What does each add to your recommendations?"
+      ],
+      "frameworks": [
+        "ACM Code of Ethics and Professional Conduct (2018): 1.1 contribute to society and human well-being; 1.2 avoid harm; 1.3 be honest and trustworthy; 2.5 give comprehensive and thorough evaluations of computer systems and their impacts, including analysis of possible risks; 3.1 ensure that the public good is the central concern",
+        "IEEE Code of Ethics (IEEE Policies 7.8), item I.5: be honest and realistic in stating claims or estimates based on available data; seek, accept and offer honest criticism and acknowledge errors",
+        "The AQuA Book (UK Government, 2025 edition; replaces the 2015 Aqua Book): commissioner, analyst, assurer and approver roles; proportionate quality assurance; verification and validation; uncertainty identified, managed and communicated",
+        "NASA-STD-7009B (2024) Standard for Models and Simulations: credibility assessment (data and input pedigree, verification, validation, uncertainty characterization, results robustness, technical review) and reporting M&S results and their credibility to decision makers - a civilian engineering standard used here by analogy",
+        "Office for Statistics Regulation (2021), Ensuring statistical models command public confidence: be open and trustworthy; be rigorous and ensure quality throughout; meet the need and provide public value",
+        "Sargent (2010) verification and validation: operational validity must be judged against an accuracy requirement set for the intended use, before the runs",
+        "Structured method used in the model answer: facts -> intended use -> stakeholders and harms -> obligations (codes, standards, law) -> options -> recommendation with safeguards"
+      ],
+      "modelAnswer": "**1. Facts and intended use.** The commissioner's direction set two goals: grades comparable with previous years (an aggregate property) and fairness to each student (an individual property). The DCP model is a well-designed tool for the first: it predicts a centre's grade distribution from its history and prior attainment. It was used for the second, because a predicted distribution was turned into one grade per named student via the rank order. That conversion is where group prediction became individual decision, and the documentation did not mark the change in evidential standard.\n\n**2. Uncertainty.** '51 of 55 subjects had more than 90% of students within one grade' is honest but incomplete. For a student it means: for most subjects, about 1 in 10 or more would have been more than one grade away from their exam result, and the model cannot tell you whether you are one of them. For an admissions officer it means a grade is uncertain by about one grade, which matters at offer boundaries. For the commissioner, the impact is scale: 3.6% of calculated grades differed from the CAG by two or more grades; applied to roughly 718,000 A level entries that is about 26,000 entries. OSR's finding that limitations and uncertainty were 'not fully communicated' is the core professional failure. It engages ACM 1.3 and 2.5 and IEEE I.5 directly. The lab shows why aggregate checks cannot catch this: with a teacher-exam correlation of 0.80, a rank-based model reproduces the distribution exactly (error 0.0000) yet matches the exam grade for only 40.0% of students. Two equally good exam sittings agree only 39.7% of the time, so individual-level uncertainty also exists in normal years. This is a reason to communicate it, not to ignore it.\n\n**3. Equity and the small-cohort rule.** Using CAGs for small groups follows the statistics (Theorem 23.1: the SD of a historical share from 3 x 8 students is 0.090, a 34% relative error). But the CAGs were optimistic, so students in small classes systematically kept higher grades. Ofqual itself noted that some AS and A level subjects came out much higher. A statistically motivated rule had a distributional consequence that should have been surfaced to the commissioner and decided explicitly, not left implicit in the method.\n\n**4. Roles and assurance (AQuA Book, NASA-STD-7009B).** The commissioner was the Secretary of State and the analyst was Ofqual with the exam boards. OSR found 'limited professional statistical consensus' and methods not exposed to the widest expert audience. Proportionality required independent assurance and an approver who explicitly accepted the residual individual-level risk, because the consequence (university places) was high and irreversible on results day. NASA-STD-7009B's insistence on reporting credibility, not just results, to decision makers is the right analogy.\n\n**5. Misuse safeguards.** (a) Individual-level review of predictable outliers before release: OSR says such cases 'should be explored as part of quality assurance'. (b) An appeal route designed and published before results, with the student able to trigger it. (c) Advance publication of the method, in tension with the stated lower priority on transparency. (d) Acceptability testing on impact, not process. (e) A pre-registered decision rule saying when the model's output is not to be used, for example a CAG far above the centre's history combined with a small cohort.\n\n**6. Contrasts.** Robodebt shows the validation duty: income averaging was a model assumption that is false for people with irregular earnings, and validating the assumption against the population it is applied to is not optional. CovidSim shows that releasing code and having it independently re-run builds trust in verification (the code does what the paper says), but that is not validation of the model's assumptions.\n\n**7. Recommendation.** If a model must allocate outcomes to individuals, (i) state the intended use and the accuracy required at individual level before building (Sargent step 2); (ii) publish the method and its individual-level uncertainty in plain language; (iii) require independent assurance proportionate to consequence; (iv) build human review and appeal into the design; and (v) give the commissioner an explicit choice between statistical comparability and individual fairness, with the residual risk quantified. Applying these does not guarantee public acceptance, but it discharges the professional duties in ACM 1.2, 1.3 and 2.5."
+    },
+    "problemSet": [
+      {
+        "id": "26-P1",
+        "type": "short-answer",
+        "difficulty": 1,
+        "marks": 5,
+        "problem": "List five stakeholder groups in the 2020 grading case and, for each, one concrete harm a model error could cause them.",
+        "solution": "Students (wrong grade -> lost university place); teachers (CAGs overridden, appeals burden); centres (results misrepresented in small/atypical cohorts); universities/employers (grades less comparable, offers made on noisy signals); the public/future cohorts (loss of confidence in qualifications and in public-sector models - OSR's concern). Marking: 1 per stakeholder-harm pair."
+      },
+      {
+        "id": "26-P2",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 4,
+        "problem": "Ofqual reported that 96.4% of calculated grades were the same as, or within one grade of, the CAG. If the remaining share applied to the 718,276 A level entries of summer 2020, how many entries would differ from the CAG by two or more grades? Why does reporting the count change the conversation?",
+        "solution": "(1 - 0.964) x 718,276 = 25,858 entries (computed in research/l500_checks.py). A percentage near 100 sounds like success; a count of about 26,000 people makes the individual stakes visible to the commissioner and invites the question of how those cases will be reviewed. Both framings are true; honest communication gives both. Marking: number 2, framing argument 2."
+      },
+      {
+        "id": "26-P3",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Rewrite the claim 'The model predicts grades accurately' as an uncertainty statement suitable for students and parents, using the back-testing result that 51 of 55 A level subjects had more than 90% of students within one grade.",
+        "solution": "Example: 'We tested the method on 2019, where the real exam grades are known. In 51 of 55 A level subjects it gave at least 9 in 10 students a grade within one grade of the grade they actually got; for the other 4 subjects it did less well. So for any individual student the calculated grade could be one grade away from what an exam would have shown, and occasionally further. If you think your grade is wrong, here is how to appeal: ...' Marks for: stating what was tested (1), the result in natural frequencies (2), the individual-level implication (2), a route to act (1)."
+      },
+      {
+        "id": "26-P4",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Robodebt-style averaging: a person earned 26,000 dollars in total over a year, all of it in 13 fortnights (2,000 per fortnight worked), and nothing in the other 13 fortnights, during which they received an income-tested benefit. (a) What fortnightly income does annual averaging attribute to every fortnight? (b) Explain why this produces a debt for fortnights in which the true income was 0, and which validation step (Sargent) would have caught it.",
+        "solution": "(a) 26,000/26 = 1,000 per fortnight. (b) Averaging assigns 1,000 of income to the 13 benefit fortnights where true income was 0, so the person appears to have under-declared and a debt is raised. The model assumption 'income is evenly spread' is false for irregular earners - the people most likely to be on and off benefits. Data validity and conceptual-model validity (are the assumptions true for the population the model is applied to?) would have caught it; checking against a sample of actual payslips is historical-data validation. Marking: (a) 2, (b) 4."
+      },
+      {
+        "id": "26-P5",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 15,
+        "problem": "Write a structured case analysis (800-1,000 words) of the 2020 grading case using the method facts -> intended use -> stakeholders and harms -> obligations -> options -> recommendation. Cite at least three clauses from the frameworks listed (ACM, IEEE, AQuA Book, NASA-STD-7009B, OSR) and use one number from the lesson's simulation.",
+        "solution": "See caseStudy.modelAnswer for a model answer. Strong answers separate aggregate from individual validity with a number (e.g. distribution error 0.0000 vs 40.0% exact agreement), identify the small-cohort trade-off and who decided it, map roles to the AQuA Book, cite ACM 2.5/1.3 and IEEE I.5 precisely, and recommend safeguards that are concrete and testable (pre-release outlier review, appeal designed in advance, published method). Graded with the lesson rubric."
+      },
+      {
+        "id": "26-P6",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "CovidSim's code was released and independently re-run in 2020. Explain what that reproduction does establish, what it does not, and what further evidence a decision maker should ask for before acting on a simulation's projection.",
+        "solution": "It establishes computational reproducibility - a form of verification: the published code, with the same inputs and seeds, produces the published outputs (CovidSim's README notes results are deterministic given the same thread count and seed). It does not establish validity: whether the model's assumptions and parameters (contact patterns, severity, compliance) are adequate for the intended use, nor the uncertainty of the projections. A decision maker should ask for: the intended use and accuracy requirement, validation against observed data where possible, sensitivity/uncertainty ranges on the outputs that drive the decision, and the credibility assessment in a form like NASA-STD-7009B's reporting to decision makers. Marking: verification 2, not validation 2, further evidence 2."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Structured analysis",
+        "excellent": "All stages (facts, use, stakeholders, obligations, options, recommendation) present and linked",
+        "adequate": "Most stages, some jumps",
+        "inadequate": "Opinion without structure",
+        "weight": 25
+      },
+      {
+        "criterion": "Use of primary sources",
+        "excellent": "Specific clauses quoted or paraphrased accurately with citations (ACM 2.5, IEEE I.5, AQuA roles, OSR findings)",
+        "adequate": "Frameworks named but not applied to specifics",
+        "inadequate": "No primary sources or misattributed claims",
+        "weight": 25
+      },
+      {
+        "criterion": "Technical understanding of uncertainty and validation",
+        "excellent": "Quantifies aggregate vs individual validity and the small-cohort variance; distinguishes verification from validation",
+        "adequate": "Qualitative understanding",
+        "inadequate": "Treats aggregate fit as individual accuracy",
+        "weight": 25
+      },
+      {
+        "criterion": "Recommendation quality",
+        "excellent": "Concrete, testable safeguards with trade-offs acknowledged and an owner for each",
+        "adequate": "Reasonable but generic",
+        "inadequate": "Absent or 'use AI responsibly'",
+        "weight": 15
+      },
+      {
+        "criterion": "Fairness and tone",
+        "excellent": "Represents decision makers' constraints fairly (OSR: teams acted with integrity) while holding the analysis to professional standards",
+        "adequate": "Mostly balanced",
+        "inadequate": "Polemical or blames individuals",
+        "weight": 10
+      }
+    ],
+    "conceptNote": "content/concepts/L500/26-ethics.md",
+    "conceptSummary": "A model that decides about people needs more than aggregate validation: the 2020 grading model reproduced national distributions yet, as the regulator of statistics found, its limitations and individual-level uncertainty were not fully communicated and outputs got little individual review. Professional codes (ACM 1.2, 1.3, 2.5; IEEE I.5) and standards (AQuA Book roles and proportionality; NASA-STD-7009B credibility reporting) turn that into concrete duties: state the use, quantify individual uncertainty, assure independently, design appeal and human review in.",
+    "sources": [
+      {
+        "title": "Ofqual (13 Aug 2020), Awarding GCSE, AS, A level, advanced extension awards and extended project qualifications in summer 2020: interim report",
+        "url": "https://www.gov.uk/government/publications/awarding-gcse-as-a-levels-in-summer-2020-interim-report"
+      },
+      {
+        "title": "Ofqual interim report, full PDF (executive summary used for the figures quoted)",
+        "url": "https://assets.publishing.service.gov.uk/media/5f3571778fa8f5173f593d61/6656-1_Awarding_GCSE__AS__A_level__advanced_extension_awards_and_extended_project_qualifications_in_summer_2020_-_interim_report.pdf"
+      },
+      {
+        "title": "Ofqual (17 Aug 2020), Statement from Roger Taylor, Chair, Ofqual",
+        "url": "https://www.gov.uk/government/news/statement-from-roger-taylor-chair-ofqual"
+      },
+      {
+        "title": "Office for Statistics Regulation (2 Mar 2021), Ensuring statistical models command public confidence",
+        "url": "https://osr.statisticsauthority.gov.uk/publications/ensuring-statistical-models-command-public-confidence/"
+      },
+      {
+        "title": "ACM Code of Ethics and Professional Conduct (2018)",
+        "url": "https://www.acm.org/code-of-ethics"
+      },
+      {
+        "title": "IEEE Code of Ethics, IEEE Policies Section 7.8",
+        "url": "https://www.ieee.org/about/corporate/governance/p7-8.html"
+      },
+      {
+        "title": "The AQuA Book (UK Government Analysis Function et al., 30 Jul 2025; replaces the 2015 Aqua Book)",
+        "url": "https://www.gov.uk/guidance/the-aqua-book"
+      },
+      {
+        "title": "HM Treasury (2015), The Aqua Book: guidance on producing quality analysis for government (OGL v3)",
+        "url": "https://analysisfunction.civilservice.gov.uk/wp-content/uploads/2018/03/Aqua-Book-4.pdf"
+      },
+      {
+        "title": "NASA-STD-7009B (2024), Standard for Models and Simulations (public PDF)",
+        "url": "https://standards.nasa.gov/sites/default/files/standards/NASA/B/1/NASA-STD-7009B-Final-3-5-2024.pdf"
+      },
+      {
+        "title": "Royal Commission into the Robodebt Scheme, Report (July 2023)",
+        "url": "https://www.royalcommission.gov.au/robodebt/report"
+      },
+      {
+        "title": "mrc-ide/covid-sim (CovidSim source, GPL-3.0)",
+        "url": "https://github.com/mrc-ide/covid-sim"
+      },
+      {
+        "title": "Singh Chawla (2020), Critiqued coronavirus simulation gets thumbs up from code-checking efforts, Nature 582",
+        "url": "https://www.nature.com/articles/d41586-020-01685-y"
+      }
+    ],
+    "seeAlso": [
+      "simulation L100 #6 Is the model right? Verification vs validation: the vocabulary this lesson applies to people-facing decisions.",
+      "simulation L400 #21 Model governance and V&V: model cards checked against evidence: a model card is the place to state intended use and individual-level uncertainty.",
+      "simulation L400 #22 Capstone: a digital twin of a service centre: staffing decisions affect workers; the governance pack is where these duties land.",
+      "simulation L500 #23 Foundations I: probability and stochastic processes for simulation: the sampling variance behind the small-cohort rule."
+    ],
+    "next": "Reading seminar: Metropolis & Ulam (1949) and Sargent on V&V (L500 #27)",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "aggregate_vs_individual.py ran locally on Python 3.12.15 + numpy 2.5.3 on Linux (checkOutput is its real stdout; research/l500_checks.py re-runs it and recomputes the numeric problem answers). All factual claims about the case/readings come from primary sources retrieved on 2026-10-30 (research/L500-evidence.md); the essays are human-graded with the rubric.",
+      "pendingCi": [
+        "macOS and Windows run of labs/L500/26-ethics/aggregate_vs_individual.py"
+      ]
+    },
+    "codeCheck": {
+      "purpose": "Synthetic illustration for the case: a rank-based model reproduces the grade distribution exactly yet disagrees with the exam for most individuals; small cohorts make centre histories noisy (Theorem 23.1).",
+      "check": "labs/L500/26-ethics/aggregate_vs_individual.py",
+      "checkOutput": "teacher-exam correlation 0.80: distribution error 0.0000; same grade as exam 40.0%; within one grade 86.4%\nteacher-exam correlation 0.90: distribution error 0.0000; same grade as exam 51.5%; within one grade 95.3%\nexam vs an equally good re-sit: same grade 39.7%; within one 86.5%\nsmall centres: a centre's top-two-grade share (true p = 0.26) estimated from 3 past years of n students each:\n  n =   5: SD 0.113 (theory sqrt(p(1-p)/3n) = 0.113), relative error 43%\n  n =   8: SD 0.090 (theory sqrt(p(1-p)/3n) = 0.090), relative error 34%\n  n =  15: SD 0.065 (theory sqrt(p(1-p)/3n) = 0.065), relative error 25%\n  n =  50: SD 0.036 (theory sqrt(p(1-p)/3n) = 0.036), relative error 14%\n  n = 200: SD 0.018 (theory sqrt(p(1-p)/3n) = 0.018), relative error 7%"
+    }
+  },
+  {
+    "id": "reading-seminar-monte-carlo-vv",
+    "number": 27,
+    "level": "L500",
+    "title": "Reading seminar: Metropolis & Ulam (1949) 'The Monte Carlo Method' and Sargent on verification and validation",
+    "category": "primary literature",
+    "description": "Two primary sources that frame this whole course: the 1949 paper that named and explained the Monte Carlo method, and Sargent's Winter Simulation Conference paper on verification and validation of simulation models. You read them with guiding questions, connect them to the theorems of lessons 23-25, and write a critical response.",
+    "outcome": "You can summarise each paper's argument in your own words, place it in its historical and technical context, connect its claims to the theory and labs of this course, and write a critical response that evaluates its strengths and limits with evidence.",
+    "estimatedTime": "5-6 hours (reading 2-3 h, seminar 1 h, response 2 h)",
+    "prerequisites": [
+      "L500 #23 and #25 (LLN, CLT, Monte Carlo variance) for Metropolis & Ulam",
+      "L100 #6 and L400 #21 (V&V in practice) for Sargent",
+      "access: Metropolis & Ulam via JSTOR (institutional or individual access); Sargent's paper is a free PDF from the WSC archive"
+    ],
+    "learningObjectives": [
+      "Summarize the central argument and method of each paper accurately and in your own words.",
+      "Explain how Metropolis & Ulam's 'sample single chains instead of integrating' idea relates to Theorems 23.1, 23.2 and 25.3.",
+      "Analyze Sargent's process model (conceptual model validity, computerized model verification, operational validity, data validity) and apply it to one lab from this course.",
+      "Critique each paper: what it leaves open (error estimation in 1949; subjectivity of validity decisions in Sargent) and how later work or this course addresses it.",
+      "Evaluate the papers' relevance to a current model-informed decision (connects to L500 #26)."
+    ],
+    "glossary": [
+      {
+        "term": "branching process (chain of events)",
+        "meaning": "A random genealogy where each individual (e.g. a neutron) produces a random number of offspring; Metropolis & Ulam's motivating example."
+      },
+      {
+        "term": "integro-differential equation",
+        "meaning": "An equation involving both derivatives and integrals of the unknown function, such as neutron transport; the paper treats Monte Carlo as a statistical approach to such equations."
+      },
+      {
+        "term": "conceptual model validity",
+        "meaning": "Sargent: the theories and assumptions underlying the conceptual model are correct and its representation is reasonable for the intended purpose."
+      },
+      {
+        "term": "operational validity",
+        "meaning": "Sargent: the model's output behaviour has sufficient accuracy for its intended purpose over its domain of applicability."
+      },
+      {
+        "term": "range of accuracy",
+        "meaning": "Sargent: the amount of accuracy required for a model to be valid for its intended purpose - to be set before validation."
+      },
+      {
+        "term": "IV&V",
+        "meaning": "Independent verification and validation: a third party, not the developers or users, decides whether the model is valid."
+      }
+    ],
+    "readings": [
+      {
+        "citation": "Metropolis, N. and Ulam, S. (1949). The Monte Carlo Method. Journal of the American Statistical Association, 44(247), 335-341. doi:10.1080/01621459.1949.10483310",
+        "url": "https://www.jstor.org/stable/2280232",
+        "why": "The paper that introduced the name and the idea to a statistical audience: replace an intractable multiple integral or the iteration of probability matrices by following many individual random histories ('single chains of events') on a computing machine, and read the answer off as a frequency. Every Monte Carlo estimate in L100 #2, L300 #12 and L500 #25 descends from it. It is short (7 pages) and readable, and it states openly that a precise estimate of the error for a finite sample was still an open question - which Theorems 23.2 and 25.3 now answer. Summary only here: read the original via JSTOR; we do not reproduce it.",
+        "guidingQuestions": [
+          "What class of problems do the authors say the method addresses, and why do they call it a statistical approach to (integro-)differential equations rather than a numerical one?",
+          "In the neutron-multiplication example, what is the 'state' of a particle, what is sampled at each step, and why does sampling single chains avoid the multiple integrations or matrix products of the exact approach? Relate this to labs/L500/27-readings/branching_process.py.",
+          "The authors note that a precise estimate of the error from a finite sample is still open. Using Theorems 23.1, 23.2 and 25.3, write the error estimate they lacked, and say which assumption (finite variance) it needs.",
+          "What role do 'modern computing machines' and pseudo-random numbers play in the argument? Which of the generator problems in L500 #25 (period, planes, low bits) would have threatened their results?",
+          "The paper suggests the method can run on many machines in parallel. What does that require of the random streams (L300 #16, L400 #20), and why is that harder than it sounds?"
+        ],
+        "responsePrompt": "In 600-800 words, explain the Monte Carlo idea as Metropolis and Ulam present it, then evaluate it from a 2026 standpoint: what the 1949 paper got right, what it left open, and how the theory in L500 #23-25 closes those gaps. Include one numerical illustration of your own (seeded code, real output), for example the branching-process extinction check, and state its 95% interval."
+      },
+      {
+        "citation": "Sargent, R. G. (2010). Verification and Validation of Simulation Models. In Proceedings of the 2010 Winter Simulation Conference (B. Johansson et al., eds.). IEEE.",
+        "url": "https://www.informs-sim.org/wsc10papers/016.pdf",
+        "why": "The most-cited practical account of simulation V&V. It defines verification ('ensuring that the computer program of the computerized model and its implementation are correct') and validation (a model 'within its domain of applicability possesses a satisfactory range of accuracy consistent with the intended application'). It gives a simple process model linking problem entity, conceptual model and computerized model through conceptual model validity, computerized model verification, operational validity and data validity, catalogues techniques (animation, comparison to other models, degenerate and extreme-condition tests, face validity, historical data validation, sensitivity analysis, traces, Turing tests and more), and recommends a procedure whose second step is to specify the required accuracy before testing. L100 #6, L400 #21 and the capstone all apply it. The 2020 advanced tutorial by the same author (https://www.informs-sim.org/wsc20papers/002.pdf) updates it (three decision approaches; parsimony and usability added). Summary only: read the original free PDF; the text is IEEE-copyright.",
+        "guidingQuestions": [
+          "Sargent describes four ways of deciding whether a model is valid (development team, user involvement, IV&V, scoring model). Which does he recommend against, and why? Which approach fits a model that allocates outcomes to people (L500 #26)?",
+          "Draw the simplified model-development process (problem entity, conceptual model, computerized model) and label where conceptual model validity, computerized model verification, operational validity and data validity apply. Place each test from labs/L100/06-verification-validation on your diagram.",
+          "Why does Sargent insist that the acceptable range of accuracy be specified before validation? Give an example from this course where choosing it afterwards would have changed the conclusion (L400 #21's envelope at 5% vs 10%).",
+          "Pick three techniques from his list (e.g. degenerate tests, extreme-condition tests, historical data validation). For each, name a lab in this course that used it and what it could not detect.",
+          "Sargent treats validity as relative to an intended purpose and domain of applicability. What follows for re-using a validated model for a new purpose, and how does a model card (L400 #21) record that?"
+        ],
+        "responsePrompt": "In 600-800 words, apply Sargent's framework to one model you built in this course (any lab from L100-L400). Identify the intended purpose and required accuracy, the evidence you have for each of the four validity/verification types, the weakest link, and one technique you would add. Close with a critical paragraph: where is Sargent's framework itself weakest (e.g. subjective decisions, models of systems that do not yet exist, people-facing decisions) and what would you add?"
+      }
+    ],
+    "codeCheck": {
+      "purpose": "Reading companion: Metropolis & Ulam's chains of events as a Galton-Watson branching process; Monte Carlo extinction probability checked against the analytic fixed point (an operational-validity test in Sargent's sense).",
+      "check": "labs/L500/27-readings/branching_process.py",
+      "checkOutput": "analytic extinction probability q = 0.6863 (smallest root of q = exp(1.2(q - 1)))\nMonte Carlo, 20,000 chains: 0.6842 +/- 0.0064 (95% CI); contains q: True\ncapped chains contribute bias < q^500 = 1.8e-82"
+    },
+    "problemSet": [
+      {
+        "id": "27-P1",
+        "type": "short-answer",
+        "difficulty": 1,
+        "marks": 4,
+        "problem": "In no more than 100 words, summarise the Monte Carlo method as Metropolis and Ulam (1949) present it.",
+        "solution": "A strong answer: the method treats problems governed by (integro-)differential equations - such as neutron multiplication and diffusion - statistically. Instead of computing multiple integrals or iterating probability matrices, it follows many individual random histories ('chains of events') generated with (pseudo-)random numbers on a computing machine, and estimates the quantities of interest as frequencies or averages over the histories. The authors stress its suitability for the new computing machines and parallel work, and note that a precise estimate of the sampling error was still open. Marking: statistical approach 1, chains of events 1, frequencies/averages 1, open error question 1."
+      },
+      {
+        "id": "27-P2",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "A branching process has Poisson(m) offspring. (a) Find the extinction probability q (smallest root of q = exp(m(q - 1))) for m = 1.2, 1.5 and 2.0. (b) The companion script estimates q for m = 1.2 from 20,000 chains. What 95% half-width do you expect, and does the reported interval contain q?",
+        "solution": "(a) Iterating q <- exp(m(q - 1)) from 0: m = 1.2: q = 0.6863; m = 1.5: q = 0.4172; m = 2.0: q = 0.2032 (research/l500_checks.py). (b) Half-width ~ 1.96 sqrt(q(1 - q)/20,000) = 0.0064; the script reports 0.6842 +/- 0.0064, which contains 0.6863. Marking: (a) 1 + 1 + 1 with method, (b) 2 + 1."
+      },
+      {
+        "id": "27-P3",
+        "type": "derivation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Derive the fixed-point equation for the extinction probability of a Galton-Watson process with offspring generating function G(s) = E[s^X], and specialise it to Poisson(m) offspring. Why is the relevant root the smallest one in [0, 1]?",
+        "solution": "Condition on the first generation: the line dies out iff each of the X children's lines dies out, independently, so q = E[q^X] = G(q). For Poisson(m), G(s) = exp(m(s - 1)), so q = exp(m(q - 1)). q_n = P(extinct by generation n) satisfies q_(n+1) = G(q_n) with q_0 = 0; G is increasing, so q_n increases to the smallest fixed point in [0, 1] (s = 1 is always a fixed point; for m > 1 there is a smaller one). Marking: conditioning 3, Poisson pgf 1, smallest-root argument 2."
+      },
+      {
+        "id": "27-P4",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Using Sargent (2010), distinguish conceptual model validity, computerized model verification, operational validity and data validity, giving one example of each from this course's labs.",
+        "solution": "Conceptual model validity - are the assumptions right for the purpose? (L200 #7: lognormal, not exponential, service times). Computerized model verification - does the code implement the model? (L100 #6 rule unit tests; L500 #24 order checks). Operational validity - is the output accurate enough over the domain? (L400 #21: Erlang C comparison within 10% up to utilisation 0.85). Data validity - are the data adequate and correct? (L400 #17: innovation gate rejecting the 85 C glitch). Marking: 1 per definition-example pair plus 2 for accurate definitions overall."
+      },
+      {
+        "id": "27-P5",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 15,
+        "problem": "Critical response on Metropolis & Ulam (1949): answer the reading's responsePrompt.",
+        "solution": "Model points: accurate summary (chains of events, statistical approach, machines, parallelism); identifies the open error question and closes it with sigma/sqrt(N) and the CLT interval (Theorems 23.2, 25.3), noting the finite-variance assumption; links generator quality to validity of results (RANDU-style structure would bias multi-dimensional sampling); includes a seeded illustration with a real interval; evaluates limits (variance can be large for rare events - motivating importance sampling, Theorem 25.3(b)). Graded with the lesson rubric."
+      },
+      {
+        "id": "27-P6",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 15,
+        "problem": "Critical response on Sargent (2010): answer the reading's responsePrompt.",
+        "solution": "Model points: purpose and accuracy requirement stated before evidence; evidence mapped to the four types with real lab numbers; weakest link identified honestly (often data validity or operational validity outside the tested envelope); a technique added with justification; critique of the framework (validity decisions remain judgements; scoring models discouraged; little guidance for people-facing decisions or for systems that do not yet exist; the 2020 tutorial's additions). Graded with the lesson rubric."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Accurate summary in own words",
+        "excellent": "Captures the argument and method precisely without quoting at length",
+        "adequate": "Mostly accurate, some paraphrase errors",
+        "inadequate": "Misrepresents the paper or copies text",
+        "weight": 25
+      },
+      {
+        "criterion": "Connection to course theory and labs",
+        "excellent": "Links specific theorems and labs with numbers",
+        "adequate": "General links",
+        "inadequate": "No links",
+        "weight": 25
+      },
+      {
+        "criterion": "Critical evaluation",
+        "excellent": "Identifies limits and how later work addresses them, with evidence",
+        "adequate": "Some critique, thin evidence",
+        "inadequate": "Only praise or only summary",
+        "weight": 30
+      },
+      {
+        "criterion": "Evidence and citation",
+        "excellent": "Seeded code with real output; page/section references to the paper",
+        "adequate": "Some references",
+        "inadequate": "Unsupported claims",
+        "weight": 20
+      }
+    ],
+    "conceptNote": "content/concepts/L500/27-readings.md",
+    "conceptSummary": "Metropolis & Ulam (1949) named Monte Carlo: follow many random chains of events on a computing machine instead of integrating, and admit the finite-sample error is still open - now closed by sigma/sqrt(N) and the CLT. Sargent (WSC 2010) gives the vocabulary for trusting a model: conceptual validity, verification, operational and data validity, judged against an accuracy fixed in advance for an intended purpose.",
+    "sources": [
+      {
+        "title": "Metropolis & Ulam (1949), The Monte Carlo Method, JASA 44(247):335-341 (JSTOR)",
+        "url": "https://www.jstor.org/stable/2280232"
+      },
+      {
+        "title": "Sargent (2010), Verification and validation of simulation models, Proc. 2010 Winter Simulation Conference",
+        "url": "https://www.informs-sim.org/wsc10papers/016.pdf"
+      },
+      {
+        "title": "Sargent (2020), Verification and Validation of Simulation Models: An Advanced Tutorial, Proc. 2020 Winter Simulation Conference",
+        "url": "https://www.informs-sim.org/wsc20papers/002.pdf"
+      }
+    ],
+    "seeAlso": [
+      "simulation L100 #2 Monte Carlo: estimate a project's completion time: the method of reading 1 in its simplest form.",
+      "simulation L100 #6 Is the model right? Verification vs validation: Sargent's vocabulary in a first lab.",
+      "simulation L400 #21 Model governance and V&V: model cards checked against evidence: Sargent's recommended procedure made machine-checkable.",
+      "simulation L500 #25 Foundations III: random number generation and Monte Carlo theory: the error estimate Metropolis & Ulam lacked."
+    ],
+    "next": "Course assessment: content/assessment/ (syllabus, exams, concept inventory, capstone oral defence)",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "branching_process.py ran locally on Python 3.12.15 + numpy 2.5.3 on Linux (checkOutput is its real stdout; research/l500_checks.py re-runs it and recomputes the numeric problem answers). All factual claims about the case/readings come from primary sources retrieved on 2026-10-30 (research/L500-evidence.md); the essays are human-graded with the rubric.",
+      "pendingCi": [
+        "macOS and Windows run of labs/L500/27-readings/branching_process.py"
+      ]
+    }
+  }
+]

@@ -1,0 +1,701 @@
+[
+ {
+  "id": "int04-L600-001",
+  "level": "L600",
+  "lesson": 4,
+  "type": "concept",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "Why does a board send only its unacked records instead of its whole CRDT state at each sync?",
+  "options": [
+   "Gateways can only merge one reading at a time",
+   "The whole state does not fit a 32-byte frame; a delta does",
+   "Full-state merges are not idempotent",
+   "The radio queue holds only three messages"
+  ],
+  "answer": 1,
+  "explanation": "One board's 12 h log is 6,480 B (224 frames), while one sync attempt sends at most 24 records in 8 frames. Full-state merges ARE idempotent; the problem is size, not correctness.",
+  "source": "Lesson L600 #04 seams S1 / ADR 0002"
+ },
+ {
+  "id": "int04-L600-002",
+  "level": "L600",
+  "lesson": 4,
+  "type": "scenario",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "A firmware bug builds one 93-byte frame while radio.config(length=32) is in effect. What does the gateway see?",
+  "options": [
+   "The full 93 bytes, because the gateway's length is 251",
+   "Nothing: the radio refuses to send it and raises ValueError",
+   "32 bytes; the body is not a whole number of records, so it is rejected",
+   "Three valid records and a warning about the rest"
+  ],
+  "answer": 2,
+  "explanation": "The sender truncates to its own length (docs + stub), so 32 B leave the board; 29 B of body is not a multiple of 9 and decode_frame() rejects it. A bigger receiver length cannot restore bytes that were never sent.",
+  "source": "Lesson L600 #04 tests/test_seams.py S1"
+ },
+ {
+  "id": "int04-L600-003",
+  "level": "L600",
+  "lesson": 4,
+  "type": "concept",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "Why is a reading identified by (device, boot, seq) rather than (device, wall time)?",
+  "options": [
+   "Wall time can repeat after a reboot or a clock step; the dot never does",
+   "Wall time needs 4 bytes while a dot needs 3 bytes",
+   "The API sorts faster by integers than by timestamps",
+   "Gateways cannot read the device's wall time from a frame"
+  ],
+  "answer": 0,
+  "explanation": "running_time() restarts at 0 on reboot and acks can step the epoch back: 1,421 (device, wall-second) keys repeat in the seeded run. Size is not the reason - a dot plus wall time is sent anyway.",
+  "source": "Lesson L600 #04 seam S2 / ADR 0001"
+ },
+ {
+  "id": "int04-L600-004",
+  "level": "L600",
+  "lesson": 4,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "Why do boards start every sync themselves instead of gateways polling them?",
+  "options": [
+   "Gateways have no radio, only USB",
+   "Polling would need a unique radio group per board",
+   "Radio broadcasts from a PC are limited to 32 bytes",
+   "In Deep Sleep the board cannot receive; it wakes on timer, pins, buttons or UART"
+  ],
+  "answer": 3,
+  "explanation": "The power docs list the wake sources; the radio is not one, and the firmware turns the radio off between syncs. Groups are irrelevant here - acks are already addressed by device id in the frame.",
+  "source": "Lesson L600 #04 seam S3 / ADR 0003"
+ },
+ {
+  "id": "int04-L600-005",
+  "level": "L600",
+  "lesson": 4,
+  "type": "scenario",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "A gateway that ignores the schema byte receives a 27-byte frame from a schema-1 board (3 + 3 x 8 B). What happens?",
+  "options": [
+   "It decodes 2 records and drops the rest",
+   "It rejects the frame: 24 B is not a whole number of 9 B records",
+   "It decodes 3 records with light = None",
+   "It acks the frame but stores nothing"
+  ],
+  "answer": 1,
+  "explanation": "Assuming the newest layout means 9-byte records; 24 is not a multiple of 9, so the strict decoder rejects it and no ack is sent (--inject schema-drift: 2,880 readings never acked). Light = None is what the CORRECT decoder produces.",
+  "source": "Lesson L600 #04 seam S4"
+ },
+ {
+  "id": "int04-L600-006",
+  "level": "L600",
+  "lesson": 4,
+  "type": "concept",
+  "difficulty": 3,
+  "tags": [
+   "seam",
+   "contract"
+  ],
+  "question": "The v2 consumer contract expects \"light\": null for d17 (firmware schema 1). The provider starts returning \"light\": 0 for it. What does verification report?",
+  "options": [
+   "Nothing: 0 and null are both falsy JSON values",
+   "Nothing: light is declared with like(100), so any number matches",
+   "A problem: light is an exact value in that interaction, 0 != None",
+   "A problem only if the status code also changes"
+  ],
+  "answer": 2,
+  "explanation": "In the d17 interaction light is not wrapped in like(); body_problems() compares it exactly. like(100) is used only in the d01 interaction, for schema-2 boards.",
+  "source": "Lesson L600 #04 contracts.py / application-architecture L300 #14"
+ },
+ {
+  "id": "int04-L600-007",
+  "level": "L600",
+  "lesson": 4,
+  "type": "concept",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "Why does /v2/devices/{dev}/readings return only readings up to stableThrough (the version-vector mark)?",
+  "options": [
+   "Readings above the mark are not yet replicated to b1",
+   "To keep pages under 32 bytes for the radio",
+   "Because the mark is the newest wall time",
+   "Below the mark nothing can arrive later, so a cursor never skips one"
+  ],
+  "answer": 3,
+  "explanation": "Gossip can deliver seq 4 before seq 3. A cursor that passed 4 would never see 3. Readings above the mark are already in b1 - they are withheld because a gap may still fill below them.",
+  "source": "Lesson L600 #04 seam S5"
+ },
+ {
+  "id": "int04-L600-008",
+  "level": "L600",
+  "lesson": 4,
+  "type": "concept",
+  "difficulty": 2,
+  "tags": [
+   "seam"
+  ],
+  "question": "Scorecard S3 asserts firmware ACTIVE_MS == budget.FIGURES['ACTIVE_MS'] (microbit L300 #14). Why is that a seam test?",
+  "options": [
+   "The battery model costs each wake-up at its own figure; if they drift, the hours are silently wrong",
+   "Both values are needed to configure the radio",
+   "ACTIVE_MS sets the radio ack window",
+   "The gateway uses ACTIVE_MS to time out frames"
+  ],
+  "answer": 0,
+  "explanation": "The firmware counts awake time with its constant and the model's cross-check (budget.life_h) uses FIGURES; the battery claim is only valid while they agree. The ack window is ACK_WAIT_MS, a different constant.",
+  "source": "Lesson L600 #04 seam S3"
+ },
+ {
+  "id": "int04-L600-009",
+  "level": "L600",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 2,
+  "tags": [
+   "calc"
+  ],
+  "question": "Frames carry a 3-byte header and 9-byte schema-2 records. How many records fit in the default radio length?",
+  "options": [
+   "2",
+   "3",
+   "4",
+   "29"
+  ],
+  "answer": 1,
+  "explanation": "(32 - 3) // 9 = 3 (27 B of records, 30 B frames). 29 is the body size in bytes, not a record count.",
+  "source": "Lesson L600 #04 firmware/node.py",
+  "check": "rpf_32_v2"
+ },
+ {
+  "id": "int04-L600-010",
+  "level": "L600",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 2,
+  "tags": [
+   "calc"
+  ],
+  "question": "With radio length 251 and schema-1 (8-byte) records, how many records fit in one frame?",
+  "options": [
+   "27",
+   "30",
+   "32",
+   "31"
+  ],
+  "answer": 3,
+  "explanation": "(251 - 3) // 8 = 31. 27 is the schema-2 figure ((251 - 3) // 9).",
+  "source": "Lesson L600 #04 solution/node_251.py",
+  "check": "rpf_251_v1"
+ },
+ {
+  "id": "int04-L600-011",
+  "level": "L600",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 3,
+  "tags": [
+   "calc"
+  ],
+  "question": "One board logs 720 schema-2 readings (9 B each) in 12 h. How many 32-byte frames (29 B payload after the header) would a full-state sync of that log need?",
+  "options": [
+   "224 frames",
+   "203 frames",
+   "240 frames",
+   "720 frames"
+  ],
+  "answer": 0,
+  "explanation": "ceil(720 x 9 / 29) = ceil(6480 / 29) = 224. 203 uses 32 B as payload and forgets the header; 240 assumes exactly 3 records per frame.",
+  "source": "Lesson L600 #04 scorecard S1",
+  "check": "full_state_frames"
+ },
+ {
+  "id": "int04-L600-012",
+  "level": "L600",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 3,
+  "tags": [
+   "calc"
+  ],
+  "question": "Using microbit L300 #14's figures (30 mA awake, 0.5 mA asleep, 1,250 mAh), a board that is awake 60 x 20 ms per hour and never syncs lasts how long?",
+  "options": [
+   "2,500.0 h",
+   "2,451.8 h",
+   "2,419.7 h",
+   "41.7 h"
+  ],
+  "answer": 1,
+  "explanation": "avg = (1,200 x 30 + 3,598,800 x 0.5) / 3,600,000 = 0.5098 mA; 1,250 / 0.5098 = 2,451.8 h. 2,419.7 h is the run's worst board WITH syncs; 2,500 h ignores the awake time.",
+  "source": "Lesson L600 #04 fleet_sim.life_hours",
+  "check": "life_sample_only"
+ },
+ {
+  "id": "int04-L600-013",
+  "level": "L600",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 3,
+  "tags": [
+   "calc"
+  ],
+  "question": "Same model, but the board also syncs every 10 s and each sync keeps it awake 170 ms (20 ms wake-up + 3 attempts x 50 ms): 360 x 170 ms per hour on top of 1,200 ms of sampling. Modelled life?",
+  "options": [
+   "2,212.4 h",
+   "1,850.0 h",
+   "2,000.0 h",
+   "1,236.0 h"
+  ],
+  "answer": 3,
+  "explanation": "Awake = 1,200 + 61,200 = 62,400 ms/h; avg = (62,400 x 30 + 3,537,600 x 0.5) / 3,600,000 = 1.0113 mA; 1,250 / 1.0113 = 1,236.0 h - below the 2,000 h target. 2,212.4 h is the observed sync-every-minute run.",
+  "source": "Lesson L600 #04 tests/test_fitness.py F3",
+  "check": "life_10s_sync"
+ },
+ {
+  "id": "int04-L600-014",
+  "level": "L600",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 2,
+  "tags": [
+   "calc"
+  ],
+  "question": "The flash log holds 400 readings and a board samples once a minute. How long can it stay out of range before it must drop readings (ignoring any backlog)?",
+  "options": [
+   "4.0 h",
+   "8.0 h",
+   "6.7 h",
+   "40.0 h"
+  ],
+  "answer": 2,
+  "explanation": "400 / 60 = 6.67 h. Try it 2's 8 h partition exceeds it and drops 451 readings (backlog included).",
+  "source": "Lesson L600 #04 scaling limits",
+  "check": "flash_hours"
+ },
+ {
+  "id": "int04-L600-015",
+  "level": "L600",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 2,
+  "tags": [
+   "calc"
+  ],
+  "question": "/v1 is deprecated at 2027-01-01T00:00:00Z. What Deprecation header value does RFC 9745 require?",
+  "options": [
+   "@1798761600",
+   "Fri, 01 Jan 2027 00:00:00 GMT",
+   "2027-01-01",
+   "@1798761600000"
+  ],
+  "answer": 0,
+  "explanation": "RFC 9745 uses a Structured Field Date: '@' + Unix seconds. The HTTP-date form is what Sunset (RFC 8594) uses; milliseconds are not seconds.",
+  "source": "https://www.rfc-editor.org/rfc/rfc9745.html",
+  "check": "deprecation"
+ },
+ {
+  "id": "int04-L600-016",
+  "level": "L600",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 2,
+  "tags": [
+   "calc"
+  ],
+  "question": "An ack holds the 8-byte prefix (schema, 'A', dev, 4-byte epoch, count), one (boot, hw) entry and two exact (boot, seq) entries of 3 bytes each. Its length?",
+  "options": [
+   "14 bytes",
+   "17 bytes",
+   "20 bytes",
+   "11 bytes"
+  ],
+  "answer": 1,
+  "explanation": "8 + 3 + 2 x 3 = 17 bytes, under the 32-byte limit. 11 bytes is an ack with only the cumulative entry.",
+  "source": "Lesson L600 #04 gateway.encode_ack",
+  "check": "ack_len"
+ },
+ {
+  "id": "int04-L600-017",
+  "level": "L600",
+  "lesson": 4,
+  "type": "debugging",
+  "difficulty": 3,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "M2 says all 14,400 readings reached a gateway and every log is empty, yet F1 reports 1,421 lost - exactly the number of repeated (device, wall-second) keys. Most likely cause?",
+  "options": [
+   "The radio dropped 1,421 frames",
+   "Gossip stopped before convergence",
+   "Flash logs overflowed during the partition",
+   "Rows keyed by device wall time: later readings overwrote earlier ones"
+  ],
+  "answer": 3,
+  "explanation": "Reaching a gateway and draining the logs rules out radio and overflow; lost == repeated wall keys points to last-writer-wins by timestamp (--inject wallclock-lww). Gossip did converge - on the overwritten data.",
+  "source": "Lesson L600 #04 failureLab"
+ },
+ {
+  "id": "int04-L600-018",
+  "level": "L600",
+  "lesson": 4,
+  "type": "debugging",
+  "difficulty": 3,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "After an 8 h partition with cumulative-only acks, logs_empty is false, boards keep resending the same frames and 2,330 readings are lost. What blocks the acks?",
+  "options": [
+   "A record dropped from the full log never arrives, so the contiguous mark stops at the gap",
+   "The gateways' queues are full",
+   "g2's slow clock makes acks expire",
+   "The boards' radio length is too small for acks"
+  ],
+  "answer": 0,
+  "explanation": "With only (boot, hw) acks, nothing above a permanent gap is ever deleted; the log stays full and keeps dropping. Selective acks (exact dots) fix it: 450 lost, all from the overflow itself.",
+  "source": "Lesson L600 #04 tryIt 2"
+ },
+ {
+  "id": "int04-L600-019",
+  "level": "L600",
+  "lesson": 4,
+  "type": "debugging",
+  "difficulty": 3,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "With --inject oversize-frame, max_frame_bytes is exactly 32, gateways reject over 100,000 frames and almost nothing is stored. Diagnosis?",
+  "options": [
+   "Gateways run out of radio queue space",
+   "RECORDS_PER_FRAME is sized for 251 B while the radio is still at 32 B, so frames are truncated",
+   "Schema-1 boards send the wrong schema byte",
+   "The 30 % loss rate is too high for 3 attempts"
+  ],
+  "answer": 1,
+  "explanation": "Frames of 3 + 27 x 9 B are cut to 32 B by the sender; the body is no longer whole records and is rejected. A frame size of exactly the radio length is the tell-tale sign.",
+  "source": "Lesson L600 #04 --inject oversize-frame"
+ },
+ {
+  "id": "int04-L600-020",
+  "level": "L600",
+  "lesson": 4,
+  "type": "debugging",
+  "difficulty": 3,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "Only d17-d20 never get acked; gateway reject counters climb; 7 contract problems appear. The other 16 boards are fine. What changed?",
+  "options": [
+   "Those four boards are out of radio range",
+   "Their flash logs are full",
+   "The gateway now ignores the schema byte and assumes 9-byte records",
+   "Their boot counters overflowed"
+  ],
+  "answer": 2,
+  "explanation": "d17-d20 run schema 1 (8-byte records); a decoder that assumes schema 2 rejects their frames (--inject schema-drift). An out-of-range board would not raise the gateway's reject counter at all.",
+  "source": "Lesson L600 #04 --inject schema-drift"
+ },
+ {
+  "id": "int04-L600-021",
+  "level": "L600",
+  "lesson": 4,
+  "type": "debugging",
+  "difficulty": 3,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "In the failure lab all five replicas end up equal (replicas_equal true) although 1,421 readings are gone. Why doesn't convergence catch the loss?",
+  "options": [
+   "Equality is only checked on b1",
+   "The replicas converged before the data arrived",
+   "Gossip skips readings older than one hour",
+   "Convergence means the replicas agree, not that they hold what was sampled"
+  ],
+  "answer": 3,
+  "explanation": "Every replica applied the same overwrites, so they agree on wrong data. Only a completeness check (sampled dots vs stored dots, F1) finds it.",
+  "source": "Lesson L600 #04 failureLab"
+ },
+ {
+  "id": "int04-L600-022",
+  "level": "L600",
+  "lesson": 4,
+  "type": "debugging",
+  "difficulty": 2,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "A /v1 dashboard shows d07's sequence number fall from 300 to 1 mid-afternoon and flags 'data corruption'. What happened?",
+  "options": [
+   "Gossip delivered old readings late",
+   "d07 rebooted: seq restarts per boot and /v1 has no boot field",
+   "g2's slow clock reordered the readings",
+   "The v1 endpoint returns the oldest reading"
+  ],
+  "answer": 1,
+  "explanation": "Dots are (dev, boot, seq); after the reboot at minute 300 d07 is on boot 2 and seq restarts at 1. /v2 exposes boot, /v1 cannot - which is why /v1 is deprecated.",
+  "source": "Lesson L600 #04 api.py / ADR 0004"
+ },
+ {
+  "id": "int04-L600-023",
+  "level": "L600",
+  "lesson": 4,
+  "type": "code-reading",
+  "difficulty": 3,
+  "tags": [
+   "code"
+  ],
+  "question": "What does this print? (version vector + dot cloud compaction)",
+  "code": "hw, cloud = 1, {2, 3, 5}\nwhile hw + 1 in cloud:\n    cloud.discard(hw + 1)\n    hw += 1\nprint(hw, sorted(cloud))",
+  "options": [
+   "3 [5]",
+   "5 []",
+   "1 [2, 3, 5]",
+   "2 [3, 5]"
+  ],
+  "answer": 0,
+  "explanation": "Starting at hw 1, seqs 2 and 3 extend the contiguous prefix and move into the mark; 5 stays in the cloud because 4 is missing.",
+  "source": "Lesson L600 #04 store.ReadingStore._compact",
+  "check": "code"
+ },
+ {
+  "id": "int04-L600-024",
+  "level": "L600",
+  "lesson": 4,
+  "type": "code-reading",
+  "difficulty": 2,
+  "tags": [
+   "code"
+  ],
+  "question": "What does this print? (frame size for schema 2)",
+  "code": "def pack(boot, seq, wall, temp, light):\n    return bytes([boot, seq >> 8, seq & 255]) + wall.to_bytes(4, 'big') + bytes([temp & 255, light])\n\nrecs = [(1, s, 1790000000 + 60 * s, 21, 100) for s in (1, 2, 3)]\nframe = bytes([2, ord('D'), 7]) + b''.join(pack(*r) for r in recs)\nprint(len(frame))",
+  "options": [
+   "27",
+   "33",
+   "30",
+   "32"
+  ],
+  "answer": 2,
+  "explanation": "3 header bytes + 3 records x 9 bytes = 30. 27 is the body only.",
+  "source": "Lesson L600 #04 firmware/node.py frames()",
+  "check": "code"
+ },
+ {
+  "id": "int04-L600-025",
+  "level": "L600",
+  "lesson": 4,
+  "type": "code-reading",
+  "difficulty": 2,
+  "tags": [
+   "code"
+  ],
+  "question": "What does this print? (temperature byte decoding in gateway.decode_frame)",
+  "code": "raw = (-5) & 0xFF\ntemp = raw - 256 if raw > 127 else raw\nprint(temp)",
+  "options": [
+   "251",
+   "-5",
+   "5",
+   "-251"
+  ],
+  "answer": 1,
+  "explanation": "The firmware sends temp & 0xFF; -5 becomes 0xFB = 251, and the decoder maps values above 127 back by subtracting 256.",
+  "source": "Lesson L600 #04 gateway.decode_frame",
+  "check": "code"
+ },
+ {
+  "id": "int04-L600-026",
+  "level": "L600",
+  "lesson": 4,
+  "type": "code-reading",
+  "difficulty": 3,
+  "tags": [
+   "code"
+  ],
+  "question": "What does this print? (rows keyed by device wall time, last write wins)",
+  "code": "rows = {}\nfor dev, wall, value in [(7, 100, 'a'), (7, 160, 'b'), (7, 100, 'c')]:\n    rows[(dev, wall)] = value\nprint(len(rows))",
+  "options": [
+   "3",
+   "1",
+   "0",
+   "2"
+  ],
+  "answer": 3,
+  "explanation": "Keys (7, 100) and (7, 160): the third write reuses (7, 100) and overwrites 'a'. Two rows remain for three readings - the failure lab in four lines.",
+  "source": "Lesson L600 #04 failureLab",
+  "check": "code"
+ },
+ {
+  "id": "int04-L600-027",
+  "level": "L600",
+  "lesson": 4,
+  "type": "code-reading",
+  "difficulty": 3,
+  "tags": [
+   "code"
+  ],
+  "question": "What does this print? (delta for a peer's digest)",
+  "code": "mine = {1, 2, 3, 4, 5, 6}\npeer_hw, peer_cloud = 3, {5}\nprint(sorted(s for s in mine if s > peer_hw and s not in peer_cloud))",
+  "options": [
+   "[4, 6]",
+   "[4, 5, 6]",
+   "[6]",
+   "[1, 2, 3, 4, 5, 6]"
+  ],
+  "answer": 0,
+  "explanation": "The peer holds seq <= 3 (its mark) and 5 (its cloud); only 4 and 6 are missing. Sending all six would be a full-state sync.",
+  "source": "Lesson L600 #04 store.ReadingStore.delta_for",
+  "check": "code"
+ },
+ {
+  "id": "int04-L600-028",
+  "level": "L600",
+  "lesson": 4,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "trade-off"
+  ],
+  "question": "The build task cuts frames by more than half with 251-byte frames. Why might a real radio not show the same gain?",
+  "options": [
+   "The micro:bit cannot send more than 32 bytes",
+   "Bigger frames need a different radio group",
+   "The stub's loss is per packet; on air, longer packets are lost more often",
+   "Gateways must ack each record separately"
+  ],
+  "answer": 2,
+  "explanation": "The stub drops a delivery with a fixed probability regardless of length; real bit errors make long packets likelier to fail and costlier to resend. 251 bytes is within the documented maximum.",
+  "source": "Lesson L600 #04 simulatorVsReal"
+ },
+ {
+  "id": "int04-L600-029",
+  "level": "L600",
+  "lesson": 4,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "trade-off"
+  ],
+  "question": "Hourly syncs give the best battery life (2,445.1 h). What limit must you check before choosing them?",
+  "options": [
+   "Per-sync capacity (attempts x frames x records) must exceed an hour's backlog under loss",
+   "The radio cannot be turned on more than 24 times a day",
+   "Gossip needs at least one new reading per minute",
+   "The API cache expires after 10 minutes"
+  ],
+  "answer": 0,
+  "explanation": "Each sync can move at most 3 x 8 x 3 = 72 records; 60 new readings per hour plus retries under 30 % loss leaves little margin (peak log 305 of 400). The other options are not constraints in this design.",
+  "source": "Lesson L600 #04 tryIt 1"
+ },
+ {
+  "id": "int04-L600-030",
+  "level": "L600",
+  "lesson": 4,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "trade-off"
+  ],
+  "question": "When would you add a hybrid logical clock (HLC) on top of dots?",
+  "options": [
+   "To deduplicate radio retries",
+   "When you need a causal order of readings across devices",
+   "To make the merge commutative",
+   "To shrink frames below 32 bytes"
+  ],
+  "answer": 1,
+  "explanation": "Dots already give identity, deduplication and per-device order, and the merge is already a join. An HLC adds a cross-device order that respects causality and stays close to physical time (Kulkarni et al.).",
+  "source": "Lesson L600 #04 ADR 0001"
+ },
+ {
+  "id": "int04-L600-031",
+  "level": "L600",
+  "lesson": 4,
+  "type": "design",
+  "difficulty": 2,
+  "tags": [
+   "trade-off"
+  ],
+  "question": "Why does the firmware persist only the boot counter (once per boot) instead of every seq?",
+  "options": [
+   "seq is not needed after a reboot",
+   "Flash cannot store integers",
+   "The gateway reconstructs seq from wall time",
+   "One write per boot keeps dots unique and avoids a flash write per reading"
+  ],
+  "answer": 3,
+  "explanation": "(boot, seq) stays unique if boot increments on every start, so seq can live in RAM. Wall time cannot reconstruct seq - it repeats, which is the whole failure lab.",
+  "source": "Lesson L600 #04 ADR 0001"
+ },
+ {
+  "id": "int04-L600-032",
+  "level": "L600",
+  "lesson": 4,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "trade-off"
+  ],
+  "question": "Five replicas agreed within 3 push-pull rounds in 200 seeded experiments. What makes push-pull faster than push-only?",
+  "options": [
+   "Each exchange moves missing data in both directions",
+   "Push-pull contacts every peer each round",
+   "Push-pull sends full state instead of deltas",
+   "Push-only cannot use version vectors"
+  ],
+  "answer": 0,
+  "explanation": "In push-pull both partners end the exchange with the union, so knowledge spreads from and to the chosen peer. Each node still contacts only one random peer per round.",
+  "source": "Lesson L600 #04 fitness F2 / Demers et al."
+ },
+ {
+  "id": "int04-L600-033",
+  "level": "L600",
+  "lesson": 4,
+  "type": "design",
+  "difficulty": 2,
+  "tags": [
+   "trade-off"
+  ],
+  "question": "Why keep /v1 alive with Deprecation and Sunset headers instead of changing its response to include boot?",
+  "options": [
+   "Headers make /v1 faster",
+   "RFC 9745 forbids changing deprecated resources",
+   "Old dashboards keep working unchanged and are told when /v1 goes away",
+   "Adding a field to /v1 would break /v2"
+  ],
+  "answer": 2,
+  "explanation": "Versioning in the path lets consumers migrate on their own schedule; the headers announce the plan. Adding a field is usually compatible, but v1's meaning of seq would still be ambiguous for clients that ignore boot.",
+  "source": "Lesson L600 #04 ADR 0004"
+ },
+ {
+  "id": "int04-L600-034",
+  "level": "L600",
+  "lesson": 4,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "trade-off"
+  ],
+  "question": "Both consumer contracts pass in the failure lab. What is the right conclusion?",
+  "options": [
+   "The contracts are misconfigured and must be rewritten",
+   "Contracts check shape; completeness needs its own fitness function",
+   "The failure lab does not affect the API",
+   "Contract tests should compare row counts"
+  ],
+  "answer": 1,
+  "explanation": "A contract pins what one consumer reads, not whether every reading exists. F1 (sampled vs stored dots) is the completeness guard; putting fleet-wide counts in a consumer contract would couple it to data.",
+  "source": "Lesson L600 #04 ADR 0004 / checkYourself"
+ }
+]

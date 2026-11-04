@@ -1,0 +1,18 @@
+flowchart LR
+  U[User task] --> H
+  subgraph H[Secure host - ports & adapters]
+    direction TB
+    L[Verifying loader<br/>Ed25519 manifests + impl digest] --> R[(Tool registry)]
+    T[Token service<br/>macaroon caveats, TTL<=300 s] --> C
+    M[Model port<br/>fake / Ollama] -- proposes tool call --> P[PEP: parse once,<br/>schema check]
+    P --> C[Capability check<br/>caveats vs args]
+    C --> D[PDP: tools.rego<br/>deny by default]
+    D -- high risk --> A[Approver port<br/>human yes/no]
+    D -- allow --> X[Execute tool]
+    A -- yes --> X
+    X --> G[Tag output<br/>untrusted_data]
+    G -- data, not instructions --> M
+    P & D & A & X --> AU[(Audit: hash chain<br/>+ signed checkpoint)]
+  end
+  S[MCP tool server<br/>lesson 10 stdio] -. tools/list pinned .-> L
+  X --> W[(World: docs, files,<br/>recorded effects)]

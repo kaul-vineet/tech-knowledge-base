@@ -1,0 +1,848 @@
+[
+ {
+  "id": "as-L100-001",
+  "level": "L100",
+  "lesson": 1,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "Which third-party package must be installed for the local L100 labs to run?",
+  "options": [
+   "numpy, astropy, skyfield and scipy, all at their pins",
+   "Only numpy (plus the standard library)",
+   "astropy alone, because it bundles numpy",
+   "None; numpy is used only by the CI equivalents"
+  ],
+  "answer": 1,
+  "explanation": "The local labs compute everything with Python and numpy; astropy, skyfield, scipy and photutils are pinned but run the CI equivalents. Installing astropy locally is not required and would not replace numpy.",
+  "source": "Lesson 1 checkYourself"
+ },
+ {
+  "id": "as-L100-002",
+  "level": "L100",
+  "lesson": 1,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "Of the lab data folders raw, cache and derived, which one may you delete at any time without losing information?",
+  "options": [
+   "raw, because downloads can always be repeated",
+   "cache, because the next run re-creates it",
+   "derived, because it holds the original observations",
+   "raw and cache together, since both are temporary"
+  ],
+  "answer": 1,
+  "explanation": "cache only holds re-creatable intermediate results. raw must never change: it is the record of what was actually observed or downloaded.",
+  "source": "Lesson 1 checkYourself"
+ },
+ {
+  "id": "as-L100-003",
+  "level": "L100",
+  "lesson": 1,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print?",
+  "code": "import numpy as np\na = np.random.default_rng(42).uniform(0, 360, 3).round(4)\nb = np.random.default_rng(42).uniform(0, 360, 3).round(4)\nc = np.random.default_rng(43).uniform(0, 360, 3).round(4)\nprint((a == b).all(), (a == c).all())",
+  "options": [
+   "True False",
+   "False False",
+   "True True",
+   "False True"
+  ],
+  "answer": 0,
+  "explanation": "Two generators with the same seed produce identical draws, so a and b match; a different seed gives a different field. This is why every synthetic field in the labs is seeded.",
+  "source": "Lesson 1 code (synthetic_stars)"
+ },
+ {
+  "id": "as-L100-004",
+  "level": "L100",
+  "lesson": 1,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "After a git checkout on Windows, this pin check reports numpy as 'not matching its pin' even though 2.5.3 is installed. Why?",
+  "code": "text = \"numpy==2.5.3\\r\\nastropy==8.0.2\\r\\n\"\npins = dict(line.split(\"==\") for line in text.split(\"\\n\") if line)\nprint(pins[\"numpy\"] == \"2.5.3\")",
+  "options": [
+   "Each value keeps a trailing '\\r', so '2.5.3\\r' differs from '2.5.3'",
+   "The '==' separator must be '>=' for pinned packages",
+   "dict() cannot be built from a generator of lists",
+   "numpy reports its version with a 'v' prefix on Windows, e.g. 'v2.5.3'"
+  ],
+  "answer": 0,
+  "explanation": "Splitting on '\\n' leaves the carriage return of CRLF line endings on every value. The lab's parse_pins() uses splitlines() and strip() for exactly this reason.",
+  "source": "Lesson 1 code (parse_pins)"
+ },
+ {
+  "id": "as-L100-005",
+  "level": "L100",
+  "lesson": 1,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "A CI job log shows Astropy trying to download IERS Earth-orientation data. What should you conclude about the local labs?",
+  "options": [
+   "Install astropy locally so the labs can stay offline",
+   "Nothing is wrong; local labs never import astropy",
+   "Delete the cache folder so the download is not needed",
+   "Pin numpy lower so astropy stops downloading"
+  ],
+  "answer": 1,
+  "explanation": "Only the CI equivalents use astropy, and fetching IERS tables there is expected. The local labs use numpy only and stay offline, so installing astropy locally changes nothing.",
+  "source": "Lesson 1 troubleshooting"
+ },
+ {
+  "id": "as-L100-006",
+  "level": "L100",
+  "lesson": 1,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "Why is every synthetic star field in the labs generated from a fixed seed?",
+  "options": [
+   "So the field is random enough to double as a secure access token for the labs",
+   "So every machine produces the same field and tests can compare exact values",
+   "So the field changes every run and tests stay general",
+   "So numpy can skip random-number generation entirely"
+  ],
+  "answer": 1,
+  "explanation": "A seed makes the 'random' data reproducible across machines, which makes outputs and tests deterministic. Seeded generators are explicitly not for security tokens.",
+  "source": "Lesson 1 concepts and caution"
+ },
+ {
+  "id": "as-L100-007",
+  "level": "L100",
+  "lesson": 2,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "Over one night, which pair of coordinates of a star stays (to catalogue accuracy) the same?",
+  "options": [
+   "Altitude and azimuth",
+   "Hour angle and altitude",
+   "Azimuth and local sidereal time",
+   "Right ascension and declination"
+  ],
+  "answer": 3,
+  "explanation": "RA/Dec are fixed on the celestial sphere; altitude, azimuth and hour angle change as the Earth turns and depend on where you stand.",
+  "source": "Lesson 2 overview"
+ },
+ {
+  "id": "as-L100-008",
+  "level": "L100",
+  "lesson": 2,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "A star is exactly on your meridian. What is its hour angle, and what else is true?",
+  "options": [
+   "Zero: local sidereal time equals its RA and it is at its highest altitude",
+   "12 h: it is at its lowest point below the pole",
+   "Equal to its declination, so its altitude is 90 deg and it passes the zenith",
+   "Equal to the longitude divided by 15"
+  ],
+  "answer": 0,
+  "explanation": "Hour angle = LST - RA, so on the meridian it is 0 and the star culminates. 12 h would be the lower transit.",
+  "source": "Lesson 2 checkYourself"
+ },
+ {
+  "id": "as-L100-009",
+  "level": "L100",
+  "lesson": 2,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "What is the highest altitude Canopus (Dec -52.6957 deg) can reach as seen from Greenwich (latitude 51.4778 N)?",
+  "options": [
+   "14.2 deg, low in the south",
+   "38.5 deg, the equator's altitude",
+   "-14.2 deg, so it never rises",
+   "-1.2 deg, just below the horizon"
+  ],
+  "answer": 2,
+  "explanation": "The upper-culmination altitude of a star south of the zenith is 90 - latitude + Dec. A negative result means it never clears the horizon; flipping the sign is the tempting error.",
+  "source": "Lesson 2 checkYourself"
+ },
+ {
+  "id": "as-L100-010",
+  "level": "L100",
+  "lesson": 2,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "At Gurgaon (latitude 28.46 N) the lab finds Polaris at altitude 28.93 deg. Why is it so close to the latitude?",
+  "options": [
+   "Polaris is on the celestial equator, which always rises to an altitude equal to the latitude",
+   "Polaris is 0.74 deg from the celestial pole, whose altitude equals the latitude",
+   "Refraction lifts every star by about the latitude",
+   "Polaris is at the zenith, whose altitude equals the latitude"
+  ],
+  "answer": 1,
+  "explanation": "The north celestial pole stands at an altitude equal to your latitude, and Polaris circles it within 0.74 deg. That is why the lab tests Polaris within 0.75 deg of the latitude.",
+  "source": "Lesson 2 checkYourself"
+ },
+ {
+  "id": "as-L100-011",
+  "level": "L100",
+  "lesson": 2,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print?",
+  "code": "lst_deg, ra_deg = 10.0, 350.0\nprint(round((lst_deg - ra_deg) % 360.0, 1), round(lst_deg - ra_deg, 1))",
+  "options": [
+   "-340.0 -340.0",
+   "20.0 -340.0",
+   "20.0 20.0",
+   "0.0 -340.0"
+  ],
+  "answer": 1,
+  "explanation": "Python's % always returns a value in [0, 360), so the hour angle wraps to 20 deg; the raw difference is -340. Both describe the same angle, but only the wrapped value is safe for comparisons.",
+  "source": "Lesson 2 code (altaz)"
+ },
+ {
+  "id": "as-L100-012",
+  "level": "L100",
+  "lesson": 2,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "Vega has Dec +38.78. What does this snippet print for Gurgaon (latitude 28.46)?",
+  "code": "import math\ndef alt(dec, lat, ha):\n    d, l, h = map(math.radians, (dec, lat, ha))\n    s = math.sin(d) * math.sin(l) + math.cos(d) * math.cos(l) * math.cos(h)\n    return math.degrees(math.asin(s))\nprint(round(alt(38.78, 28.46, 0), 2), round(alt(38.78, 28.46, 180), 2))",
+  "options": [
+   "100.32 -22.76",
+   "51.22 -22.76",
+   "79.68 -22.76",
+   "79.68 -10.32"
+  ],
+  "answer": 2,
+  "explanation": "At hour angle 0 the altitude is 90 - |lat - Dec| = 79.68; at 12 h it is Dec + lat - 90 = -22.76, so Vega is not circumpolar there.",
+  "source": "Lesson 2 code (altaz)"
+ },
+ {
+  "id": "as-L100-013",
+  "level": "L100",
+  "lesson": 2,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "A learner in Gurgaon wants the sky at 21:00 local time and runs the line below. Every altitude is wrong by what looks like 5.5 hours of sky rotation. What is the fix?",
+  "code": "dt = datetime(2026, 10, 29, 21, 0, tzinfo=timezone.utc)\nalt, az = altaz(ra, dec, 28.46, 77.03, dt)",
+  "options": [
+   "Add the longitude 77.03 deg to the hour angle twice",
+   "Use the J2000 epoch instead of the current date",
+   "Switch the latitude sign because India is east",
+   "21:00 is IST; pass 15:30 UTC (subtract 5 h 30 min)"
+  ],
+  "answer": 3,
+  "explanation": "The function expects UTC, and 21:00 IST is 15:30 UTC. Labelling local time as UTC shifts the sidereal time by 5.5 h; longitude and latitude are already handled.",
+  "source": "Lesson 2 troubleshooting"
+ },
+ {
+  "id": "as-L100-014",
+  "level": "L100",
+  "lesson": 2,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "Your sky.py altitude for a star differs from Stellarium by about 0.5 deg. What is the most likely explanation?",
+  "options": [
+   "The USNO sidereal-time formula is wrong by half an hour",
+   "The lab ignores refraction and precession since J2000",
+   "Stellarium uses geocentric, not topocentric, latitude",
+   "The azimuth convention runs from South through West"
+  ],
+  "answer": 1,
+  "explanation": "Stellarium's atmosphere adds refraction, and precession moves J2000 positions by up to ~0.37 deg by 2026; together that explains ~0.5 deg. A sidereal-time error would shift by about 7.5 deg, not 0.5.",
+  "source": "Lesson 2 troubleshooting and overview"
+ },
+ {
+  "id": "as-L100-015",
+  "level": "L100",
+  "lesson": 2,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which task is the lesson 2 calculator (J2000 positions, no precession, nutation, aberration or refraction) accurate enough for?",
+  "options": [
+   "Pointing a telescope to arcsecond accuracy",
+   "Timing a star's rise to the nearest second at the true horizon",
+   "Predicting when the Moon will occult a star",
+   "Deciding whether a bright star is above the horizon now"
+  ],
+  "answer": 3,
+  "explanation": "Errors of up to ~0.4 deg are irrelevant for 'is it up?' but fatal for pointing, horizon timing or occultations, which need the full Astropy/Skyfield corrections.",
+  "source": "Lesson 2 overview"
+ },
+ {
+  "id": "as-L100-016",
+  "level": "L100",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Using JD = 2440587.5 + Unix seconds / 86400, what is the Julian Date of 2026-10-29 15:30 UTC?",
+  "options": [
+   "61342.64583",
+   "2461343.37500",
+   "2461343.14583",
+   "2461342.64583"
+  ],
+  "answer": 2,
+  "explanation": "Julian days start at noon, so 15:30 UTC is 0.14583 d into JD 2461343. Subtracting 2400000.5 gives the MJD, and adding 5.5 h treats IST as UTC.",
+  "source": "Lesson 3 lab README expected output"
+ },
+ {
+  "id": "as-L100-017",
+  "level": "L100",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "In 2026 TAI - UTC = 37 s and TT - TAI = 32.184 s. What is TT - UTC?",
+  "options": [
+   "37.000 s",
+   "69.184 s",
+   "32.184 s",
+   "64.184 s"
+  ],
+  "answer": 1,
+  "explanation": "TT - UTC = (TAI - UTC) + 32.184 s. 64.184 s was the value in 2000, when TAI - UTC was 32 s.",
+  "source": "Lesson 3 expectedResults"
+ },
+ {
+  "id": "as-L100-018",
+  "level": "L100",
+  "lesson": 3,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The lab prints J2000.0 as 2000-01-01 11:58:55.816 UTC. Why not 12:00:00 UTC?",
+  "options": [
+   "J2000.0 is 12:00 TT, and TT was 32 + 32.184 s ahead of UTC in 2000",
+   "Earth's rotation slowed by about 64 s between 1900 and 2000, so noon moved earlier",
+   "A leap second was inserted on 2000-01-01",
+   "J2000.0 is defined at noon in local sidereal time"
+  ],
+  "answer": 0,
+  "explanation": "TT - UTC = (TAI - UTC) + 32.184 s, and TAI - UTC was 32 s in 2000, so 12:00 TT fell 64.184 s before 12:00 UTC. No leap second was added on that date.",
+  "source": "Lesson 3 checkYourself"
+ },
+ {
+  "id": "as-L100-019",
+  "level": "L100",
+  "lesson": 3,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "Why is a sidereal day (23h56m04.09s) shorter than a mean solar day?",
+  "options": [
+   "Earth's rotation speeds up at night",
+   "Sidereal time ignores leap seconds",
+   "Earth makes one extra turn relative to the stars per orbit of the Sun",
+   "The Moon's tidal pull shortens every day by about 4 minutes relative to the Sun"
+  ],
+  "answer": 2,
+  "explanation": "Because the Earth also moves along its orbit, it rotates about 366.25 times relative to the stars in 365.25 solar days, so sidereal time runs 1.0027x faster. Leap seconds are unrelated.",
+  "source": "Lesson 3 checkYourself"
+ },
+ {
+  "id": "as-L100-020",
+  "level": "L100",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "At JD 2461343.145833 (UT1 taken as UTC) the USNO short formula gives GMST = 18.0318 h. What is the local sidereal time at Gurgaon (77.03 deg E)?",
+  "options": [
+   "12.8965 h",
+   "23.1671 h",
+   "23.0618 h",
+   "18.0318 h"
+  ],
+  "answer": 1,
+  "explanation": "LST = GMST + east longitude / 15, which matches the lab's 23.1671 h. Subtracting is the west-longitude convention, and adding degrees to hours mixes units.",
+  "source": "Lesson 3 / Lesson 2 expected output"
+ },
+ {
+  "id": "as-L100-021",
+  "level": "L100",
+  "lesson": 3,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this leap-second lookup print?",
+  "code": "LEAPS = [(41317, 10), (57204, 36), (57754, 37)]\ndef tai_minus_utc(mjd):\n    return [s for start, s in LEAPS if mjd >= start][-1]\nprint(tai_minus_utc(57753.9), tai_minus_utc(57754.0), tai_minus_utc(61342.6))",
+  "options": [
+   "37 37 37",
+   "36 36 37",
+   "36 37 37",
+   "10 37 37"
+  ],
+  "answer": 2,
+  "explanation": "The table is a step function: an MJD before 57754 (2017-01-01) still gets 36 s, and from that day on 37 s. Leap seconds come from a table, not a formula.",
+  "source": "Lesson 3 code (tai_minus_utc)"
+ },
+ {
+  "id": "as-L100-022",
+  "level": "L100",
+  "lesson": 3,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "Logging the leap second at the end of 2016 raises ValueError. What is the right way to record that instant?",
+  "code": "from datetime import datetime\nt = datetime(2016, 12, 31, 23, 59, 60)",
+  "options": [
+   "Round it to 23:59:59 and add 1 s to every later timestamp",
+   "Store it as 2017-01-01 00:00:00 UTC instead",
+   "Catch the ValueError and continue with the previous second",
+   "Use TAI or Astropy Time; datetime cannot hold second 60"
+  ],
+  "answer": 3,
+  "explanation": "Python's datetime has no 61st second, so the leap second itself cannot be represented; TAI is continuous and Astropy Time handles UTC leap seconds. Re-labelling it as the next or previous second makes two different instants identical.",
+  "source": "Lesson 3 troubleshooting"
+ },
+ {
+  "id": "as-L100-023",
+  "level": "L100",
+  "lesson": 3,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "In July 2027 the lab's freshness test starts failing. What should you do?",
+  "options": [
+   "Download the current Leap_Second.dat and update LEAPS and LEAP_TABLE_EXPIRES",
+   "Delete the test, since leap seconds no longer change",
+   "Add one leap second per year by formula",
+   "Switch the labs from UTC to local time"
+  ],
+  "answer": 0,
+  "explanation": "The embedded table expires on 2027-06-28; the test exists to make that visible instead of silently wrong. Leap seconds are announced by IERS and cannot be predicted by a formula.",
+  "source": "Lesson 3 caution and troubleshooting"
+ },
+ {
+  "id": "as-L100-024",
+  "level": "L100",
+  "lesson": 3,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "Which clock reading tells you where a star sits relative to your meridian?",
+  "options": [
+   "Local sidereal time",
+   "UTC",
+   "Terrestrial Time (TT)",
+   "TAI"
+  ],
+  "answer": 0,
+  "explanation": "Hour angle = LST - RA, so sidereal time places the sky. UTC is for logs and TT for ephemerides.",
+  "source": "Lesson 3 overview"
+ },
+ {
+  "id": "as-L100-025",
+  "level": "L100",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 1,
+  "question": "How many times more flux does a magnitude 2.0 star deliver than a magnitude 4.5 star?",
+  "options": [
+   "10.0 times",
+   "2.5 times",
+   "6.3 times",
+   "0.1 times"
+  ],
+  "answer": 0,
+  "explanation": "F1/F2 = 10^(-0.4 (m1 - m2)) = 10^(0.4 x 2.5) = 10. Magnitudes are logarithmic, so 2.5 mag is not 2.5 times.",
+  "source": "Lesson 4 code (flux_ratio)"
+ },
+ {
+  "id": "as-L100-026",
+  "level": "L100",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Three unresolved stars each have m = 7.0. What is their combined magnitude?",
+  "options": [
+   "2.33",
+   "21.00",
+   "5.81",
+   "4.00"
+  ],
+  "answer": 2,
+  "explanation": "Convert to flux, add (3x), convert back: 7.0 - 2.5 log10(3) = 5.81. Adding or dividing magnitudes treats a logarithm as a linear quantity.",
+  "source": "Lesson 4 troubleshooting"
+ },
+ {
+  "id": "as-L100-027",
+  "level": "L100",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A star has a distance modulus m - M = 7.5. How far away is it?",
+  "options": [
+   "75.0 pc",
+   "31.6 pc",
+   "316.2 pc",
+   "3162.3 pc"
+  ],
+  "answer": 2,
+  "explanation": "d = 10^(mu/5 + 1) pc = 316.2 pc. Dropping the +1 forgets that the modulus is measured relative to 10 pc.",
+  "source": "Lesson 4 code (distance_from_modulus)"
+ },
+ {
+  "id": "as-L100-028",
+  "level": "L100",
+  "lesson": 4,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "A nearby star has a negative distance modulus m - M. What does that tell you?",
+  "options": [
+   "The calculation is wrong, because distance moduli can never be negative for real stars",
+   "It is farther than 10 pc and dimmed by dust",
+   "It is closer than 10 pc, so it looks brighter than it would at 10 pc",
+   "Its absolute magnitude must also be negative"
+  ],
+  "answer": 2,
+  "explanation": "m - M = 5 log10(d/10) is negative whenever d < 10 pc. That is physically correct, not an error.",
+  "source": "Lesson 4 troubleshooting"
+ },
+ {
+  "id": "as-L100-029",
+  "level": "L100",
+  "lesson": 4,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print?",
+  "code": "import math\ndef mag_difference(f1, f2):\n    return -2.5 * math.log10(f1 / f2)\nprint(round(mag_difference(2, 1), 4), round(mag_difference(1, 100), 1))",
+  "options": [
+   "-0.301 5.0",
+   "-0.7526 5.0",
+   "0.7526 -2.0",
+   "-1.5051 10.0"
+  ],
+  "answer": 1,
+  "explanation": "Twice the flux is 0.75 mag brighter (more negative), and 1/100 of the flux is 5 mag fainter. -0.301 is log10(2) without the factor 2.5; remember that brighter means a smaller (more negative) magnitude.",
+  "source": "Lesson 4 code (mag_difference)"
+ },
+ {
+  "id": "as-L100-030",
+  "level": "L100",
+  "lesson": 4,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "A catalogue star has parallax 2.0 +/- 0.6 mas (30 % error). How should you estimate its distance?",
+  "options": [
+   "Take 1/parallax = 500 pc and quote +/- 30 %",
+   "Add the error first: 1/(2.6 mas) = 385 pc",
+   "Use a probabilistic method; 1/parallax is biased at this error",
+   "Discard the error; parallaxes are exact by definition"
+  ],
+  "answer": 2,
+  "explanation": "Inverting a noisy parallax biases distances, and the lesson's rule of thumb is a probabilistic method above ~10 % error. Simple inversion with a symmetric +/- hides that bias.",
+  "source": "Lesson 4 caution"
+ },
+ {
+  "id": "as-L100-031",
+  "level": "L100",
+  "lesson": 4,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why must you add fluxes, not magnitudes, when two stars blend into one image?",
+  "options": [
+   "Magnitudes already include the distance, so they double count",
+   "Fluxes are exact but magnitudes are rounded",
+   "Adding magnitudes is fine when both stars are brighter than 6",
+   "Magnitudes are logarithms of flux, and light adds linearly"
+  ],
+  "answer": 3,
+  "explanation": "Detectors add photons, and magnitude = -2.5 log10(flux) + const, so sums must be done in flux. The rounding argument is irrelevant: the error is structural.",
+  "source": "Lesson 4 concepts"
+ },
+ {
+  "id": "as-L100-032",
+  "level": "L100",
+  "lesson": 4,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "Your photometry tool splits a close double star into two components of m = 6.0 each; an old catalogue lists the unresolved pair as m = 5.25. A colleague says the catalogue must be wrong. What do you reply?",
+  "options": [
+   "The pair should be m = 3.0, so the catalogue is wrong",
+   "The pair should be m = 12.0, so the catalogue is wrong",
+   "The pair should be m = 6.0, since equal stars do not add",
+   "It is consistent: two equal fluxes add to 0.75 mag brighter"
+  ],
+  "answer": 3,
+  "explanation": "Doubling the flux brightens by 2.5 log10(2) = 0.75 mag, so 6.0 becomes 5.25 - exactly the lab's troubleshooting example. Halving or adding magnitudes treats a logarithmic scale as linear.",
+  "source": "Lesson 4 troubleshooting"
+ },
+ {
+  "id": "as-L100-033",
+  "level": "L100",
+  "lesson": 5,
+  "type": "calculation",
+  "difficulty": 1,
+  "question": "Saturn's orbit has a = 9.537 au. What is its period from Kepler's third law (years, au, solar mass)?",
+  "options": [
+   "91.0 yr",
+   "4.5 yr",
+   "9.5 yr",
+   "29.5 yr"
+  ],
+  "answer": 3,
+  "explanation": "P^2 = a^3, so P = a^1.5 = 29.5 yr. Using a^(2/3) inverts the law.",
+  "source": "Lesson 5 code (period_years)"
+ },
+ {
+  "id": "as-L100-034",
+  "level": "L100",
+  "lesson": 5,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this Newton solver print for M = 1.0 rad, e = 0.5?",
+  "code": "import math\ndef solve_kepler(M, e, tol=1e-12):\n    E = M + e * math.sin(M)\n    for n in range(1, 51):\n        dE = (M - (E - e * math.sin(E))) / (1 - e * math.cos(E))\n        E += dE\n        if abs(dE) < tol:\n            return round(E, 6), n\nprint(solve_kepler(1.0, 0.5))",
+  "options": [
+   "(1.498701, 4)",
+   "(1.498701, 1)",
+   "(1.498701, 50)",
+   "(1.420735, 4)"
+  ],
+  "answer": 0,
+  "explanation": "Newton's method converges quadratically: from JPL's starting guess it reaches 1e-12 in a few steps. 1.420735 is only the starting guess M + e sin M.",
+  "source": "Lesson 5 code (solve_kepler)"
+ },
+ {
+  "id": "as-L100-035",
+  "level": "L100",
+  "lesson": 5,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "Mars comes out tens of degrees from Stellarium. The element rates are per Julian century. Which line is wrong?",
+  "code": "T = jd_tdb - 2451545.0\na, e, I, L, peri, node = (v0 + rate * T for v0, rate in zip(*ELEMENTS[name]))\nM = math.radians((L - peri + 180) % 360 - 180)",
+  "options": [
+   "The mean anomaly must be L + peri, not L - peri",
+   "The epoch must be 2440587.5, not 2451545.0",
+   "math.radians() must be removed from the node",
+   "T must be (jd_tdb - 2451545.0) / 36525.0"
+  ],
+  "answer": 3,
+  "explanation": "The rates are per Julian century, so T needs dividing by 36525; otherwise each rate is applied 36525 times too much. The other lines match the lab's code.",
+  "source": "Lesson 5 troubleshooting"
+ },
+ {
+  "id": "as-L100-036",
+  "level": "L100",
+  "lesson": 5,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "Why does the lab solve Kepler's equation M = E - e sin E with Newton's method instead of rearranging it?",
+  "options": [
+   "Newton's method is needed only when e is exactly zero (a circle)",
+   "It is transcendental: E cannot be isolated with algebra",
+   "Rearranging works but loses the sign of E",
+   "Algebra works, but Newton is required by the IAU"
+  ],
+  "answer": 1,
+  "explanation": "E appears both alone and inside a sine, so there is no closed-form solution; iteration is the standard approach. At e = 0 the answer is simply E = M.",
+  "source": "Lesson 5 checkYourself"
+ },
+ {
+  "id": "as-L100-037",
+  "level": "L100",
+  "lesson": 5,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The lab computes the heliocentric positions of Mars and the Earth-Moon barycentre. How does it get Mars's position as seen from Earth?",
+  "options": [
+   "Subtract Earth's heliocentric vector from Mars's, then rotate to equatorial",
+   "Add the two vectors and rotate by the obliquity",
+   "Use Mars's heliocentric longitude and latitude directly as its RA and Dec",
+   "Divide Mars's vector by Earth's distance from the Sun"
+  ],
+  "answer": 0,
+  "explanation": "Geocentric = planet minus Earth; then a rotation by the obliquity turns ecliptic into equatorial coordinates. Heliocentric angles are not what an observer on Earth sees.",
+  "source": "Lesson 5 concepts"
+ },
+ {
+  "id": "as-L100-038",
+  "level": "L100",
+  "lesson": 5,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "You need Jupiter's position for the year 2150 and plan to use the lab's JPL approximate elements. What is the right call?",
+  "options": [
+   "Use them; the code raises an error if the date is outside the valid range",
+   "Use them but double the stated 40-arcsec error",
+   "Use them after converting the date to TT",
+   "Use a full ephemeris; the elements are fitted only for 1800-2050"
+  ],
+  "answer": 3,
+  "explanation": "JPL states the elements are not valid outside their fit interval, and the code does not stop you. A time-scale conversion does not fix an out-of-range fit.",
+  "source": "Lesson 5 caution"
+ },
+ {
+  "id": "as-L100-039",
+  "level": "L100",
+  "lesson": 5,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "A learner passes an orbit with e = 1.3 (a hyperbolic comet) to solve_kepler. What is the real problem?",
+  "options": [
+   "The tolerance 1e-12 is too strict for comets",
+   "M must be given in degrees for comets",
+   "M = E - e sin E describes ellipses only (e < 1)",
+   "Newton's method needs 500 iterations for e > 1"
+  ],
+  "answer": 2,
+  "explanation": "Kepler's elliptic equation is valid for 0 <= e < 1; e >= 1 is not an ellipse, one of the two causes of non-convergence in the lab's troubleshooting. Loosening the tolerance hides the modelling error.",
+  "source": "Lesson 5 troubleshooting"
+ },
+ {
+  "id": "as-L100-040",
+  "level": "L100",
+  "lesson": 5,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "Your lesson 5 Mars position differs from a Skyfield/JPL ephemeris by about 1 arcmin. Is that a bug?",
+  "options": [
+   "No: the approximate elements and missing light-time explain it",
+   "Yes: the Kepler solver must be off by one iteration",
+   "Yes: any difference above 1 arcsec means the three rotations are in the wrong order",
+   "No: Skyfield ignores the Earth's position"
+  ],
+  "answer": 0,
+  "explanation": "JPL quotes a nominal ~40-arcsec error for Mars from these elements, and the lab ignores light-time, so an arcminute is within expectations; tens of degrees would point to a real bug. Skyfield does include Earth's position.",
+  "source": "Lesson 5 code docstring and troubleshooting"
+ },
+ {
+  "id": "as-L100-041",
+  "level": "L100",
+  "lesson": 6,
+  "type": "calculation",
+  "difficulty": 1,
+  "question": "Using Wien's law with b = 2.897771955e-3 m K, at what wavelength does a 9940 K star peak?",
+  "options": [
+   "2915.3 nm",
+   "29.2 nm",
+   "502.0 nm",
+   "291.5 nm"
+  ],
+  "answer": 3,
+  "explanation": "lambda_max = b / T = 291.5 nm, in the ultraviolet. The power-of-ten options come from unit slips, and 502 nm is the Sun's peak, not a universal one.",
+  "source": "Lesson 6 code (Wien b/T)"
+ },
+ {
+  "id": "as-L100-042",
+  "level": "L100",
+  "lesson": 6,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The lab checks that pi x (integral of the Planck curve) equals sigma T^4. What follows for two stars of equal radius, one twice as hot?",
+  "options": [
+   "The hotter one emits 16 times the total power",
+   "The hotter one emits twice the total power",
+   "Both emit the same power; only the peak shifts",
+   "The hotter one emits 4 times the total power"
+  ],
+  "answer": 0,
+  "explanation": "Power per unit area is sigma T^4, so doubling T multiplies it by 2^4 = 16. A factor of 2 is how the Wien peak wavelength scales, not the total power.",
+  "source": "Lesson 6 concepts and expectedResults"
+ },
+ {
+  "id": "as-L100-043",
+  "level": "L100",
+  "lesson": 6,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "H-alpha (rest 656.28 nm) is observed at 656.05 nm. What radial velocity does v = c dlambda / lambda give?",
+  "options": [
+   "-105.1 km/s (approaching)",
+   "+105.1 km/s (receding)",
+   "-105065.3 km/s (approaching)",
+   "-0.105 km/s (approaching)"
+  ],
+  "answer": 0,
+  "explanation": "dlambda = -0.23 nm, so v = -105.1 km/s: a blueshift, moving towards us. The 1000x options come from mixing m/s and km/s.",
+  "source": "Lesson 6 code (doppler_velocity)"
+ },
+ {
+  "id": "as-L100-044",
+  "level": "L100",
+  "lesson": 6,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "What does this snippet print for z = 0.5?",
+  "code": "C = 299_792_458.0\ndef relativistic_velocity(z):\n    s = (1 + z) ** 2\n    return C * (s - 1) / (s + 1)\nz = 0.5\nprint(f\"{C * z / 1000:.0f} {relativistic_velocity(z) / 1000:.0f}\")",
+  "options": [
+   "149896 149896",
+   "149896 99931",
+   "115305 115305",
+   "149896 115305"
+  ],
+  "answer": 3,
+  "explanation": "cz is only the small-z approximation; the relativistic Doppler formula gives a smaller velocity that stays below c. At large z cosmological redshift is not a simple Doppler velocity anyway.",
+  "source": "Lesson 6 code (relativistic_velocity) and caution"
+ },
+ {
+  "id": "as-L100-045",
+  "level": "L100",
+  "lesson": 6,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print for H-beta?",
+  "code": "C = 299_792_458.0\nrest, obs = 486.13e-9, 486.40e-9   # H-beta, metres\nv = C * (obs - rest) / rest\nprint(f\"{v / 1000:+.1f} km/s, z = {obs / rest - 1:.6f}\")",
+  "options": [
+   "+83.3 km/s, z = 0.000555",
+   "+166544.0 km/s, z = 0.000555",
+   "+166.5 km/s, z = 0.000555",
+   "+166.5 km/s, z = 1.000555"
+  ],
+  "answer": 2,
+  "explanation": "Observed is longer than rest, so the velocity is positive (receding) and z = obs/rest - 1. The wrong answers halve the velocity, mix m/s with km/s or forget the -1 in z.",
+  "source": "Lesson 6 code (doppler_velocity, redshift)"
+ },
+ {
+  "id": "as-L100-046",
+  "level": "L100",
+  "lesson": 6,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "This call returns a velocity of about +3e17 km/s. What is wrong?",
+  "code": "v = doppler_velocity(656.50, 656.28e-9) / 1000   # km/s",
+  "options": [
+   "The speed of light must be in km/s",
+   "The formula needs the relativistic version",
+   "The observed wavelength is in nm and the rest wavelength is in m",
+   "The rest wavelength should be in vacuum, not air"
+  ],
+  "answer": 2,
+  "explanation": "Mixing nm and m makes the ratio absurdly large; keep one unit for both wavelengths. The air/vacuum difference changes the answer by a few km/s, not by orders of magnitude.",
+  "source": "Lesson 6 troubleshooting"
+ },
+ {
+  "id": "as-L100-047",
+  "level": "L100",
+  "lesson": 6,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "A spectral line appears at a shorter wavelength than in the lab. What does that mean?",
+  "options": [
+   "The source is moving away from us (redshift)",
+   "The source is moving towards us (blueshift)",
+   "The source is hotter than the Sun",
+   "The source is closer than 10 pc"
+  ],
+  "answer": 1,
+  "explanation": "Shorter observed wavelength means negative dlambda, a blueshift and negative radial velocity. Temperature moves the continuum peak, not the line positions.",
+  "source": "Lesson 6 checkYourself"
+ },
+ {
+  "id": "as-L100-048",
+  "level": "L100",
+  "lesson": 6,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "A quasar has z = 2. Why is 'v = cz = 600,000 km/s' the wrong statement?",
+  "options": [
+   "z must first be converted from nm to m",
+   "Quasars show blueshifts, so z must be negative",
+   "The formula is right, but c should be taken as exactly 300,000 km/s for quasars",
+   "cz is a small-z approximation; at large z redshift is not a simple Doppler velocity"
+  ],
+  "answer": 3,
+  "explanation": "cz only works for z << 1, and cosmological redshift is not a Doppler velocity at large z. A speed above c is the giveaway; rounding c changes nothing.",
+  "source": "Lesson 6 caution"
+ },
+ {
+  "id": "as-L100-049",
+  "level": "L100",
+  "lesson": 6,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "You estimate a red supergiant's temperature from the peak of its spectrum with Wien's law, but the spectrum has deep molecular absorption bands. How should you treat the result?",
+  "options": [
+   "As an estimate: real stars are not perfect blackbodies",
+   "As exact: Wien's law holds for every star",
+   "As useless: Wien's law only works for the Sun",
+   "As exact once you convert the peak wavelength to a peak frequency"
+  ],
+  "answer": 0,
+  "explanation": "Absorption lines and atmospheres reshape real spectra, so a blackbody peak only approximates the temperature. That does not make it useless; it makes it an estimate to compare with other methods.",
+  "source": "Lesson 6 caution"
+ }
+]

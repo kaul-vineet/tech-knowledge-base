@@ -1,0 +1,1273 @@
+[
+ {
+  "id": "setup-astronomy-workbench",
+  "number": 1,
+  "level": "Setup",
+  "title": "Your astronomy workbench: Python, pinned libraries, Stellarium and offline data",
+  "phase": "Setup",
+  "category": "toolchain",
+  "description": "Check Python 3.12 + numpy, see the pinned Astropy/Skyfield/SciPy/photutils versions CI installs, create offline data folders, install Stellarium as the sky simulator.",
+  "outcome": "You know which parts run locally vs in CI, where lab data lives, and can reproduce a seeded synthetic star field.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3; CI adds astropy 8.0.2, skyfield 1.55, scipy 1.18.1, photutils 3.1.1 (L200 adds rebound 5.2.2); Stellarium 26.x as sky simulator (no telescope needed); optional Ollama for lessons 2 and 10 (LOCAL_MODEL_URL / LOCAL_MODEL); Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+  "estimatedTime": "20 minutes",
+  "overview": [
+   "Labs compute with Python + numpy; library equivalents run in CI; Stellarium shows the same sky."
+  ],
+  "prerequisites": [
+   "Python 3.12+",
+   "A terminal"
+  ],
+  "glossary": [
+   {
+    "term": "pin",
+    "meaning": "Exact version (==) so every machine installs the same code."
+   },
+   {
+    "term": "offline-first",
+    "meaning": "Labs use bundled or generated data; no network needed to run them."
+   },
+   {
+    "term": "sky simulator",
+    "meaning": "Planetarium software (Stellarium) that renders the sky for any place and time."
+   }
+  ],
+  "concepts": [
+   "Local labs need only Python 3.12 + numpy.",
+   "Astronomy libraries are pinned and run in CI.",
+   "raw / cache / derived data folders.",
+   "Every synthetic field is seeded."
+  ],
+  "steps": [
+   {
+    "title": "Install Python 3.12",
+    "detail": "Any 3.12+ works; labs were validated on 3.12.15. Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+    "mac": "brew install python@3.12",
+    "windows": "winget install -e --id Python.Python.3.12",
+    "expected": "`python3.12 --version` (Mac) or `py -3.12 --version` (Windows) prints Python 3.12.x.",
+    "ifNot": "Open a new terminal so PATH is refreshed."
+   },
+   {
+    "title": "Create and activate a venv",
+    "detail": "In the repository root.",
+    "mac": "python3.12 -m venv .venv && source .venv/bin/activate",
+    "windows": "py -3.12 -m venv .venv; .venv\\Scripts\\Activate.ps1\n$env:PYTHONUTF8 = \"1\"   # UTF-8 output",
+    "expected": "Prompt starts with (.venv); `python --version` is 3.12.x.",
+    "ifNot": "Windows 'running scripts is disabled': `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then activate again."
+   },
+   {
+    "title": "Install the pins and check them",
+    "detail": "`--only-binary=:all:` refuses source builds, so a missing wheel fails fast. Then run check_env.py.",
+    "mac": "python -m pip install --only-binary=:all: -r labs/L100/01-setup-workbench/requirements.txt\ncd labs/L100/01-setup-workbench\npython check_env.py",
+    "windows": "python -m pip install --only-binary=:all: -r labs\\L100\\01-setup-workbench\\requirements.txt\ncd labs\\L100\\01-setup-workbench\npython check_env.py",
+    "expected": "First line names the machine (Darwin arm64 / Windows AMD64); each pin shows 'installed'. Offline (as here): numpy installed, others 'not installed -> runs in CI', READY.",
+    "ifNot": "'No matching distribution': check `python -c \"import platform; print(platform.machine())\"` (see HARDWARE.md)."
+   },
+   {
+    "title": "Data folders",
+    "detail": "check_env.py creates labs/data/raw (never edit), cache (safe to delete) and derived (re-creatable).",
+    "expected": "data folders: data/raw, data/cache, data/derived",
+    "ifNot": "Run from the lab folder; check write permission."
+   },
+   {
+    "title": "See a seed at work",
+    "detail": "The synthetic star field is drawn from default_rng(42).",
+    "expected": "seed 42 stars (RA deg, mag): [(278.6242, 8.97), (157.9962, 2.94), (309.0953, 11.76)] on every OS.",
+    "ifNot": "Check numpy is 2.5.x."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "expected": "Ran 5 tests ... OK",
+    "ifNot": "Read the failing test name."
+   },
+   {
+    "title": "Install Stellarium (sky simulator) and, optionally, a local model",
+    "detail": "Stellarium replaces the telescope for checking positions. Set Location to Gurgaon (28.46 N, 77.03 E). Optional Ollama + qwen2.5:1.5b for lessons 2 and 10 (they also run with --fake). Same commands as ../shared/WORKSTATION-SETUP.md.",
+    "mac": "brew install --cask stellarium\nbrew install ollama\nbrew services start ollama\nollama pull qwen2.5:1.5b\nexport LOCAL_MODEL_URL=http://localhost:11434/v1\nexport LOCAL_MODEL=qwen2.5:1.5b",
+    "windows": "# Stellarium: installer from https://stellarium.org/ (Windows x86_64, Qt6)\n# Ollama: OllamaSetup.exe from https://ollama.com/download (winget Ollama.Ollama lags behind)\nollama pull qwen2.5:1.5b\n$env:LOCAL_MODEL_URL=\"http://localhost:11434/v1\"\n$env:LOCAL_MODEL=\"qwen2.5:1.5b\"",
+    "expected": "Stellarium opens and shows the sky over Gurgaon; `ollama list` shows qwen2.5:1.5b (optional).",
+    "ifNot": "Stellarium needs OpenGL 3.3 (2.1 minimum). The model is optional: all tests use the fake server."
+   }
+  ],
+  "code": "\"\"\"Setup check for the astronomy workbench: interpreter, pinned libraries, offline data folders, a seeded sky.\n\npython check_env.py\n\"\"\"\nimport importlib.metadata as md\nimport platform\nimport sys\nfrom pathlib import Path\n\nHERE = Path(__file__).resolve().parent\nDATA = HERE.parents[1] / \"data\"  # labs/data: raw (never edited), cache (safe to delete), derived (re-creatable)\nFOLDERS = (\"raw\", \"cache\", \"derived\")\n\n\ndef parse_pins(text):\n    # splitlines + strip: the file may have Windows CRLF line endings after a git checkout\n    return dict(line.strip().split(\"==\") for line in text.splitlines() if line.strip() and not line.startswith(\"#\"))\n\n\nPINS = parse_pins((HERE / \"requirements.txt\").read_text(encoding=\"utf-8\"))\n\n\ndef installed(pkg):\n    try:\n        return md.version(pkg)\n    except md.PackageNotFoundError:\n        return None\n\n\ndef make_folders(root=DATA):\n    for name in FOLDERS:\n        (root / name).mkdir(parents=True, exist_ok=True)  # offline-first: every lab reads/writes here, no network\n    return [str((root / n).relative_to(root.parent)) for n in FOLDERS]\n\n\ndef synthetic_stars(seed, n=3):\n    import numpy as np\n    rng = np.random.default_rng(seed)  # seeded: the same \"random\" star field on every machine\n    ra = rng.uniform(0, 360, n).round(4)\n    mag = rng.uniform(2, 12, n).round(2)\n    return list(zip(ra.tolist(), mag.tolist()))\n\n\ndef main():\n    print(f\"Python {platform.python_version()} on {platform.system()} {platform.machine()}\")\n    ok = sys.version_info >= (3, 12)\n    for pkg, pin in PINS.items():\n        have = installed(pkg)\n        where = \"local\" if pkg == \"numpy\" else \"CI\"\n        status = f\"installed {have}\" + (\"\" if have == pin else f\" (pin {pin})\") if have else f\"not installed -> runs in {where}\"\n        print(f\"  {pkg:<9} pin {pin:<7} {status}\")\n        ok &= bool(have) or pkg != \"numpy\"  # numpy is the only package the local labs need\n    print(\"data folders:\", \", \".join(make_folders()))\n    print(\"seed 42 stars (RA deg, mag):\", synthetic_stars(42))\n    print(\"READY for local labs\" if ok else \"NOT READY: need Python 3.12+ and numpy\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "projectFiles": [
+   {
+    "path": "labs/L100/01-setup-workbench/check_env.py",
+    "purpose": "main lab code"
+   },
+   {
+    "path": "labs/L100/01-setup-workbench/requirements.txt",
+    "purpose": "pins: numpy, astropy, skyfield, scipy, photutils"
+   },
+   {
+    "path": "labs/L100/01-setup-workbench/test_setup.py",
+    "purpose": "version, numpy, pins (incl. CRLF), folders, seeding"
+   },
+   {
+    "path": "labs/L100/01-setup-workbench/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "Python 3.12+, numpy 2.5.3",
+   "Pins listed for astropy, skyfield, scipy, photutils",
+   "labs/data/raw, cache, derived exist",
+   "Identical seeded star field"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 5 tests ... OK"
+   },
+   {
+    "action": "Write numpy>=2.5 instead of numpy==2.5.3 in requirements.txt",
+    "expected": "import check_env fails with ValueError: pins must use =="
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "No module named numpy",
+    "action": "`python -m pip install numpy==2.5.3` for this interpreter."
+   },
+   {
+    "symptom": "Astropy tries to download IERS data",
+    "action": "Expected in CI only; local labs never import astropy."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Compare two unseeded star fields.",
+    "predict": "Equal?",
+    "expected": "unseeded fields equal? False"
+   },
+   {
+    "task": "Draw the field with seed 42 and seed 43.",
+    "predict": "Same first star?",
+    "expected": "seed 42 first star: (278.6242, 8.97) | seed 43 first star: (234.8277, 10.39)"
+   }
+  ],
+  "equivalents": [
+   "Astropy 8.0.2 (BSD-3-Clause): coordinates, time, units, FITS, WCS, Lomb-Scargle - lessons 2-4, 6-8, 10.",
+   "Skyfield 1.55 (MIT): planet and satellite positions from JPL ephemerides - lesson 5.",
+   "photutils 3.1.1 (BSD-3-Clause): aperture photometry - lesson 9; SciPy 1.18.1 cKDTree - lesson 7.",
+   "REBOUND 5.2.2 (GPL-3.0-or-later): N-body integrators - lesson 11.",
+   "KStars / Celestia: other open-source planetariums (not verified for this KB; see LEARNING-TOOLS.md)."
+  ],
+  "learningTools": [
+   {
+    "name": "Stellarium",
+    "role": "SEE",
+    "exercise": "Set Location to Gurgaon (28.46 N, 77.03 E) and the date to 2026-10-29 21:00 IST. Turn the atmosphere off (A) and look north, then west.",
+    "expected": "Polaris about 29 deg above the north horizon; Deneb, Vega and Altair high in the west - the same stars lesson 2 computes as UP. Pending a manual run.",
+    "mac": "brew install --cask stellarium   # cask 26.2; stellarium.org lists 26.3 (macOS 11+, universal)",
+    "windows": "Installer from https://stellarium.org/ (Windows x86_64 Qt6, Windows 10+; ARM64 build also listed)",
+    "licence": "GPL-2.0-or-later (OSI: yes; licence file not re-read 2026-10-29)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "seeAlso": [
+   "simulation Setup #1 Set up your simulation workbench: the same pin-and-seed discipline, applied to simulations."
+  ],
+  "inRealSystems": "Survey pipelines (Rubin, Gaia DPAC) pin software versions and keep raw data immutable.",
+  "useWhen": "Pin, seed and keep raw data read-only whenever a number will be compared or published.",
+  "caution": "Seeded generators are for synthetic data, never for security tokens. Never paste keys or passwords into a model prompt.",
+  "checkpoint": "PASS: READY printed and all setup tests pass.",
+  "checkYourself": [
+   {
+    "q": "Which packages does a local lab need?",
+    "a": "Only numpy (plus the standard library); the others run the CI equivalents."
+   },
+   {
+    "q": "Which data folder may you delete?",
+    "a": "cache - it can be re-created; raw must never change."
+   }
+  ],
+  "sources": [
+   {
+    "title": "PyPI: astropy 8.0.2 (BSD-3-Clause, Python >= 3.11, macOS arm64 + Windows wheels)",
+    "url": "https://pypi.org/project/astropy/"
+   },
+   {
+    "title": "PyPI: skyfield 1.55 (MIT, pure-Python wheel)",
+    "url": "https://pypi.org/project/skyfield/"
+   },
+   {
+    "title": "PyPI: photutils 3.1.1 (BSD-3-Clause, Python >= 3.12)",
+    "url": "https://pypi.org/project/photutils/"
+   },
+   {
+    "title": "NumPy manual: Random Generator",
+    "url": "https://numpy.org/doc/stable/reference/random/generator.html"
+   },
+   {
+    "title": "Homebrew formula: python@3.12",
+    "url": "https://formulae.brew.sh/formula/python@3.12"
+   },
+   {
+    "title": "winget-pkgs manifests: Python.Python.3.12",
+    "url": "https://github.com/microsoft/winget-pkgs/tree/master/manifests/p/Python/Python/3/12"
+   },
+   {
+    "title": "Python docs: venv (activation, ExecutionPolicy)",
+    "url": "https://docs.python.org/3/library/venv.html"
+   },
+   {
+    "title": "Stellarium home (26.3; macOS 11+ universal, Windows x86_64/ARM64)",
+    "url": "https://stellarium.org/"
+   },
+   {
+    "title": "Homebrew cask: stellarium (26.2)",
+    "url": "https://formulae.brew.sh/api/cask/stellarium.json"
+   }
+  ],
+  "next": "L200 #8 FITS images and WCS: a minimal reader and a TAN projection (the files you will keep in labs/data)",
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran check_env.py, try_it.py and the unittests on Python 3.12.15 + numpy 2.5.3 (Linux x86_64); outputs in the lab README. Mac/Windows install commands checked against Homebrew, winget-pkgs and Python docs but not run; CI runs macos-latest and windows-latest.",
+   "pendingCi": [
+    "requirements.txt install of astropy 8.0.2, skyfield 1.55, scipy 1.18.1, photutils 3.1.1 (not installed here)",
+    "Stellarium install and exercise (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/01-setup-astronomy-workbench.md",
+  "conceptSummary": "An astronomy workbench is an interpreter, pinned libraries, seeded synthetic data in offline folders and a sky simulator to look at the same sky. Local labs need only numpy; the library equivalents run in CI."
+ },
+ {
+  "id": "coordinates-sky",
+  "number": 2,
+  "level": "L100",
+  "title": "Coordinates and the sky: RA/Dec to Alt/Az - is a star above the horizon now?",
+  "phase": "Sky",
+  "category": "coordinates",
+  "description": "Turn catalogue RA/Dec into altitude and azimuth for an observer in Gurgaon (and anywhere else) and decide which stars are up.",
+  "outcome": "You can compute local sidereal time, hour angle, altitude and azimuth, and explain why a star is up or down.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3 (stdlib math only); Astropy 8.0.2 equivalent in CI; Stellarium for a visual check; optional Ollama for agent assist",
+  "estimatedTime": "30 minutes",
+  "overview": [
+   "RA/Dec are fixed on the sky; altitude/azimuth depend on where and when you stand.",
+   "Accuracy limit: the star positions are J2000.0 (ICRS) catalogue approximations, rounded. The lab does not precess them to the date: precession moves the equinox by about 50 arcsec per year (IAU 2006 precession, Wallace & Capitaine 2006 eq. 4: about 5038 arcsec per century), so by 2026 a star's RA/Dec of date differ from J2000 by up to ~0.37 deg (~0.4 deg). Nutation, aberration and refraction are ignored too. Good enough for 'is it above the horizon?', not for pointing; Astropy/Skyfield (CI) apply all of them."
+  ],
+  "prerequisites": [
+   "Lesson 1"
+  ],
+  "glossary": [
+   {
+    "term": "RA / Dec",
+    "meaning": "Right ascension and declination: longitude/latitude on the sky."
+   },
+   {
+    "term": "LST",
+    "meaning": "Local sidereal time: the RA currently on your meridian."
+   },
+   {
+    "term": "hour angle",
+    "meaning": "LST - RA: how far west of the meridian a star is."
+   },
+   {
+    "term": "altitude / azimuth",
+    "meaning": "Angle above the horizon / compass direction from north through east."
+   },
+   {
+    "term": "precession / J2000",
+    "meaning": "The slow turning of Earth's axis moves RA/Dec by about 50 arcsec per year; J2000 coordinates are valid for 2000-01-01 12:00 TT, and this lab uses them unprecessed (~0.4 deg error by 2026)."
+   }
+  ],
+  "concepts": [
+   "Sidereal time places the sky.",
+   "Hour angle + latitude give alt/az.",
+   "Up means altitude > 0 (no refraction here)."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python sky.py` (Gurgaon, 2026-10-29 15:30 UTC = 21:00 IST).",
+    "mac": "cd labs/L100/02-coordinates\npython sky.py",
+    "windows": "cd labs\\L100\\02-coordinates\npython sky.py",
+    "expected": "A header line and a 10-row table sorted by altitude.",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Read the header",
+    "detail": "JD and local sidereal time for the observer.",
+    "expected": "JD 2461343.14583 | LST 23.1671 h",
+    "ifNot": "Use UTC, not IST, in --utc."
+   },
+   {
+    "title": "Read the table",
+    "detail": "Altitude > 0 means above the horizon. Positions are J2000 approximations; precession (~0.4 deg since 2000) is ignored, so planetarium values of date differ by up to that much.",
+    "expected": "Deneb 56.27 (UP) ... Polaris 28.93 (UP, close to the latitude 28.46) ... Sirius -28.46 (below), Canopus -33.23 (below).",
+    "ifNot": "Azimuth here is from north through east."
+   },
+   {
+    "title": "Another place and time",
+    "detail": "Greenwich at 21:00 UTC.",
+    "mac": "cd labs/L100/02-coordinates\npython sky.py --lat 51.4778 --lon -0.0015 --utc 2026-10-29T21:00",
+    "windows": "cd labs\\L100\\02-coordinates\npython sky.py --lat 51.4778 --lon -0.0015 --utc 2026-10-29T21:00",
+    "expected": "Polaris 52.00 (close to 51.48); Betelgeuse just up at 2.33.",
+    "ifNot": "East longitudes positive, west negative."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "expected": "Ran 12 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the Astropy comparison (pending-ci)."
+   },
+   {
+    "title": "Agent assist (optional)",
+    "detail": "`python agent_assist.py --fake` (drop --fake to use local Ollama).",
+    "expected": "Agent proposes Sirius and Canopus; code overrules both (below the horizon) and flags 22 and 40 as UNVERIFIED.",
+    "ifNot": "No server: use --fake."
+   }
+  ],
+  "code": "\"\"\"L100 Coordinates and the sky: RA/Dec -> Alt/Az for an observer. Is a star above the horizon now?\n\npython sky.py                                   # Gurgaon, 2026-10-29 15:30 UTC (21:00 IST)\npython sky.py --lat 51.4778 --lon -0.0015 --utc 2026-10-29T21:00   # any place and time (east longitude +)\nSimplifications: J2000 catalogue positions (no precession, nutation, aberration), no refraction.\n\"\"\"\nimport argparse\nimport math\nfrom datetime import datetime, timezone\n\nGURGAON = (28.46, 77.03)  # latitude N, longitude E (degrees)\n# Approximate J2000 (ICRS) RA/Dec in degrees, rounded, as listed by SIMBAD; check them in Stellarium.\nSTARS = {\n    \"Polaris\": (37.9546, 89.2641), \"Vega\": (279.2347, 38.7837), \"Altair\": (297.6958, 8.8683),\n    \"Deneb\": (310.3580, 45.2803), \"Fomalhaut\": (344.4127, -29.6222), \"Capella\": (79.1723, 45.9980),\n    \"Betelgeuse\": (88.7929, 7.4071), \"Sirius\": (101.2872, -16.7161), \"Canopus\": (95.9880, -52.6957),\n    \"Arcturus\": (213.9153, 19.1824),\n}\n\n\ndef julian_date(dt):\n    \"\"\"JD from an aware UTC datetime (JD 2440587.5 = 1970-01-01 00:00 UTC, the Unix epoch).\"\"\"\n    return 2440587.5 + dt.timestamp() / 86400.0\n\n\ndef gmst_hours(jd_ut):\n    # Greenwich mean sidereal time, USNO approximate formula (accuracy ~0.1 s; UTC used for UT1)\n    return (18.697375 + 24.065709824279 * (jd_ut - 2451545.0)) % 24.0\n\n\ndef altaz(ra_deg, dec_deg, lat_deg, lon_deg, dt):\n    \"\"\"Return (altitude, azimuth) in degrees; azimuth from North through East.\"\"\"\n    lst_deg = (gmst_hours(julian_date(dt)) * 15.0 + lon_deg) % 360.0  # local sidereal time as an angle\n    ha = math.radians((lst_deg - ra_deg) % 360.0)  # hour angle: how far west of the meridian the star is\n    dec, lat = math.radians(dec_deg), math.radians(lat_deg)\n    sin_alt = math.sin(dec) * math.sin(lat) + math.cos(dec) * math.cos(lat) * math.cos(ha)\n    alt = math.asin(sin_alt)\n    az = math.atan2(-math.cos(dec) * math.sin(ha),  # east-west component\n                    math.sin(dec) * math.cos(lat) - math.cos(dec) * math.sin(lat) * math.cos(ha))\n    return math.degrees(alt), math.degrees(az) % 360.0\n\n\ndef sky_table(lat, lon, dt):\n    rows = []\n    for name, (ra, dec) in STARS.items():\n        alt, az = altaz(ra, dec, lat, lon, dt)\n        rows.append((name, alt, az, alt > 0.0))  # above the (mathematical) horizon?\n    return sorted(rows, key=lambda r: -r[1])\n\n\ndef main():\n    p = argparse.ArgumentParser()\n    p.add_argument(\"--lat\", type=float, default=GURGAON[0])\n    p.add_argument(\"--lon\", type=float, default=GURGAON[1])\n    p.add_argument(\"--utc\", default=\"2026-10-29T15:30\")\n    a = p.parse_args()\n    dt = datetime.fromisoformat(a.utc).replace(tzinfo=timezone.utc)\n    lst = (gmst_hours(julian_date(dt)) + a.lon / 15.0) % 24.0\n    print(f\"observer lat {a.lat:+.2f} lon {a.lon:+.2f} | {dt:%Y-%m-%d %H:%M} UTC | JD {julian_date(dt):.5f} | LST {lst:.4f} h\")\n    print(\"star        alt(deg)  az(deg)  up?\")\n    for name, alt, az, up in sky_table(a.lat, a.lon, dt):\n        print(f\"{name:<11} {alt:8.2f} {az:8.2f}  {'UP' if up else 'below'}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "projectFiles": [
+   {
+    "path": "labs/L100/02-coordinates/sky.py",
+    "purpose": "main lab code"
+   },
+   {
+    "path": "labs/L100/02-coordinates/sky_astropy.py",
+    "purpose": "Astropy 8.0.2 equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L100/02-coordinates/test_sky.py",
+    "purpose": "time, geometry and Gurgaon checks"
+   },
+   {
+    "path": "labs/L100/02-coordinates/agent_assist.py",
+    "purpose": "agent proposes visible stars; code decides and checks"
+   },
+   {
+    "path": "labs/L100/02-coordinates/test_agent_assist.py",
+    "purpose": "agent-assist tests (fake server only)"
+   },
+   {
+    "path": "labs/L100/02-coordinates/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/_shared/local_agent/",
+    "purpose": "vendored chat client + fake model server"
+   }
+  ],
+  "expectedResults": [
+   "LST 23.1671 h in Gurgaon at 15:30 UTC",
+   "6 of 10 stars up; Sirius and Canopus below",
+   "Polaris altitude within 0.75 deg of the latitude"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 12 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "Change Polaris's Dec from 89.2641 to 80",
+    "expected": "test_polaris_altitude_is_close_to_latitude fails"
+   },
+   {
+    "action": "Agent lists Sirius as visible",
+    "expected": "overruled by computed altitude -28.46"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "All altitudes look 5.5 h off",
+    "action": "You passed IST as UTC; subtract 5:30."
+   },
+   {
+    "symptom": "Stellarium differs by ~0.5 deg",
+    "action": "Turn off atmosphere (refraction); the lab also ignores precession since J2000."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Wait 3 hours (00:00 IST).",
+    "predict": "Which stars set, which rise?",
+    "expected": "15:30 UTC up: Deneb, Altair, Vega, Fomalhaut, Polaris, Capella | 18:30 UTC up: Capella, Betelgeuse, Polaris, Deneb, Fomalhaut, Sirius, Vega"
+   },
+   {
+    "task": "Same moment, observer in Sydney (33.87 S, 151.21 E).",
+    "predict": "Is Canopus up?",
+    "expected": "Canopus from Gurgaon: alt -33.23 deg az 136.60 deg | Canopus from Sydney: alt  59.20 deg az 138.16 deg"
+   }
+  ],
+  "equivalents": [
+   "Astropy: SkyCoord(...).transform_to(AltAz(obstime=..., location=EarthLocation(...))) - adds precession, nutation, aberration, refraction.",
+   "Skyfield: (earth + wgs84.latlon(...)).at(t).observe(star).apparent().altaz().",
+   "PyEphem / XEphem (older C-based libraries); Stellarium for a visual check."
+  ],
+  "learningTools": [
+   {
+    "name": "Stellarium",
+    "role": "CHECK",
+    "exercise": "Location Gurgaon (28.46 N, 77.03 E), date 2026-10-29 21:00 IST, atmosphere off. Click Deneb and Sirius and read Az./Alt.",
+    "expected": "Should match the lab within about 0.5 deg: Deneb alt 56.27 az 310.07, Sirius alt -28.46 (below). Stellarium uses apparent places of date, the lab J2000 places. Pending a manual run.",
+    "mac": "brew install --cask stellarium   # cask 26.2; stellarium.org lists 26.3 (macOS 11+, universal)",
+    "windows": "Installer from https://stellarium.org/ (Windows x86_64 Qt6, Windows 10+; ARM64 build also listed)",
+    "licence": "GPL-2.0-or-later (OSI: yes; licence file not re-read 2026-10-29)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "seeAlso": [
+   "microbit L100 #6 Motion and gestures: the board's accelerometer gives tilt angles in its own frame - the same idea as converting between sky frames.",
+   "astronomy L300 #12 Observation planning: airmass, twilight, Moon distance and a scheduler under constraints: every planning constraint starts from this alt/az conversion."
+  ],
+  "inRealSystems": "Telescope control (INDI/ASCOM drivers), planetariums and observation schedulers run this transform for every pointing.",
+  "useWhen": "Use the simple J2000 transform for planning to ~0.5 deg; use Astropy/Skyfield for pointing or anything below a few arcminutes.",
+  "caution": "Agent assist: the model never decides visibility and receives only star names and the computed table - never keys or personal data.",
+  "checkpoint": "PASS: Deneb 56.27 deg and Sirius below the horizon; all tests pass.",
+  "checkYourself": [
+   {
+    "q": "Why is Polaris's altitude close to your latitude?",
+    "a": "It sits 0.74 deg from the celestial pole, whose altitude equals the latitude."
+   },
+   {
+    "q": "What is the hour angle of a star on the meridian?",
+    "a": "Zero: LST equals its RA, and it is at its highest altitude."
+   },
+   {
+    "q": "Can Canopus (Dec -52.7) ever rise from London (51.5 N)?",
+    "a": "No: its highest altitude is -52.7 + 90 - 51.5 = -14.2 deg."
+   }
+  ],
+  "sources": [
+   {
+    "title": "USNO: Computing Approximate Sidereal Time",
+    "url": "https://aa.usno.navy.mil/faq/GAST"
+   },
+   {
+    "title": "Wallace & Capitaine 2006, Precession-nutation procedures consistent with IAU 2006 resolutions (A&A 459, 981): precession angle psi-bar ~5038 arcsec per century (eq. 4)",
+    "url": "https://syrte.obspm.fr/iau2006/aa06_459.IAU06prec.pdf"
+   },
+   {
+    "title": "PyPI: astropy 8.0.2 (BSD-3-Clause, Python >= 3.11, macOS arm64 + Windows wheels)",
+    "url": "https://pypi.org/project/astropy/"
+   },
+   {
+    "title": "PyPI: skyfield 1.55 (MIT, pure-Python wheel)",
+    "url": "https://pypi.org/project/skyfield/"
+   },
+   {
+    "title": "Stellarium home (26.3; macOS 11+ universal, Windows x86_64/ARM64)",
+    "url": "https://stellarium.org/"
+   },
+   {
+    "title": "Ollama docs: OpenAI compatibility",
+    "url": "https://docs.ollama.com/api/openai-compatibility"
+   }
+  ],
+  "next": "L200 #7 Catalogues and cross-matching: angular separation and a k-d tree (from one star's position to matching thousands)",
+  "validation": {
+   "status": "validated-local",
+   "how": "sky.py (both locations), try_it.py, agent_assist.py --fake and unittests (Ran 12 tests ... OK (skipped=1)) ran on Python 3.12.15; outputs pasted. Star positions are approximate J2000 values (rounded, SIMBAD-listed, not re-fetched); the Astropy comparison is pending-ci. Agent assist tested against the deterministic fake server only.",
+   "pendingCi": [
+    "labs/L100/02-coordinates/sky_astropy.py",
+    "test_sky.py: TestAstropyEquivalent",
+    "agent_assist.py against a real local model (fake server only)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "agentAssist": {
+   "task": "A local model proposes which stars are visible from Gurgaon at 21:00 IST and explains the sky table; code computes every altitude, decides what is up and checks quoted numbers.",
+   "prompt": "[[ASTRO-SKY]] Observer in Gurgaon, India (28.46 N, 77.03 E) at 21:00 IST on 2026-10-29. From this list [...] which stars are above the horizon? Reply with ONE JSON object: {\"visible\": [names], \"reason\": \"...\"}. Then: Explain this sky table in 2 sentences... Quote only numbers that appear in the table.",
+   "check": "validate(): only names in sky.STARS are used; others are reported. decide(): a star is up only if code's altitude > 0; the agent's picks are listed as overruled/missed. check_numbers(): every number in the explanation must match a table altitude or azimuth to its shown decimals, else UNVERIFIED.",
+   "expected": "1. agent proposed: {\"visible\": [\"Vega\", \"Altair\", \"Sirius\", \"Polaris\", \"Canopus\"], \"reason\": \"bright stars that are usually seen on autumn evenings\"}\n2. code decided (altitude > 0): up = ['Altair', 'Capella', 'Deneb', 'Fomalhaut', 'Polaris', 'Vega']\n   overruled (agent said visible, code says below): ['Canopus', 'Sirius']; missed: ['Capella', 'Deneb', 'Fomalhaut']; unknown names: none\n3. agent explained: Deneb is highest at 56.27 degrees altitude; Canopus is lowest at -33.23 degrees, well below the horizon. Sirius rises at about 22:40 local time.\n4. code checked 4 quoted numbers: 2 match the table; UNVERIFIED (treat as the model's guess): 22, 40",
+   "realModelNote": "`python agent_assist.py` uses LOCAL_MODEL_URL (default http://localhost:11434/v1) and LOCAL_MODEL (default qwen2.5:1.5b). Real replies vary: a reply without a valid object is rejected and nothing runs. Not run here: no model in the sandbox."
+  },
+  "conceptNote": "content/concepts/02-coordinates-sky.md",
+  "conceptSummary": "Local sidereal time turns fixed RA/Dec into an hour angle, and the observer's latitude turns hour angle and declination into altitude and azimuth. A star is up when its altitude is above zero."
+ },
+ {
+  "id": "time-systems",
+  "number": 3,
+  "level": "L100",
+  "title": "Time systems: UTC, TAI, TT, Julian Date and sidereal time",
+  "phase": "Sky",
+  "category": "time",
+  "description": "Convert one UTC moment to JD, MJD, TAI and TT with the IERS leap-second table, and compute sidereal time checked against a published IAU 2006 worked example and official formulas (USNO, IERS Conventions 2010).",
+  "outcome": "You can pick the right time scale for a task and check a sidereal-time calculation against a published worked example and an official formula.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3 (stdlib only); IERS Leap_Second.dat values embedded (expires 2027-06-28); Astropy 8.0.2 Time equivalent in CI",
+  "estimatedTime": "30 minutes",
+  "overview": [
+   "One moment has several clock readings: UTC for logs, TT for ephemerides, sidereal time for pointing."
+  ],
+  "prerequisites": [
+   "Lesson 2"
+  ],
+  "glossary": [
+   {
+    "term": "TAI",
+    "meaning": "International Atomic Time: uniform seconds, no leap seconds."
+   },
+   {
+    "term": "TT",
+    "meaning": "Terrestrial Time = TAI + 32.184 s; used by ephemerides."
+   },
+   {
+    "term": "JD / MJD",
+    "meaning": "Julian Date: day count from noon -4712; MJD = JD - 2400000.5."
+   },
+   {
+    "term": "leap second",
+    "meaning": "1 s step in UTC that keeps it near Earth's rotation; announced by IERS Bulletin C."
+   }
+  ],
+  "concepts": [
+   "JD is a running day count.",
+   "Leap seconds come from a table.",
+   "Sidereal time runs 1.0027x faster than solar time."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python timescales.py` (2026-10-29 15:30 UTC, longitude 77.03 E).",
+    "mac": "cd labs/L100/03-time-systems\npython timescales.py",
+    "windows": "cd labs\\L100\\03-time-systems\npython timescales.py",
+    "expected": "Five scale lines, a GMST/LST line, the J2000 line and three sidereal-time checks (IAU 2006 worked example, USNO full formula, IERS ERA at J2000).",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Julian Date",
+    "detail": "JD = 2440587.5 + Unix seconds / 86400.",
+    "expected": "JD(UTC) 2461343.145833, MJD(UTC) 61342.645833",
+    "ifNot": "Use an aware UTC datetime; a naive one is read as local time."
+   },
+   {
+    "title": "TAI and TT",
+    "detail": "TAI-UTC from the IERS table; TT = TAI + 32.184 s.",
+    "expected": "TAI-UTC 37 s, TT-UTC 69.184 s; J2000.0 in UTC: 2000-01-01T11:58:55.816",
+    "ifNot": "Check the table row for 2017-01-01 (MJD 57754)."
+   },
+   {
+    "title": "Sidereal time vs a published worked example",
+    "detail": "Primary check: the IAU 2006 worked example of Wallace & Capitaine (2006) for UTC 2006-01-15 21:24:37.5 (UT1-UTC +0.3341 s): ERA 5h05m03.703s, apparent sidereal time 5h05m22.213s. The lab's ERA (IERS Conventions 2010 eq. 5.14) matches to 0.00001 s; GMST + USNO's approximate equation of the equinoxes gives 5h05m22.190s (0.023 s). Two formula checks follow: USNO's full GMST formula (the short form has a loss of precision of 0.1 s per century) and the IERS ERA at J2000.0.",
+    "expected": "ERA 05h05m03.70s (published 05h05m03.70s) | GAST 05h05m22.19s (published 05h05m22.21s, diff -0.023 s); GMST short vs USNO full formula diff -0.010 s; J2000.0 GMST = IERS ERA (diff +0.0016 s); LST in Gurgaon 23h10m01.74s",
+    "ifNot": "GMST uses UT (UTC here), not TT."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v` (includes a data-freshness test that fails after 2027-06-28).",
+    "expected": "Ran 11 tests ... OK (skipped=1)",
+    "ifNot": "test_leap_table_not_expired failing means: update LEAPS from the current IERS Leap_Second.dat."
+   },
+   {
+    "title": "Another moment and place",
+    "detail": "Any UTC time and longitude.",
+    "mac": "cd labs/L100/03-time-systems\npython timescales.py --utc 2027-01-01T00:00 --lon -0.0015",
+    "windows": "cd labs\\L100\\03-time-systems\npython timescales.py --utc 2027-01-01T00:00 --lon -0.0015",
+    "expected": "TAI-UTC stays 37 s (Bulletin C 72: no leap second at the end of 2026).",
+    "ifNot": "Before 1972 the script refuses (UTC had fractional steps)."
+   }
+  ],
+  "code": "\"\"\"L100 Time systems: UTC, TAI, TT, Julian Date and sidereal time (checked against official formulas).\n\npython timescales.py                        # Gurgaon (77.03 E), 2026-10-29 15:30 UTC\npython timescales.py --utc 2027-01-01T00:00 --lon -0.0015\n\"\"\"\nimport argparse\nimport math\nfrom datetime import date, datetime, timezone\n\n# TAI-UTC in seconds from each MJD on (IERS Leap_Second.dat, Bulletin C 72, July 2026). The file expires:\nLEAP_TABLE_EXPIRES = date(2027, 6, 28)\nLEAPS = [(41317, 10), (41499, 11), (41683, 12), (42048, 13), (42413, 14), (42778, 15), (43144, 16),\n         (43509, 17), (43874, 18), (44239, 19), (44786, 20), (45151, 21), (45516, 22), (46247, 23),\n         (47161, 24), (47892, 25), (48257, 26), (48804, 27), (49169, 28), (49534, 29), (50083, 30),\n         (50630, 31), (51179, 32), (53736, 33), (54832, 34), (56109, 35), (57204, 36), (57754, 37)]\nTT_MINUS_TAI = 32.184  # seconds, exact by definition\n\n\ndef jd_utc(dt):\n    return 2440587.5 + dt.timestamp() / 86400.0  # Julian Date: days since -4712 Jan 1 noon; Unix epoch = 2440587.5\n\n\ndef tai_minus_utc(mjd):\n    if mjd < LEAPS[0][0]:\n        raise ValueError(\"before 1972: UTC had fractional steps; not handled\")\n    return [s for start, s in LEAPS if mjd >= start][-1]  # leap seconds: a step table, not a formula\n\n\ndef scales(dt):\n    jd = jd_utc(dt)\n    dat = tai_minus_utc(jd - 2400000.5)\n    return {\"JD(UTC)\": jd, \"MJD(UTC)\": jd - 2400000.5, \"TAI-UTC s\": dat,\n            \"TT-UTC s\": dat + TT_MINUS_TAI, \"JD(TT)\": jd + (dat + TT_MINUS_TAI) / 86400.0}\n\n\ndef gmst_hours(jd_ut):\n    return (18.697375 + 24.065709824279 * (jd_ut - 2451545.0)) % 24.0  # USNO approximate GMST (UT1 ~ UTC)\n\n\ndef gmst_usno_full_hours(dt):\n    \"\"\"USNO's longer GMST formula (from USNO Circular 179, sec. 2.6.2): split at 0h UT1, with the TT-century terms.\"\"\"\n    jd = jd_utc(dt)\n    jd0 = math.floor(jd - 0.5) + 0.5\n    h = (jd - jd0) * 24.0\n    t = (scales(dt)[\"JD(TT)\"] - 2451545.0) / 36525.0\n    return (6.697375 + 0.065707485828 * (jd0 - 2451545.0) + 1.0027379 * h + 0.0854103 * t + 0.0000258 * t * t) % 24.0\n\n\ndef era_hours(jd_ut1):\n    \"\"\"Earth rotation angle, IERS Conventions (2010) eq. 5.14, in hours (24 h = one turn).\"\"\"\n    return 24.0 * ((0.7790572732640 + 1.00273781191135448 * (jd_ut1 - 2451545.0)) % 1.0)\n\n\ndef gast_hours(jd_ut1, jd_tt):\n    \"\"\"Apparent sidereal time = GMST + equation of the equinoxes (USNO approximate nutation terms).\"\"\"\n    d = jd_tt - 2451545.0\n    omega, sun_l, eps = 125.04 - 0.052954 * d, 280.47 + 0.98565 * d, 23.4393 - 0.0000004 * d\n    dpsi = -0.000319 * math.sin(math.radians(omega)) - 0.000024 * math.sin(math.radians(2.0 * sun_l))  # hours\n    return (gmst_hours(jd_ut1) + dpsi * math.cos(math.radians(eps))) % 24.0\n\n\n# Worked example, Wallace & Capitaine 2006 (A&A 459, 981), appendix: UTC 2006-01-15 21:24:37.5, UT1-UTC = +0.3341 s\nWC06_JD_UT1 = 2400000.5 + 53750.892104561342593\nWC06_JD_TT = 2400000.5 + 53750.892855138888889\nWC06_ERA_H = 76.265431053522 / 15.0             # 5h05m03.703452845s\nWC06_GST_H = 5.0 + 5.0 / 60.0 + 22.213252581 / 3600.0  # 5h05m22.213252581s (apparent, IAU 2006/2000A)\n\n\ndef hms(hours):\n    s = round(hours * 3600.0, 2)\n    return f\"{int(s // 3600):02d}h{int(s % 3600 // 60):02d}m{s % 60:05.2f}s\"\n\n\ndef main():\n    p = argparse.ArgumentParser()\n    p.add_argument(\"--utc\", default=\"2026-10-29T15:30\")\n    p.add_argument(\"--lon\", type=float, default=77.03)\n    a = p.parse_args()\n    dt = datetime.fromisoformat(a.utc).replace(tzinfo=timezone.utc)\n    for k, v in scales(dt).items():\n        print(f\"{k:<10} {v:.6f}\" if isinstance(v, float) else f\"{k:<10} {v}\")\n    g = gmst_hours(jd_utc(dt))\n    print(f\"GMST {hms(g)} | LST at {a.lon:+.2f} deg: {hms((g + a.lon / 15.0) % 24.0)}\")\n    # official check 1: J2000.0 is 2000-01-01 12:00 TT -> UTC = 12:00 - (32 + 32.184) s\n    j2000 = datetime(2000, 1, 1, 12, tzinfo=timezone.utc).timestamp() - tai_minus_utc(51544.5) - TT_MINUS_TAI\n    print(\"J2000.0 in UTC:\", datetime.fromtimestamp(j2000, timezone.utc).isoformat(timespec=\"milliseconds\"))\n    # official check 2: the IAU 2006 worked example published by Wallace & Capitaine (2006)\n    era, gast = era_hours(WC06_JD_UT1), gast_hours(WC06_JD_UT1, WC06_JD_TT)\n    print(f\"Worked example 2006-01-15 21:24:37.5 UTC: ERA {hms(era)} (published {hms(WC06_ERA_H)}) | \"\n          f\"GAST {hms(gast)} (published {hms(WC06_GST_H)}, diff {(gast - WC06_GST_H) * 3600.0:+.3f} s)\")\n    # official check 3: the short formula vs USNO's full GMST formula (USNO: short form loses 0.1 s per century)\n    diff = (g - gmst_usno_full_hours(dt)) * 3600.0\n    print(f\"GMST short vs USNO full formula: {hms(gmst_usno_full_hours(dt))} (diff {diff:+.3f} s)\")\n    # official check 4: at J2000.0 (UT1) GMST starts where the IERS 2010 Earth rotation angle starts\n    print(f\"J2000.0 GMST {hms(gmst_hours(2451545.0))} | IERS ERA {hms(era_hours(2451545.0))} \"\n          f\"(diff {(gmst_hours(2451545.0) - era_hours(2451545.0)) * 3600.0:+.4f} s)\")\n    if date.today() > LEAP_TABLE_EXPIRES:\n        print(\"WARNING: leap-second table expired; fetch the new IERS Leap_Second.dat\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "projectFiles": [
+   {
+    "path": "labs/L100/03-time-systems/timescales.py",
+    "purpose": "main lab code (leap-second table embedded)"
+   },
+   {
+    "path": "labs/L100/03-time-systems/time_astropy.py",
+    "purpose": "Astropy 8.0.2 Time equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L100/03-time-systems/test_timescales.py",
+    "purpose": "scales, sidereal time vs the IAU 2006 worked example and USNO / IERS formulas, freshness"
+   },
+   {
+    "path": "labs/L100/03-time-systems/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "TT-UTC = 69.184 s",
+   "J2000.0 = 2000-01-01 11:58:55.816 UTC",
+   "ERA equals the published IAU 2006 worked example (5h05m03.703s); apparent sidereal time within 0.1 s of the published 5h05m22.213s (observed 0.023 s)",
+   "GMST within 0.05 s of USNO's full formula (observed 0.010 s)"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 11 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "Delete the (57754, 37) row",
+    "expected": "test_tai_minus_utc_now_is_37 and test_leap_second_step_on_2017_01_01 fail"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "ValueError for 23:59:60",
+    "action": "Python datetime cannot hold a leap second; use TAI or Astropy Time for that instant."
+   },
+   {
+    "symptom": "Freshness test fails",
+    "action": "Download the current Leap_Second.dat from IERS and update LEAPS and LEAP_TABLE_EXPIRES."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "One second either side of the 2016-12-31 leap second.",
+    "predict": "How much does TAI-UTC change?",
+    "expected": "2016-12-31T23:59:59 TAI-UTC = 36 s | 2017-01-01T00:00:01 TAI-UTC = 37 s"
+   },
+   {
+    "task": "Move the observer 15 degrees east.",
+    "predict": "How much does LST change?",
+    "expected": "lon 77.03: LST 23h10m01.74s | lon 92.03: LST 00h10m01.74s"
+   }
+  ],
+  "equivalents": [
+   "Astropy: Time(dt).tt, .tai, .jd, .sidereal_time('mean', 'greenwich') (IAU 2006 model, needs UT1 from IERS).",
+   "Skyfield: ts.utc(...).tt, t.gmst; SOFA/ERFA C libraries (iauDat for TAI-UTC, iauGmst06).",
+   "USNO online sidereal-time data service (1800-2050)."
+  ],
+  "learningTools": [
+   {
+    "name": "Stellarium",
+    "role": "INSPECT",
+    "exercise": "Set 2026-10-29 15:30 UTC and Gurgaon. Open the Date/Time window and switch it to Julian Day; select any star and read the sidereal-time line in its info panel.",
+    "expected": "JD should read 2461343.1458 and local sidereal time about 23h10m (the lab prints 23h10m01.74s; Stellarium may show apparent sidereal time, up to ~1 s different). Info-panel option names not re-verified; pending a manual run.",
+    "mac": "brew install --cask stellarium   # cask 26.2; stellarium.org lists 26.3 (macOS 11+, universal)",
+    "windows": "Installer from https://stellarium.org/ (Windows x86_64 Qt6, Windows 10+; ARM64 build also listed)",
+    "licence": "GPL-2.0-or-later (OSI: yes; licence file not re-read 2026-10-29)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "seeAlso": [
+   "distributed-systems L100 #6 Ordering events with Lamport clocks: physical time scales vs logical clocks - when wall-clock time can and cannot order events.",
+   "astronomy L300 #16 Reproducible data pipelines: provenance, caching and versioned inputs: a JD/MJD half-day offset breaks a pipeline release there."
+  ],
+  "inRealSystems": "Ephemeris software (SOFA/ERFA, Astropy, Skyfield) keeps leap-second tables; observatories timestamp data in UTC and convert to TT/TDB for analysis.",
+  "useWhen": "Store UTC (ISO 8601) in logs; convert to JD(TT) for orbits and to sidereal time for pointing.",
+  "caution": "The embedded leap-second table expires 2027-06-28; the freshness test makes that visible instead of silently wrong.",
+  "checkpoint": "PASS: TT-UTC 69.184 s, J2000 at 11:58:55.816 UTC, ERA and apparent sidereal time match the Wallace & Capitaine (2006) worked example (0.023 s), GMST within 0.05 s of USNO's full formula; all tests pass.",
+  "checkYourself": [
+   {
+    "q": "Why is J2000.0 not at 12:00 UTC?",
+    "a": "It is 12:00 TT; TT-UTC was 32 + 32.184 s in 2000."
+   },
+   {
+    "q": "How long is a sidereal day?",
+    "a": "23h56m04.09s of solar time; one extra rotation per year."
+   }
+  ],
+  "sources": [
+   {
+    "title": "IERS Bulletin C 72 (UTC-TAI = -37 s, July 2026)",
+    "url": "https://hpiers.obspm.fr/iers/bul/bulc/bulletinc.dat"
+   },
+   {
+    "title": "IERS Leap_Second.dat (TAI-UTC table, expires 2027-06-28)",
+    "url": "https://hpiers.obspm.fr/iers/bul/bulc/Leap_Second.dat"
+   },
+   {
+    "title": "USNO: Computing Approximate Sidereal Time (short and full GMST formulas, from USNO Circular 179 sec. 2.6.2)",
+    "url": "https://aa.usno.navy.mil/faq/GAST"
+   },
+   {
+    "title": "Wallace & Capitaine 2006, Precession-nutation procedures consistent with IAU 2006 resolutions (A&A 459, 981), appendix worked example: ERA and GST",
+    "url": "https://syrte.obspm.fr/iau2006/aa06_459.IAU06prec.pdf"
+   },
+   {
+    "title": "IERS Conventions (2010), Chapter 5 (eq. 5.14: Earth rotation angle)",
+    "url": "https://iers-conventions.obspm.fr/content/chapter5/icc5.pdf"
+   },
+   {
+    "title": "PyPI: astropy 8.0.2 (BSD-3-Clause, Python >= 3.11, macOS arm64 + Windows wheels)",
+    "url": "https://pypi.org/project/astropy/"
+   }
+  ],
+  "next": "L200 #10 Light curves and periods: Lomb-Scargle, transits vs variable stars (time stamps become the x-axis of a periodogram)",
+  "validation": {
+   "status": "validated-local",
+   "how": "timescales.py, try_it.py and unittests (Ran 11 tests ... OK (skipped=1)) ran on Python 3.12.15; outputs pasted. Sidereal-time checks use primary/official sources only: the IAU 2006 worked example in Wallace & Capitaine (2006) (ERA to 0.00001 s, apparent sidereal time to 0.023 s), USNO's full GMST formula (0.002-0.010 s on four dates) and the IERS Conventions (2010) ERA at J2000.0 (0.0016 s). The freshness test is time-sensitive (ran 3 times, passes until 2027-06-28).",
+   "pendingCi": [
+    "labs/L100/03-time-systems/time_astropy.py",
+    "test_timescales.py: TestAstropyEquivalent"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/03-time-systems.md",
+  "conceptSummary": "Julian Date counts days; UTC differs from atomic TAI by leap seconds (37 s now) and TT adds 32.184 s. Sidereal time follows the stars; check your code against a published worked example and official formulas (IAU/IERS, USNO)."
+ },
+ {
+  "id": "units-magnitudes",
+  "number": 4,
+  "level": "L100",
+  "title": "Units and scales: AU, light-year, parsec, magnitudes and distance modulus",
+  "phase": "Measure",
+  "category": "units",
+  "description": "Build the distance ladder from exact definitions and convert between magnitudes, flux ratios and distances.",
+  "outcome": "You can convert au/ly/pc, combine magnitudes through flux, and use the distance modulus and parallax.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3 (stdlib math only); Astropy 8.0.2 units equivalent in CI",
+  "estimatedTime": "25 minutes",
+  "overview": [
+   "Distances build on the exact AU; magnitudes are reversed logarithms of flux."
+  ],
+  "prerequisites": [
+   "Lesson 1"
+  ],
+  "glossary": [
+   {
+    "term": "parsec",
+    "meaning": "Distance at which 1 au subtends 1 arcsec: 648000/pi au."
+   },
+   {
+    "term": "magnitude",
+    "meaning": "m = -2.5 log10(F) + const; 5 mag = factor 100."
+   },
+   {
+    "term": "absolute magnitude M",
+    "meaning": "Magnitude a star would have at 10 pc."
+   },
+   {
+    "term": "distance modulus",
+    "meaning": "m - M = 5 log10(d / 10 pc)."
+   }
+  ],
+  "concepts": [
+   "Exact AU, derived parsec and light-year.",
+   "Add fluxes, not magnitudes.",
+   "Distance modulus and parallax."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python units.py`",
+    "mac": "cd labs/L100/04-units-magnitudes\npython units.py",
+    "windows": "cd labs\\L100\\04-units-magnitudes\npython units.py",
+    "expected": "Six lines of conversions.",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Distances",
+    "detail": "AU exact; parsec = 648000/pi au; ly = c x Julian year.",
+    "expected": "1 ly = 9460730472580800 m; 1 pc = 3.085678e+16 m = 206264.806 AU = 3.2616 ly; light from 1 AU takes 499.005 s",
+    "ifNot": "Use 365.25 days (Julian year), not 365."
+   },
+   {
+    "title": "Magnitudes and flux",
+    "detail": "Pogson's ratio.",
+    "expected": "5 mag = x100.0, 1 mag = x2.5119, flux x2 -> -0.7526 mag",
+    "ifNot": "Check the sign: brighter = smaller magnitude."
+   },
+   {
+    "title": "Distance modulus",
+    "detail": "Same star (M = 4.83) at different distances.",
+    "expected": "m = 4.83 / 9.83 / 14.83 at 10 / 100 / 1000 pc; at 1 AU (the Sun) m = -26.74",
+    "ifNot": "log10, not ln."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "expected": "Ran 8 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the Astropy comparison (pending-ci)."
+   }
+  ],
+  "code": "\"\"\"L100 Units and scales: AU, light-year, parsec, magnitudes <-> flux, distance modulus.\n\npython units.py\n\"\"\"\nimport math\n\nC = 299_792_458.0                 # speed of light, m/s (exact, SI)\nAU = 149_597_870_700.0            # astronomical unit, m (exact, IAU 2012 Resolution B2)\nJULIAN_YEAR = 365.25 * 86_400.0   # s (IAU: the light-year uses the Julian year)\nLY = C * JULIAN_YEAR              # light-year, m\nPC = AU * 648_000.0 / math.pi     # parsec: distance at which 1 AU subtends 1 arcsecond (IAU 2015 Resolution B2)\n\n\ndef flux_ratio(m1, m2):\n    \"\"\"F1/F2 for magnitudes m1, m2 (Pogson: 5 magnitudes = factor 100; brighter = smaller magnitude).\"\"\"\n    return 10 ** (-0.4 * (m1 - m2))\n\n\ndef mag_difference(f1, f2):\n    return -2.5 * math.log10(f1 / f2)\n\n\ndef distance_modulus(d_pc):\n    return 5.0 * math.log10(d_pc / 10.0)  # m - M: how much fainter a star looks than at 10 pc\n\n\ndef distance_from_modulus(mu):\n    return 10.0 ** (mu / 5.0 + 1.0)\n\n\ndef parallax_distance_pc(parallax_arcsec):\n    return 1.0 / parallax_arcsec  # small-angle definition of the parsec\n\n\ndef main():\n    print(f\"1 AU = {AU:.0f} m | 1 ly = {LY:.0f} m | 1 pc = {PC:.6e} m\")\n    print(f\"1 pc = {PC / AU:.3f} AU = {PC / LY:.4f} ly | light from 1 AU takes {AU / C:.3f} s\")\n    print(f\"5 mag brighter = x{flux_ratio(0, 5):.1f} flux | 1 mag = x{flux_ratio(0, 1):.4f}\")\n    print(f\"flux x2 -> {mag_difference(2, 1):+.4f} mag\")\n    for d in (10, 100, 1000):\n        print(f\"star with M = 4.83 at {d:>4} pc: m = {4.83 + distance_modulus(d):6.2f} (distance modulus {distance_modulus(d):5.2f})\")\n    print(f\"same star at 1 AU (the Sun): m = {4.83 + distance_modulus(AU / PC):.2f}\")\n    print(f\"parallax 0.1 arcsec -> {parallax_distance_pc(0.1):.1f} pc; modulus 5.00 -> {distance_from_modulus(5.0):.1f} pc\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "projectFiles": [
+   {
+    "path": "labs/L100/04-units-magnitudes/units.py",
+    "purpose": "main lab code"
+   },
+   {
+    "path": "labs/L100/04-units-magnitudes/units_astropy.py",
+    "purpose": "Astropy 8.0.2 units equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L100/04-units-magnitudes/test_units.py",
+    "purpose": "definitions, magnitudes, round trips"
+   },
+   {
+    "path": "labs/L100/04-units-magnitudes/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "1 pc = 3.2616 ly",
+   "5 mag = x100",
+   "Sun at 1 AU: m = -26.74 from M = 4.83"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 8 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "Use 365 days for the light-year",
+    "expected": "test_light_year_exact_value fails"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Combined magnitude is 3.0 for two m=6 stars",
+    "action": "Convert to flux, add, convert back (5.25)."
+   },
+   {
+    "symptom": "Negative distance modulus",
+    "action": "Correct for d < 10 pc (the star looks brighter than at 10 pc)."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Two m = 6.0 stars side by side.",
+    "predict": "Combined magnitude 3.0? 5.5? 6.0?",
+    "expected": "two m=6.0 stars together: m = 5.25"
+   },
+   {
+    "task": "Parallax 1.000 mas +/- 0.100 mas.",
+    "predict": "Is the distance error symmetric?",
+    "expected": "parallax 0.9 mas ->  1111.1 pc, distance modulus 10.229 | parallax 1.0 mas ->  1000.0 pc, distance modulus 10.000 | parallax 1.1 mas ->   909.1 pc, distance modulus 9.793"
+   }
+  ],
+  "equivalents": [
+   "Astropy units: (1*u.pc).to(u.lyr), Distance(100*u.pc).distmod, u.Magnitude(-5).physical.",
+   "Pint (generic units library) for non-astronomy units."
+  ],
+  "learningTools": [
+   {
+    "name": "Stellarium",
+    "role": "INSPECT",
+    "exercise": "Select Deneb and Vega. Read apparent magnitude, absolute magnitude and distance in the info panel, then compute 5 log10(d/10 pc) with units.distance_modulus().",
+    "expected": "For each star m - M from the panel should equal the lab's distance modulus for the panel distance within rounding. Values depend on Stellarium's catalogue; pending a manual run.",
+    "mac": "brew install --cask stellarium   # cask 26.2; stellarium.org lists 26.3 (macOS 11+, universal)",
+    "windows": "Installer from https://stellarium.org/ (Windows x86_64 Qt6, Windows 10+; ARM64 build also listed)",
+    "licence": "GPL-2.0-or-later (OSI: yes; licence file not re-read 2026-10-29)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "seeAlso": [
+   "microbit L100 #5 Sensing temperature and light: a light sensor reports a linear level; magnitudes are the logarithmic version of the same flux."
+  ],
+  "inRealSystems": "Gaia catalogues give parallaxes in mas and G magnitudes; Astropy's units and Distance classes do these conversions.",
+  "useWhen": "Use magnitudes for comparing and catalogues; switch to flux for any sum, average or fit.",
+  "caution": "Inverting a noisy parallax biases distances; for parallax errors above ~10% use a probabilistic method.",
+  "checkpoint": "PASS: printed values match the README and all tests pass.",
+  "checkYourself": [
+   {
+    "q": "How much brighter is a magnitude 1 star than magnitude 6?",
+    "a": "100 times."
+   },
+   {
+    "q": "A star has m - M = 10. How far is it?",
+    "a": "1000 pc (10^(10/5+1))."
+   }
+  ],
+  "sources": [
+   {
+    "title": "PyPI: astropy 8.0.2 (BSD-3-Clause, Python >= 3.11, macOS arm64 + Windows wheels)",
+    "url": "https://pypi.org/project/astropy/"
+   },
+   {
+    "title": "Stellarium home (26.3; macOS 11+ universal, Windows x86_64/ARM64)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "next": "L200 #9 Aperture photometry: background annulus and signal-to-noise (measuring the flux behind a magnitude)",
+  "validation": {
+   "status": "validated-local",
+   "how": "units.py, try_it.py and unittests (Ran 8 tests ... OK (skipped=1)) ran on Python 3.12.15; outputs pasted. The IAU 2012 B2 (AU) and 2015 B2 (parsec) resolution texts were not re-fetched; values are computed from the definitions and match the parsec value used in the test.",
+   "pendingCi": [
+    "labs/L100/04-units-magnitudes/units_astropy.py",
+    "test_units.py: TestAstropyEquivalent"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/04-units-magnitudes.md",
+  "conceptSummary": "The AU is exact and the parsec and light-year follow from it. Magnitudes are reversed logarithms of flux, so add fluxes rather than magnitudes, and the distance modulus links apparent and absolute magnitude."
+ },
+ {
+  "id": "orbits-kepler",
+  "number": 5,
+  "level": "L100",
+  "title": "Orbits: Kepler's laws, Kepler's equation and a planet's position",
+  "phase": "Solar system",
+  "category": "orbits",
+  "description": "Solve Kepler's equation with Newton's method and compute Earth, Mars and Jupiter positions from JPL's approximate elements.",
+  "outcome": "You can turn orbital elements and a date into heliocentric and geocentric positions and check them with Kepler's third law.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3 (stdlib math only); JPL approximate elements (Table 1, 1800-2050); Skyfield 1.55 + DE421 equivalent in CI",
+  "estimatedTime": "35 minutes",
+  "overview": [
+   "Six elements and Kepler's equation give a planet's position to well under a degree."
+  ],
+  "prerequisites": [
+   "Lessons 2 and 3"
+  ],
+  "glossary": [
+   {
+    "term": "mean anomaly M",
+    "meaning": "Fraction of the orbital period since perihelion, as an angle."
+   },
+   {
+    "term": "eccentric anomaly E",
+    "meaning": "Auxiliary angle with M = E - e sin E (Kepler's equation)."
+   },
+   {
+    "term": "elements",
+    "meaning": "a, e, I, L, longitude of perihelion, longitude of node (+ rates per century)."
+   }
+  ],
+  "concepts": [
+   "Newton's method solves Kepler's equation.",
+   "Three rotations place the orbit in space.",
+   "Geocentric = planet minus Earth."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python kepler.py` (2026-10-29 0h TDB = JD 2461342.5).",
+    "mac": "cd labs/L100/05-orbits-kepler\npython kepler.py",
+    "windows": "cd labs\\L100\\05-orbits-kepler\npython kepler.py",
+    "expected": "A Kepler line, three heliocentric lines, two geocentric lines.",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Kepler's equation",
+    "detail": "Newton's method from E0 = M + e sin M.",
+    "expected": "M=1.0 rad, e=0.5 -> E = 1.498701133518 rad",
+    "ifNot": "Angles in radians."
+   },
+   {
+    "title": "Heliocentric positions",
+    "detail": "Elements at T centuries since J2000, then three rotations.",
+    "expected": "EM Bary r=0.99346 au, Mars r=1.59098 au, Jupiter r=5.31369 au; periods 1.0000 / 1.8808 / 11.8677 yr",
+    "ifNot": "Check w = long.peri - node and M = L - long.peri."
+   },
+   {
+    "title": "Geocentric RA/Dec",
+    "detail": "Mars minus Earth, rotated by the obliquity 23.43928 deg.",
+    "expected": "Mars RA 139.6593 deg (9.3106 h) Dec +17.2889 deg, 1.4567 au; Jupiter RA 146.1564 Dec +14.2936, 5.5429 au",
+    "ifNot": "Rotate about the x-axis (equinox direction)."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "expected": "Ran 7 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the Skyfield/DE421 comparison (pending-ci)."
+   }
+  ],
+  "code": "\"\"\"L100 Orbits: Kepler's laws, Kepler's equation and a planet's position from approximate elements.\n\nElements: JPL \"Approximate Positions of the Planets\" (Standish & Williams), Table 1, valid 1800-2050;\nnominal error for Mars about 40 arcsec in longitude.\npython kepler.py                 # 2026-10-29 0h TDB\npython kepler.py --jd 2461500.5\n\"\"\"\nimport argparse\nimport math\n\n# a [au], e, I [deg], L [deg], long.peri [deg], long.node [deg]; second tuple = rates per Julian century\nELEMENTS = {\n    \"EM Bary\": ((1.00000261, 0.01671123, -0.00001531, 100.46457166, 102.93768193, 0.0),\n                (0.00000562, -0.00004392, -0.01294668, 35999.37244981, 0.32327364, 0.0)),\n    \"Mars\": ((1.52371034, 0.09339410, 1.84969142, -4.55343205, -23.94362959, 49.55953891),\n             (0.00001847, 0.00007882, -0.00813131, 19140.30268499, 0.44441088, -0.29257343)),\n    \"Jupiter\": ((5.20288700, 0.04838624, 1.30439695, 34.39644051, 14.72847983, 100.47390909),\n                (-0.00011607, -0.00013253, -0.00183714, 3034.74612775, 0.21252668, 0.20469106)),\n}\nOBLIQUITY = math.radians(23.43928)  # J2000\n\n\ndef solve_kepler(M, e, tol=1e-12):\n    \"\"\"Solve M = E - e sin E for E (radians) with Newton's method.\"\"\"\n    E = M + e * math.sin(M)  # JPL's starting guess\n    for _ in range(50):\n        dE = (M - (E - e * math.sin(E))) / (1 - e * math.cos(E))  # Newton step on f(E) = E - e sin E - M\n        E += dE\n        if abs(dE) < tol:\n            return E\n    raise RuntimeError(\"Kepler's equation did not converge\")\n\n\ndef heliocentric(name, jd_tdb):\n    \"\"\"Heliocentric ecliptic J2000 position (x, y, z) in au.\"\"\"\n    T = (jd_tdb - 2451545.0) / 36525.0\n    a, e, I, L, peri, node = (v0 + rate * T for v0, rate in zip(*ELEMENTS[name]))\n    w, M = math.radians(peri - node), math.radians((L - peri + 180) % 360 - 180)  # argument of perihelion, mean anomaly\n    E = solve_kepler(M, e)\n    xp, yp = a * (math.cos(E) - e), a * math.sqrt(1 - e * e) * math.sin(E)  # position in the orbit plane\n    I, node = math.radians(I), math.radians(node)\n    cw, sw, cO, sO, ci, si = math.cos(w), math.sin(w), math.cos(node), math.sin(node), math.cos(I), math.sin(I)\n    return ((cw * cO - sw * sO * ci) * xp + (-sw * cO - cw * sO * ci) * yp,\n            (cw * sO + sw * cO * ci) * xp + (-sw * sO + cw * cO * ci) * yp,\n            (sw * si) * xp + (cw * si) * yp)\n\n\ndef geocentric_radec(name, jd_tdb):\n    p, earth = heliocentric(name, jd_tdb), heliocentric(\"EM Bary\", jd_tdb)\n    x, y, z = (pi - ei for pi, ei in zip(p, earth))\n    ye, ze = y * math.cos(OBLIQUITY) - z * math.sin(OBLIQUITY), y * math.sin(OBLIQUITY) + z * math.cos(OBLIQUITY)\n    dist = math.sqrt(x * x + y * y + z * z)  # geometric distance (no light-time correction)\n    return math.degrees(math.atan2(ye, x)) % 360, math.degrees(math.asin(ze / dist)), dist\n\n\ndef period_years(a_au):\n    return a_au ** 1.5  # Kepler's third law in years and au (Sun-dominated orbit)\n\n\ndef main():\n    p = argparse.ArgumentParser()\n    p.add_argument(\"--jd\", type=float, default=2461342.5, help=\"Julian Date (TDB); default 2026-10-29 0h\")\n    jd = p.parse_args().jd\n    print(f\"JD(TDB) {jd} | Kepler: M=1.0 rad, e=0.5 -> E = {solve_kepler(1.0, 0.5):.12f} rad\")\n    for name in ELEMENTS:\n        x, y, z = heliocentric(name, jd)\n        print(f\"{name:<8} helio x={x:+.5f} y={y:+.5f} z={z:+.5f} au  r={math.sqrt(x*x+y*y+z*z):.5f} au  \"\n              f\"period {period_years(ELEMENTS[name][0][0]):.4f} yr\")\n    for name in (\"Mars\", \"Jupiter\"):\n        ra, dec, d = geocentric_radec(name, jd)\n        print(f\"{name:<8} geocentric RA {ra:8.4f} deg ({ra / 15:.4f} h)  Dec {dec:+8.4f} deg  distance {d:.4f} au\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "projectFiles": [
+   {
+    "path": "labs/L100/05-orbits-kepler/kepler.py",
+    "purpose": "main lab code (JPL Table 1 elements embedded)"
+   },
+   {
+    "path": "labs/L100/05-orbits-kepler/kepler_skyfield.py",
+    "purpose": "Skyfield 1.55 + DE421 equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L100/05-orbits-kepler/test_kepler.py",
+    "purpose": "Kepler residuals, Earth distance, third law"
+   },
+   {
+    "path": "labs/L100/05-orbits-kepler/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "Kepler residual < 1e-12",
+   "Earth 0.983-1.017 au from the Sun",
+   "Mars at RA 9.31 h, Dec +17.3 deg on 2026-10-29"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 7 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "Use degrees in math.sin inside solve_kepler",
+    "expected": "test_residual_is_tiny fails"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Kepler's equation did not converge",
+    "action": "e >= 1 (not an ellipse) or M in degrees."
+   },
+   {
+    "symptom": "Mars off by tens of degrees",
+    "action": "Check JD vs centuries T and the order of rotations."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Fixed-point iteration E = M + e sin E instead of Newton.",
+    "predict": "How many steps for e = 0.9?",
+    "expected": "e=0.1: fixed-point needs 9 iterations; Newton gives the same E = 1.088597752 | e=0.9: fixed-point needs 20 iterations; Newton gives the same E = 1.862086687"
+   },
+   {
+    "task": "Scan Mars-Earth distance through 2026-2027.",
+    "predict": "When is Mars closest?",
+    "expected": "closest Mars-Earth distance 2026-2027: 0.6778 au at JD 2461456.5 (2027-02-20)"
+   }
+  ],
+  "equivalents": [
+   "Skyfield: load('de421.bsp'); earth.at(t).observe(mars) - JPL numerical ephemeris.",
+   "Astropy: get_body('mars', time) (uses the built-in or a JPL ephemeris).",
+   "JPL Horizons (web/API) for reference positions; poliastro/hapsira for orbit mechanics."
+  ],
+  "learningTools": [
+   {
+    "name": "Stellarium",
+    "role": "CHECK",
+    "exercise": "Set 2026-10-29 00:00 UTC, select Mars and read 'RA/Dec (J2000.0)' and its distance.",
+    "expected": "Should be close to the lab: RA 9h18.6m (139.66 deg), Dec +17.29 deg, 1.457 au; differences of up to about 1 arcmin come from the approximate elements and light time. Pending a manual run.",
+    "mac": "brew install --cask stellarium   # cask 26.2; stellarium.org lists 26.3 (macOS 11+, universal)",
+    "windows": "Installer from https://stellarium.org/ (Windows x86_64 Qt6, Windows 10+; ARM64 build also listed)",
+    "licence": "GPL-2.0-or-later (OSI: yes; licence file not re-read 2026-10-29)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "seeAlso": [
+   "simulation L100 #4 Time-stepped physics: a parcel dropped from a drone: stepping a motion in time vs the closed-form orbit solved here (lesson 11 steps orbits too)."
+  ],
+  "inRealSystems": "Observation planners and planetariums use approximate elements for speed; precise work uses JPL DE ephemerides via Skyfield/Astropy.",
+  "useWhen": "Use approximate elements for planning to ~1 arcmin (Mars) within 1800-2050; use a JPL ephemeris otherwise.",
+  "caution": "JPL states the elements are not valid outside their fit interval; the code does not stop you.",
+  "checkpoint": "PASS: Mars RA/Dec as printed; all tests pass.",
+  "checkYourself": [
+   {
+    "q": "Why can't you solve M = E - e sin E with algebra?",
+    "a": "It is transcendental; iterate (Newton) instead."
+   },
+   {
+    "q": "Mars has a = 1.524 au. Its period?",
+    "a": "1.524^1.5 = 1.881 years (Kepler's third law)."
+   }
+  ],
+  "sources": [
+   {
+    "title": "JPL Solar System Dynamics: Approximate Positions of the Planets (Standish & Williams)",
+    "url": "https://ssd.jpl.nasa.gov/planets/approx_pos.html"
+   },
+   {
+    "title": "PyPI: skyfield 1.55 (MIT, pure-Python wheel)",
+    "url": "https://pypi.org/project/skyfield/"
+   },
+   {
+    "title": "Stellarium home (26.3; macOS 11+ universal, Windows x86_64/ARM64)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "next": "L200 #11 N-body simulation: leapfrog vs Euler and energy conservation (when planets pull on each other, step the orbits numerically)",
+  "validation": {
+   "status": "validated-local",
+   "how": "kepler.py, try_it.py and unittests (Ran 7 tests ... OK (skipped=1)) ran on Python 3.12.15; outputs pasted. Comparison with Skyfield + DE421 (expected within JPL's stated ~40 arcsec for Mars, tolerance 0.05 deg) is pending-ci; it downloads de421.bsp.",
+   "pendingCi": [
+    "labs/L100/05-orbits-kepler/kepler_skyfield.py",
+    "test_kepler.py: TestSkyfieldEquivalent"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/05-orbits-kepler.md",
+  "conceptSummary": "Orbital elements at a date give the mean anomaly; Kepler's equation, solved with Newton's method, turns it into a position on the ellipse. Rotating the ellipse into space and subtracting Earth gives where to look."
+ },
+ {
+  "id": "light-spectra",
+  "number": 6,
+  "level": "L100",
+  "title": "Light and spectra: blackbody, Wien's law, Doppler shift and redshift",
+  "phase": "Measure",
+  "category": "spectra",
+  "description": "Compute Planck curves, find their peaks numerically and with Wien's law, check Stefan-Boltzmann, and turn line shifts into velocities.",
+  "outcome": "You can estimate a temperature from a peak wavelength and a velocity from a shifted line, and know when v = cz breaks down.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3; Astropy 8.0.2 BlackBody equivalent in CI",
+  "estimatedTime": "25 minutes",
+  "overview": [
+   "Temperature sets the shape of a star's spectrum; motion shifts its lines."
+  ],
+  "prerequisites": [
+   "Lesson 4"
+  ],
+  "glossary": [
+   {
+    "term": "blackbody",
+    "meaning": "Ideal emitter whose spectrum depends only on temperature (Planck's law)."
+   },
+   {
+    "term": "Wien's law",
+    "meaning": "Peak wavelength = b / T, b = 2.897771955e-3 m K."
+   },
+   {
+    "term": "redshift z",
+    "meaning": "lambda_obs / lambda_rest - 1."
+   }
+  ],
+  "concepts": [
+   "Planck curve and Wien peak.",
+   "Area = sigma T^4.",
+   "Doppler: v = c dlambda/lambda for small z."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python light.py`",
+    "mac": "cd labs/L100/06-light-spectra\npython light.py",
+    "windows": "cd labs\\L100\\06-light-spectra\npython light.py",
+    "expected": "Three temperature lines, a flux line, a Doppler line, three redshift lines.",
+    "ifNot": "numpy 2.x needed (np.trapezoid)."
+   },
+   {
+    "title": "Wien peaks",
+    "detail": "Numerical argmax of Planck vs b/T.",
+    "expected": "Sun 5772 K: 502.0 nm both ways; 3600 K: 804.9 nm; 12100 K: 239.5 nm",
+    "ifNot": "Use B per wavelength, not per frequency."
+   },
+   {
+    "title": "Stefan-Boltzmann",
+    "detail": "pi x integral of B over wavelength.",
+    "expected": "6.2939e+07 W/m^2 = sigma T^4 for the Sun",
+    "ifNot": "Integrate on a log-spaced grid wide enough (10 nm-1 cm)."
+   },
+   {
+    "title": "Doppler and redshift",
+    "detail": "H-alpha rest 656.28 nm (air).",
+    "expected": "656.50 nm -> +100.5 km/s; z = 0.1: cz 29979 vs relativistic 28487 km/s",
+    "ifNot": "Positive = receding (redshift)."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "expected": "Ran 8 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the Astropy comparison (pending-ci)."
+   }
+  ],
+  "code": "\"\"\"L100 Light and spectra: blackbody (Planck, Wien, Stefan-Boltzmann), Doppler shift and redshift.\n\npython light.py\n\"\"\"\nimport numpy as np\n\nH = 6.62607015e-34      # Planck constant, J s (exact, SI 2019)\nC = 299_792_458.0       # m/s (exact)\nK = 1.380649e-23        # Boltzmann constant, J/K (exact)\nB_WIEN = 2.897771955e-3  # Wien displacement constant, m K (CODATA)\nSIGMA = 5.670374419e-8   # Stefan-Boltzmann constant, W m^-2 K^-4 (CODATA)\nH_ALPHA = 656.28e-9      # hydrogen-alpha rest wavelength in air, m\n\n\ndef planck(wavelength_m, T):\n    \"\"\"Spectral radiance B_lambda(T) in W m^-2 sr^-1 m^-1.\"\"\"\n    x = H * C / (wavelength_m * K * T)\n    return 2 * H * C**2 / wavelength_m**5 / np.expm1(x)  # expm1: accurate when x is small\n\n\ndef peak_wavelength(T, lo=50e-9, hi=50e-6, n=200_001):\n    lam = np.geomspace(lo, hi, n)\n    return lam[np.argmax(planck(lam, T))]  # numerical peak, to compare with Wien's law b / T\n\n\ndef total_flux(T):\n    lam = np.geomspace(10e-9, 1e-2, 400_001)\n    return np.pi * np.trapezoid(planck(lam, T), lam)  # pi * integral of B over wavelength = sigma T^4\n\n\ndef doppler_velocity(observed_m, rest_m):\n    return C * (observed_m - rest_m) / rest_m  # non-relativistic: v = c * dlambda / lambda (+ = moving away)\n\n\ndef redshift(observed_m, rest_m):\n    return observed_m / rest_m - 1.0\n\n\ndef relativistic_velocity(z):\n    s = (1 + z) ** 2\n    return C * (s - 1) / (s + 1)\n\n\ndef main():\n    for name, T in ((\"Sun\", 5772), (\"Betelgeuse-like\", 3600), (\"Rigel-like\", 12100)):\n        print(f\"{name:<16} T={T:>6} K  Wien b/T = {B_WIEN / T * 1e9:7.1f} nm  numerical peak = {peak_wavelength(T) * 1e9:7.1f} nm\")\n    print(f\"Sun: pi * integral B = {total_flux(5772):.4e} W/m^2 vs sigma T^4 = {SIGMA * 5772**4:.4e} W/m^2\")\n    obs = 656.50e-9\n    print(f\"H-alpha observed at 656.50 nm: v = {doppler_velocity(obs, H_ALPHA) / 1000:+.1f} km/s (z = {redshift(obs, H_ALPHA):.6f})\")\n    for z in (0.001, 0.1, 1.0):\n        print(f\"z = {z:<5}: cz = {C * z / 1000:9.0f} km/s  relativistic Doppler v = {relativistic_velocity(z) / 1000:9.0f} km/s\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "projectFiles": [
+   {
+    "path": "labs/L100/06-light-spectra/light.py",
+    "purpose": "main lab code"
+   },
+   {
+    "path": "labs/L100/06-light-spectra/light_astropy.py",
+    "purpose": "Astropy 8.0.2 BlackBody equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L100/06-light-spectra/test_light.py",
+    "purpose": "Wien, Stefan-Boltzmann, Rayleigh-Jeans, Doppler"
+   },
+   {
+    "path": "labs/L100/06-light-spectra/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "Sun peaks at 502.0 nm",
+   "pi * integral B = sigma T^4",
+   "H-alpha +0.22 nm = +100.5 km/s"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 8 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "Replace np.expm1(x) with np.exp(x) (drop the -1)",
+    "expected": "3 blackbody tests fail: Wien peak, Stefan-Boltzmann, Rayleigh-Jeans"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Overflow warning in exp",
+    "action": "Very short wavelength / low T: x is huge; the radiance is ~0 there."
+   },
+   {
+    "symptom": "Velocity 1000x too big",
+    "action": "Wavelengths in metres vs nm mixed; keep one unit."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Double the Sun's temperature.",
+    "predict": "Peak wavelength? Total flux?",
+    "expected": "T=5772 K: peak  502.0 nm, flux 6.294e+07 W/m^2 | T=11544 K: peak  251.0 nm, flux 1.007e+09 W/m^2"
+   },
+   {
+    "task": "A galaxy's H-alpha line at 721.9 nm.",
+    "predict": "z and the two velocity estimates?",
+    "expected": "z = 0.1000: cz = 29976 km/s, relativistic 28484 km/s"
+   }
+  ],
+  "equivalents": [
+   "Astropy: astropy.modeling.models.BlackBody(temperature=...), u.doppler_optical / u.doppler_relativistic equivalencies.",
+   "specutils (Astropy-affiliated) for real spectra: line fitting, redshift."
+  ],
+  "learningTools": [
+   {
+    "name": "Stellarium",
+    "role": "SEE",
+    "exercise": "Select Betelgeuse and Rigel and compare their colour index (B-V) in the info panel.",
+    "expected": "Betelgeuse should show a large positive B-V (red, cool, peak near the lab's 3600 K curve at 804.9 nm), Rigel a value near zero or negative (blue, hot). Pending a manual run.",
+    "mac": "brew install --cask stellarium   # cask 26.2; stellarium.org lists 26.3 (macOS 11+, universal)",
+    "windows": "Installer from https://stellarium.org/ (Windows x86_64 Qt6, Windows 10+; ARM64 build also listed)",
+    "licence": "GPL-2.0-or-later (OSI: yes; licence file not re-read 2026-10-29)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "seeAlso": [
+   "simulation L100 #6 Is the model right? Verification vs validation: here the numerical peak is verified against Wien's law and the integral against sigma T^4."
+  ],
+  "inRealSystems": "Photometric pipelines estimate temperatures from colours; spectroscopic surveys measure radial velocities and redshifts from line shifts.",
+  "useWhen": "Use the blackbody as a first model of a star's continuum; use v = cz only for z below ~0.01.",
+  "caution": "Stars are not perfect blackbodies (absorption lines, atmospheres); cosmological redshift is not a simple Doppler velocity at large z.",
+  "checkpoint": "PASS: Wien and numerical peaks agree; all tests pass.",
+  "checkYourself": [
+   {
+    "q": "A star peaks at 1000 nm. Its temperature?",
+    "a": "b / lambda = 2898 K."
+   },
+   {
+    "q": "Line observed at a shorter wavelength than rest. Moving how?",
+    "a": "Towards us (blueshift, negative velocity)."
+   }
+  ],
+  "sources": [
+   {
+    "title": "NIST CODATA: Wien wavelength displacement law constant",
+    "url": "https://physics.nist.gov/cgi-bin/cuu/Value?bwien"
+   },
+   {
+    "title": "PyPI: astropy 8.0.2 (BSD-3-Clause, Python >= 3.11, macOS arm64 + Windows wheels)",
+    "url": "https://pypi.org/project/astropy/"
+   }
+  ],
+  "next": "L200 #9 Aperture photometry: background annulus and signal-to-noise (measuring that light in an image)",
+  "validation": {
+   "status": "validated-local",
+   "how": "light.py, try_it.py and unittests (Ran 8 tests ... OK (skipped=1)) ran on Python 3.12.15 + numpy 2.5.3; outputs pasted. Temperatures for Betelgeuse-like and Rigel-like stars are illustrative round values; the Sun's 5772 K is the IAU nominal value (resolution not re-fetched).",
+   "pendingCi": [
+    "labs/L100/06-light-spectra/light_astropy.py",
+    "test_light.py: TestAstropyEquivalent"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/06-light-spectra.md",
+  "conceptSummary": "Planck's law gives a blackbody's spectrum; its peak follows Wien's law and its area sigma T^4. A shifted line gives a velocity, v = c dlambda/lambda for small shifts and the relativistic formula beyond."
+ }
+]

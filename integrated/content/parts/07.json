@@ -1,0 +1,657 @@
+{
+ "id": "l600-quantum-job-service",
+ "number": 7,
+ "level": "L600",
+ "title": "A reliable quantum-job service on unreliable backends",
+ "phase": "Integrate it",
+ "category": "Integrated project",
+ "combines": [
+  "quantum-computing",
+  "distributed-systems",
+  "application-architecture"
+ ],
+ "description": "A job service that canonicalises OpenQASM circuits, caches results by canonical hash + backend + calibration version, schedules across three simulated noisy backends, survives retries, lease expiries, an outage and recalibrations, and returns exact shot totals with error bars.",
+ "outcome": "You can find and guard the seams where quantum results, at-least-once execution and service architecture meet: exact shot accounting under duplicate execution, a cache key that respects circuit equivalence and calibration versions, and a result contract that always carries uncertainty.",
+ "environment": "Mac mini or Windows 11; Python 3.12 venv; numpy 2.5.3; stdlib otherwise. Reuses labs from quantum-computing (L100 #5, L300 #12-13, L400 #17, _shared/qsim), distributed-systems (L200 #7) and application-architecture (L300 #13, #15, L400 #21) through _kb.py. Discrete-event simulation on a fake clock. SDK path (pending CI): a Qiskit Aer backend behind the same Backend interface - not built.",
+ "estimatedTime": "4-6 hours",
+ "overview": [
+  "Submit -> canonicalise -> versioned cache -> scheduler -> per-backend queues behind bulkheads and breakers -> leased, fenced chunk attempts -> result with error bars.",
+  "The interesting bugs are at the seams: a redelivered chunk inflates N, two texts of one circuit miss the cache, a recalibration stales cached results, a result without uncertainty misleads."
+ ],
+ "prerequisites": [
+  "quantum-computing L400 #17 (orchestrator, backend adapter) and L300 #12-13 (noise, readout mitigation)",
+  "distributed-systems L200 #7 (leases, fencing tokens), L200 #8 (at-least-once), L100 #5 (idempotency keys), L200 #10 (cache invalidation)",
+  "application-architecture L300 #13 (circuit breaker, bulkhead), L300 #15 (percentiles), L400 #21 (Little's law, headroom)"
+ ],
+ "buildsOn": [
+  {
+   "topic": "quantum-computing",
+   "lesson": 5,
+   "title": "Portable circuits with OpenQASM",
+   "uses": "crosscheck_qasm_numpy.parse as the canonicaliser's front end (OpenQASM 2/3 subset)"
+  },
+  {
+   "topic": "quantum-computing",
+   "lesson": 12,
+   "title": "Noise models: how Bell and GHZ results degrade",
+   "uses": "noise_lab.noisy_steps + qsim.density: each backend's noise model and exact noisy distribution"
+  },
+  {
+   "topic": "quantum-computing",
+   "lesson": 13,
+   "title": "Error mitigation: readout correction and zero-noise extrapolation",
+   "uses": "mitigation_lab.mitigate: readout-error mitigation with the calibration version's assignment matrix"
+  },
+  {
+   "topic": "quantum-computing",
+   "lesson": 17,
+   "title": "Hybrid quantum-classical architecture: orchestrator, job queue and backend adapter",
+   "uses": "FakeClock, TransientBackendError and the 'seed per circuit, not per attempt' retry rule"
+  },
+  {
+   "topic": "distributed-systems",
+   "lesson": 7,
+   "title": "Leader election with leases and fencing tokens",
+   "uses": "election.FencedStorage as the per-chunk result slot; one growing token counter"
+  },
+  {
+   "topic": "distributed-systems",
+   "lesson": 5,
+   "title": "Idempotency keys: exactly-once effect over at-least-once delivery",
+   "uses": "job_id as idempotency key with a payload fingerprint: replay or conflict (pattern, re-implemented in-process)"
+  },
+  {
+   "topic": "application-architecture",
+   "lesson": 13,
+   "title": "Resilience patterns: timeouts, circuit breaker, bulkhead, fallback",
+   "uses": "resilience.CircuitBreaker per backend (fake clock injected); bulkhead as per-backend slots"
+  },
+  {
+   "topic": "application-architecture",
+   "lesson": 21,
+   "title": "Cost and capacity planning: Little's law, benchmarks, headroom, cost per request",
+   "uses": "capacity.littles_law and the headroom rule (scheduler targets half the p95 budget)"
+  }
+ ],
+ "designBrief": {
+  "context": "Clients submit small OpenQASM circuits (2-4 qubits) with shots, a seed and a minimum estimated fidelity. Three backends differ: fast-noisy (4 slots, 1 s/chunk), slow-clean (2 slots, 3 s/chunk, 15% of chunks 5x slower) and flaky-mid (3 slots, 25% start rejections, a 40 s outage). Two backends recalibrate during the run. Clients retry submissions.",
+  "constraints": [
+   "shots returned == shots requested for 100% of jobs under injected failures",
+   "a cache hit never crosses a calibration version (0 crossings)",
+   "p95 queue time <= 30 s in the seeded 240-job load test (0.8 jobs/s)",
+   "every result carries per-outcome standard errors and its backend + calibration version",
+   "no job lands below its fidelity floor when a backend meets it"
+  ],
+  "question": "How must chunk attempts, the cache key and the scheduler be designed so that duplicates, drift and outages never change what a client receives?"
+ },
+ "architecture": {
+  "diagram": "labs/L600/07-quantum-job-service/architecture.mmd",
+  "summary": "jobservice.JobService is a discrete-event simulation on the quantum topic's FakeClock. submit() fingerprints the request (idempotency key), canonicalises the QASM (canon.py: L100 #5 reader, cancel adjacent self-inverse pairs, sorted ASAP moments) and looks up the result cache keyed on canonical hash + backend + calibration version + shots + seed. On a miss, pick() applies the fidelity floor, then a 15 s wait target, then the best estimated fidelity, and the job's 1000-shot chunks join that backend's queue. dispatch() honours the bulkhead (slots) and the backend's CircuitBreaker; each attempt gets a lease (10 s) and a fencing token. finish() executes the chunk on the L300 #12 noise model and commits it to the ledger: a FencedStorage slot per chunk, one calibration version per job (a newer version restarts the job). result() builds counts, probabilities with standard errors, and readout-mitigated values with propagated errors."
+ },
+ "seams": [
+  {
+   "between": "distributed-systems ↔ quantum-computing",
+   "contract": "a chunk contributes exactly its shots once, however many attempts ran; attempts of one chunk are seeded identically",
+   "risk": "a lease expires on a slow backend, the chunk is redelivered, both attempts report and merged counts exceed the requested shots (4000 of 2000) with error bars that are too narrow",
+   "test": "labs/L600/07-quantum-job-service/tests/test_seams.py::RetriesShotAccounting"
+  },
+  {
+   "between": "quantum-computing ↔ application-architecture",
+   "contract": "equivalent circuit texts map to one canonical hash; every rewrite keeps the unitary; inequivalent circuits never share a key",
+   "risk": "a raw-text key loses 38 of 108 hits; an over-eager canonicaliser would serve another circuit's result",
+   "test": "labs/L600/07-quantum-job-service/tests/test_seams.py::CanonicalisationCacheKey"
+  },
+  {
+   "between": "quantum-computing ↔ application-architecture",
+   "contract": "every result has shots == requested, per-outcome stderr, mitigated values with propagated stderr, backend and calibration version",
+   "risk": "a bare count is over-read; mitigated values look exact but have larger variance (0.008486 vs 0.007898 for P(00))",
+   "test": "labs/L600/07-quantum-job-service/tests/test_seams.py::NoiseResultContract"
+  },
+  {
+   "between": "quantum-computing ↔ distributed-systems",
+   "contract": "the calibration version is part of the cache key and of each chunk commit; one result = one calibration",
+   "risk": "a versionless key serves 28 hits measured and mitigated under a superseded calibration; a job straddling a recalibration mixes two devices",
+   "test": "labs/L600/07-quantum-job-service/tests/test_seams.py::CalibrationDriftCache"
+  }
+ ],
+ "failureLab": {
+  "inject": "python run_project.py --inject lease-expiry: the shipped ledger.py merges every chunk report. Seeded slow chunks (15 s) outlive the 10 s lease, so redelivered attempts run in parallel with the originals - a fault that exists only because at-least-once execution meets shot statistics.",
+  "symptom": "The 2-chunk failure-lab job returns 4000 of 2000 shots; in the load test 14 of 240 jobs return 1000 extra shots (604,000 vs 590,000), 14 contract violations, and the scorecard drops to 3/5 milestones, 2/4 seams, 2/3 fitness.",
+  "diagnose": "The commit log shows two accepted commits per chunk with different tokens ([0, 3] and [0, 1]): the lease-expired attempt still reported. Shots per job = sum over commits, not over chunks.",
+  "fix": "solution/ledger.py: each chunk slot is distributed-systems L200 #7 FencedStorage - writes replace, a lower token is rejected ('REJECTED (token 1 < 3)'); chunk seeds depend on (seed, chunk, version, circuit, backend), never on the attempt.",
+  "test": "labs/L600/07-quantum-job-service/tests/test_failure_lab.py (fault reproduces; fix gives exact totals 3 times) and labs/L600/07-quantum-job-service/tests/test_build_task.py (BUILD_TARGET=mine)"
+ },
+ "buildTask": {
+  "task": "Copy ledger.py to my_ledger.py and make Ledger.new_slot / write / read idempotent and fenced, so a chunk holds exactly one attempt's counts and a stale token cannot overwrite a newer one.",
+  "acceptance": "BUILD_TARGET=mine python -m unittest discover -s tests -p \"test_build_task.py\" -v -> 4/4 pass (an unmodified copy fails 3 of 4); then python run_project.py with your ledger reports 240/240 exact.",
+  "solution": "labs/L600/07-quantum-job-service/solution/ledger.py"
+ },
+ "milestones": [
+  {
+   "title": "M1 Intake: canonicalise + idempotent submit",
+   "deliverable": "canon.py (one hash per family of 4, unitary preserved); job_id replay vs conflict (29 replays, 1 conflict)",
+   "test": "labs/L600/07-quantum-job-service/tests/test_milestones.py::M1Intake"
+  },
+  {
+   "title": "M2 Noisy backends + scheduler",
+   "deliverable": "backends.py on the L300 #12 noise model (sampled TVD 0.0088 to exact); pick(): floor -> wait target -> fidelity",
+   "test": "labs/L600/07-quantum-job-service/tests/test_milestones.py::M2BackendsAndScheduler"
+  },
+  {
+   "title": "M3 Reliable execution",
+   "deliverable": "chunked queues, leases + fencing tokens, retries with backoff, CircuitBreaker per backend, bulkhead slots; 240/240 complete",
+   "test": "labs/L600/07-quantum-job-service/tests/test_milestones.py::M3ReliableExecution"
+  },
+  {
+   "title": "M4 Results with error bars",
+   "deliverable": "results.py: counts, probs +- stderr, mitigated +- propagated stderr, contract check (0 violations)",
+   "test": "labs/L600/07-quantum-job-service/tests/test_milestones.py::M4ResultsWithErrorBars"
+  },
+  {
+   "title": "M5 Versioned result cache",
+   "deliverable": "cachekeys.cache_key; 108 hits, 46 from textual variants, 0 version crossings",
+   "test": "labs/L600/07-quantum-job-service/tests/test_milestones.py::M5VersionedCache"
+  }
+ ],
+ "rubric": [
+  {
+   "criterion": "correctness",
+   "measure": "shots returned vs requested across 240 jobs",
+   "pass": "590,000 == 590,000; 240/240 exact"
+  },
+  {
+   "criterion": "reliability",
+   "measure": "jobs completed with 15 lease expiries, 4 breaker openings, a 40 s outage",
+   "pass": "240/240"
+  },
+  {
+   "criterion": "result honesty",
+   "measure": "reported 95% intervals covering the exact noisy probability",
+   "pass": ">= 0.90 (observed 0.9362)"
+  },
+  {
+   "criterion": "cache safety",
+   "measure": "cache hits across calibration versions",
+   "pass": "0 (of 108 hits)"
+  },
+  {
+   "criterion": "latency",
+   "measure": "p95 queue time",
+   "pass": "<= 30 s (observed 18.38 s)"
+  },
+  {
+   "criterion": "quality of service",
+   "measure": "jobs below their fidelity floor",
+   "pass": "0"
+  }
+ ],
+ "fitnessFunctions": [
+  {
+   "what": "Shots returned == shots requested for 100% of jobs under injected failures (ADR 0001)",
+   "test": "labs/L600/07-quantum-job-service/tests/test_fitness.py::Fitness::test_exact_shots_for_every_job_under_injected_failures",
+   "threshold": "240/240"
+  },
+  {
+   "what": "A cache hit never crosses calibration versions (ADR 0003)",
+   "test": "labs/L600/07-quantum-job-service/tests/test_fitness.py::Fitness::test_cache_hit_never_crosses_calibration_versions",
+   "threshold": "0 crossings"
+  },
+  {
+   "what": "p95 queue time under budget in the simulated load test (ADR 0002)",
+   "test": "labs/L600/07-quantum-job-service/tests/test_fitness.py::Fitness::test_p95_queue_time_under_budget",
+   "threshold": "p95 <= 30 s"
+  }
+ ],
+ "decisionRecords": [
+  "labs/L600/07-quantum-job-service/decisions/0001-fenced-idempotent-chunk-attempts.md",
+  "labs/L600/07-quantum-job-service/decisions/0002-scheduler-fidelity-floor-then-wait-target.md",
+  "labs/L600/07-quantum-job-service/decisions/0003-cache-key-canonical-hash-and-calibration-version.md"
+ ],
+ "glossary": [
+  {
+   "term": "chunk attempt",
+   "meaning": "One execution of a 1000-shot slice of a job on one backend; a chunk may have several attempts."
+  },
+  {
+   "term": "lease",
+   "meaning": "Time-limited right to run an attempt (10 s); when it expires the chunk is redelivered (at-least-once)."
+  },
+  {
+   "term": "fencing token",
+   "meaning": "Number from one counter that only grows, attached to each attempt; the result slot rejects a write with a lower token than it has seen."
+  },
+  {
+   "term": "canonical form",
+   "meaning": "One text for all equivalent spellings of a circuit: indices instead of register names, cancelled self-inverse pairs, gates sorted inside ASAP moments."
+  },
+  {
+   "term": "calibration version",
+   "meaning": "Counter that increases each time a backend publishes new noise parameters; part of the cache key and of every chunk commit."
+  },
+  {
+   "term": "fidelity floor",
+   "meaning": "Client's minimum estimated fidelity; the scheduler never picks a backend below it when one meets it."
+  },
+  {
+   "term": "bulkhead",
+   "meaning": "Per-backend limit on chunks in flight (slots), so one slow backend cannot hold every worker."
+  },
+  {
+   "term": "standard error",
+   "meaning": "sqrt(p(1-p)/N) for a shot-based probability; mitigated values use the propagated covariance A^-1 Cov A^-T."
+  }
+ ],
+ "steps": [
+  {
+   "title": "Set up",
+   "detail": "Create a Python 3.12 venv with numpy 2.5.3 and run everything from the lab folder.",
+   "expected": "python -c \"import numpy; print(numpy.__version__)\" prints 2.5.3.",
+   "ifNot": "See shared/WORKSTATION-SETUP.md for the Python install per OS.",
+   "mac": "cd integrated/labs/L600/07-quantum-job-service && python3.12 -m venv .venv && source .venv/bin/activate && pip install numpy==2.5.3",
+   "windows": "cd integrated\\labs\\L600\\07-quantum-job-service; py -3.12 -m venv .venv; .venv\\Scripts\\Activate.ps1; pip install numpy==2.5.3"
+  },
+  {
+   "title": "Run the scorecard",
+   "detail": "python run_project.py runs the 240-job load test plus the exact scenarios and prints one JSON line per milestone, seam and fitness function.",
+   "expected": "{\"scorecard\": {\"milestone\": \"5/5\", \"seam\": \"4/4\", \"fitness\": \"3/3\"}, \"fault\": null, \"all_pass\": true}; exit code 0.",
+   "ifNot": "ModuleNotFoundError: _kb.py loads the other topics' labs by relative path - keep the kb folder layout.",
+   "mac": "python run_project.py; echo $?",
+   "windows": "python run_project.py; $LASTEXITCODE"
+  },
+  {
+   "title": "Reproduce the failure lab",
+   "detail": "Swap in the shipped ledger that merges every chunk report.",
+   "expected": "seam 'retries <-> shot accounting' fails: requested 2000, returned 4000; load_shots [604000, 590000]; fitness exact 226 of 240; exit 1.",
+   "ifNot": "If nothing fails, check that --inject lease-expiry is spelled exactly.",
+   "mac": "python run_project.py --inject lease-expiry; echo $?",
+   "windows": "python run_project.py --inject lease-expiry; $LASTEXITCODE"
+  },
+  {
+   "title": "Break the cache key two ways",
+   "detail": "A key without the calibration version, then a key from the raw QASM text.",
+   "expected": "stale-cache: cache_crossings 28 (of 128 hits); text-key: cache_hits 70, variant_hits 0.",
+   "ifNot": "Compare cachekeys.FAULT_KEYS with cache_key.",
+   "mac": "python run_project.py --inject stale-cache; python run_project.py --inject text-key",
+   "windows": "python run_project.py --inject stale-cache; python run_project.py --inject text-key"
+  },
+  {
+   "title": "Read the exact scenarios",
+   "detail": "python scenarios.py runs single jobs: lease expiry (fixed and shipped), recalibration mid-job, partial retries.",
+   "expected": "fixed: commits [0,3] accepted, [0,1] 'REJECTED (token 1 < 3)'; drift_mid_job: restarts 1, calibration_version 2, returned 4000.",
+   "ifNot": "Different tokens mean slow_starts or slots in scenarios.py were changed.",
+   "mac": "python scenarios.py",
+   "windows": "python scenarios.py"
+  },
+  {
+   "title": "Do the build task",
+   "detail": "Copy ledger.py to my_ledger.py, fence it, and run the build-task tests against your file.",
+   "expected": "Unmodified copy: 3 failures of 4; fenced: Ran 4 tests ... OK.",
+   "ifNot": "test_stale_token_rejected failing means a lower token still overwrites or merges.",
+   "mac": "cp ledger.py my_ledger.py && BUILD_TARGET=mine python -m unittest discover -s tests -p \"test_build_task.py\" -v",
+   "windows": "Copy-Item ledger.py my_ledger.py; $env:BUILD_TARGET = \"mine\"; python -m unittest discover -s tests -p \"test_build_task.py\" -v"
+  },
+  {
+   "title": "Run all tests",
+   "detail": "Milestones, seams, fitness functions, failure lab, build task and tryIt checks.",
+   "expected": "Ran 35 tests ... OK (identical on 3 runs: fake clock, seeded).",
+   "ifNot": "Unset BUILD_TARGET first; it switches the ledger for every test.",
+   "mac": "unset BUILD_TARGET; python -m unittest discover -s tests -v",
+   "windows": "Remove-Item Env:BUILD_TARGET -ErrorAction SilentlyContinue; python -m unittest discover -s tests -v"
+  }
+ ],
+ "code": "\"\"\"L600 #07 - a reliable quantum-job service on unreliable backends (discrete-event simulation on a fake clock).\n\nsubmit -> idempotency check -> canonicalise -> cache -> scheduler picks a backend -> chunks queue per backend\ndispatch: bulkhead (slots) + circuit breaker; each chunk attempt gets a lease and a fencing token\nfinish:  ledger.commit (fenced, versioned) -> job complete -> result with error bars, cached by version\nFaults: ledger 'lease-expiry' (shipped unfixed ledger), cache key 'stale-cache' / 'text-key' (see cachekeys.py).\n\"\"\"\nimport hashlib\nimport heapq\nfrom collections import deque\n\nimport results\nfrom _kb import q17, resilience\nfrom backends import TransientBackendError\nfrom cachekeys import cache_key\nfrom canon import canonicalise, circuit_hash\n\nLEASE_S, CHUNK, BACKOFF_S, MAX_ATTEMPTS = 10.0, 1000, 0.5, 12\nSCHED_WAIT_S = 15.0                    # scheduler's wait target: half the 30 s p95 budget (headroom)\n\n\nclass Conflict(ValueError):\n    \"\"\"Same job id, different request body (HTTP 422 in an API).\"\"\"\n\n\nclass JobService:\n    def __init__(self, backends, ledger, key=cache_key, policy=\"floor+budget\"):\n        self.clock, self.ledger, self.key, self.policy = q17.FakeClock(), ledger, key, policy\n        self.backends = {b.name: b for b in backends}\n        self.queues, self.busy = {n: deque() for n in self.backends}, dict.fromkeys(self.backends, 0)\n        self.retrying, self.max_busy = dict.fromkeys(self.backends, 0), dict.fromkeys(self.backends, 0)\n        self.breakers = {n: resilience.CircuitBreaker(n, window=10, min_calls=5, failure_rate=0.5, open_s=20.0,\n                                                      clock=lambda: self.clock.now, log=lambda r: self.log.append({\"t\": self.clock.now, **r}))\n                         for n in self.backends}\n        self.jobs, self.cache, self.events, self.seq, self.log = {}, {}, [], 0, []\n\n    def at(self, t, fn, *args):\n        self.seq += 1\n        heapq.heappush(self.events, (t, self.seq, fn, args))\n\n    def run(self):\n        while self.events:\n            t, _, fn, args = heapq.heappop(self.events)\n            self.clock.now = max(self.clock.now, t)\n            fn(*args)\n\n    def healthy(self, name):\n        br = self.breakers[name]                              # open breakers leave the pool until open_s has passed\n        return br.state != \"open\" or self.clock.now - br.opened_at >= br.open_s\n\n    def wait_estimate(self, name):\n        b = self.backends[name]\n        return (len(self.queues[name]) + self.busy[name] + self.retrying[name]) / b.slots * b.expected_latency()\n\n    def pick(self, n, ops, floor):\n        \"\"\"Fidelity floor first, then the queue-time target; best estimated fidelity among what is left.\"\"\"\n        names = [m for m in self.backends if self.healthy(m)] or list(self.backends)\n        fid = {m: self.backends[m].estimated_fidelity(n, ops) for m in names}\n        if self.policy in (\"best-fidelity\", \"fastest\"):        # the two rejected options (ADR 0002)\n            return max(names, key=fid.get) if self.policy == \"best-fidelity\" else min(names, key=self.wait_estimate)\n        ok = [m for m in names if fid[m] >= floor]\n        fast = [m for m in ok if self.wait_estimate(m) <= SCHED_WAIT_S]\n        if fast:\n            return max(fast, key=fid.get)\n        return min(ok, key=self.wait_estimate) if ok else max(names, key=fid.get)\n\n    def submit(self, req):\n        body = repr(sorted(req.items())).encode(\"utf-8\")\n        fp, jid = hashlib.sha256(body).hexdigest(), req[\"job_id\"]\n        if jid in self.jobs:                                   # client retry: replay, never a second job\n            if self.jobs[jid][\"fp\"] != fp:\n                raise Conflict(f\"job id {jid} already used with a different request\")\n            return self.jobs[jid]\n        n, ops, _ = canonicalise(req[\"qasm\"])\n        chash, shots, seed = circuit_hash(req[\"qasm\"]), req[\"shots\"], req[\"seed\"]\n        job = {\"fp\": fp, \"req\": req, \"n\": n, \"ops\": ops, \"submitted\": self.clock.now, \"started\": None, \"done\": None,\n               \"attempts\": 0, \"cache_hit\": None}\n        self.jobs[jid] = job\n        for name in sorted(self.backends, key=lambda m: -self.backends[m].estimated_fidelity(n, ops)):\n            b = self.backends[name]\n            hit = self.cache.get(self.key(req[\"qasm\"], chash, b, shots, seed))\n            if hit and b.estimated_fidelity(n, ops) >= req[\"min_fidelity\"]:\n                job.update(backend=name, started=self.clock.now, done=self.clock.now, source=hit[\"job_id\"],\n                           cache_hit={\"cached_version\": hit[\"version\"], \"current_version\": b.version})\n                return job\n        job[\"backend\"] = name = self.pick(n, ops, req[\"min_fidelity\"])\n        job[\"cache_key\"] = self.key(req[\"qasm\"], chash, self.backends[name], shots, seed)\n        chunks = -(-shots // CHUNK)\n        self.ledger.open(jid, chunks)\n        self.queues[name].extend((jid, c, 0) for c in range(chunks))\n        self.dispatch(name)\n        return job\n\n    def dispatch(self, name):\n        b, q = self.backends[name], self.queues[name]\n        while q and self.busy[name] < b.slots:                 # bulkhead: never more than `slots` in flight\n            jid, c, tries = q.popleft()\n            if self.ledger.chunk_done(jid, c) or (jid, c) in self.ledger.leases:\n                continue\n            try:\n                run_s = self.breakers[name].call(b.start, self.clock.now)\n            except (TransientBackendError, resilience.CircuitOpen) as e:\n                self.jobs[jid][\"attempts\"] += 1\n                delay = self.breakers[name].open_s if isinstance(e, resilience.CircuitOpen) else BACKOFF_S * 2 ** min(tries, 5)\n                if tries + 1 >= MAX_ATTEMPTS:\n                    raise RuntimeError(f\"{jid} chunk {c}: {MAX_ATTEMPTS} attempts failed\") from e\n                self.retrying[name] += 1\n                self.at(self.clock.now + delay, self.requeue, name, (jid, c, tries + 1), False, True)\n                continue\n            token, job = self.ledger.grant(jid, c), self.jobs[jid]\n            job[\"attempts\"] += 1\n            job[\"started\"] = job[\"started\"] if job[\"started\"] is not None else self.clock.now\n            self.busy[name] += 1\n            self.max_busy[name] = max(self.max_busy[name], self.busy[name])\n            self.at(self.clock.now + run_s, self.finish, name, jid, c, token, b.version)\n            self.at(self.clock.now + LEASE_S, self.expire, name, jid, c, token)\n\n    def requeue(self, name, item, front=False, backoff=False):\n        self.retrying[name] -= backoff                         # a chunk waiting out a backoff counted as load\n        self.queues[name].appendleft(item) if front else self.queues[name].append(item)\n        self.dispatch(name)\n\n    def expire(self, name, jid, c, token):\n        \"\"\"Lease ran out before the attempt reported: assume it is lost and redeliver (at-least-once).\"\"\"\n        if self.ledger.holds(jid, c, token) and not self.ledger.chunk_done(jid, c):\n            self.ledger.release(jid, c)\n            self.log.append({\"t\": self.clock.now, \"evt\": \"lease-expired\", \"job\": jid, \"chunk\": c, \"token\": token})\n            self.requeue(name, (jid, c, 0), front=True)\n\n    def finish(self, name, jid, c, token, version):\n        self.busy[name] -= 1\n        job, b = self.jobs[jid], self.backends[name]\n        counts = b.execute(job[\"n\"], job[\"ops\"], version, min(CHUNK, job[\"req\"][\"shots\"] - c * CHUNK),\n                           job[\"req\"][\"seed\"], c)\n        status, restarted = self.ledger.commit(jid, c, token, version, counts)\n        self.log.append({\"t\": self.clock.now, \"evt\": \"commit\", \"job\": jid, \"chunk\": c, \"token\": token, \"status\": status,\n                         \"restarted\": restarted})\n        if self.ledger.holds(jid, c, token):\n            self.ledger.release(jid, c)\n        for k in range(self.ledger.jobs[jid][\"chunks\"]):        # rejected or restarted chunks go back to the queue\n            if not self.ledger.chunk_done(jid, k) and (jid, k) not in self.ledger.leases and (restarted or k == c):\n                self.queues[name].append((jid, k, 0))\n        if job[\"done\"] is None and self.ledger.complete(jid):\n            job[\"done\"] = self.clock.now\n            self.cache[job[\"cache_key\"]] = {\"job_id\": jid, \"version\": self.ledger.jobs[jid][\"version\"]}\n        self.dispatch(name)\n\n    def result(self, jid):\n        job = self.jobs[jid]\n        src = job.get(\"source\", jid)                            # a cache hit reads the job that produced the result\n        v = self.ledger.jobs[src][\"version\"]\n        return results.build(jid, self.ledger.counts(src), job[\"n\"], self.backends[job[\"backend\"]].readout(job[\"n\"], v),\n                             job[\"backend\"], v, cache_hit=job[\"cache_hit\"] is not None)\n",
+ "codeLanguage": "python",
+ "codeWalkthrough": [
+  {
+   "title": "Events on a fake clock",
+   "detail": "at() pushes (time, seq, fn, args) on a heap and run() pops them in order; the clock is the quantum L400 #17 FakeClock, so a 15 s slow chunk costs no real time and every run is identical."
+  },
+  {
+   "title": "submit(): idempotency, canonical hash, cache",
+   "detail": "The request fingerprint decides replay vs Conflict for a known job_id. canonicalise() feeds circuit_hash(); the cache is checked on every backend that meets the floor, best fidelity first, with the key from cachekeys (hash, backend, calibration version, shots, seed)."
+  },
+  {
+   "title": "pick(): floor, wait target, fidelity",
+   "detail": "Healthy backends (breaker not open, or open longer than open_s) that meet the floor and whose wait estimate ((queued + running + backing-off chunks) / slots x expected latency) is under 15 s; the best estimated fidelity among them. The two rejected policies stay for try_it."
+  },
+  {
+   "title": "dispatch(): bulkhead, breaker, lease",
+   "detail": "At most `slots` chunks in flight. The start goes through CircuitBreaker.call; a TransientBackendError backs off exponentially, CircuitOpen waits open_s. A started attempt gets a fencing token and two events: finish at its run time, expire at LEASE_S."
+  },
+  {
+   "title": "expire(): at-least-once redelivery",
+   "detail": "If the attempt still holds the lease and the chunk has no result, the lease is released and the chunk goes to the front of the queue. The slow attempt keeps running - this is where duplicates come from."
+  },
+  {
+   "title": "finish(): fenced, versioned commit",
+   "detail": "The chunk runs on the backend's noise model with a seed from (seed, chunk, version, circuit, backend). ledger.commit() rejects a stale token or an older calibration, restarts the job on a newer one, and requeues anything not done; the first complete job fills the cache."
+  },
+  {
+   "title": "result(): uncertainty travels with the counts",
+   "detail": "results.build() returns counts, probabilities with standard errors, readout-mitigated values (L300 #13) with propagated errors, the backend and the calibration version; a cache hit reads the producing job's ledger."
+  }
+ ],
+ "projectFiles": [
+  {
+   "path": "labs/L600/07-quantum-job-service/jobservice.py",
+   "purpose": "main: submit, schedule, dispatch, lease expiry, commit, result"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/canon.py",
+   "purpose": "canonical form + hash (reuses quantum L100 #5 reader)"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/backends.py",
+   "purpose": "three simulated backends on the L300 #12 noise model; calibration versions"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/jobstore.py",
+   "purpose": "leases, fencing tokens, calibration epochs"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/ledger.py",
+   "purpose": "shipped, unfixed ledger (failure lab, build-task start)"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/solution/ledger.py",
+   "purpose": "reference: FencedStorage slot per chunk (DS L200 #7)"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/ledger_loader.py",
+   "purpose": "BUILD_TARGET switch"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/cachekeys.py",
+   "purpose": "cache key + the two faulty keys"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/results.py",
+   "purpose": "result contract with error bars and mitigation"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/loadtest.py",
+   "purpose": "seeded 240-job load test with outage, slow chunks, recalibrations"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/scenarios.py",
+   "purpose": "exact single-job scenarios (lease expiry, drift mid-job, partial retry)"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/run_project.py",
+   "purpose": "scorecard JSON lines; --inject <fault>"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/_kb.py",
+   "purpose": "loads the reused labs by path"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/tests/",
+   "purpose": "milestones, seams, fitness, failure lab, build task, tryIt"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/try_it/try_it.py",
+   "purpose": "lease length and scheduler policy experiments"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/decisions/",
+   "purpose": "ADRs 0001-0003 (Nygard)"
+  },
+  {
+   "path": "labs/L600/07-quantum-job-service/architecture.mmd",
+   "purpose": "Mermaid architecture diagram"
+  }
+ ],
+ "expectedResults": [
+  "Scorecard 5/5 milestones, 4/4 seams, 3/3 fitness; 240/240 jobs exact (590,000 shots); p95 queue 18.38 s; 108 cache hits, 0 version crossings",
+  "--inject lease-expiry: 2000-shot job returns 4000; load test 604,000 of 590,000 shots; 14 jobs over",
+  "--inject stale-cache: 28 of 128 hits cross a calibration version; --inject text-key: hits drop to 70, variant hits 0",
+  "Mitigation: TVD to the pre-readout distribution 0.0653 raw -> 0.0098 mitigated; stderr of P(00) 0.007898 -> 0.008486"
+ ],
+ "testCases": [
+  {
+   "action": "Submit the same job_id twice with the same body, then with shots changed",
+   "expected": "Same job object returned; then Conflict ('already used with a different request'); one job stored"
+  },
+  {
+   "action": "Lease-expiry scenario with the reference ledger",
+   "expected": "returned 2000; commits [0,3] accepted, [0,1] REJECTED (token 1 < 3)"
+  },
+  {
+   "action": "Recalibrate slow-clean at t = 1 s during a 4-chunk job",
+   "expected": "1 restart; result calibration_version 2; 4000 shots"
+  },
+  {
+   "action": "Canonicalise 'h q[1]; cx q[1], q[0]' vs 'h q[0]; cx q[0], q[1]' and a 3-qubit copy",
+   "expected": "three different hashes"
+  }
+ ],
+ "tryIt": [
+  {
+   "task": "Raise the lease from 10 s to 20 s (try_it.lease(20.0)).",
+   "predict": "What happens to lease expiries, attempts and p95, and what do you give up?",
+   "expected": "Expiries 15 -> 0, rejected commits 2 -> 0, attempts 405 -> 400, p95 18.38 -> 15.55 s, still 240 exact. The cost is detection time: a crashed worker's chunk would wait 20 s before redelivery."
+  },
+  {
+   "task": "Compare scheduler policies (try_it.policy): floor+budget, best-fidelity, fastest.",
+   "predict": "Which policy breaks which constraint?",
+   "expected": "best-fidelity sends all 240 jobs to slow-clean: p95 1163.38 s (mean estimated fidelity 0.9078); fastest: p95 0.0 s but 46 jobs below their floor and mean estimated fidelity 0.8522; floor+budget: 18.38 s, 0 below floor, 0.8852."
+  }
+ ],
+ "troubleshooting": [
+  {
+   "symptom": "Shots returned exceed shots requested for a few jobs",
+   "action": "Look for two accepted commits for one chunk in svc.log; the ledger is merging instead of fencing."
+  },
+  {
+   "symptom": "Results change between runs of the same request",
+   "action": "A seed depends on the attempt or on wall-clock time; seed by (seed, chunk, version, circuit, backend)."
+  },
+  {
+   "symptom": "Cache hit rate collapses after a recalibration",
+   "action": "Expected: the version is in the key. If hits do not drop, the key is missing the version (stale-cache)."
+  },
+  {
+   "symptom": "p95 queue time explodes",
+   "action": "Check per_backend: a policy that ignores waits piles jobs on slow-clean (best-fidelity: 1163.38 s)."
+  }
+ ],
+ "learningTools": [
+  {
+   "name": "OpenQASM 3 spec + openqasm3 reference parser",
+   "role": "CHECK",
+   "exercise": "Parse every OpenQASM 3 variant in loadtest.CIRCUITS with openqasm3.parse and compare its gate list with your canonical form; then write a variant the lab reader rejects (e.g. rz) and see what each parser does.",
+   "expected": "Pending a manual run (parser not installed in the authoring sandbox). The OpenQASM 3 variants should parse to the same gate sequence modulo register names.",
+   "mac": "pip install \"openqasm3[parser]\"",
+   "windows": "pip install \"openqasm3[parser]\"",
+   "licence": "Apache-2.0 (OSI: yes)",
+   "url": "https://github.com/openqasm/openqasm"
+  },
+  {
+   "name": "RabbitMQ + management UI",
+   "role": "INSPECT",
+   "exercise": "Publish one message per chunk, consume with manual ack and a handler slower than the consumer timeout, and watch Unacked -> Ready redelivery in the UI; carry the fencing token in a header and reject stale ones in your consumer.",
+   "expected": "Pending a manual run. A redelivered message should carry the redelivered flag; without the token check the consumer counts it twice, as the lease-expiry fault does.",
+   "mac": "brew install rabbitmq; rabbitmq-plugins enable rabbitmq_management; http://localhost:15672",
+   "windows": "rabbitmq-server-4.4.0.exe (Erlang requirement not checked)",
+   "licence": "MPL-2.0 (OSI: yes)",
+   "url": "https://www.rabbitmq.com/docs/management"
+  },
+  {
+   "name": "Structurizr (local)",
+   "role": "SEE",
+   "exercise": "Model the service as a C4 container view (intake, scheduler, per-backend queues, ledger, cache, backends) and attach the three ADRs from decisions/.",
+   "expected": "Pending a manual run. One container per box in architecture.mmd; the ADRs appear in the decision log.",
+   "mac": "docker run -it --rm -p 8080:8080 -v PATH:/usr/local/structurizr structurizr/structurizr local",
+   "windows": "same (Docker or Java 21+)",
+   "licence": "Apache-2.0 (open-core; 'local' is free)",
+   "url": "https://docs.structurizr.com/local"
+  }
+ ],
+ "inRealSystems": [
+  "Cloud quantum services queue jobs per device, publish calibration data with timestamps (e.g. BackendProperties.last_update_date) and retry transient failures; the shot-accounting and calibration-version seams apply to any client or broker built on them.",
+  "Message brokers deliver at least once (visibility or consumer timeouts); fencing at the result store is how duplicate work becomes harmless.",
+  "Result caches for expensive computations key on a canonical form of the input plus the version of everything the result depends on."
+ ],
+ "useWhen": "Use this shape - idempotent intake, canonical + versioned cache key, chunked attempts with leases and fencing, a result contract with uncertainty - whenever expensive, statistical jobs run on shared, drifting, failing backends. Avoid it for one-off interactive runs where a single synchronous call and no cache is simpler.",
+ "simulatorVsReal": "Backends are the numpy density-matrix simulator with illustrative noise, latency and failure values on a fake clock; recalibration is a scripted event. Real devices publish per-qubit calibration on their own schedule, have much longer queues, and need transpilation; the seams and tests stay the same. Pending CI: a Qiskit Aer backend behind the Backend interface (not built).",
+ "caution": "Fencing makes duplicates harmless only if every write path checks the token; one unchecked path reintroduces the bug. Never expose a job service or its result store beyond 127.0.0.1 without authentication, and never put credentials into circuit text or job ids (they become cache keys and logs).",
+ "checkpoint": "PASS if run_project.py prints 5/5, 4/4, 3/3 and exits 0, each --inject fault exits 1 on the lines that guard its seam, and you can explain why a lease alone does not prevent duplicate shots.",
+ "checkYourself": [
+  {
+   "q": "The lease-expired attempt and its redelivery both finish. Why do the fixed totals stay exact whichever arrives first?",
+   "a": "Both attempts of a chunk use the same seed, so their counts are identical, and the slot replaces rather than adds; a lower token arriving later is rejected."
+  },
+  {
+   "q": "Why is the calibration version in the cache key and not just a TTL?",
+   "a": "A TTL guesses when a result goes stale; the version says exactly when the device changed. Without it, 28 hits crossed a recalibration."
+  },
+  {
+   "q": "Why did best-fidelity fail the latency budget?",
+   "a": "It sent all 240 jobs to slow-clean (2 slots, about 4.9 s expected per chunk), so the queue kept growing: p95 1163.38 s."
+  },
+  {
+   "q": "Mitigation lowered the TVD from 0.0653 to 0.0098. Why must the result still report a larger standard error?",
+   "a": "The inverse assignment matrix amplifies shot noise: the stderr of P(00) grows from 0.007898 to 0.008486."
+  }
+ ],
+ "scalingLimits": [
+  "One token counter per service: several coordinators with private counters can issue equal or lower tokens for the same chunk (signal: two accepted commits for one chunk, shots_returned > shots_requested).",
+  "Dense readout mitigation is 2^n x 2^n: the matrix and its inverse grow exponentially and mitigated variance with them (signal: mitigated stderr far above raw, negative quasi-probabilities); move to tensored or subspace mitigation.",
+  "The wait estimate is a model; slow tails and outages make it optimistic (signal: max queue time 38.5 s against the 15 s target; p95 creeping toward the 30 s budget as load rises)."
+ ],
+ "sources": [
+  {
+   "title": "Gray & Cheriton (1989), Leases: An Efficient Fault-Tolerant Mechanism for Distributed File Cache Consistency, SOSP",
+   "url": "https://www.cs.cmu.edu/~15712/papers//gray89.pdf"
+  },
+  {
+   "title": "Kleppmann (2016), How to do distributed locking (fencing tokens)",
+   "url": "https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html"
+  },
+  {
+   "title": "IETF draft-ietf-httpapi-idempotency-key-header-08 (work in progress)",
+   "url": "https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/"
+  },
+  {
+   "title": "OpenQASM live specification: Types and Casting",
+   "url": "https://openqasm.com/language/types.html"
+  },
+  {
+   "title": "Bravyi et al. (2021), Mitigating measurement errors in multi-qubit experiments, PRA 103, 042605, arXiv:2006.14044",
+   "url": "https://arxiv.org/abs/2006.14044"
+  },
+  {
+   "title": "Brown, Cai, DasGupta (2001), Interval Estimation for a Binomial Proportion, Statistical Science 16(2)",
+   "url": "https://projecteuclid.org/journals/statistical-science/volume-16/issue-2/Interval-Estimation-for-a-Binomial-Proportion/10.1214/ss/1009213286.pdf"
+  },
+  {
+   "title": "qiskit-ibm-runtime BackendProperties (last_update_date, readout_error)",
+   "url": "https://eu-de.quantum.cloud.ibm.com/docs/en/api/qiskit-ibm-runtime/models-backend-properties"
+  },
+  {
+   "title": "Queue-Based Load Leveling pattern (Azure Architecture Center)",
+   "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/queue-based-load-leveling"
+  },
+  {
+   "title": "Bulkhead pattern (Azure Architecture Center)",
+   "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/bulkhead"
+  }
+ ],
+ "next": "Extend the result contract to Wilson intervals for every outcome (the lab measured Wald covering only 82.16% of outcomes with exact p < 0.01), then add lease renewal (heartbeats) and request coalescing for concurrent identical misses.",
+ "validation": {
+  "status": "validated-local",
+  "how": "Ran locally on Linux (Python 3.12.15, numpy 2.5.3, no quantum SDKs): python run_project.py -> 5/5 milestones, 4/4 seams, 3/3 fitness, exit 0; --inject lease-expiry / stale-cache / text-key -> exit 1 with the guarding lines failing; python scenarios.py and python try_it/try_it.py (outputs in README); python -m unittest discover -s tests -> 35 tests OK, 3 runs identical (fake clock, seeded). Build task: an unmodified copy of ledger.py as my_ledger.py fails 3 of 4 tests, the solution passes 4/4. research/checks_07.py recomputes every number in the lesson and question bank.",
+  "pendingCi": [
+   "macOS and Windows runs (expected: pathlib, utf-8, no POSIX-only calls, no sockets)",
+   "Qiskit Aer backend (AerSimulator + NoiseModel) behind the Backend interface - not built",
+   "learningTools: OpenQASM 3 parser, RabbitMQ, Structurizr exercises (manual)"
+  ]
+ },
+ "conceptNote": "content/concepts/L600/07-quantum-job-service.md",
+ "conceptSummary": "A quantum result is a statistic tied to one calibration; a job service delivers work at least once. Where they meet, a redelivered chunk inflates N, two texts of one circuit miss the cache, a recalibration stales cached results and a bare count hides its uncertainty. Fenced, idempotent chunk attempts, a canonical + versioned cache key, a floor-then-wait scheduler and a result contract with error bars keep 240/240 jobs exact, 0 cache hits across versions and p95 at 18.38 s.",
+ "platforms": {
+  "mac": "expected",
+  "windows": "expected"
+ },
+ "macMini": {
+  "gains": "Qiskit Aer runs behind the unchanged Backend interface (same leases, fencing tokens, ledger and cache), the Mac's RAM sets computed qubit walls per backend kind (Aer statevector 29-31 qubits, density matrix 14-15 qubits from 16 to 64 GB), and the load test runs for 40 seeds and fleets up to 12 backends overnight - the sandbox already found a seed (8) that fails the p95 budget seed 7 passes.",
+  "needs": {
+   "minRamGB": 16,
+   "tools": [
+    {
+     "name": "Python 3.12",
+     "licence": "PSF-2.0",
+     "install": "brew install python@3.12 (or the python.org macOS installer: https://www.python.org/downloads/macos/)"
+    },
+    {
+     "name": "numpy 2.5.3",
+     "licence": "BSD-3-Clause",
+     "install": "python3.12 -m pip install numpy==2.5.3"
+    },
+    {
+     "name": "qiskit 2.6.1",
+     "licence": "Apache-2.0",
+     "install": "python3.12 -m pip install qiskit==2.6.1"
+    },
+    {
+     "name": "qiskit-aer 0.18.2",
+     "licence": "Apache-2.0",
+     "install": "python3.12 -m pip install qiskit-aer==0.18.2"
+    }
+   ]
+  },
+  "experiments": [
+   {
+    "title": "Qiskit Aer behind the existing Backend interface",
+    "why": "KNOWN-GAPS lists the Qiskit cross-check for 07 as not run. If a real simulator SDK fits the interface, the service's reliability machinery (leases, fencing, cache keys by calibration version) is shown to be independent of the backend implementation.",
+    "steps": [
+     {
+      "title": "Conformance and agreement",
+      "detail": "AerBackend overrides only exact_probs (Aer density matrix + readout matrix) and execute (Aer sampling with ReadoutError, seed_simulator from the same (seed, chunk, version, circuit, backend) tuple). conformance() checks counts, determinism per attempt, normalisation, versions, and exact TVD to the numpy backend.",
+      "mac": "cd integrated/labs/L600/07-quantum-job-service\npython -m pip install qiskit==2.6.1 qiskit-aer==0.18.2\npython mac_mini/aer_backend.py --out ~/kb-runs/07-aer.jsonl; echo $?",
+      "expected": "Three conformance lines (fast-noisy, slow-clean, flaky-mid) with every check true and exact_tvd_vs_numpy <= 1e-6; the load-test line passes with slow-clean on Aer (shots exact, 0 contract violations, p95 <= 30 s); exit 0."
+     }
+    ],
+    "measure": "exact_tvd_vs_numpy per backend; load-test shots_exact, contract_violations, p95_queue_s, ci95_coverage",
+    "decides": "Agreement closes the 'SDK cross-checks not run: Qiskit (07)' gap for macOS and lets the quantum topic's 'Capstone SDK swap not built' note point here; a TVD above 1e-6 means the noise model mapping (channel order, readout orientation, qubit order) is wrong, not the service."
+   },
+   {
+    "title": "Qubit walls per backend kind -> admission rule",
+    "why": "The service accepts any circuit its reader parses. Memory decides the widest job each backend kind can run: 2^n x 16 B for a statevector, 4^n x 16 B for a density matrix; the numpy density-matrix path also grows ~8^n in time.",
+    "steps": [
+     {
+      "title": "Sweep numpy and Aer up to the computed walls",
+      "detail": "GHZ-n; Aer gets max_memory_mb = the mac_profile.py budget so it refuses instead of swapping.",
+      "mac": "cd integrated/labs/L600/07-quantum-job-service\npython mac_mini/qubit_sweep.py --aer --out ~/kb-runs/07-sweep.jsonl",
+      "expected": "Walls from mac_profile budgets: statevector 29 (16 GB), 30 (24/32 GB), 31 (64 GB); density matrix 14 (16 GB), 15 (24-64 GB). Aer runs up to the wall and errors at wall + 1; numpy density matrix stops on the time cap first."
+     }
+    ],
+    "measure": "largest n per backend kind; seconds per n; the error at wall + 1",
+    "decides": "Admission: the job service refuses at submit (422-style) any job wider than the wall of the backend kind it would run on, instead of queueing work that can only fail or swap; today's circuits (<= 4 qubits) are far inside it."
+   },
+   {
+    "title": "The load test over many seeds and larger fleets",
+    "why": "The scorecard's p95 fitness function is checked on one seeded run. The sandbox shows seed 7 passing (p95 18.4 s) and seed 8 failing (p95 170.5 s) with the same fleet: one seed is a sample, not a capacity guarantee.",
+    "steps": [
+     {
+      "title": "40 seeds x fleets of 3, 6 and 12 backends",
+      "detail": "loadtest.run() unchanged; fleets = backends.fleet() plus renamed copies; arrival rate 0.8 x copies keeps the load per backend constant; one spawn worker per performance core.",
+      "mac": "cd integrated/labs/L600/07-quantum-job-service\ncaffeinate -i python mac_mini/overnight_load.py --seeds 40 --jobs 5000 --copies 1 2 4 --out ~/kb-runs/07-load.jsonl",
+      "expected": "contract_violations 0 in every run (exit 0); fitness_pass_rate per fleet size in the summary lines, worst and median p95."
+     }
+    ],
+    "measure": "fitness_pass_rate, worst_p95_queue_s and median_p95_queue_s per fleet size; lease_expiries and rejected_commits per run",
+    "decides": "The p95 fitness function is judged over seeds (e.g. >= 95 % of 40 seeds) and ADR 0002 records the capacity (backends per offered load) that meets it; contract invariants stay 100 %."
+   }
+  ],
+  "overnight": "caffeinate -i python mac_mini/overnight_load.py --seeds 40 --jobs 5000 --copies 1 2 4: 120 runs of 5,000 jobs in parallel processes. It reveals the tail a single seeded run hides: how often breakers open, how many lease expiries end in a fenced (rejected) commit, and the spread of p95 from seed to seed.",
+  "validation": {
+   "here": "Ran in the Linux sandbox (Python 3.12.15, numpy 2.5.3, 2026-11-02): aer_backend.py --here (conformance checks all true on the numpy backend, Aer skipped, exit 0; exit 2 without --here); qubit_sweep.py --here (numpy statevector n = 8-18, density matrix n = 2-6, walls for 16/24/32/64 GB); overnight_load.py --here (seeds 7 and 8, fleets of 3 and 6: 0 contract violations; seed 8 with 3 backends p95 170.49 s fails the 30 s budget); mac_mini/tests: 7 tests OK (1 skipped: needs Aer); research/checks_07_mac.py OK.",
+   "pendingMac": [
+    "aer_backend.py with qiskit 2.6.1 + qiskit-aer 0.18.2 (conformance, agreement, load test on Aer)",
+    "qubit_sweep.py --aer up to the RAM walls",
+    "overnight_load.py --seeds 40 --jobs 5000 --copies 1 2 4"
+   ]
+  }
+ }
+}

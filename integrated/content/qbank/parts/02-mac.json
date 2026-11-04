@@ -1,0 +1,139 @@
+[
+ {
+  "id": "02-mac-01",
+  "level": "L600",
+  "lesson": 2,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "order_wall.py uses t = 2n counting qubits and n work qubits for an n-bit N. How many qubits does order finding for N = 899 need?",
+  "options": [
+   "20",
+   "27",
+   "30",
+   "40"
+  ],
+  "answer": 2,
+  "explanation": "899 needs n = ceil(log2 899) = 10 bits, so 3 x 10 = 30 qubits. 27 qubits is N = 323 (9 bits).",
+  "source": "02 mac_mini/order_wall.py qubits(); shor_sim.run_order_finding"
+ },
+ {
+  "id": "02-mac-02",
+  "level": "L600",
+  "lesson": 2,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "The sandbox measured 121.9 bytes per amplitude for shor_sim. How much memory does N = 323 (27 qubits) need at that rate?",
+  "options": [
+   "About 16.4 GB",
+   "About 2.1 GB",
+   "About 131 GB",
+   "About 4.1 GB"
+  ],
+  "answer": 0,
+  "explanation": "121.9 x 2^27 = 1.64e10 B = 16.4 GB. 2.1 GB is the textbook 16 B x 2^27; 131 GB is N = 899 at 30 qubits.",
+  "source": "02 mac_mini/order_wall.py wall(); README real output"
+ },
+ {
+  "id": "02-mac-03",
+  "level": "L600",
+  "lesson": 2,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The predicted wall is N = 323 on 24 GB, on 32 GB and on 64 GB alike. Why does more RAM not buy a bigger N?",
+  "options": [
+   "Qiskit Aer refuses circuits above 27 qubits",
+   "macOS limits one process to 24 GB",
+   "The next semiprime size needs 3 more qubits, i.e. 8 times the memory: about 131 GB",
+   "The numpy simulator switches to single precision above 27 qubits"
+  ],
+  "answer": 2,
+  "explanation": "One more bit of N adds 2 counting + 1 work qubit = x8 memory, so 16.4 GB jumps to 131 GB; 64 GB sits in between. Nothing in numpy or macOS imposes a 27-qubit or 24 GB limit.",
+  "source": "02 mac_mini/README.md; order_wall.py"
+ },
+ {
+  "id": "02-mac-04",
+  "level": "L600",
+  "lesson": 2,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "pq_bench.py may show ML-KEM-1024 encapsulating almost as fast as ML-KEM-768 on the Mac. Why does the decision line still rule ML-KEM-1024 out for the messaging handshake?",
+  "options": [
+   "ML-KEM-1024 is not supported by the strict client of cryptography L400 #18",
+   "Its client key share is 1,568 + 32 = 1,600 B, above the 1,400 B client-flight budget, whatever its speed",
+   "NIST IR 8547 disallows ML-KEM-1024 after 2030",
+   "Its shared secret is 64 bytes, which AES-256-GCM cannot use"
+  ],
+  "answer": 1,
+  "explanation": "The budget is in bytes on the wire; speed cannot fix a share that does not fit the first flight. Both parameter sets yield a 32-byte shared secret.",
+  "source": "02 mac_mini/pq_bench.py decisions(); fitness.BUDGET; cryptography ML-KEM docs (1568-byte public key)"
+ },
+ {
+  "id": "02-mac-05",
+  "level": "L600",
+  "lesson": 2,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "A first version of the Aer check sampled 20,000 shots and failed for N = 35 with TVD 0.031 while C1 (exact Qiskit == numpy) passed. What is the most likely explanation?",
+  "options": [
+   "Aer and numpy disagree on the bit order of the counting register",
+   "The controlled UnitaryGate was transpiled wrongly by Aer",
+   "Qiskit's inverse QFT differs from the L500 one for t = 12",
+   "Sampling noise: N = 35 spreads over ~130 likely outcomes, and 20,000 shots alone give a TVD near 0.026-0.032"
+  ],
+  "answer": 3,
+  "explanation": "C1 already shows the circuit is right. Total-variation distance from sampling grows with the number of outcomes and shrinks as 1/sqrt(shots); research/checks_02_mac.py recomputes it, hence 100,000 shots and a 0.025 threshold.",
+  "source": "02 mac_mini/qiskit_crosscheck.py docstring; research/checks_02_mac.py"
+ },
+ {
+  "id": "02-mac-06",
+  "level": "L600",
+  "lesson": 2,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "qiskit_crosscheck.py turns Aer counts into a probability vector. Qiskit prints clbit 0 as the RIGHTMOST character. What does this snippet print?",
+  "code": "counts = {\"01\": 3, \"10\": 1}\nout = [0] * 4\nfor bits, c in counts.items():\n    out[int(bits, 2)] += c\nprint(out)",
+  "options": [
+   "[0, 3, 1, 0]",
+   "[0, 1, 3, 0]",
+   "[3, 0, 0, 1]",
+   "[0, 0, 3, 1]"
+  ],
+  "answer": 0,
+  "explanation": "int('01', 2) = 1 and int('10', 2) = 2, so index 1 gets 3 and index 2 gets 1: little-endian, qubit 0 = least significant bit, the same order as shor_sim's marginal. Reversing the strings gives the second option.",
+  "source": "qiskit_crosscheck.counts_to_probs (executed in research/checks_02_mac.py)"
+ },
+ {
+  "id": "02-mac-07",
+  "level": "L600",
+  "lesson": 2,
+  "type": "design",
+  "difficulty": 2,
+  "question": "qiskit_crosscheck.py exits 0 with status 'skipped' when Qiskit is missing in --here mode, but exits 2 without --here. Why the difference?",
+  "options": [
+   "Exit 2 tells pip to install Qiskit automatically",
+   "In the sandbox a missing SDK is expected and nothing is claimed; on the Mac a missing SDK is an install problem that must not be reported as a pass",
+   "Exit 0 is required by unittest, exit 2 by Playwright",
+   "Without --here the script runs on Windows, where Qiskit is not supported"
+  ],
+  "answer": 1,
+  "explanation": "A skip must never look like a successful cross-check where the cross-check is the point (the nightly Mac run). In the sandbox the line 'skipped ... pendingMac' is the honest result.",
+  "source": "02 mac_mini/qiskit_crosscheck.py main()"
+ },
+ {
+  "id": "02-mac-08",
+  "level": "L600",
+  "lesson": 2,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does pq_bench.py take the median of 7 batches of 200 ML-DSA signatures instead of timing a few signatures?",
+  "options": [
+   "ML-DSA keys expire after 200 signatures",
+   "The first 200 signatures are always slower because of key expansion",
+   "cryptography caches signatures of identical messages",
+   "ML-DSA signing uses rejection sampling, so the time of a single signature varies from call to call"
+  ],
+  "answer": 3,
+  "explanation": "FIPS 204 signing repeats an inner loop until a candidate passes its bounds; the number of repetitions is random. The sandbox's ML-DSA-65 timings already varied between runs with few calls.",
+  "source": "02 mac_mini/pq_bench.py; FIPS 204"
+ }
+]

@@ -1,0 +1,1177 @@
+[
+  {
+    "id": "foundations-linear-algebra-for-qubits",
+    "number": 23,
+    "level": "L500",
+    "title": "Foundations I: linear algebra for qubits",
+    "phase": "Theory & Rigour",
+    "category": "foundations",
+    "description": "Dirac notation, inner products, tensor products, unitaries and the Born rule, with proofs that unitaries preserve norm and a derivation of Bell-state measurement statistics, each checked in numpy.",
+    "outcome": "You can read and write the state-vector mathematics behind every circuit in L100-L400, prove the two facts the labs silently rely on (unitarity keeps probabilities summing to 1; a Bell pair gives cos^2(a-b) agreement), and confirm each result numerically.",
+    "estimatedTime": "4-6 hours (reading 1.5 h, proofs and checks 1.5 h, problem set 2-3 h)",
+    "prerequisites": [
+      "linear algebra: complex numbers and conjugates, vectors, matrix multiplication, transpose, eigenvalues",
+      "trigonometry: sin/cos identities (cos(a)cos(b) + sin(a)sin(b) = cos(a - b))",
+      "probability: discrete distributions, expected value",
+      "L100 #2-#4 (gates, shots, Bell pair) for the circuits being explained"
+    ],
+    "learningObjectives": [
+      "Explain Dirac notation (kets, bras, inner and outer products) and translate between it and numpy arrays, including the qubit-ordering convention.",
+      "Prove that a unitary matrix preserves inner products and norms, and explain why that is exactly what keeps measurement probabilities summing to 1.",
+      "Derive the joint state of two qubits with the tensor product and decide, with proof, whether a given two-qubit state is a product state or entangled.",
+      "Derive the measurement statistics of the Bell state |Φ+> in rotated bases (P(same) = cos^2(a - b)) and evaluate a simulation against that prediction."
+    ],
+    "glossary": [
+      {
+        "term": "ket |ψ>",
+        "meaning": "A column vector in C^d representing a state; for one qubit d = 2."
+      },
+      {
+        "term": "bra <ψ|",
+        "meaning": "The conjugate transpose of |ψ> (a row vector)."
+      },
+      {
+        "term": "inner product <φ|ψ>",
+        "meaning": "sum_k conj(φ_k) ψ_k; numpy: np.vdot(phi, psi). Linear in the second argument."
+      },
+      {
+        "term": "norm ||ψ||",
+        "meaning": "sqrt(<ψ|ψ>); a state vector has norm 1."
+      },
+      {
+        "term": "unitary U",
+        "meaning": "A square matrix with U†U = I; every gate in a circuit is one."
+      },
+      {
+        "term": "tensor (Kronecker) product ⊗",
+        "meaning": "Combines systems: (A ⊗ B)_{(i,j),(k,l)} = A_ik B_jl; numpy: np.kron."
+      },
+      {
+        "term": "Born rule",
+        "meaning": "Measuring |ψ> in an orthonormal basis {|b_k>} gives outcome k with probability |<b_k|ψ>|^2."
+      },
+      {
+        "term": "global vs relative phase",
+        "meaning": "e^{iθ}|ψ> is the same state; a phase on one component only changes interference."
+      },
+      {
+        "term": "product state / entangled state",
+        "meaning": "|a> ⊗ |b> for some single-qubit |a>, |b>; entangled = not of that form."
+      },
+      {
+        "term": "Bell states",
+        "meaning": "|Φ±> = (|00> ± |11>)/√2, |Ψ±> = (|01> ± |10>)/√2: an orthonormal basis of two qubits."
+      }
+    ],
+    "theorems": [
+      {
+        "name": "T23.1 Unitaries preserve inner products, norms and total probability",
+        "statement": "If U is unitary (U†U = I) then <Uφ|Uψ> = <φ|ψ> for all φ, ψ; in particular ||Uψ|| = ||ψ||, so the Born probabilities of Uψ in any orthonormal basis sum to 1. Conversely, a linear map that preserves the norm of every vector of a finite-dimensional complex space is unitary.",
+        "proof": "**Proof.** The bra of $U|\\psi\\rangle$ is $(U|\\psi\\rangle)^\\dagger = \\langle\\psi|U^\\dagger$. Hence\n$\\langle U\\varphi|U\\psi\\rangle = \\langle\\varphi|U^\\dagger U|\\psi\\rangle = \\langle\\varphi|I|\\psi\\rangle = \\langle\\varphi|\\psi\\rangle$.\nTaking $\\varphi = \\psi$ gives $\\|U\\psi\\|^2 = \\|\\psi\\|^2 = 1$. If $\\{|b_k\\rangle\\}$ is any orthonormal basis then\n$\\sum_k |\\langle b_k|U\\psi\\rangle|^2 = \\|U\\psi\\|^2$ (Parseval: expand $U|\\psi\\rangle = \\sum_k \\langle b_k|U\\psi\\rangle |b_k\\rangle$ and use orthonormality), so the probabilities sum to 1.\n\n**Converse (polarisation).** Suppose $\\|A x\\| = \\|x\\|$ for all $x$. For complex inner products,\n$\\langle x|y\\rangle = \\tfrac14\\sum_{k=0}^{3} i^{-k}\\,\\|x + i^k y\\|^2$ (check by expanding each norm). Every term on the right is unchanged when $x, y$ are replaced by $Ax, Ay$, so $\\langle Ax|Ay\\rangle = \\langle x|y\\rangle$ for all $x, y$, i.e. $\\langle x|(A^\\dagger A - I)y\\rangle = 0$ for all $x, y$; choosing $x = (A^\\dagger A - I)y$ gives $A^\\dagger A = I$. ∎\n\n**Why it matters.** Every gate in L100-L400 is unitary, which is why counts always add up to the number of shots. The matrix\n[[1, 1], [0, 1]] is invertible but not unitary: it sends |1> to a vector of norm √2, whose \"probabilities\" would sum to 2.",
+        "check": "labs/L500/23-linear-algebra-for-qubits/theorems.py::T23.1",
+        "checkOutput": "[T23.1] Unitaries preserve inner products, norms and total probability\n  1000 random unitaries (dims 2,4,8,16): max |<Ua|Ub> - <a|b>| < 1e-12: True\n  max | ||Ua|| - 1 | < 1e-12: True\n  qsim circuit H, CX, RY(0.7), CP(0.3) on 3 qubits: U^dagger U = I within 1e-12: True\n  probabilities after the circuit sum to 1.000000\n  non-unitary [[1,1],[0,1]] maps |1> to a vector of norm 1.4142 (probabilities would sum to 2.0)"
+      },
+      {
+        "name": "T23.2 Tensor-product rules",
+        "statement": "For matrices of compatible sizes, (A ⊗ B)(C ⊗ D) = AC ⊗ BD (mixed-product rule); for vectors, <a ⊗ b|c ⊗ d> = <a|c><b|d>; hence if U and V are unitary then U ⊗ V is unitary, and a product of normalised states is normalised.",
+        "proof": "**Proof.** Index the rows of a Kronecker product by pairs: $(A\\otimes B)_{(i,j),(k,l)} = A_{ik}B_{jl}$. Then\n$[(A\\otimes B)(C\\otimes D)]_{(i,j),(m,n)} = \\sum_{k,l} A_{ik}B_{jl}C_{km}D_{ln} = (\\sum_k A_{ik}C_{km})(\\sum_l B_{jl}D_{ln}) = (AC)_{im}(BD)_{jn}$,\nwhich is the $(i,j),(m,n)$ entry of $AC\\otimes BD$. For vectors, $(a\\otimes b)^\\dagger = a^\\dagger\\otimes b^\\dagger$, so by the\nsame rule $\\langle a\\otimes b|c\\otimes d\\rangle = (a^\\dagger c)\\otimes(b^\\dagger d) = \\langle a|c\\rangle\\langle b|d\\rangle$ (a 1x1 Kronecker product is an ordinary product).\nFinally $(U\\otimes V)^\\dagger(U\\otimes V) = (U^\\dagger\\otimes V^\\dagger)(U\\otimes V) = U^\\dagger U\\otimes V^\\dagger V = I\\otimes I = I$. ∎\n\n**Ordering convention.** Textbooks write $|ab\\rangle = |a\\rangle\\otimes|b\\rangle$ with the left factor most significant. Qiskit (and this\ncourse's qsim) label qubit 0 as the least-significant bit, so the left factor of np.kron is the *highest-numbered* qubit. The check\nconfirms |+> ⊗ |1> equals qsim's \"H on q1, X on q0\" (L100 #6 shows why this matters when comparing frameworks).",
+        "check": "labs/L500/23-linear-algebra-for-qubits/theorems.py::T23.2",
+        "checkOutput": "[T23.2] Tensor products: (A x B)(C x D) = AC x BD, <a x b|c x d> = <a|c><b|d>, U x V is unitary\n  mixed-product rule on 200 random 2x2 pairs: max error < 1e-10: True\n  inner product of product states factorises (200 cases): max error < 1e-12: True\n  U (x) V for random 2x2 and 4x4 unitaries is an 8x8 unitary: True\n  |+> (x) |1> = [0.0, 0.7071, 0.0, 0.7071] (basis 00,01,10,11) = qsim H on q1, X on q0: True"
+      },
+      {
+        "name": "T23.3 Born rule in any orthonormal basis; global phase is unobservable",
+        "statement": "For a unit vector |ψ> and orthonormal basis {|b_k>}, p_k = |<b_k|ψ>|^2 is a probability distribution. Replacing |ψ> by e^{iθ}|ψ> changes no p_k in any basis, whereas a relative phase (e.g. |+> vs |->) can change the distribution in another basis.",
+        "proof": "**Proof.** $p_k \\ge 0$ trivially, and $\\sum_k p_k = \\sum_k \\langle\\psi|b_k\\rangle\\langle b_k|\\psi\\rangle = \\langle\\psi|\\big(\\sum_k |b_k\\rangle\\langle b_k|\\big)|\\psi\\rangle = \\langle\\psi|\\psi\\rangle = 1$,\nbecause $\\sum_k |b_k\\rangle\\langle b_k| = I$ for an orthonormal basis (completeness). With a global phase,\n$|\\langle b_k|e^{i\\theta}\\psi\\rangle|^2 = |e^{i\\theta}|^2|\\langle b_k|\\psi\\rangle|^2 = |\\langle b_k|\\psi\\rangle|^2$; since any later unitary $U$ gives\n$Ue^{i\\theta}|\\psi\\rangle = e^{i\\theta}U|\\psi\\rangle$, no experiment can ever detect $\\theta$. A *relative* phase is different:\n$|\\pm\\rangle = (|0\\rangle \\pm |1\\rangle)/\\sqrt2$ give identical Z-basis statistics (1/2, 1/2), but in the X basis $|\\langle +|+\\rangle|^2 = 1$ and $|\\langle +|-\\rangle|^2 = 0$. ∎\n\nMeasuring \"in the X basis\" on hardware means applying H and then measuring Z, because $|\\langle \\pm|\\psi\\rangle|^2 = |\\langle 0/1|H|\\psi\\rangle|^2$; this is the\nrotate-then-measure pattern behind every basis change in the labs.",
+        "check": "labs/L500/23-linear-algebra-for-qubits/theorems.py::T23.3",
+        "checkOutput": "[T23.3] Born rule in any orthonormal basis; global phase unobservable, relative phase observable\n  300 random states and bases (dims 2,4,8): sum_k |<b_k|psi>|^2 = 1 within 1e-12: True\n  multiplying by a random global phase changes no probability (within 1e-12): True\n  Z basis: |+> gives {'0': 0.5, '1': 0.5}, |-> gives {'0': 0.5, '1': 0.5} (identical)\n  X basis (H then measure): |+> gives {'0': 1.0}, |-> gives {'1': 1.0} (relative phase is visible)"
+      },
+      {
+        "name": "T23.4 Bell-state measurement statistics",
+        "statement": "Let |Φ+> = (|00> + |11>)/√2 = CX(H ⊗ I)|00>. If each qubit is measured in the rotated basis {|u_θ> = cos θ|0> + sin θ|1>, |u_θ⊥> = -sin θ|0> + cos θ|1>} with angles a and b, then P(00) = P(11) = cos^2(a - b)/2, P(01) = P(10) = sin^2(a - b)/2, so P(same) = cos^2(a - b) and the correlation E = P(same) - P(different) = cos 2(a - b). The four Bell states form an orthonormal basis that CX followed by H maps onto |00>, |01>, |10>, |11>.",
+        "proof": "**Derivation.** Start from $|00\\rangle$: $H\\otimes I$ gives $(|00\\rangle + |10\\rangle)/\\sqrt2$ and CX (control = first qubit) flips the second qubit\nwhen the first is 1, giving $|\\Phi^+\\rangle = (|00\\rangle + |11\\rangle)/\\sqrt2$. For the rotated basis vectors (real amplitudes, so bras need no conjugation):\n$\\langle u_a\\otimes u_b|\\Phi^+\\rangle = \\tfrac{1}{\\sqrt2}(\\cos a\\cos b + \\sin a\\sin b) = \\tfrac{1}{\\sqrt2}\\cos(a-b)$, so $P(00) = \\cos^2(a-b)/2$.\nSimilarly $\\langle u_a^\\perp\\otimes u_b^\\perp|\\Phi^+\\rangle = \\tfrac1{\\sqrt2}(\\sin a\\sin b + \\cos a\\cos b)$ gives $P(11) = \\cos^2(a-b)/2$, and\n$\\langle u_a\\otimes u_b^\\perp|\\Phi^+\\rangle = \\tfrac1{\\sqrt2}(-\\cos a\\sin b + \\sin a\\cos b) = \\tfrac1{\\sqrt2}\\sin(a-b)$ gives $P(01) = \\sin^2(a-b)/2$ (same for 10).\nTherefore $P(\\text{same}) = \\cos^2(a-b)$ and $E = \\cos^2(a-b) - \\sin^2(a-b) = \\cos 2(a-b)$. With $a = b = 0$ this is L100 #4's \"only 00 and 11, each 1/2\".\nEach marginal is 1/2 for every angle: Bob alone sees a fair coin whatever Alice does (no signalling, made precise in lesson 24).\n\n**Bell basis.** Writing $|\\Phi^\\pm\\rangle, |\\Psi^\\pm\\rangle$ in the computational basis, the Gram matrix of the four vectors is $I$ by direct calculation.\n$(H\\otimes I)\\,\\mathrm{CX}$ is unitary and is the inverse of the preparation circuit $\\mathrm{CX}(H\\otimes I)$ applied to $|00\\rangle, |01\\rangle, |10\\rangle, |11\\rangle$,\nso it maps the Bell states back to those basis states: a \"Bell measurement\" is CX, H, then an ordinary measurement. ∎\n\n**Numerical check.** On hardware, measuring in basis angle θ = applying RY(-2θ) then measuring Z. The check compares the exact\nprobabilities with cos^2(a - b) for five angle pairs and draws 20,000 seeded shots per pair (agreement within 4 standard errors).",
+        "check": "labs/L500/23-linear-algebra-for-qubits/theorems.py::T23.4",
+        "checkOutput": "[T23.4] Bell state statistics: P(same outcome) = cos^2(a - b), E = cos 2(a - b)\n  computational basis: {'00': 0.5, '11': 0.5}\n  a = 0.0000, b = 0.0000: P(same) = 1.0000, cos^2(a-b) = 1.0000, E = 1.0000; 20000 sampled shots within 4 sigma: True\n  a = 0.0000, b = 0.3927: P(same) = 0.8536, cos^2(a-b) = 0.8536, E = 0.7071; 20000 sampled shots within 4 sigma: True\n  a = 0.0000, b = 0.7854: P(same) = 0.5000, cos^2(a-b) = 0.5000, E = 0.0000; 20000 sampled shots within 4 sigma: True\n  a = 0.3927, b = -0.3927: P(same) = 0.5000, cos^2(a-b) = 0.5000, E = 0.0000; 20000 sampled shots within 4 sigma: True\n  a = 0.3000, b = 1.1000: P(same) = 0.4854, cos^2(a-b) = 0.4854, E = -0.0292; 20000 sampled shots within 4 sigma: True\n  the four Bell states are orthonormal (Gram matrix = I): True\n  CX then H maps them to 00, 01, 10, 11 with probability 1 (Bell measurement)"
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "qc-L500-23-P1",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 4,
+        "problem": "Let |ψ> = (|0> + i|1>)/√2 and |φ> = (|0> + |1>)/√2 = |+>. Compute <ψ|φ> and |<ψ|φ>|^2. What is the probability of outcome '+' if |ψ> is measured in the X basis?",
+        "solution": "<ψ| = (1, -i)/√2 (conjugate!). <ψ|φ> = (1·1 + (-i)·1)/2 = (1 - i)/2 = 0.5 - 0.5i. |<ψ|φ>|^2 = (0.25 + 0.25) = 0.5. By the Born rule (T23.3) the probability of '+' is |<+|ψ>|^2 = 0.5. Common error: forgetting to conjugate the bra gives (1 + i)/2, which has the same modulus here but the wrong phase; the check in research/l500_checks.py recomputes 0.5 with np.vdot."
+      },
+      {
+        "id": "qc-L500-23-P2",
+        "type": "proof",
+        "difficulty": 1,
+        "marks": 5,
+        "problem": "Prove that H = (1/√2)[[1, 1], [1, -1]] is unitary and Hermitian, that H^2 = I, and deduce its eigenvalues.",
+        "solution": "H has real entries and is symmetric, so H† = H^T = H (Hermitian). H†H = H^2 = (1/2)[[1+1, 1-1], [1-1, 1+1]] = I, so H is unitary. If Hv = λv with v ≠ 0 then v = H^2 v = λ^2 v, so λ^2 = 1 and λ ∈ {+1, -1}; the trace is 0 = λ1 + λ2, so one eigenvalue is +1 and the other -1."
+      },
+      {
+        "id": "qc-L500-23-P3",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Write |+> ⊗ (√3/2 |0> + 1/2 |1>) in the basis |00>, |01>, |10>, |11> (textbook order: left factor first). Give P(11) and the probability that the LEFT qubit reads 1. Which qsim/Qiskit qubit is the left factor?",
+        "solution": "Amplitudes = (1/√2)(√3/2, 1/2, √3/2, 1/2) = (0.6124, 0.3536, 0.6124, 0.3536). P(11) = (1/(2√2))^2 = 0.125. P(left = 1) = P(10) + P(11) = 0.375 + 0.125 = 0.5, as it must be for a product state with |+> on the left. In qsim/Qiskit order the left factor of np.kron is the highest-numbered qubit (q1 here), see T23.2."
+      },
+      {
+        "id": "qc-L500-23-P4",
+        "type": "proof",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Prove that |Φ+> = (|00> + |11>)/√2 is not a product state.",
+        "solution": "Suppose |Φ+> = (α|0> + β|1>) ⊗ (γ|0> + δ|1>) = αγ|00> + αδ|01> + βγ|10> + βδ|11>. Comparing coefficients: αγ = 1/√2, βδ = 1/√2, αδ = 0, βγ = 0. From αδ = 0 either α = 0 (contradicting αγ ≠ 0) or δ = 0 (contradicting βδ ≠ 0). Hence no such factorisation exists and |Φ+> is entangled. (Equivalent test: arrange the amplitudes as the 2x2 matrix [[1, 0], [0, 1]]/√2; a product state gives a rank-1 matrix, this has rank 2.)"
+      },
+      {
+        "id": "qc-L500-23-P5",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Alice and Bob share |Φ+>. Alice measures at angle a = 0, Bob at b = π/8 (basis {cos θ|0> + sin θ|1>, ...}). Give P(same), the correlation E, and P(same) for a = π/8, b = -π/8.",
+        "solution": "By T23.4, P(same) = cos^2(a - b) = cos^2(π/8) = 0.8536 and E = cos(2(a - b)) = cos(π/4) = 0.7071. For a = π/8, b = -π/8: a - b = π/4, P(same) = cos^2(π/4) = 0.5 (E = 0): the outcomes are uncorrelated even though the state is maximally entangled. The theorem check prints the same three numbers from simulation."
+      },
+      {
+        "id": "qc-L500-23-P6",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "RY(θ) = [[cos θ/2, -sin θ/2], [sin θ/2, cos θ/2]]. For θ = π/3 compute RY(θ)|0>, P(1) and <Z>.",
+        "solution": "RY(π/3)|0> = (cos π/6, sin π/6) = (0.8660, 0.5). P(1) = sin^2(π/6) = 0.25, P(0) = 0.75, <Z> = P(0) - P(1) = 0.5 = cos θ. (L200 #10 fits exactly this cos θ curve.)"
+      },
+      {
+        "id": "qc-L500-23-P7",
+        "type": "derivation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Show that (H ⊗ I)·CX maps |Φ+>, |Φ->, |Ψ+>, |Ψ-> to |00>, |10>, |01>, |11> respectively (control = left qubit), and explain why this implements a measurement in the Bell basis.",
+        "solution": "CX|Φ±> = (|00> ± |10>)/√2 = |±> ⊗ |0>; CX|Ψ±> = (|01> ± |11>)/√2 = |±> ⊗ |1>. Then H|+> = |0>, H|-> = |1>, so Φ+ -> |00>, Φ- -> |10>, Ψ+ -> |01>, Ψ- -> |11>. Because this unitary maps the orthonormal Bell basis onto the computational basis, measuring in the computational basis afterwards gives outcome k with probability |<Bell_k|ψ>|^2 (T23.1 + T23.3): exactly a Bell-basis measurement. The check prints the qsim version (qsim labels bits q1 q0)."
+      },
+      {
+        "id": "qc-L500-23-P8",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "For |Φ+> compute the expectation values <Z⊗Z>, <X⊗X>, <Y⊗Y> and <Z⊗I>. Which of them would a product state |a>|b> with <Z⊗I> = 0 and <I⊗Z> = 0 be unable to reproduce simultaneously?",
+        "solution": "<Z⊗Z> = 1, <X⊗X> = 1, <Y⊗Y> = -1, <Z⊗I> = 0 (computed with np.kron in research/l500_checks.py). For a product state <A⊗B> = <A><B>; <Z⊗I> = 0 forces <Z> = 0 on the left qubit, so <Z⊗Z> = 0 ≠ 1. Perfect correlations with random marginals are the signature of entanglement."
+      },
+      {
+        "id": "qc-L500-23-P9",
+        "type": "short-answer",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "A student models a noisy gate as M = [[1, 1], [0, 1]] applied to the state vector. Show with one vector that M is not a valid closed-system evolution and say which theorem it violates.",
+        "solution": "M|1> = (1, 1) with norm √2 = 1.4142, so the outcome probabilities would sum to 2.0. M is invertible but not unitary (M†M ≠ I), violating T23.1. Noise is modelled with density matrices and channels instead (L300 #12, lesson 24)."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Correctness of mathematics",
+        "excellent": "Every step valid; conjugation, ordering and normalisation handled explicitly.",
+        "adequate": "Main argument right; one slip (e.g. a missing conjugate) that does not change the conclusion.",
+        "inadequate": "Key step wrong or assumed (e.g. treats U as preserving norm without using U†U = I).",
+        "weight": 40
+      },
+      {
+        "criterion": "Proof structure and rigour",
+        "excellent": "States what is assumed and proved; each line follows; quantifiers ('for all ψ') explicit.",
+        "adequate": "Readable but skips a justification a reader could supply.",
+        "inadequate": "Argument by example only, or circular.",
+        "weight": 25
+      },
+      {
+        "criterion": "Numerical evidence",
+        "excellent": "Runs the check, quotes the real output, and explains any tolerance used.",
+        "adequate": "Runs the check but does not connect output to the claim.",
+        "inadequate": "No check, or numbers typed in by hand.",
+        "weight": 20
+      },
+      {
+        "criterion": "Communication",
+        "excellent": "Notation consistent, qubit order stated, units/bases named.",
+        "adequate": "Mostly consistent notation.",
+        "inadequate": "Mixes conventions so results cannot be checked.",
+        "weight": 15
+      }
+    ],
+    "conceptNote": "content/concepts/L500/23-linear-algebra-for-qubits.md",
+    "conceptSummary": "A qubit state is a unit vector in C^2; n qubits live in the tensor product C^(2^n). Gates are unitaries, and unitaries preserve inner products, so probabilities always sum to 1 (proved, then checked on 1000 random unitaries). The Born rule turns amplitudes into probabilities in any orthonormal basis; global phase never shows, relative phase does. A Bell pair measured at angles a and b agrees with probability cos^2(a - b).",
+    "sources": [
+      {
+        "title": "IBM Quantum Learning - Basics of quantum information: Single systems, Quantum information (J. Watrous)",
+        "url": "https://quantum.cloud.ibm.com/learning/en/courses/basics-of-quantum-information/single-systems/quantum-information"
+      },
+      {
+        "title": "IBM Quantum Learning - Basics of quantum information: Multiple systems, Quantum information (J. Watrous)",
+        "url": "https://quantum.cloud.ibm.com/learning/en/courses/basics-of-quantum-information/multiple-systems/quantum-information"
+      },
+      {
+        "title": "IBM Quantum Learning - Limitations on quantum information (global phase, no-cloning)",
+        "url": "https://quantum.cloud.ibm.com/learning/en/courses/basics-of-quantum-information/quantum-circuits/limitations-on-quantum-information"
+      },
+      {
+        "title": "Bit-ordering in the Qiskit SDK",
+        "url": "https://quantum.cloud.ibm.com/docs/en/guides/bit-ordering"
+      }
+    ],
+    "seeAlso": [
+      "quantum-computing L100 #2 Qubits and gates in code: the X and H matrices whose unitarity T23.1 proves.",
+      "quantum-computing L100 #3 Shots, counts and probability: the Born rule (T23.3) is where the 50/50 comes from.",
+      "quantum-computing L100 #4 Entanglement with a Bell pair: T23.4 derives its 00/11 statistics and generalises them to any angles.",
+      "quantum-computing L100 #6 Same circuit, two frameworks: the tensor-product ordering convention of T23.2.",
+      "quantum-computing L200 #10 Parameterized circuits and sweeps: <Z> = cos θ for RY(θ)|0> (problem P6)."
+    ],
+    "next": "L500 #24 Foundations II: quantum information basics - what entanglement buys you (teleportation, superdense coding) and what quantum mechanics forbids (cloning).",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran locally (Python 3.12.15, numpy 2.5.3; no quantum SDK needed): `python theorems.py` in labs/L500/23-linear-algebra-for-qubits (its output is each theorem's checkOutput, regenerated by tools/build_l500_json.py) and `python -m unittest -v` (2 tests OK); `python research/l500_checks.py` re-runs every check, compares it with checkOutput and recomputes every problem-set number. Platforms: authored and run on Linux only; the code uses pathlib and numpy only.",
+      "pendingCi": [
+        "labs/L500/23-linear-algebra-for-qubits: theorems.py + unittest on macos-latest and windows-latest (CI matrix, not yet run)"
+      ]
+    }
+  },
+  {
+    "id": "foundations-quantum-information-basics",
+    "number": 24,
+    "level": "L500",
+    "title": "Foundations II: quantum information basics",
+    "phase": "Theory & Rigour",
+    "category": "foundations",
+    "description": "No-cloning with proof, teleportation and superdense coding derived line by line, Deutsch-Jozsa correctness, and density matrices with the partial trace, each checked numerically.",
+    "outcome": "You can prove why quantum states cannot be copied, derive the teleportation and superdense-coding protocols from the Bell basis, prove that Deutsch-Jozsa never errs, and use density matrices and the partial trace to describe part of an entangled system (and to show that entanglement cannot signal).",
+    "estimatedTime": "5-7 hours (reading 2 h, proofs and checks 2 h, problem set 2-3 h)",
+    "prerequisites": [
+      "lesson 23 (Dirac notation, tensor products, Bell basis, T23.1-T23.4)",
+      "linear algebra: outer products, trace, Hermitian and positive semidefinite matrices, eigenvalues",
+      "Boolean functions and XOR; a geometric series sum"
+    ],
+    "learningObjectives": [
+      "Prove the no-cloning theorem in two ways (linearity and inner products) and explain why copying basis states with a CNOT does not contradict it.",
+      "Derive the teleportation identity |ψ>|Φ+> = (1/2) Σ |Bell_xz> ⊗ X^x Z^z|ψ> and use it to explain why each outcome has probability 1/4 and why no information travels faster than the classical bits.",
+      "Derive superdense coding and analyse it as the resource-dual of teleportation (1 e-bit + 1 qubit = 2 bits).",
+      "Prove that Deutsch-Jozsa outputs 0^n with probability 1 for constant f and 0 for balanced f, and evaluate the classical query cost it is compared with.",
+      "Analyze states with density matrices and partial traces, and explain with them why measurements on one half of a Bell pair cannot signal to the other half."
+    ],
+    "glossary": [
+      {
+        "term": "no-cloning",
+        "meaning": "No fixed unitary and blank state copy every unknown |ψ> to |ψ>|ψ>."
+      },
+      {
+        "term": "e-bit",
+        "meaning": "One shared Bell pair, used as a resource."
+      },
+      {
+        "term": "teleportation",
+        "meaning": "Moves an unknown qubit state using 1 e-bit + 2 classical bits; the original is destroyed."
+      },
+      {
+        "term": "superdense coding",
+        "meaning": "Sends 2 classical bits by transmitting 1 qubit of a pre-shared e-bit."
+      },
+      {
+        "term": "phase kickback",
+        "meaning": "With the target in |->, an oracle |x>|y> -> |x>|y ⊕ f(x)> acts as |x> -> (-1)^f(x) |x>."
+      },
+      {
+        "term": "balanced / constant function",
+        "meaning": "f: {0,1}^n -> {0,1} that outputs 1 on exactly half of the inputs / on all or none."
+      },
+      {
+        "term": "density matrix ρ",
+        "meaning": "Σ_i p_i |ψ_i><ψ_i|: Hermitian, positive semidefinite, trace 1. Pure iff Tr ρ^2 = 1."
+      },
+      {
+        "term": "partial trace Tr_A",
+        "meaning": "The unique map giving the state of B alone: (Tr_A ρ)_{jk} = Σ_i ρ_{(i,j),(i,k)}."
+      },
+      {
+        "term": "purity",
+        "meaning": "Tr ρ^2, between 1/d (maximally mixed) and 1 (pure)."
+      },
+      {
+        "term": "no-signalling",
+        "meaning": "Nothing Alice does locally changes Bob's reduced state ρ_B."
+      }
+    ],
+    "theorems": [
+      {
+        "name": "T24.1 No-cloning theorem",
+        "statement": "Let d >= 2. There is no state |e> and unitary U on C^d ⊗ C^d such that U(|ψ> ⊗ |e>) = |ψ> ⊗ |ψ> for every unit vector |ψ>.",
+        "proof": "**Proof 1 (inner products).** Suppose such $U, |e\\rangle$ exist and take any two states $|\\psi\\rangle, |\\varphi\\rangle$. By T23.1 and T23.2,\n$\\langle\\psi|\\varphi\\rangle = \\langle\\psi|\\varphi\\rangle\\langle e|e\\rangle = \\langle U(\\psi\\otimes e)|U(\\varphi\\otimes e)\\rangle = \\langle\\psi\\otimes\\psi|\\varphi\\otimes\\varphi\\rangle = \\langle\\psi|\\varphi\\rangle^2$.\nSo $x = \\langle\\psi|\\varphi\\rangle$ satisfies $x = x^2$, i.e. $x \\in \\{0, 1\\}$: a cloner could only work on a set of mutually orthogonal (or identical) states.\nBut $|0\\rangle$ and $|+\\rangle$ have $\\langle 0|+\\rangle = 1/\\sqrt2$, a contradiction. ∎\n\n**Proof 2 (linearity, as in Watrous's IBM course).** If $U(|0\\rangle|e\\rangle) = |00\\rangle$ and $U(|1\\rangle|e\\rangle) = |11\\rangle$, linearity forces\n$U(|+\\rangle|e\\rangle) = (|00\\rangle + |11\\rangle)/\\sqrt2$, which is entangled (P4 of lesson 23) and so differs from $|{+}{+}\\rangle = (|00\\rangle+|01\\rangle+|10\\rangle+|11\\rangle)/2$.\n\n**Remarks.** (i) The CNOT \"copier\" clones $|0\\rangle$ and $|1\\rangle$ perfectly; on $\\cos(\\theta/2)|0\\rangle + \\sin(\\theta/2)|1\\rangle$ its joint fidelity with the ideal\nclone is $(c^3 + s^3)^2$ ($c = \\cos\\theta/2$, $s = \\sin\\theta/2$), falling to 1/2 for $|+\\rangle$. (ii) The theorem forbids perfect cloning of *unknown* states;\napproximate cloning with bounded fidelity is possible. (iii) Consequences: no \"save a copy\" for debugging a quantum state, no amplifying a weak quantum signal,\nand the security of quantum key distribution.",
+        "check": "labs/L500/24-quantum-information-basics/theorems.py::T24.1",
+        "checkOutput": "[T24.1] No-cloning: no unitary U and blank |e> give U|psi>|e> = |psi>|psi> for all psi\n  CNOT copier clones |0> and |1> exactly (fidelity 1)\n  theta = 0.0000: joint fidelity 1.0000 = (c^3 + s^3)^2 = 1.0000; copy alone 1.0000 = c^4 + s^4\n  theta = 1.0472: joint fidelity 0.5999 = (c^3 + s^3)^2 = 0.5999; copy alone 0.6250 = c^4 + s^4\n  theta = 1.5708: joint fidelity 0.5000 = (c^3 + s^3)^2 = 0.5000; copy alone 0.5000 = c^4 + s^4\n  theta = 2.0944: joint fidelity 0.5999 = (c^3 + s^3)^2 = 0.5999; copy alone 0.6250 = c^4 + s^4\n  theta = 3.1416: joint fidelity 1.0000 = (c^3 + s^3)^2 = 1.0000; copy alone 1.0000 = c^4 + s^4\n  minimum fidelity 0.5000 at theta = pi/2 (|+> becomes a Bell state, not |+>|+>)\n  500 random unitaries keep <0,e|+,e> = 0.7071; perfect clones would need <0|+>^2 = 0.5000: impossible"
+      },
+      {
+        "name": "T24.2 Teleportation and superdense coding",
+        "statement": "(a) If Alice holds |ψ> and shares |Φ+> with Bob, measuring her two qubits in the Bell basis gives each of the four outcomes (x, z) with probability 1/4, and Bob's qubit is then X^x Z^z |ψ>; applying Z^z X^x restores |ψ> exactly. (b) If Alice applies Z^a X^b to her half of |Φ+> and sends it to Bob, a Bell measurement by Bob returns (a, b) with certainty.",
+        "proof": "**(a) Derivation.** Write $|\\psi\\rangle = \\alpha|0\\rangle + \\beta|1\\rangle$ on qubit M, with $|\\Phi^+\\rangle$ on A (Alice) and B (Bob):\n$|\\psi\\rangle|\\Phi^+\\rangle = \\tfrac{1}{\\sqrt2}(\\alpha|000\\rangle + \\alpha|011\\rangle + \\beta|100\\rangle + \\beta|111\\rangle)$ (order M, A, B).\nInvert the Bell-basis definitions: $|00\\rangle = (\\Phi^+ + \\Phi^-)/\\sqrt2$, $|11\\rangle = (\\Phi^+ - \\Phi^-)/\\sqrt2$, $|01\\rangle = (\\Psi^+ + \\Psi^-)/\\sqrt2$, $|10\\rangle = (\\Psi^+ - \\Psi^-)/\\sqrt2$ on (M, A). Collecting terms,\n$$|\\psi\\rangle|\\Phi^+\\rangle = \\tfrac12\\big[\\,|\\Phi^+\\rangle(\\alpha|0\\rangle+\\beta|1\\rangle) + |\\Phi^-\\rangle(\\alpha|0\\rangle-\\beta|1\\rangle) + |\\Psi^+\\rangle(\\alpha|1\\rangle+\\beta|0\\rangle) + |\\Psi^-\\rangle(\\alpha|1\\rangle-\\beta|0\\rangle)\\,\\big].$$\nThe four Bob states are $|\\psi\\rangle, Z|\\psi\\rangle, X|\\psi\\rangle, XZ|\\psi\\rangle$ (the last up to a global phase $-1$). Each branch has amplitude $1/2$ times a unit vector,\nso by the Born rule each Bell outcome has probability $1/4$ *independently of* $\\alpha, \\beta$: the outcomes carry no information about $|\\psi\\rangle$.\nBob applies $X^x$ then $Z^z$ (or the circuit form: Alice does CX(M→A), H(M), measures; Bob applies X if A = 1, then Z if M = 1). Fidelity is exactly 1.\nUntil Bob receives the 2 classical bits his reduced state is $\\tfrac14\\sum_{xz} X^xZ^z|\\psi\\rangle\\langle\\psi|Z^zX^x = I/2$, so nothing has been signalled; and\nAlice's measurement destroyed her copy, consistent with T24.1.\n\n**(b) Derivation.** On Alice's qubit, $X$ maps $\\Phi^\\pm \\to \\Psi^\\pm$ and $Z$ maps $\\Phi^+\\to\\Phi^-$, $\\Psi^+\\to\\Psi^-$; so $Z^aX^b \\otimes I$ sends $|\\Phi^+\\rangle$ to a distinct Bell state for each of the four messages\n(up to sign). Bob's CX then H maps the Bell basis to the computational basis (T23.4), giving (a, b) with probability 1.\n**Resource view:** teleportation spends 1 e-bit + 2 bits to send 1 qubit; superdense coding spends 1 e-bit + 1 qubit to send 2 bits. ∎",
+        "check": "labs/L500/24-quantum-information-basics/theorems.py::T24.2",
+        "checkOutput": "[T24.2] Teleportation and superdense coding are exact for every input\n  200 random states x 4 outcomes: each outcome has probability 0.25 (within 1e-12) and Bob's corrected qubit has fidelity 1 (within 1e-12): True\n  psi = cos(pi/8)|0> + sin(pi/8)|1>: outcome probabilities [0.25, 0.25, 0.25, 0.25]\n  superdense coding, message ab -> Bob decodes (q0 q1): 00 -> 00, 01 -> 01, 10 -> 10, 11 -> 11 with probability 1"
+      },
+      {
+        "name": "T24.3 Deutsch-Jozsa correctness",
+        "statement": "Given a promise that f: {0,1}^n -> {0,1} is constant or balanced, the circuit H^{⊗n}, oracle (phase form |x> -> (-1)^{f(x)}|x>), H^{⊗n} applied to |0^n> outputs 0^n with probability 1 if f is constant and 0 if f is balanced, using one oracle call. A deterministic classical algorithm needs 2^{n-1} + 1 queries in the worst case.",
+        "proof": "**Proof.** Using $H^{\\otimes n}|x\\rangle = 2^{-n/2}\\sum_y (-1)^{x\\cdot y}|y\\rangle$:\nafter the first layer the state is $2^{-n/2}\\sum_x|x\\rangle$; the oracle gives $2^{-n/2}\\sum_x (-1)^{f(x)}|x\\rangle$ (phase kickback: with an ancilla in $|-\\rangle$,\n$|x\\rangle|-\\rangle \\mapsto (-1)^{f(x)}|x\\rangle|-\\rangle$). After the final layer the amplitude of $|0^n\\rangle$ is\n$$a_0 = \\frac{1}{2^n}\\sum_x (-1)^{f(x)}.$$\nIf f is constant, $a_0 = \\pm 1$, so $P(0^n) = 1$. If f is balanced, half the terms are $+1$ and half $-1$, so $a_0 = 0$ and $P(0^n) = 0$.\n**Classical bound.** An adversary can answer the first $2^{n-1}$ queries of any deterministic algorithm with the same value; both a constant and a balanced\nfunction are consistent with those answers, so one more query is needed: $2^{n-1}+1$. ∎\n\n**Honest caveat.** A *randomised* classical algorithm that queries k random inputs errs with probability at most $2^{1-k}$ (it can only fail on a balanced f by seeing\nk equal values), so the exponential separation is only against exact deterministic algorithms. That is why Deutsch-Jozsa is a teaching example, not an application;\nBernstein-Vazirani (L200 #7) and Simon's problem sharpen the separation.",
+        "check": "labs/L500/24-quantum-information-basics/theorems.py::T24.3",
+        "checkOutput": "[T24.3] Deutsch-Jozsa: P(0^n) = 1 if f is constant and 0 if f is balanced, with one query\n  n = 3: both constant functions give P(000) = 1.0000, 1.0000\n  all 70 balanced functions give P(000) = 0.0000 (max)\n  ancilla circuit for f = x0 XOR x2 (|-> ancilla, phase kickback): P(inputs 000) = 0.0000\n  a deterministic classical algorithm needs 2^(n-1) + 1 = 5 queries in the worst case"
+      },
+      {
+        "name": "T24.4 Density matrices, partial trace and no-signalling",
+        "statement": "ρ = Σ p_i|ψ_i><ψ_i| is Hermitian, positive semidefinite with trace 1, and Tr ρ^2 = 1 iff ρ is pure. For |Φ+>, Tr_A |Φ+><Φ+| = I/2 (purity 1/2) although the global state is pure. For any state ρ_AB and any unitary U_A or measurement on A whose result is not communicated, Tr_A of the new state equals Tr_A ρ_AB.",
+        "proof": "**Properties.** $\\rho^\\dagger = \\sum p_i (|\\psi_i\\rangle\\langle\\psi_i|)^\\dagger = \\rho$; $\\langle v|\\rho|v\\rangle = \\sum p_i|\\langle\\psi_i|v\\rangle|^2 \\ge 0$; $\\mathrm{Tr}\\rho = \\sum p_i\\langle\\psi_i|\\psi_i\\rangle = 1$.\nWith eigenvalues $\\lambda_k \\ge 0$ summing to 1, $\\mathrm{Tr}\\rho^2 = \\sum\\lambda_k^2 \\le (\\max_k\\lambda_k)\\sum_k\\lambda_k \\le 1$, with equality iff one $\\lambda_k = 1$, i.e. $\\rho$ is a projector onto one pure state.\n**Bell pair.** $|\\Phi^+\\rangle\\langle\\Phi^+| = \\tfrac12(|00\\rangle\\langle00| + |00\\rangle\\langle11| + |11\\rangle\\langle00| + |11\\rangle\\langle11|)$. Tracing out A keeps only terms with equal A-labels:\n$\\mathrm{Tr}_A = \\tfrac12(|0\\rangle\\langle0| + |1\\rangle\\langle1|) = I/2$, purity $\\tfrac14+\\tfrac14 = 1/2$. Global knowledge is perfect; local knowledge is nil: a hallmark of entanglement.\n**No-signalling.** Partial trace is invariant under conjugation by operators on the traced-out factor: $\\mathrm{Tr}_A[(U\\otimes I)\\rho(U^\\dagger\\otimes I)] = \\mathrm{Tr}_A[\\rho\\,(U^\\dagger U\\otimes I)] = \\mathrm{Tr}_A\\rho$\n(cyclicity of the trace over A). An unread measurement $\\rho \\mapsto \\sum_k (P_k\\otimes I)\\rho(P_k\\otimes I)$ with $\\sum_k P_k = I$ gives, by the same cyclicity, $\\mathrm{Tr}_A[\\rho\\sum_k P_k] = \\mathrm{Tr}_A\\rho$. ∎\n\n**Why it matters for practice.** Noise models (L300 #12) are maps on density matrices, and \"the state of one qubit of a register\" in any SDK is a partial trace.\nThe mixture ½|0><0| + ½|+><+| has eigenvalues (2 ± √2)/4: different ensembles can give the same ρ, so ρ, not the recipe, is what experiments can distinguish.",
+        "check": "labs/L500/24-quantum-information-basics/theorems.py::T24.4",
+        "checkOutput": "[T24.4] Density matrices: trace 1, PSD, purity; partial trace of a Bell pair is I/2; no signalling\n  Bell pair: global purity Tr(rho^2) = 1.0000; rho_A = rho_B = I/2: True; Tr(rho_B^2) = 0.5000\n  200 random 2-qubit pure states: Hermitian, eigenvalues >= 0, trace 1: True\n  no signalling: Alice's random unitary or unread measurement changes rho_B by < 1e-12: True\n  mixture 1/2|0><0| + 1/2|+><+|: eigenvalues [0.8536, 0.1464], purity 0.7500"
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "qc-L500-24-P1",
+        "type": "proof",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Give the inner-product proof of no-cloning in your own words, and explain why it does not rule out a device that clones the two states |0> and |1> only.",
+        "solution": "See T24.1, Proof 1: a cloning unitary must satisfy <ψ|φ> = <ψ|φ>^2 for every pair it clones, so every pair of clonable states has overlap 0 or 1. |0> and |1> are orthogonal (overlap 0), so a CNOT with blank |0> clones them; the contradiction only arises once a non-orthogonal pair such as |0>, |+> (overlap 1/√2 = 0.7071, squared 0.5) must also be cloned."
+      },
+      {
+        "id": "qc-L500-24-P2",
+        "type": "derivation",
+        "difficulty": 3,
+        "marks": 8,
+        "problem": "Derive the teleportation identity |ψ>|Φ+> = (1/2) Σ_{x,z} |Bell_{xz}> ⊗ X^x Z^z |ψ> (up to signs), and state which correction Bob applies for each of Alice's four outcomes.",
+        "solution": "Expand |ψ>|Φ+> with |ψ> = α|0> + β|1> into four computational terms, substitute the inverse Bell relations for Alice's pair and collect (T24.2a). Outcomes: Φ+ -> Bob has |ψ>, no correction; Φ- -> Z|ψ>, apply Z; Ψ+ -> X|ψ>, apply X; Ψ- -> XZ|ψ> (= -ZX|ψ>), apply X then Z. Each has probability 1/4 because each branch is (1/2) × a unit vector."
+      },
+      {
+        "id": "qc-L500-24-P3",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Alice teleports |ψ> = cos(π/8)|0> + sin(π/8)|1>. (i) What is the probability of each of her four outcomes? (ii) If her outcome needs both corrections and Bob forgets them and measures Z, what is P(1)? (iii) What is P(1) if Bob applies the corrections first?",
+        "solution": "(i) 0.25 each, independent of ψ (T24.2). (ii) Uncorrected, Bob holds XZ|ψ> ∝ -sin(π/8)|0> + cos(π/8)|1>, so P(1) = cos^2(π/8) = 0.8536. (iii) Corrected, he holds |ψ>, so P(1) = sin^2(π/8) = 0.1464. Averaged over Alice's outcomes, before the bits arrive Bob's P(1) is 1/2 (ρ_B = I/2)."
+      },
+      {
+        "id": "qc-L500-24-P4",
+        "type": "derivation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Show that applying I, X, Z, ZX to Alice's half of |Φ+> produces the four Bell states, and write Bob's decoding circuit. Why does this not let Alice send 2 bits with one qubit and no prior entanglement?",
+        "solution": "(X ⊗ I)|Φ+> = |Ψ+>, (Z ⊗ I)|Φ+> = |Φ->, (ZX ⊗ I)|Φ+> = (|01> - |10>)/√2 = |Ψ-> (X acts first, then Z). Bob applies CX (Alice's qubit as control) then H to it and measures: messages 00, 01, 10, 11 come out with probability 1 (check prints the table). Without the pre-shared e-bit a single qubit carries at most 1 classical bit (Holevo's bound, stated here without proof); the second bit is 'paid for' by the e-bit delivered earlier."
+      },
+      {
+        "id": "qc-L500-24-P5",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Deutsch-Jozsa with n = 2 and f(x1, x2) = x1 XOR x2. Compute P(00). How many queries does a deterministic classical algorithm need in the worst case for n = 10?",
+        "solution": "f is balanced (f = 1 on 01 and 10). a_0 = (1/4)(1 - 1 - 1 + 1) = 0, so P(00) = 0 and the algorithm answers 'balanced'. Classical worst case for n = 10: 2^9 + 1 = 513 queries (versus 1 quantum query). A randomised classical algorithm with 10 queries errs with probability at most 2^-9."
+      },
+      {
+        "id": "qc-L500-24-P6",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "For |ψ> = √0.8 |00> + √0.2 |11>, compute ρ_A = Tr_B |ψ><ψ|, its purity and its von Neumann entropy S = -Σ λ log2 λ.",
+        "solution": "Only equal B-labels survive: ρ_A = diag(0.8, 0.2). Purity = 0.64 + 0.04 = 0.68. S = -(0.8 log2 0.8 + 0.2 log2 0.2) = 0.7219 bits (less than 1 bit: less entangled than a Bell pair, whose ρ_A = I/2 has S = 1)."
+      },
+      {
+        "id": "qc-L500-24-P7",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Find the eigenvalues and purity of ρ = ½|0><0| + ½|+><+|. Give a different ensemble of two orthogonal states with the same ρ.",
+        "solution": "ρ = [[3/4, 1/4], [1/4, 1/4]]. Eigenvalues (2 ± √2)/4 = 0.8536 and 0.1464; purity = 0.8536^2 + 0.1464^2 = 0.75. Its eigen-decomposition is itself an ensemble: the two orthonormal eigenvectors (cos(π/8), sin(π/8)) and (-sin(π/8), cos(π/8)) with weights 0.8536 and 0.1464 give the same ρ, so no experiment can tell the two preparations apart."
+      },
+      {
+        "id": "qc-L500-24-P8",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "The CNOT 'copier' is applied to cos(θ/2)|0> + sin(θ/2)|1> with blank |0>. For θ = π/3 compute the joint fidelity with |ψ>|ψ> and the fidelity of the copy qubit alone with |ψ>.",
+        "solution": "Output = c|00> + s|11> with c = cos(π/6), s = sin(π/6). Joint fidelity = |<ψψ|out>|^2 = (c^3 + s^3)^2 = 0.5999. The copy qubit alone is ρ = diag(c^2, s^2), so <ψ|ρ|ψ> = c^4 + s^4 = 0.6250. Both equal 1 only at θ = 0 or π (basis states), as T24.1 requires."
+      },
+      {
+        "id": "qc-L500-24-P9",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "A blog post claims: 'Teleportation proves entanglement sends information instantly, and also makes a copy of the qubit at Bob's end.' Correct both claims using T24.1, T24.2 and T24.4.",
+        "solution": "(1) Before Alice's 2 classical bits arrive, Bob's reduced state is I/2 whatever |ψ> is (T24.2a, T24.4 no-signalling), so he learns nothing; the bits travel at most at light speed. (2) Alice's Bell measurement leaves her qubits in a basis state uncorrelated with |ψ>; exactly one copy exists at any time, consistent with no-cloning (T24.1). Teleportation moves a state; it neither copies it nor signals."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Correctness of derivations",
+        "excellent": "Identities expanded fully; signs and global phases tracked; probabilities justified by the Born rule.",
+        "adequate": "Correct result with a skipped algebra step.",
+        "inadequate": "Asserts the protocol works without deriving it.",
+        "weight": 40
+      },
+      {
+        "criterion": "Use of theorems",
+        "excellent": "Cites the exact theorem (T23.x/T24.x) each step relies on; recognises when a promise or assumption is needed.",
+        "adequate": "Uses the right ideas without naming them.",
+        "inadequate": "Applies a result outside its conditions (e.g. clones orthogonal states and claims a contradiction).",
+        "weight": 25
+      },
+      {
+        "criterion": "Numerical evidence",
+        "excellent": "Runs theorems.py, quotes output, and ties every number in the answer to code.",
+        "adequate": "Runs code but numbers only partly traced.",
+        "inadequate": "No code evidence.",
+        "weight": 20
+      },
+      {
+        "criterion": "Physical interpretation",
+        "excellent": "Explains what can and cannot be done (signalling, copying, query cost) in plain words.",
+        "adequate": "Some interpretation.",
+        "inadequate": "None, or a misconception (FTL, copying).",
+        "weight": 15
+      }
+    ],
+    "conceptNote": "content/concepts/L500/24-quantum-information-basics.md",
+    "conceptSummary": "Linearity forbids copying unknown states (no-cloning). Entanglement is a resource: 1 e-bit + 2 bits teleports a qubit, 1 e-bit + 1 qubit carries 2 bits, and neither signals faster than light because Bob's local state stays I/2 until the bits arrive. Deutsch-Jozsa turns a global property of f into one interference amplitude. Density matrices and the partial trace describe parts of systems and noisy states.",
+    "sources": [
+      {
+        "title": "IBM Quantum Learning - Limitations on quantum information (no-cloning theorem, J. Watrous)",
+        "url": "https://quantum.cloud.ibm.com/learning/en/courses/basics-of-quantum-information/quantum-circuits/limitations-on-quantum-information"
+      },
+      {
+        "title": "IBM Quantum Learning - Entanglement in action (teleportation, superdense coding, CHSH)",
+        "url": "https://quantum.cloud.ibm.com/learning/en/courses/basics-of-quantum-information/entanglement-in-action/introduction"
+      },
+      {
+        "title": "IBM Quantum Learning - The Deutsch-Jozsa algorithm",
+        "url": "https://quantum.cloud.ibm.com/learning/en/courses/fundamentals-of-quantum-algorithms/quantum-query-algorithms/deutsch-jozsa-algorithm"
+      },
+      {
+        "title": "IBM Quantum Learning - General formulation of quantum information: Density matrices",
+        "url": "https://quantum.cloud.ibm.com/learning/en/courses/general-formulation-of-quantum-information/density-matrices/introduction"
+      },
+      {
+        "title": "Cleve, Ekert, Macchiavello, Mosca (1998), Quantum algorithms revisited, arXiv:quant-ph/9708016",
+        "url": "https://arxiv.org/abs/quant-ph/9708016"
+      }
+    ],
+    "seeAlso": [
+      "quantum-computing L100 #4 Entanglement with a Bell pair: the e-bit every protocol here consumes.",
+      "quantum-computing L200 #7 Bernstein–Vazirani as a pattern: the same H-oracle-H interference argument as T24.3, with a sharper separation.",
+      "quantum-computing L300 #12 Noise models: how Bell and GHZ results degrade: noise channels act on the density matrices of T24.4.",
+      "quantum-computing L300 #13 Error mitigation: readout correction and zero-noise extrapolation: mitigation estimates properties of ρ, it cannot clone or purify it (T24.1).",
+      "quantum-computing L200 #8 Small Grover search: its phase oracle is the phase-kickback construction proved in T24.3."
+    ],
+    "next": "L500 #25 Foundations III: algorithms and complexity - Grover's sqrt(N), the QFT and phase estimation, Shor's reduction, and why exponential speed-ups are rare.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran locally (Python 3.12.15, numpy 2.5.3; no quantum SDK needed): `python theorems.py` in labs/L500/24-quantum-information-basics (its output is each theorem's checkOutput, regenerated by tools/build_l500_json.py) and `python -m unittest -v` (2 tests OK); `python research/l500_checks.py` re-runs every check, compares it with checkOutput and recomputes every problem-set number. Platforms: authored and run on Linux only; the code uses pathlib and numpy only.",
+      "pendingCi": [
+        "labs/L500/24-quantum-information-basics: theorems.py + unittest on macos-latest and windows-latest (CI matrix, not yet run)"
+      ]
+    }
+  },
+  {
+    "id": "foundations-algorithms-and-complexity",
+    "number": 25,
+    "level": "L500",
+    "title": "Foundations III: algorithms and complexity",
+    "phase": "Theory & Rigour",
+    "category": "foundations",
+    "description": "Grover's success probability and ~(π/4)√N iterations, the QFT as a unitary, phase estimation, Shor's reduction from factoring to order finding, BQP at undergraduate level, and why exponential speed-ups are rare.",
+    "outcome": "You can derive Grover's sin^2((2k+1)θ) law and the optimal iteration count, prove the QFT is unitary and count its gates, derive the phase-estimation distribution and its 4/π^2 guarantee, explain Shor's classical reduction step by step, place BQP among P, BPP, NP and PSPACE, and critique speed-up claims.",
+    "estimatedTime": "6-8 hours (reading 2 h, derivations and checks 2-3 h, problem set 2-3 h)",
+    "prerequisites": [
+      "lessons 23-24 (unitaries, tensor products, phase kickback, Deutsch-Jozsa)",
+      "linear algebra: reflections and rotations in a plane, eigenvectors of a unitary (|λ| = 1)",
+      "discrete maths: modular arithmetic, gcd and Euclid's algorithm, continued fractions (introduced here)",
+      "complexity: big-O, polynomial vs exponential time, the classes P and NP",
+      "geometric series; the inequality 2x/π <= sin x <= x on [0, π/2]"
+    ],
+    "learningObjectives": [
+      "Derive Grover's success probability P_k = sin^2((2k+1)θ) from two reflections and evaluate the optimal number of iterations ~(π/4)√(N/M), including what happens when you overshoot.",
+      "Prove that the quantum Fourier transform is unitary and explain why its circuit uses O(n^2) gates while the classical FFT on the same vector needs ~n 2^n operations.",
+      "Derive the phase-estimation outcome distribution and prove the nearest estimate occurs with probability at least 4/π^2.",
+      "Explain Shor's reduction from factoring to order finding, including when it fails and how continued fractions recover the order from a measured phase.",
+      "Explain the definition of BQP, justify its place relative to P, BPP, NP and PSPACE, and critique claims of exponential quantum speed-up using the BBBV lower bound and the conditions under which speed-ups are known."
+    ],
+    "glossary": [
+      {
+        "term": "oracle / query complexity",
+        "meaning": "Cost measured in calls to a black-box f; lower bounds are provable in this model."
+      },
+      {
+        "term": "Grover iterate G",
+        "meaning": "D·O: oracle O flips marked amplitudes; diffusion D = 2|s><s| - I reflects about the uniform state."
+      },
+      {
+        "term": "θ (Grover angle)",
+        "meaning": "sin θ = sqrt(M/N), the initial overlap of |s> with the marked subspace."
+      },
+      {
+        "term": "QFT",
+        "meaning": "|j> -> (1/√N) Σ_k e^{2πi jk/N} |k>, the unitary DFT on n qubits (N = 2^n)."
+      },
+      {
+        "term": "phase estimation",
+        "meaning": "Given U and an eigenvector with U|u> = e^{2πiφ}|u>, outputs a t-bit estimate of φ."
+      },
+      {
+        "term": "order r of a mod N",
+        "meaning": "Smallest r >= 1 with a^r ≡ 1 (mod N), for gcd(a, N) = 1."
+      },
+      {
+        "term": "continued fractions",
+        "meaning": "Best rational approximations; recover s/r from m/2^t when 2^t >= N^2."
+      },
+      {
+        "term": "BQP",
+        "meaning": "Decision problems solvable by a uniform family of polynomial-size quantum circuits with error probability <= 1/3."
+      },
+      {
+        "term": "BPP",
+        "meaning": "The classical randomised analogue of BQP (polynomial time, error <= 1/3)."
+      },
+      {
+        "term": "dequantization",
+        "meaning": "A classical algorithm matching a claimed quantum speed-up once the same input assumptions are granted."
+      }
+    ],
+    "theorems": [
+      {
+        "name": "T25.1 Grover success probability and optimal iterations",
+        "statement": "Among N items with M marked, let sin θ = sqrt(M/N). After k Grover iterations on the uniform state, the probability of measuring a marked item is P_k = sin^2((2k+1)θ). Choosing k = floor(π/(4θ)) gives P_k >= 1 - M/N, and k ≈ (π/4)sqrt(N/M) for M << N. Any quantum algorithm needs Ω(sqrt(N/M)) queries (BBBV 1997; Boyer et al. 1998).",
+        "proof": "**Derivation.** Let $|w\\rangle$ be the uniform superposition of the M marked items and $|r\\rangle$ that of the N - M unmarked ones; they are orthonormal and\n$|s\\rangle = \\sin\\theta\\,|w\\rangle + \\cos\\theta\\,|r\\rangle$. Both operators keep the real plane span{|w>, |r>} invariant:\nthe oracle $O = I - 2|w\\rangle\\langle w|$ (on this plane) reflects about $|r\\rangle$, and $D = 2|s\\rangle\\langle s| - I$ reflects about $|s\\rangle$.\nA product of two reflections whose mirrors meet at angle θ is a rotation by 2θ, so $G = DO$ rotates by $2\\theta$ towards $|w\\rangle$ and\n$G^k|s\\rangle = \\sin((2k+1)\\theta)|w\\rangle + \\cos((2k+1)\\theta)|r\\rangle$, giving $P_k = \\sin^2((2k+1)\\theta)$.\n**Optimal k.** P_k = 1 needs $(2k+1)\\theta = \\pi/2$, i.e. $k = \\pi/(4\\theta) - 1/2$. With $k = \\lfloor \\pi/(4\\theta)\\rfloor$ we have $\\pi/(4\\theta) - 1 < k \\le \\pi/(4\\theta)$, so\n$|(2k+1)\\theta - \\pi/2| \\le \\theta$ and $P_k \\ge \\cos^2\\theta = 1 - M/N$. Since $\\theta \\approx \\sin\\theta = \\sqrt{M/N}$, $k \\approx (\\pi/4)\\sqrt{N/M}$.\n**Overshoot.** The rotation does not stop: at $k \\approx \\pi/(2\\theta)$ the state is back near $|r\\rangle$ (P ≈ 0). \"More iterations is better\" is false (L200 #8).\n**Optimality (cited).** Bennett, Bernstein, Brassard and Vazirani (1997) prove that, relative to a random oracle, no quantum algorithm decides NP in time $o(2^{n/2})$;\nBoyer, Brassard, Høyer and Tapp (1998) give the closed-form P_k above and show Grover is within a small constant of optimal. Proof idea (hybrid argument):\neach query can move the state's dependence on the marked item by only $O(1/\\sqrt N)$ in norm, so $\\Omega(\\sqrt N)$ queries are needed to separate N possibilities. ∎",
+        "check": "labs/L500/25-algorithms-and-complexity/theorems.py::T25.1",
+        "checkOutput": "[T25.1] Grover: P_k = sin^2((2k+1) theta), sin theta = sqrt(M/N); best k ~ (pi/4) sqrt(N/M)\n  N =     4, M = 1: best k =   1 (floor(pi/(4 theta)) =   1, (pi/4) sqrt(N/M) =    1.57), P = 1.0000\n  N =    16, M = 1: best k =   3 (floor(pi/(4 theta)) =   3, (pi/4) sqrt(N/M) =    3.14), P = 0.9613\n  N =    64, M = 1: best k =   6 (floor(pi/(4 theta)) =   6, (pi/4) sqrt(N/M) =    6.28), P = 0.9966\n  N =   256, M = 1: best k =  12 (floor(pi/(4 theta)) =  12, (pi/4) sqrt(N/M) =   12.57), P = 0.9999\n  N =  1024, M = 1: best k =  25 (floor(pi/(4 theta)) =  25, (pi/4) sqrt(N/M) =   25.13), P = 0.9995\n  N =  1024, M = 4: best k =  12 (floor(pi/(4 theta)) =  12, (pi/4) sqrt(N/M) =   12.57), P = 0.9999\n  N =  4096, M = 1: best k =  50 (floor(pi/(4 theta)) =  50, (pi/4) sqrt(N/M) =   50.27), P = 0.9999\n  statevector simulation matches sin^2((2k+1) theta) for every k tested (max error < 1e-9): True\n  overshoot, N = 64: P at k = 6 is 0.9966, at k = 12 it is 0.0001 (rotation keeps turning)"
+      },
+      {
+        "name": "T25.2 The QFT is unitary and has an O(n^2) circuit",
+        "statement": "F_{jk} = ω^{jk}/sqrt(N) with ω = e^{2πi/N} is unitary. For N = 2^n, F is implemented exactly by n Hadamards, n(n-1)/2 controlled phase gates and floor(n/2) swaps.",
+        "proof": "**Unitarity.** $(F^\\dagger F)_{jk} = \\frac1N\\sum_{m=0}^{N-1}\\omega^{-mj}\\omega^{mk} = \\frac1N\\sum_{m}\\omega^{m(k-j)}$. For $j = k$ every term is 1 and the sum is 1.\nFor $j \\ne k$, $q = \\omega^{k-j} \\ne 1$ but $q^N = 1$, so the geometric series gives $\\sum_m q^m = (1 - q^N)/(1 - q) = 0$. Hence $F^\\dagger F = I$.\n**Circuit (product formula).** Write $j = j_{n-1}\\dots j_0$ in binary. Then\n$F|j\\rangle = \\frac{1}{\\sqrt N}\\bigotimes_{l=1}^{n}\\big(|0\\rangle + e^{2\\pi i\\, j/2^l}|1\\rangle\\big)$ (expand $e^{2\\pi i jk/N}$ over the bits of k). The phase $e^{2\\pi i j/2^l}$ depends only on the\nlast l bits of j, i.e. on the binary fraction $0.j_{l-1}\\dots j_0$. A Hadamard on qubit $j_{l-1}$ produces the first bit of that fraction; controlled phases $R_m = \\mathrm{diag}(1, e^{2\\pi i/2^m})$\nfrom the lower qubits add the rest. Doing this from the top qubit down costs $n$ H gates and $(n-1) + (n-2) + \\dots + 0 = n(n-1)/2$ controlled phases, and leaves the\noutput in reversed order, fixed by $\\lfloor n/2\\rfloor$ swaps. ∎\n\n**What the O(n^2) does and does not buy.** The circuit transforms $2^n$ amplitudes with $O(n^2)$ gates, while an FFT on the same vector costs ~$n2^n$ operations.\nBut you cannot read the amplitudes out: measurement returns one k. The QFT is useful only inside algorithms whose output is a single, likely, informative k (periods, phases).",
+        "check": "labs/L500/25-algorithms-and-complexity/theorems.py::T25.2",
+        "checkOutput": "[T25.2] The QFT matrix F_jk = e^{2 pi i jk/N}/sqrt(N) is unitary and is built by O(n^2) gates\n  F^dagger F = I for N = 2 .. 256 (max error < 1e-10): True\n  qsim circuit (H, CP, SWAP) equals F for n = 1 .. 5 (max error < 1e-10): True\n  n = 1: 1 H + 0 controlled phases + 0 swaps = 1 gates (n(n+1)/2 + floor(n/2)); FFT on 2^n entries ~ n 2^n = 2\n  n = 2: 2 H + 1 controlled phases + 1 swaps = 4 gates (n(n+1)/2 + floor(n/2)); FFT on 2^n entries ~ n 2^n = 8\n  n = 3: 3 H + 3 controlled phases + 1 swaps = 7 gates (n(n+1)/2 + floor(n/2)); FFT on 2^n entries ~ n 2^n = 24\n  n = 4: 4 H + 6 controlled phases + 2 swaps = 12 gates (n(n+1)/2 + floor(n/2)); FFT on 2^n entries ~ n 2^n = 64\n  n = 5: 5 H + 10 controlled phases + 2 swaps = 17 gates (n(n+1)/2 + floor(n/2)); FFT on 2^n entries ~ n 2^n = 160"
+      },
+      {
+        "name": "T25.3 Phase estimation",
+        "statement": "With t counting qubits, controlled-U^{2^j} gates and an inverse QFT, an eigenvector U|u> = e^{2πiφ}|u> yields outcome m with probability P(m) = |(1/T) Σ_{k<T} e^{2πik(φ - m/T)}|^2, T = 2^t. If φT is an integer the outcome is exact; otherwise the nearest m (|φ - m/T| <= 1/(2T)) occurs with probability at least 4/π^2 ≈ 0.405.",
+        "proof": "**Derivation.** After Hadamards the counting register is $T^{-1/2}\\sum_k|k\\rangle$. Controlled-$U^{2^j}$ from counting qubit j multiplies $|k\\rangle|u\\rangle$ by\n$\\prod_j e^{2\\pi i\\varphi k_j 2^j} = e^{2\\pi i\\varphi k}$ (phase kickback; $|u\\rangle$ is unchanged). So the register holds $T^{-1/2}\\sum_k e^{2\\pi i\\varphi k}|k\\rangle$, which for $\\varphi = m/T$\nis exactly $F|m\\rangle$ (T25.2). Applying $F^\\dagger$: the amplitude of $|m\\rangle$ is $\\frac1T\\sum_k e^{2\\pi i k(\\varphi - m/T)}$.\n**Exact case.** If $\\varphi T = m$, every term is 1: $P(m) = 1$.\n**Bound.** Let $\\delta = \\varphi - m/T$ with $0 < |\\delta| \\le 1/(2T)$. Summing the geometric series, $|a_m| = \\frac{|\\sin(\\pi T\\delta)|}{T|\\sin(\\pi\\delta)|}$.\nBecause $\\pi T|\\delta| \\le \\pi/2$, concavity gives $|\\sin(\\pi T\\delta)| \\ge 2T|\\delta|$, and $|\\sin(\\pi\\delta)| \\le \\pi|\\delta|$. Therefore $|a_m| \\ge \\frac{2T|\\delta|}{T\\pi|\\delta|} = 2/\\pi$ and $P(m) \\ge 4/\\pi^2$. ∎\n\nUsing t = n + O(log(1/ε)) qubits makes the estimate accurate to n bits with probability ≥ 1 - ε (Cleve, Ekert, Macchiavello & Mosca 1998 present\nDeutsch-Jozsa, Shor and phase estimation in this one framework). Phase estimation is the engine of Shor's algorithm and of quantum chemistry energy estimation\n(the fault-tolerant alternative to the VQE of L300 #15).",
+        "check": "labs/L500/25-algorithms-and-complexity/theorems.py::T25.3",
+        "checkOutput": "[T25.3] Phase estimation: exact when phi = m/2^t; otherwise the nearest m has P >= 4/pi^2\n  t = 3, phi = 0.1250: most likely m = 1 (m/8 = 0.1250), P = 1.0000\n  t = 3, phi = 0.3333: most likely m = 3 (m/8 = 0.3750), P = 0.6878\n  t = 3, phi = 0.3000: most likely m = 2 (m/8 = 0.2500), P = 0.5775\n  t = 3, phi = 0.7071: most likely m = 6 (m/8 = 0.7500), P = 0.6719\n  t = 3, phi = 0.5625 (halfway between 4/8 and 5/8): P(4) = P(5) = 0.4105\n  simulated distribution equals |(1/T) sum_k e^{2 pi i k (phi - m/T)}|^2 for t = 3..6 (max error < 1e-10): True\n  smallest P(most likely m) over all cases = 0.4054 >= 4/pi^2 = 0.4053: True"
+      },
+      {
+        "name": "T25.4 Shor's reduction: factoring reduces to order finding",
+        "statement": "Let N be odd, composite and not a prime power, and gcd(a, N) = 1 with order r. If r is even and a^{r/2} ≢ -1 (mod N), then gcd(a^{r/2} - 1, N) is a nontrivial factor of N. For a chosen uniformly at random the condition holds with probability at least 1/2 (Shor 1997). Order finding is phase estimation of U_a|y> = |ay mod N>, whose eigenphases are s/r; with 2^t >= N^2, continued fractions recover s/r from the measured m/2^t.",
+        "proof": "**Reduction.** $a^r \\equiv 1$ means $N \\mid (a^{r/2}-1)(a^{r/2}+1)$. N does not divide $a^{r/2}-1$ (otherwise the order would be at most r/2), and by assumption\nN does not divide $a^{r/2}+1$. So N shares a factor with each bracket without dividing either: $1 < \\gcd(a^{r/2}-1, N) < N$. Euclid's algorithm computes it in polynomial time.\n**Success probability (cited).** Writing $N = \\prod p_i^{e_i}$ with k ≥ 2 distinct odd primes, the Chinese remainder theorem splits a random a into independent random residues, and the\ncondition fails with probability at most $2^{1-k} \\le 1/2$ (Shor 1997, factoring section; the check counts the fraction exactly for N = 15, 21, 33, 35, 91).\n**Order finding.** $U_a$ permutes the residues, so it is unitary; its eigenvectors $|u_s\\rangle = r^{-1/2}\\sum_{k<r} e^{-2\\pi i sk/r}|a^k \\bmod N\\rangle$ have eigenvalues $e^{2\\pi i s/r}$, and\n$|1\\rangle = r^{-1/2}\\sum_s |u_s\\rangle$, so phase estimation on input $|1\\rangle$ returns a good estimate of $s/r$ for a uniformly random s. If $|s/r - m/2^t| \\le 1/(2\\cdot 2^t) \\le 1/(2r^2)$\nthen s/r is a convergent of the continued fraction of $m/2^t$ (Legendre's theorem), so the denominator gives r (or a divisor of r when gcd(s, r) > 1; repeat and take the lcm).\n**Cost.** Modular exponentiation dominates: $O(n^3)$ gates for an n-bit N with schoolbook arithmetic, so factoring is in BQP, whereas no polynomial-time classical algorithm is known. ∎\n\n**Proportion check.** The worked example N = 15, a = 7 gives r = 4 and outcomes 0, 64, 128, 192 out of 256 with probability 1/4 each; 64 and 192 give r = 4 directly, so one run\nsucceeds with probability 1/2. This is also why \"factoring 15\" demonstrations prove little: the hard part (modular exponentiation for 2048-bit N) is absent (L400 #19).",
+        "check": "labs/L500/25-algorithms-and-complexity/theorems.py::T25.4",
+        "checkOutput": "[T25.4] Shor's reduction: an even order r with a^(r/2) != -1 (mod N) yields gcd(a^(r/2) - 1, N)\n  N = 15: 6/7 = 0.8571 of the coprime a in [2, N-1] succeed; e.g. a = 2, r = 4, gcd(2^2 - 1, 15) = 3, 15 = 3 x 5\n  N = 21: 6/11 = 0.5455 of the coprime a in [2, N-1] succeed; e.g. a = 2, r = 6, gcd(2^3 - 1, 21) = 7, 21 = 7 x 3\n  N = 33: 10/19 = 0.5263 of the coprime a in [2, N-1] succeed; e.g. a = 5, r = 10, gcd(5^5 - 1, 33) = 11, 33 = 11 x 3\n  N = 35: 18/23 = 0.7826 of the coprime a in [2, N-1] succeed; e.g. a = 2, r = 12, gcd(2^6 - 1, 35) = 7, 35 = 7 x 5\n  N = 91: 54/71 = 0.7606 of the coprime a in [2, N-1] succeed; e.g. a = 2, r = 12, gcd(2^6 - 1, 91) = 7, 91 = 7 x 13\n  order finding, N = 15, a = 7, t = 8: outcomes {0: 0.25, 64: 0.25, 128: 0.25, 192: 0.25}; one run recovers r = 4 with P = 0.5000\n  N = 21, a = 2, t = 9: a likely outcome m = 427, 427/512 -> continued fraction 5/6 -> r = 6; one run recovers r = 6 with P = 0.3084"
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "qc-L500-25-P1",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 4,
+        "problem": "Grover search with N = 1024 and one marked item. Give θ, the optimal k = floor(π/(4θ)), P_k, and P after 26 and 50 iterations.",
+        "solution": "θ = asin(1/32) = 0.03126 rad. k = floor(π/(4θ)) = 25, P_25 = sin^2(51θ) = 0.9995. P_26 = 0.9927 (just past the peak) and P_50 = 0.0002 (the state has rotated back to the unmarked direction). Classical exhaustive search needs up to 1023 queries, 512 on average."
+      },
+      {
+        "id": "qc-L500-25-P2",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Same N = 1024 but M = 4 marked items. Give the optimal k and P_k, and P if you mistakenly run the M = 1 count of 25 iterations.",
+        "solution": "sin θ = sqrt(4/1024) = 1/16. k = floor(π/(4θ)) = 12 (half of the M = 1 count, since k ∝ sqrt(N/M)), P_12 = 0.9999. Running 25 iterations overshoots badly: P_25 = 0.0023. Unknown M is handled by randomised iteration counts or quantum counting (Boyer et al.)."
+      },
+      {
+        "id": "qc-L500-25-P3",
+        "type": "derivation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Show that D = 2|s><s| - I and the oracle O restricted to span{|w>, |r>} are reflections, and derive P_k = sin^2((2k+1)θ).",
+        "solution": "D|s> = |s> and D|s⊥> = -|s⊥> for |s⊥> ⊥ |s> in the plane, so D is the reflection about |s>; O|r> = |r>, O|w> = -|w>, so O is the reflection about |r>. Composing reflections about lines at angle θ gives a rotation by 2θ; starting at angle θ from |r>, after k steps the angle is (2k+1)θ and the |w> amplitude is sin((2k+1)θ) (T25.1)."
+      },
+      {
+        "id": "qc-L500-25-P4",
+        "type": "proof",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Prove that the N x N matrix F_jk = ω^{jk}/sqrt(N), ω = e^{2πi/N}, is unitary.",
+        "solution": "(F†F)_jk = (1/N) Σ_m ω^{m(k-j)}. For j = k this is 1. For j ≠ k, q = ω^{k-j} ≠ 1 and q^N = 1, so Σ_{m=0}^{N-1} q^m = (1 - q^N)/(1 - q) = 0. Hence F†F = I (T25.2); the check confirms it numerically for N up to 256."
+      },
+      {
+        "id": "qc-L500-25-P5",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Phase estimation with t = 3 counting qubits on an eigenphase φ = 1/3. Give the probability of the most likely outcome m and of the second most likely. Verify the 4/π^2 bound.",
+        "solution": "P(m) = |(1/8) Σ_k e^{2πik(1/3 - m/8)}|^2. The most likely is m = 3 (3/8 = 0.375) with P = 0.6878; next is m = 2 (0.25) with P = 0.1749. 0.6878 >= 4/π^2 = 0.4053 as T25.3 guarantees. Estimate: φ ≈ 0.375 with t = 3; more counting qubits sharpen it."
+      },
+      {
+        "id": "qc-L500-25-P6",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Run Shor's classical reduction by hand for N = 21, a = 2: find r, check the conditions, and extract the factors.",
+        "solution": "Powers of 2 mod 21: 2, 4, 8, 16, 11, 1, so r = 6 (even). a^{r/2} = 2^3 = 8 ≢ -1 = 20 (mod 21). gcd(8 - 1, 21) = 7 and gcd(8 + 1, 21) = 3, so 21 = 7 × 3 (T25.4)."
+      },
+      {
+        "id": "qc-L500-25-P7",
+        "type": "calculation",
+        "difficulty": 3,
+        "marks": 5,
+        "problem": "Order finding for N = 21, a = 2 with t = 9 counting qubits returns m = 427. Use continued fractions (denominator <= N) to recover r, and check it.",
+        "solution": "427/512 = 0.83398...; its continued fraction convergents with denominator <= 21 end at 5/6 (Fraction(427, 512).limit_denominator(21) = 5/6). So r = 6; check 2^6 mod 21 = 1. If the measured m had given s/r with gcd(s, r) > 1 (e.g. 2/6 = 1/3) the denominator 3 would fail the check, and you repeat. In the check one run succeeds with P = 0.3084."
+      },
+      {
+        "id": "qc-L500-25-P8",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "A dense state-vector simulator stores 2^n complex128 amplitudes (16 bytes each). How much memory does n = 40 need? Reconcile this with the theorem BQP ⊆ PSPACE.",
+        "solution": "2^40 × 16 B = 17,592,186,044,416 bytes = 16 TiB (17.6 TB). BQP ⊆ PSPACE does not say simulation is cheap in time: one amplitude <x|C|0> can be computed as a sum over all paths through the circuit (a Feynman path sum) reusing polynomial memory for each path, at exponential time cost. Memory and time trade off; neither is polynomial in general."
+      },
+      {
+        "id": "qc-L500-25-P9",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "Essay (600-900 words): 'Why are exponential quantum speed-ups rare?' Use the BBBV lower bound, the structure exploited by Shor's algorithm, the read-in/read-out problem, dequantization, and constant-factor overheads from fault tolerance. End with a checklist for evaluating a speed-up claim.",
+        "solution": "Model answer outline: (1) Unstructured problems: BBBV proves Ω(sqrt N) queries, so search gives at most a quadratic gain, which large constant overheads (L400 #19: physical qubits, T-gates, code cycles) can erase. (2) Exponential gains come from structure, notably hidden periodicity (Shor: order finding via QFT) and simulation of quantum systems; NP-complete problems are not known to have such structure and BQP is not believed to contain NP. (3) Input/output: loading N classical numbers costs ~N operations and measurement returns one sample, so linear-algebra 'speed-ups' assume oracles (e.g. QRAM) that may be the real cost. (4) Dequantization: given the same sampling access, classical algorithms have matched some claimed quantum machine-learning speed-ups (Preskill 2018 cites Tang 2018 as an example). (5) Moving targets: classical simulation improved from the 2019 '10,000 years' estimate to a 15-hour GPU computation (lesson 26). Checklist: what is the problem and input model? Best classical baseline, same budget? Asymptotic or measured? Constant factors and error correction included? Is the output a useful answer or a sample? Rubric: argument 40, use of theorems 30, evidence 20, clarity 10."
+      },
+      {
+        "id": "qc-L500-25-P10",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "BQP allows error 1/3. A BQP algorithm is run 15 independent times and the majority answer is taken. Compute the error probability exactly, and explain why the class is unchanged if 1/3 is replaced by 1/4 or 0.49.",
+        "solution": "Error = P(at most 7 of 15 runs correct) with p = 2/3 = Σ_{k=0}^{7} C(15,k)(2/3)^k(1/3)^{15-k} = 0.0882. By the Chernoff bound the error falls exponentially in the number of repetitions for any constant gap from 1/2, so any error bound 1/2 - c (constant c > 0) gives the same class after polynomially many repetitions."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Derivation correctness",
+        "excellent": "Each identity justified (reflections, geometric series, inequalities); limits of validity stated.",
+        "adequate": "Correct results, a justification missing.",
+        "inadequate": "Formula quoted, not derived.",
+        "weight": 35
+      },
+      {
+        "criterion": "Complexity reasoning",
+        "excellent": "Distinguishes query vs gate complexity, asymptotic vs measured, proven vs believed (e.g. BQP vs NP).",
+        "adequate": "Mostly correct use of classes.",
+        "inadequate": "Claims 'quantum solves NP-complete problems' or equivalent.",
+        "weight": 25
+      },
+      {
+        "criterion": "Numerical evidence",
+        "excellent": "Uses theorems.py output for every number; notes tolerances and seeds.",
+        "adequate": "Numbers mostly traced to code.",
+        "inadequate": "Numbers by hand or unexplained.",
+        "weight": 20
+      },
+      {
+        "criterion": "Critical evaluation (essay)",
+        "excellent": "Weighs counter-evidence and classical baselines; ends with a usable checklist.",
+        "adequate": "Balanced but generic.",
+        "inadequate": "One-sided or hype-driven.",
+        "weight": 20
+      }
+    ],
+    "conceptNote": "content/concepts/L500/25-algorithms-and-complexity.md",
+    "conceptSummary": "Grover is a rotation by 2θ per query: P_k = sin^2((2k+1)θ), best near (π/4)√(N/M), and provably no better than quadratic. The QFT is a unitary DFT built from O(n^2) gates; phase estimation reads an eigenphase with probability >= 4/π^2 of the nearest value. Shor reduces factoring to order finding, which is phase estimation plus continued fractions. BQP is bounded-error quantum polynomial time; exponential speed-ups need special structure and are rare.",
+    "sources": [
+      {
+        "title": "Grover (1996), A fast quantum mechanical algorithm for database search, arXiv:quant-ph/9605043",
+        "url": "https://arxiv.org/abs/quant-ph/9605043"
+      },
+      {
+        "title": "Boyer, Brassard, Høyer, Tapp (1998), Tight bounds on quantum searching, arXiv:quant-ph/9605034",
+        "url": "https://arxiv.org/abs/quant-ph/9605034"
+      },
+      {
+        "title": "Bennett, Bernstein, Brassard, Vazirani (1997), Strengths and weaknesses of quantum computing, arXiv:quant-ph/9701001",
+        "url": "https://arxiv.org/abs/quant-ph/9701001"
+      },
+      {
+        "title": "Shor (1997), Polynomial-time algorithms for prime factorization and discrete logarithms on a quantum computer, arXiv:quant-ph/9508027",
+        "url": "https://arxiv.org/abs/quant-ph/9508027"
+      },
+      {
+        "title": "Cleve, Ekert, Macchiavello, Mosca (1998), Quantum algorithms revisited, arXiv:quant-ph/9708016",
+        "url": "https://arxiv.org/abs/quant-ph/9708016"
+      },
+      {
+        "title": "IBM Quantum Learning - Grover's algorithm (J. Watrous)",
+        "url": "https://quantum.cloud.ibm.com/learning/en/courses/fundamentals-of-quantum-algorithms/grover-algorithm/introduction"
+      },
+      {
+        "title": "IBM Quantum Learning - Phase estimation and factoring (J. Watrous)",
+        "url": "https://quantum.cloud.ibm.com/learning/en/courses/fundamentals-of-quantum-algorithms/phase-estimation-and-factoring/introduction"
+      },
+      {
+        "title": "Preskill (2018), Quantum Computing in the NISQ era and beyond, Quantum 2, 79",
+        "url": "https://quantum-journal.org/papers/q-2018-08-06-79/"
+      }
+    ],
+    "seeAlso": [
+      "quantum-computing L200 #8 Small Grover search: the iterations-vs-success curve that T25.1 derives in closed form.",
+      "quantum-computing L200 #9 The QFT as a building block: the same H + controlled-phase + swap circuit proved unitary in T25.2.",
+      "quantum-computing L300 #15 A hybrid variational loop (VQE) under shot noise: the NISQ alternative to phase-estimation energy estimation (T25.3).",
+      "quantum-computing L400 #18 Benchmarking honestly against classical solvers: the practical side of 'why speed-ups are rare'.",
+      "quantum-computing L400 #19 Resource estimation: logical vs physical qubits and feasibility: what Shor's O(n^3) gates cost on error-corrected hardware.",
+      "quantum-computing L400 #21 Quantum and post-quantum: crypto inventory and migration plan: why T25.4 is the reason RSA and ECC must be replaced."
+    ],
+    "next": "L500 #26 Ethics, society and professional responsibility: honest speed-up claims, harvest-now-decrypt-later and the duty to migrate, export controls and access.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran locally (Python 3.12.15, numpy 2.5.3; no quantum SDK needed): `python theorems.py` in labs/L500/25-algorithms-and-complexity (its output is each theorem's checkOutput, regenerated by tools/build_l500_json.py) and `python -m unittest -v` (2 tests OK); `python research/l500_checks.py` re-runs every check, compares it with checkOutput and recomputes every problem-set number. Platforms: authored and run on Linux only; the code uses pathlib and numpy only.",
+      "pendingCi": [
+        "labs/L500/25-algorithms-and-complexity: theorems.py + unittest on macos-latest and windows-latest (CI matrix, not yet run)"
+      ]
+    }
+  },
+  {
+    "id": "ethics-quantum-responsibility",
+    "number": 26,
+    "level": "L500",
+    "title": "Ethics 26: honest claims, the duty to migrate, export controls and access",
+    "phase": "Theory & Rigour",
+    "category": "ethics",
+    "description": "Responsible speed-up claims, harvest-now-decrypt-later and the professional duty to migrate to post-quantum cryptography, export controls and dual use at policy level, and who gets access to quantum computing - analysed with the ACM and IEEE codes, NIST, NCSC, US and EU primary sources.",
+    "outcome": "You can audit a quantum claim against its evidence, justify a migration priority with Mosca's inequality and official timelines, explain at policy level what export controls cover and exclude (and when to ask a compliance officer), and evaluate access and equity trade-offs in a structured case analysis.",
+    "estimatedTime": "4-5 hours (reading 2 h, case analysis 2-3 h)",
+    "prerequisites": [
+      "lesson 25 (what Shor and Grover can and cannot do; T25.1, T25.4)",
+      "L400 #21 (crypto inventory, Mosca priorities, hybrid ML-KEM) and L400 #18 (fair benchmarking)",
+      "no legal background needed; the lesson stays at policy level and is not legal advice"
+    ],
+    "learningObjectives": [
+      "Critique a published quantum-advantage claim by separating the measured result, the classical baseline and later classical rebuttals, citing ACM 1.3/2.5 and IEEE 7.8 item 5.",
+      "Analyze harvest-now-decrypt-later risk with Mosca's inequality (X + Y > Z) and justify migration priorities against NIST IR 8547 and NCSC timelines.",
+      "Explain the policy logic and scope of quantum export controls (US EAR 900-series ECCNs, EU Regulation 2021/821 as amended) and the exclusions for public-domain information and basic research.",
+      "Evaluate access and equity trade-offs (cost, cloud gatekeeping, talent and nationality rules) using ACM 1.4 and 3.7 and UN resolution A/RES/78/287."
+    ],
+    "glossary": [
+      {
+        "term": "harvest now, decrypt later (HNDL)",
+        "meaning": "Recording encrypted traffic today to decrypt it once a cryptographically relevant quantum computer exists."
+      },
+      {
+        "term": "CRQC",
+        "meaning": "Cryptographically relevant quantum computer: one able to run Shor's algorithm on deployed key sizes."
+      },
+      {
+        "term": "Mosca's inequality",
+        "meaning": "If X (how long data must stay secret) + Y (time to migrate) > Z (time until a CRQC), the data is already at risk."
+      },
+      {
+        "term": "quantum advantage / supremacy claim",
+        "meaning": "A claim that a quantum device did a task faster than any feasible classical method; always relative to a classical baseline."
+      },
+      {
+        "term": "dual use",
+        "meaning": "Technology with both civilian and military/security applications (EU Reg. 2021/821 definition)."
+      },
+      {
+        "term": "ECCN",
+        "meaning": "Export Control Classification Number on the US Commerce Control List (e.g. 4A906 for certain quantum computers)."
+      },
+      {
+        "term": "deemed export",
+        "meaning": "Releasing controlled technology to a foreign person inside the exporting country (US EAR concept)."
+      },
+      {
+        "term": "public domain / basic scientific research",
+        "meaning": "Information excluded from EU technology controls by the General Technology Note."
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "qc-L500-26-P1",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 4,
+        "problem": "Mosca's inequality. Records must stay confidential for X = 10 years; migration will take Y = 6 years; assume a CRQC in Z = 12 years. Is the data at risk, and by how many years? What if migration is shortened to 2 years?",
+        "solution": "X + Y = 16 > Z = 12, so data encrypted today is exposed for 16 - 12 = 4 years of its required secrecy period. With Y = 2: X + Y = 12, not greater than Z, so the margin is 0 years (borderline). The lesson: shortening Y (inventory, crypto agility) is the lever an organisation controls."
+      },
+      {
+        "id": "qc-L500-26-P2",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "A record captured in 2026 must stay secret for 25 years. If a CRQC appears in 2040, for how many years of its required secrecy period is the record exposed? Which NIST IR 8547 dates bracket the migration?",
+        "solution": "Secrecy required until 2026 + 25 = 2051; exposure from 2040, i.e. 2051 - 2040 = 11 years. NIST IR 8547 deprecates quantum-vulnerable public-key algorithms after 2030 and disallows them after 2035; HNDL means the data at risk is what is sent before migration, whatever the CRQC date."
+      },
+      {
+        "id": "qc-L500-26-P3",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "List three specific problems with the QuantaNova press release and rewrite its headline sentence so that it meets IEEE 7.8 item 5.",
+        "solution": "Problems: (i) baseline is a weak classical method, not the best known; (ii) a sampling benchmark is extrapolated to factoring, a different task needing error correction; (iii) unrefereed evidence and no uncertainty stated; also 'encryption is obsolete' ignores symmetric crypto and standardised PQC (FIPS 203). Rewrite: 'On a random-circuit sampling benchmark, our 120-qubit processor ran faster than the classical simulator we tested; we have not yet compared against the best classical methods, and the result does not bear on breaking RSA.'"
+      },
+      {
+        "id": "qc-L500-26-P4",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "Essay (600-800 words): 'Export controls on quantum computing protect security but slow science.' Evaluate using the BIS rule's own discussion of foreign talent, the EU General Technology Note exclusions and ACM 1.4 / 2.3.",
+        "solution": "Model answer outline: the controls target items with clear security relevance (quantum computers above parameters, cryogenic systems, cryo-CMOS, related technology) and were coordinated with partners (BIS: multilateral controls are most effective). The costs are explicit in the primary source: BIS states that access to foreign expertise is particularly necessary in quantum computing, that more than half of QIST-related US degrees go to temporary residents, and it therefore created a General License for quantum deemed exports with reporting. Exclusions (public domain, basic scientific research in the EU GTN) protect open publication. Tensions: nationality-based rules vs ACM 1.4 non-discrimination; resolution via ACM 2.3 (comply, challenge through channels) and institutional compliance processes rather than individual exclusion. A good essay distinguishes hardware/production technology from teaching and published science, and avoids legal conclusions it cannot support."
+      },
+      {
+        "id": "qc-L500-26-P5",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Name two access barriers to quantum computing education or research and one policy that reduces each. Tie each to a principle (ACM 1.4 or 3.7) or to A/RES/78/287.",
+        "solution": "(1) Cost of hardware access / cloud quotas -> funded shared access with transparent allocation (ACM 3.7: fair access to infrastructure). (2) Proprietary toolchains and accounts -> open-source simulators and SDKs as the default teaching stack, as this course does (ACM 1.4: inclusive and accessible technology). (3) Skills concentration in wealthy institutions -> capacity-building programmes, which A/RES/78/287 calls for, especially in developing countries."
+      },
+      {
+        "id": "qc-L500-26-P6",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "Google (2019) estimated 10,000 years of classical computation for a task its processor did in 200 s; Pan, Chen and Zhang (2022) sampled the same circuits in about 15 hours on 512 GPUs. By what factor did the classical estimate shrink, and how many times longer than the quantum run is 15 hours?",
+        "solution": "10,000 years = 10,000 × 365.25 × 24 = 87,660,000 hours, and 87,660,000 / 15 = 5,844,000: the classical cost fell by a factor of about 5.8 million. 15 hours = 54,000 s, which is 270 times the 200 s quantum run, at a lower fidelity (F ≈ 0.0037 in their abstract). Advantage claims are relative to the best classical method known at the time, and that target moves."
+      }
+    ],
+    "caseStudy": {
+      "case": "QuantaNova, a start-up, issues a press release: 'Our 120-qubit processor achieved quantum advantage on a sampling benchmark and will break RSA-2048 by 2029. Encryption as we know it is obsolete.' The release cites an unrefereed preprint; the benchmark compares against a single-CPU brute-force simulator. Three readers act on it. (1) The CISO of a regional hospital group, whose patient records must stay confidential for 25 years, is asked by the board whether to divert the 2027 IT budget to an emergency 'quantum-proofing' contract offered by a QuantaNova partner. (2) A university lab, which includes graduate students of several nationalities, plans to publish an open-source error-correction decoder and to tune it on a collaborator's cryogenic quantum processor abroad. (3) A national science agency is deciding whether to fund cloud access to quantum hardware for universities that cannot afford it. You are asked, as the computing professional advising all three, to write a structured analysis.",
+      "stakeholders": [
+        "QuantaNova staff and investors (reputation, funding, legal exposure for misleading statements)",
+        "the hospital group's patients (long-lived confidentiality of health data) and its board and CISO",
+        "the hospital's suppliers (TLS, VPN, PKI and medical-device vendors who must deliver PQC)",
+        "the university lab, its international students and its overseas collaborator",
+        "export-control authorities (US BIS, EU member-state authorities) and university compliance officers",
+        "under-resourced universities and their students; the public who fund the agency",
+        "the wider computing profession, whose credibility suffers from hype"
+      ],
+      "questions": [
+        "Which statements in the press release are evidence, which are extrapolations, and which are unsupported? What would a fair benchmark have reported (L400 #18)?",
+        "Using Mosca's inequality, NIST IR 8547 and the NCSC timeline, what should the CISO recommend, and why is 'emergency' the wrong framing even though the risk is real?",
+        "What must the lab check before shipping code or tuning on foreign hardware, which exclusions might apply to publishing the decoder, and when must it involve the compliance office?",
+        "How should the agency weigh broad access against concentration of resources, and how do nationality-based rules interact with ACM 1.4?",
+        "Which ACM and IEEE principles apply to each actor, where do they conflict, and how do you resolve the conflict?"
+      ],
+      "frameworks": [
+        "ACM Code of Ethics and Professional Conduct (2018): 1.2 Avoid harm; 1.3 Be honest and trustworthy; 1.4 Be fair and take action not to discriminate; 2.3 Know and respect existing rules; 2.5 Give comprehensive and thorough evaluations ... including analysis of possible risks; 2.7 Foster public awareness ...; 3.7 Recognize and take special care of systems that become integrated into the infrastructure of society",
+        "IEEE Code of Ethics (IEEE Policies 7.8): item 2 (improve understanding of capabilities and societal implications of emerging technologies) and item 5 ('be honest and realistic in stating claims or estimates based on available data')",
+        "NIST IR 8547 (final, October 2026): quantum-vulnerable public-key algorithms deprecated after 2030 and disallowed after 2035; HNDL; Mosca's X + Y > Z",
+        "NIST FIPS 203 (ML-KEM, August 2024): the standardised replacement for key establishment",
+        "UK NCSC, Timelines for migration to post-quantum cryptography (March 2025): discovery and plan by 2028, priority migration by 2031, complete by 2035",
+        "US BIS interim final rule, 89 FR 72926 (6 September 2024): new 900-series ECCNs for quantum items (incl. 4A906, 4D906, 4E906, 3A901, 3A904), worldwide licence requirement, License Exception IEC, General License for quantum deemed exports with annual reporting",
+        "EU Regulation (EU) 2021/821 (dual-use regime) and Commission Delegated Regulation (EU) 2025/2003 (new Annex I, in force from the day after publication on 14 November 2025); General Technology Note exclusions for 'in the public domain' and 'basic scientific research'",
+        "UN General Assembly resolution A/RES/78/287 (7 June 2024): 2025 International Year of Quantum Science and Technology, with emphasis on developing countries",
+        "Quantum (journal) Code of Conduct: misconduct includes 'misrepresentation and overstatement of results and the omission of crucial conditions and assumptions'"
+      ],
+      "modelAnswer": "1. Claims audit (ACM 1.3, 2.5, 2.7; IEEE item 5). Separate three layers. Measured: a sampling task ran on 120 qubits. Baseline: a single-CPU brute-force simulator, which is not the best classical method; the 2019 Sycamore episode shows why this matters (Google estimated 10,000 years classically; IBM's analysis argued days on a supercomputer with secondary storage; a 2022 tensor-network computation sampled the circuits in about 15 hours on 512 GPUs). Extrapolation: 'break RSA-2048 by 2029' is not supported by a sampling result; RSA needs Shor's algorithm with error correction, and published estimates for RSA-2048 run to roughly a million noisy qubits (L400 #19). Verdict: the advantage claim is unproven until benchmarked against the best classical method on equal budgets, and the RSA claim is hype that violates the honesty duties of both codes. A professional response is to say so publicly and specifically (ACM 2.7), not to amplify it.\n2. Hospital (ACM 1.2, 3.7; NIST IR 8547; NCSC). The risk is real for a reason unrelated to QuantaNova: with X = 25 years of required confidentiality and Y of several years to migrate, X + Y exceeds any plausible Z, so HNDL already threatens records sent today. The right response is a planned migration, not an emergency purchase: complete the cryptographic inventory and plan (NCSC: by 2028), prioritise long-lived data flows for hybrid ML-KEM key establishment (FIPS 203) via mainstream vendors, require PQC roadmaps in procurement, and meet the 2030/2035 NIST deprecation/disallowance dates. Buying from a vendor tied to the hype raises a conflict of interest to disclose (ACM 1.3). The duty to migrate is a duty of care to patients who cannot protect their own data.\n3. University lab (ACM 2.3; BIS rule; EU 2021/821). Export controls target hardware and 'technology' for development or production of controlled items (e.g. US ECCNs 4A906/4E906; EU entries added by Reg. 2025/2003), not teaching or published science: the EU General Technology Note excludes information 'in the public domain' and 'basic scientific research'. Publishing an open decoder is likely outside control, but the classification depends on facts (does the code embody controlled production technology? is it published before sharing?). Tuning on foreign hardware and sharing unpublished know-how with particular nationals can be an export or deemed export; the US rule created a General License for quantum deemed exports with annual reporting, precisely because, in BIS's words, access to foreign expertise is particularly necessary in quantum computing. Action: involve the compliance office before sharing; do not exclude students by nationality pre-emptively (ACM 1.4), but do not ignore the law either (ACM 2.3: challenge rules through channels).\n4. Agency (ACM 1.4, 3.7; A/RES/78/287). Shared cloud access lowers the cost barrier, but creates gatekeepers who set terms, queue priority and data retention. Fund access with open-source toolchains and simulators (this course runs entirely on them), training for under-resourced institutions, and transparent allocation; measure who uses it. The UN resolution explicitly links quantum science to capacity-building in developing countries.\n5. Conflicts and resolution. Honesty vs commercial pressure (resolve for honesty: 1.3 is not negotiable); openness vs export law (comply, but use exclusions and challenge over-broad rules through channels, 2.3); urgency vs proportionality (plan to the official timelines; spend where data lifetime is longest). The public good is the deciding consideration (ACM 3.1)."
+    },
+    "rubric": [
+      {
+        "criterion": "Use of primary sources",
+        "excellent": "Cites the exact principle/section/date (ACM 1.3, IR 8547 2030/2035, 89 FR 72926) and quotes sparingly and accurately.",
+        "adequate": "Cites sources correctly but generally.",
+        "inadequate": "Relies on news or vendor summaries, or misstates a rule.",
+        "weight": 25
+      },
+      {
+        "criterion": "Stakeholder and harm analysis",
+        "excellent": "Identifies all affected parties, including those without a voice (patients, excluded students), and weighs harms.",
+        "adequate": "Main stakeholders covered.",
+        "inadequate": "Only the decision-maker's interests considered.",
+        "weight": 25
+      },
+      {
+        "criterion": "Reasoned judgement",
+        "excellent": "Names conflicts between principles and resolves them with an explicit argument; proportionate recommendations.",
+        "adequate": "Recommendations follow from analysis but conflicts glossed.",
+        "inadequate": "Assertion without argument, or legal conclusions beyond competence.",
+        "weight": 30
+      },
+      {
+        "criterion": "Technical accuracy",
+        "excellent": "Quantum and crypto facts right (what Shor/Grover do, HNDL, PQC); numbers computed.",
+        "adequate": "Minor imprecision.",
+        "inadequate": "Hype or misconceptions repeated.",
+        "weight": 20
+      }
+    ],
+    "conceptNote": "content/concepts/L500/26-ethics-quantum-responsibility.md",
+    "conceptSummary": "Four professional duties: report quantum results with their baseline and limits (the 2019 '10,000 years' became 15 GPU-hours by 2022); migrate long-lived secrets to post-quantum cryptography on a plan, because harvested data is exposed whenever a CRQC arrives (Mosca: X + Y > Z; NIST deprecate 2030, disallow 2035); know that export controls cover quantum hardware and production technology but exclude public-domain information and basic research, and ask compliance before sharing; and widen access fairly.",
+    "sources": [
+      {
+        "title": "ACM Code of Ethics and Professional Conduct (adopted 22 June 2018)",
+        "url": "https://www.acm.org/code-of-ethics"
+      },
+      {
+        "title": "IEEE Code of Ethics (IEEE Policies 7.8)",
+        "url": "https://www.ieee.org/about/corporate/governance/p7-8.html"
+      },
+      {
+        "title": "NIST IR 8547 (final), Transition to Post-Quantum Cryptography Standards (October 2026)",
+        "url": "https://csrc.nist.gov/pubs/ir/8547/final"
+      },
+      {
+        "title": "NIST FIPS 203, Module-Lattice-Based Key-Encapsulation Mechanism Standard (August 2024)",
+        "url": "https://csrc.nist.gov/pubs/fips/203/final"
+      },
+      {
+        "title": "UK NCSC, Timelines for migration to post-quantum cryptography (20 March 2025)",
+        "url": "https://www.ncsc.gov.uk/guidance/pqc-migration-timelines"
+      },
+      {
+        "title": "US BIS interim final rule, Commerce Control List Additions and Revisions; Implementation of Controls on Advanced Technologies (89 FR 72926, 6 Sept 2024)",
+        "url": "https://www.federalregister.gov/documents/2024/09/06/2024-19633/commerce-control-list-additions-and-revisions-implementation-of-controls-on-advanced-technologies"
+      },
+      {
+        "title": "Commission Delegated Regulation (EU) 2025/2003 amending Regulation (EU) 2021/821 (list of dual-use items)",
+        "url": "https://eur-lex.europa.eu/eli/reg_del/2025/2003/oj"
+      },
+      {
+        "title": "UN General Assembly resolution A/RES/78/287, International Year of Quantum Science and Technology, 2025",
+        "url": "https://digitallibrary.un.org/record/4052700"
+      },
+      {
+        "title": "Google Research blog (2019), Quantum Supremacy Using a Programmable Superconducting Processor",
+        "url": "https://research.google/blog/quantum-supremacy-using-a-programmable-superconducting-processor/"
+      },
+      {
+        "title": "Pednault et al. (2019), Leveraging Secondary Storage to Simulate Deep 54-qubit Sycamore Circuits, arXiv:1910.09534",
+        "url": "https://arxiv.org/abs/1910.09534"
+      },
+      {
+        "title": "Pan, Chen, Zhang (2022), Solving the sampling problem of the Sycamore quantum circuits, arXiv:2111.03011 (PRL 129, 090502)",
+        "url": "https://arxiv.org/abs/2111.03011"
+      },
+      {
+        "title": "Quantum (journal), Terms and Conditions and Code of Conduct",
+        "url": "https://quantum-journal.org/about/terms-and-conditions/"
+      }
+    ],
+    "seeAlso": [
+      "quantum-computing L400 #18 Benchmarking honestly against classical solvers: the method behind an honest advantage claim.",
+      "quantum-computing L400 #19 Resource estimation: logical vs physical qubits and feasibility: why 'RSA by 2029' needs evidence of error-corrected scale.",
+      "quantum-computing L400 #21 Quantum and post-quantum: crypto inventory and migration plan: the inventory and Mosca priorities that turn the duty to migrate into work.",
+      "quantum-computing Capstone #22 Capstone: an end-to-end quantum optimisation service: code rejects 'quantum advantage' claims the report does not support."
+    ],
+    "next": "L500 #27 Reading seminar: read Grover (1996) and Preskill (2018) in the original and respond critically.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "No lab code in lesson 26. `python research/l500_checks.py` recomputes the numeric problem-set answers; every source URL was retrieved on 2026-10-30 (research/L500-evidence.md).",
+      "pendingCi": []
+    }
+  },
+  {
+    "id": "reading-seminar-grover-preskill",
+    "number": 27,
+    "level": "L500",
+    "title": "Reading seminar 27: Grover (1996) and Preskill (2018)",
+    "phase": "Theory & Rigour",
+    "category": "reading seminar",
+    "description": "Read two foundational primary sources - the paper that introduced quantum search and the paper that named the NISQ era - with guided questions, then write a critical response that connects them to lessons 23-26.",
+    "outcome": "You can read a primary quantum-computing paper for its claims, assumptions and evidence, relate its arguments to the theorems you proved (T25.1) and the practice you built (L300-L400), and write a critical response that evaluates what has held up and what has changed.",
+    "estimatedTime": "5-6 hours (reading 3 h, seminar 1 h, response 1-2 h)",
+    "prerequisites": [
+      "lessons 23-26, especially T25.1 (Grover) and lesson 26 (claims and baselines)",
+      "reading a technical paper: abstract, claims, assumptions, evidence, limitations"
+    ],
+    "learningObjectives": [
+      "Explain the central claim and the 'inversion about average' argument of Grover (1996) and relate it to the reflection proof of T25.1.",
+      "Analyze Preskill's (2018) definition of NISQ, his reasons for caution, and the applications he considers plausible.",
+      "Evaluate which claims in each paper have been confirmed, sharpened or overtaken by later work (BBBV/Boyer et al.; 2019-2022 supremacy and rebuttals).",
+      "Critique, in a structured written response, how the two papers frame expectations for practitioners, using evidence from the course labs."
+    ],
+    "glossary": [
+      {
+        "term": "inversion about average",
+        "meaning": "Grover's name for the diffusion step: each amplitude a_i -> 2·mean - a_i (= 2|s><s| - I)."
+      },
+      {
+        "term": "NISQ",
+        "meaning": "Noisy Intermediate-Scale Quantum: devices of 50 to a few hundred qubits without error correction, whose gate noise limits circuit size (Preskill 2018, section 4.1)."
+      },
+      {
+        "term": "quantum supremacy",
+        "meaning": "A demonstrated task beyond feasible classical computation, whether or not useful (term used by Preskill)."
+      },
+      {
+        "term": "critical response",
+        "meaning": "A short essay that summarises a source fairly, then evaluates its claims against evidence."
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "qc-L500-27-P1",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "Grover's abstract contrasts about N/2 classical look-ups (for a 50% chance) with O(√N) quantum steps. For N = 10^6, compute the classical figure and the optimal Grover iteration count from T25.1, with its success probability.",
+        "solution": "Classical: N/2 = 500,000 look-ups for a 50% chance. Grover: θ = asin(10^-3), k = floor(π/(4θ)) = 785 iterations with P ≈ 1.0000 (0.99999996). The ratio is about 637, but each quantum step includes an oracle call and a diffusion circuit on error-corrected hardware, so wall-clock comparisons need the overheads of L400 #19."
+      },
+      {
+        "id": "qc-L500-27-P2",
+        "type": "short-answer",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "Show that Grover's 'inversion about average' a_i -> 2·mean(a) - a_i is the matrix 2|s><s| - I.",
+        "solution": "With |s> = (1/√N)Σ|i>, (|s><s| a)_i = (1/N)Σ_j a_j = mean(a). So ((2|s><s| - I)a)_i = 2·mean(a) - a_i. The lab code in T25.1 implements exactly 'psi = 2 * psi.mean() - psi'."
+      },
+      {
+        "id": "qc-L500-27-P3",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "A simple model of NISQ noise: a circuit of G gates, each failing independently with probability ε, succeeds with probability (1 - ε)^G. Compute this for ε = 10^-3 with G = 1000 and G = 100, and for ε = 10^-4 with G = 1000. What circuit size keeps success near 1/e?",
+        "solution": "(1 - 0.001)^1000 = 0.3677; (1 - 0.001)^100 = 0.9048; (1 - 0.0001)^1000 = 0.9048. Success stays near 1/e ≈ 0.37 when G ≈ 1/ε: reliable circuit size scales inversely with the error rate, which is the quantitative core of 'noise limits the size of circuits that can be executed reliably'. Preskill makes the same naive estimate (section 4.2: with two-qubit error rates above 0.1%, circuits of much more than about 1000 gates are out of reach) and notes in section 6.4 that some noise-resilient circuits may do better; correlated errors can do worse."
+      },
+      {
+        "id": "qc-L500-27-P4",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "For each paper, give one claim that later work confirmed or sharpened and one that later work qualified.",
+        "solution": "Grover: confirmed/sharpened - near-optimality (BBBV 1997 lower bound; Boyer et al. 1998 exact formula and quantum counting); qualified - practical value: a quadratic speed-up is easily erased by hardware overheads (IBM course caution; L400 #19). Preskill: confirmed - 'will not change the world right away' and noise as the binding constraint; sharpened/qualified - supremacy experiments arrived (2019) but classical methods narrowed the gap (2019 days-scale estimate, 2022 15 GPU-hours), showing advantage claims are moving targets."
+      },
+      {
+        "id": "qc-L500-27-P5",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "Critical response (choose one reading's responsePrompt). 500-700 words, at least two citations, one number verified by code.",
+        "solution": "Graded with this lesson's rubric. A strong response summarises fairly (no strawman), identifies the paper's assumptions, tests one claim with code from labs/L500, brings in at least one later source, and ends with a reasoned judgement rather than a verdict of 'good/bad'."
+      },
+      {
+        "id": "qc-L500-27-P6",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Both papers are freely readable but under different licences. What may you do with each in your own course notes, and what does the ACM Code (1.5) ask of you?",
+        "solution": "Preskill (Quantum) is CC BY 4.0: you may share and adapt with attribution. Grover's arXiv preprint carries arXiv's distribution licence, which grants arXiv (not you) the right to distribute: link to it and quote briefly with attribution, but do not copy it. ACM 1.5 asks you to credit creators and respect copyrights and licence agreements; summarising in your own words with citations satisfies both."
+      }
+    ],
+    "readings": [
+      {
+        "citation": "L. K. Grover, 'A fast quantum mechanical algorithm for database search', Proceedings of the 28th Annual ACM Symposium on the Theory of Computing (STOC), May 1996, pp. 212-219; updated preprint arXiv:quant-ph/9605043v3 (19 Nov 1996).",
+        "url": "https://arxiv.org/abs/quant-ph/9605043",
+        "why": "The origin of the algorithm you ran in L200 #8 and derived in T25.1. The abstract frames search as finding a phone number in an unsorted directory: classically about N/2 look-ups for a 50% chance, quantumly O(√N) steps, and claims near-optimality. The v3 proof uses an 'inversion about average' interpretation. Licence: distributed by arXiv (no open content licence found on the abstract page), so read it there and quote only short attributed phrases.",
+        "guidingQuestions": [
+          "State the problem Grover solves precisely. What is the 'database' in the abstract really, and what does an oracle query correspond to in your L200 #8 lab?",
+          "Explain 'inversion about average' as a matrix. Show that it equals 2|s><s| - I and connect it to the reflection argument in T25.1.",
+          "Grover claims the algorithm is within a small constant factor of the fastest possible quantum algorithm. Which later papers prove matching lower bounds, and what do they show (BBBV 1997; Boyer et al. 1998)?",
+          "Which assumptions are needed for the speed-up to be practical (oracle cost, error rates, clock speeds, number of marked items)? Use T25.1 and the IBM course's caution about quadratic advantages.",
+          "The abstract contrasts quantum with any classical algorithm, 'deterministic or probabilistic'. Is the comparison fair as stated? What would a fair benchmark (L400 #18) require?"
+        ],
+        "responsePrompt": "In 500-700 words, explain Grover's central argument in your own notation, verify one numerical claim with labs/L500/25-algorithms-and-complexity/theorems.py (e.g. the iteration count for N = 1024), and evaluate whether 'database search' is a good description of what the algorithm accelerates in practice."
+      },
+      {
+        "citation": "J. Preskill, 'Quantum Computing in the NISQ era and beyond', Quantum 2, 79 (2018), doi:10.22331/q-2018-08-06-79; arXiv:1801.00862.",
+        "url": "https://quantum-journal.org/papers/q-2018-08-06-79/",
+        "why": "The paper that named the era your L300 labs simulate. Its abstract argues that 50-100-qubit devices may surpass classical computers on some tasks but that gate noise limits reliable circuit size, that such devices will not change the world right away, and that the goal must remain more accurate gates and eventually fault tolerance. Licence: Quantum publishes under CC BY 4.0; we still summarise rather than reproduce.",
+        "guidingQuestions": [
+          "How does Preskill define NISQ, and which two limits (size and noise) does each word refer to? Map them to your L300 #12 noise-model results.",
+          "Which applications does Preskill treat as promising for NISQ devices (e.g. simulation of quantum many-body physics, variational and optimisation methods, quantum machine learning), and what caveats does he attach to each?",
+          "Preskill defines a quantum speed-up against the best classical hardware and algorithm, and adds a note that Tang's quantum-inspired classical algorithm removed the exponential speed-up of quantum recommendation systems. What does this teach about speed-up claims (lesson 25, P9)?",
+          "What has happened since 2018 to the 'quantum supremacy' expectation he discusses? Use the Sycamore claim and its classical rebuttals (lesson 26).",
+          "Why does he argue that fault tolerance remains the long-term goal? Connect to the resource estimates in L400 #19."
+        ],
+        "responsePrompt": "In 500-700 words, summarise Preskill's argument fairly, then evaluate one of his predictions against evidence available today (cite at least one primary source from lesson 26 or the course labs). Close with what a software engineer should take from the paper when asked to 'add quantum' to a product."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Fair summary",
+        "excellent": "States the paper's claims, assumptions and evidence accurately in own words; no quotation beyond short attributed phrases.",
+        "adequate": "Accurate but misses an assumption.",
+        "inadequate": "Misrepresents or copies the source.",
+        "weight": 25
+      },
+      {
+        "criterion": "Critical evaluation",
+        "excellent": "Tests at least one claim against later evidence and the course's own results; distinguishes what held up from what changed.",
+        "adequate": "Some evaluation, mostly descriptive.",
+        "inadequate": "Purely descriptive or purely opinion.",
+        "weight": 35
+      },
+      {
+        "criterion": "Evidence and verification",
+        "excellent": "One number verified with labs/L500 code (output quoted); at least two primary citations.",
+        "adequate": "Citations present, no code check.",
+        "inadequate": "No citations.",
+        "weight": 25
+      },
+      {
+        "criterion": "Writing",
+        "excellent": "Clear structure, within length, precise terminology.",
+        "adequate": "Readable, minor issues.",
+        "inadequate": "Disorganised or far outside length.",
+        "weight": 15
+      }
+    ],
+    "conceptNote": "content/concepts/L500/27-reading-seminar.md",
+    "conceptSummary": "Two primary sources, read critically. Grover (1996) introduced O(√N) search with 'inversion about average' and claimed near-optimality, later proved. Preskill (2018) named the NISQ era: noisy 50-100+ qubit devices may beat classical computers on some tasks but will not change the world right away, so fault tolerance stays the goal. The seminar asks what each claimed, what held up, and what changed.",
+    "sources": [
+      {
+        "title": "Grover (1996), A fast quantum mechanical algorithm for database search, arXiv:quant-ph/9605043",
+        "url": "https://arxiv.org/abs/quant-ph/9605043"
+      },
+      {
+        "title": "Preskill (2018), Quantum Computing in the NISQ era and beyond, Quantum 2, 79",
+        "url": "https://quantum-journal.org/papers/q-2018-08-06-79/"
+      },
+      {
+        "title": "Quantum journal: Terms and Conditions announcement (CC BY 4.0 licence for published works)",
+        "url": "https://quantum-journal.org/terms-and-conditions-announcement/"
+      },
+      {
+        "title": "arXiv.org non-exclusive license to distribute",
+        "url": "https://arxiv.org/licenses/nonexclusive-distrib/1.0/license.html"
+      },
+      {
+        "title": "Bennett, Bernstein, Brassard, Vazirani (1997), Strengths and weaknesses of quantum computing, arXiv:quant-ph/9701001",
+        "url": "https://arxiv.org/abs/quant-ph/9701001"
+      },
+      {
+        "title": "Boyer, Brassard, Høyer, Tapp (1998), Tight bounds on quantum searching, arXiv:quant-ph/9605034",
+        "url": "https://arxiv.org/abs/quant-ph/9605034"
+      },
+      {
+        "title": "ACM Code of Ethics and Professional Conduct (2018), principle 1.5",
+        "url": "https://www.acm.org/code-of-ethics"
+      }
+    ],
+    "seeAlso": [
+      "quantum-computing L200 #8 Small Grover search: the algorithm of reading 1, run and plotted.",
+      "quantum-computing L300 #12 Noise models: how Bell and GHZ results degrade: the 'noisy' in NISQ, measured.",
+      "quantum-computing L300 #14 QAOA on MaxCut vs the classical optimum: a NISQ application Preskill discusses, tested against the classical optimum.",
+      "quantum-computing L400 #19 Resource estimation: logical vs physical qubits and feasibility: the 'beyond' in Preskill's title."
+    ],
+    "next": "Course assessment pack: content/assessment/ (syllabus, midterm, final, concept inventory, capstone oral defence, ADR peer review).",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "No lab code in lesson 27. `python research/l500_checks.py` recomputes the numeric problem-set answers; every source URL was retrieved on 2026-10-30 (research/L500-evidence.md).",
+      "pendingCi": []
+    }
+  }
+]

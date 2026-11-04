@@ -1,0 +1,1279 @@
+[
+  {
+    "id": "set-up-your-environment",
+    "number": 1,
+    "level": "Setup",
+    "title": "Set up your environment",
+    "phase": "Setup",
+    "category": "environment",
+    "description": "Run a first MicroPython program in the micro:bit simulator, use serial/REPL and sensor controls, and run the lab tests locally.",
+    "outcome": "You can run any lab in the browser simulator, read its serial output, poke it from the REPL, and run its logic tests on your PC.",
+    "environment": "micro:bit Python Editor v3 (python.microbit.org) with its MicroPython micro:bit V2 simulator (iframe python-simulator.usermbit.org/v/0.1; MIT; embeds MicroPython for micro:bit 2.1.1 per the repo's lib folder). Local: Python 3.12 stdlib + labs/sim_stub. CI: Node 24 + @playwright/test 1.64.1. Hosts: Apple-silicon Mac mini (macOS 14+) and Windows 11, same browser simulator; tests run with python3 (macOS) / py (Windows); see documentation/HARDWARE.md.",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "The micro:bit Python Editor includes a simulated micro:bit V2 that runs real MicroPython (compiled to WebAssembly), so no board is needed.",
+      "Each lab's logic is also unit-tested on your PC against a small stub of the microbit module."
+    ],
+    "prerequisites": [
+      "A current desktop browser with internet access (the editor must load online)",
+      "Python 3.12 for local tests (stdlib only)"
+    ],
+    "glossary": [
+      {
+        "term": "Simulator",
+        "meaning": "Software micro:bit V2 in the browser; runs MicroPython and offers sliders/buttons for sensors."
+      },
+      {
+        "term": "Serial",
+        "meaning": "Text channel from the program (print) to the computer; shown in the editor's serial panel."
+      },
+      {
+        "term": "REPL",
+        "meaning": "Read-Evaluate-Print-Loop: type Python lines and see results immediately."
+      },
+      {
+        "term": "Stub",
+        "meaning": "Fake module with the same API as the real one, used only for tests."
+      },
+      {
+        "term": "V1 / V2",
+        "meaning": "Board revisions. V2 adds speaker, microphone and touch logo; the simulator shows a V2."
+      }
+    ],
+    "concepts": [
+      "Flash = copy main.py to the (simulated) board and restart it.",
+      "print() output appears on serial; Ctrl+C in serial stops the program and opens the REPL, Ctrl+D restarts.",
+      "Code marked V2 (speaker, microphone, touch logo, audio.SoundEffect) runs in the simulator but not on a V1 board.",
+      "Keep logic in functions and guard the endless loop, so tests can call one iteration."
+    ],
+    "steps": [
+      {
+        "title": "Open the editor",
+        "detail": "Open https://python.microbit.org/ in Chrome or Edge (recommended). The code editor is in the middle, the simulator on the right. No micro:bit board is needed.",
+        "expected": "A starter program and a micro:bit picture with a play button.",
+        "ifNot": "Check internet access; the editor needs to load online once, then tolerates an unstable connection.",
+        "mac": "open -a \"Google Chrome\" https://python.microbit.org/   # or: open https://python.microbit.org/",
+        "windows": "Start-Process https://python.microbit.org/"
+      },
+      {
+        "title": "Run the first lab",
+        "detail": "Copy labs/L100/01-setup/main.py to the clipboard, replace all code in the editor with it, and press the simulator's play button.",
+        "expected": "A happy face on the simulated LEDs.",
+        "ifNot": "Look for a red underline/dot in the editor (syntax error) and compare with main.py.",
+        "mac": "pbcopy < labs/L100/01-setup/main.py   # then Cmd+A, Cmd+V in the editor",
+        "windows": "Get-Content labs\\L100\\01-setup\\main.py -Raw | Set-Clipboard   # then Ctrl+A, Ctrl+V in the editor"
+      },
+      {
+        "title": "Open serial",
+        "detail": "Click 'Show serial' below the editor.",
+        "expected": "'hello from micro:bit' then 'tick 1', 'tick 2', ... once per second.",
+        "ifNot": "Restart the simulator (stop/play); output printed before the panel opened may have scrolled away.",
+        "mac": "(browser only) click Show serial",
+        "windows": "(browser only) click Show serial"
+      },
+      {
+        "title": "Try the REPL",
+        "detail": "Click in the serial panel, press Ctrl+C, type temperature() and Enter; press Ctrl+D to restart the program.",
+        "expected": "A >>> prompt, then a number (degrees C); Ctrl+D restarts and ticks resume.",
+        "ifNot": "Make sure keyboard focus is in the serial panel before pressing Ctrl+C.",
+        "mac": "(browser only) Control+C / Control+D, not Cmd+C (Cmd+C copies text)",
+        "windows": "(browser only) Ctrl+C / Ctrl+D"
+      },
+      {
+        "title": "Use the sensor controls",
+        "detail": "Under the simulator, expand Temperature and move the slider; run temperature() again in the REPL.",
+        "expected": "The REPL now returns the slider value.",
+        "ifNot": "Controls are only active while the simulator is running; press play first.",
+        "mac": "(browser only) same controls as on Windows",
+        "windows": "(browser only) same controls as on macOS"
+      },
+      {
+        "title": "Install Python 3.12 and run all lab tests locally",
+        "detail": "Install Python 3.12 with the canonical commands, optionally make a venv (the tests use the standard library only), then from the domain folder run labs/run_tests.py. Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+        "expected": "Each suite prints its tests as 'ok' (11 labs + local_agent) and the last line is 'ALL LABS PASSED'.",
+        "ifNot": "Run from the folder that contains labs/. Windows: if Activate.ps1 is blocked, run Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, or skip the venv and run py -3.12 labs\\run_tests.py.",
+        "mac": "brew install python@3.12\npython3.12 -m venv .venv && source .venv/bin/activate\npython labs/run_tests.py",
+        "windows": "winget install -e --id Python.Python.3.12\npy -3.12 -m venv .venv\n.venv\\Scripts\\Activate.ps1\n$env:PYTHONUTF8 = \"1\"\npython labs\\run_tests.py"
+      },
+      {
+        "title": "Optional: run the labs in the real simulator automatically",
+        "detail": "Install Node 24 (pinned; Node 24 is in Maintenance LTS), then in harness/ install the pinned Playwright, its Chromium, and run the tests (needs internet). Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+        "expected": "Playwright lists 6 lab tests + 9 tryIt tests as passed (pending-ci: not yet observed).",
+        "ifNot": "Playwright needs macOS 14+ or Windows 11+. Check node --version shows v24. On Windows run the commands in PowerShell, one per line.",
+        "mac": "brew install node@24\nexport PATH=\"$(brew --prefix node@24)/bin:$PATH\"   # node@24 is keg-only\ncd harness\nnpm install --save-exact\nnpx playwright install chromium\nnpx playwright test",
+        "windows": "winget install -e --id OpenJS.NodeJS.LTS --version 24.19.0   # pinned Node 24; open a new terminal after\ncd harness\nnpm install --save-exact\nnpx playwright install chromium\nnpx playwright test"
+      }
+    ],
+    "code": "# Lab 01 - first program: show an image and print to serial.\n# Runs unchanged in the micro:bit Python Editor simulator and on a V1/V2 board.\nfrom microbit import *   # stub tests swap in labs/sim_stub: same API, fake hardware\n\n\ndef hello():\n    # Runs once at start-up.\n    display.show(Image.HAPPY)\n    print(\"hello from micro:bit\")   # serial: print() text goes to the serial panel\n\n\ndef step(count):\n    # One loop iteration: print a counter so you can watch the serial panel.\n    count += 1\n    print(\"tick\", count)\n    return count\n\n\ndef main():\n    hello()\n    count = 0\n    while True:\n        count = step(count)\n        sleep(1000)  # milliseconds; in the stub only a virtual clock advances\n\n\n# main.py runs as __main__ on the board/simulator (flash = copy + restart);\n# unit tests import it under another name, so the endless loop does not start.\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/01-setup/main.py",
+        "purpose": "Lab program; paste into the Python Editor or flash as main.py"
+      },
+      {
+        "path": "labs/L100/01-setup/test_main.py",
+        "purpose": "unittest: lab logic against labs/sim_stub with injected inputs"
+      },
+      {
+        "path": "labs/L100/01-setup/try_it.py",
+        "purpose": "Runs the tryIt edits (try_it.json) on the stub; test_try_it.py asserts them"
+      },
+      {
+        "path": "labs/L100/01-setup/README.md",
+        "purpose": "Run commands and observed test output"
+      },
+      {
+        "path": "labs/sim_stub/microbit/__init__.py",
+        "purpose": "CPython stub of the microbit module used by the tests"
+      },
+      {
+        "path": "labs/sim_stub/labtest.py",
+        "purpose": "Test helpers: load a lab without starting its loop, capture serial"
+      },
+      {
+        "path": "labs/run_tests.py",
+        "purpose": "Runs every lab's tests, one process per lab"
+      },
+      {
+        "path": "harness/",
+        "purpose": "Playwright harness that runs each lab in the real simulator (CI)"
+      },
+      {
+        "path": "documentation/HARDWARE.md",
+        "purpose": "What runs on the Mac mini vs the Windows PC; no board needed"
+      }
+    ],
+    "expectedResults": [
+      "Simulator shows a happy face; serial shows 'hello from micro:bit' and a tick per second.",
+      "python labs/run_tests.py ends with 'ALL LABS PASSED'."
+    ],
+    "testCases": [
+      {
+        "action": "Run the lab in the simulator and open serial",
+        "expected": "'hello from micro:bit', then 'tick 1', 'tick 2'"
+      },
+      {
+        "action": "In labs/L100/01-setup run: python3 -m unittest -v (Windows: py -m unittest -v)",
+        "expected": "4 tests OK"
+      },
+      {
+        "action": "From the domain folder: python3 labs/run_tests.py (Windows: py labs\\run_tests.py)",
+        "expected": "Last line 'ALL LABS PASSED'"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "In main.py change sleep(1000) to sleep(250) and run 4 loop passes (python try_it.py, variant fast-tick).",
+        "predict": "Four ticks in about 1 s instead of 4 s; the stub clock reads 1000 ms.",
+        "expected": "Observed (stub): serial 'hello from micro:bit', 'tick 1' ... 'tick 4'; running_time() = 1000 ms."
+      },
+      {
+        "task": "Delete the guard: replace the last two lines with a plain main() call, then import the file as the tests do (variant no-guard).",
+        "predict": "The import never returns, because the endless loop now starts on import.",
+        "expected": "Observed (stub): the import did not return on its own - try_it.py had to stop it after 3 sleeps; serial already showed 'hello from micro:bit', 'tick 1', 'tick 2', 'tick 3'."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Nothing on serial",
+        "action": "Press play again with the serial panel open; check for an error message there."
+      },
+      {
+        "symptom": "ModuleNotFoundError: microbit when running main.py with python",
+        "action": "main.py is for the simulator; on a PC run the tests (they add labs/sim_stub to the path)."
+      },
+      {
+        "symptom": "macOS: python3 is an older Apple/Xcode Python; Windows: 'python' opens the Store",
+        "action": "Use python3.12 (Homebrew) on macOS; use py -3.12 on Windows (winget Python.Python.3.12). See ../shared/WORKSTATION-SETUP.md."
+      }
+    ],
+    "equivalents": [
+      "MakeCode for micro:bit has its own JavaScript simulator with sensor/button controls (blocks, JavaScript or MakeCode Python - not MicroPython).",
+      "Mu editor or a serial terminal (115200 baud) gives the same REPL with a physical board.",
+      "Same testing idea in any embedded stack: hide hardware behind an API and swap in a fake for unit tests."
+    ],
+    "inRealSystems": "The micro:bit Python Editor embeds this same simulator iframe; fakes behind a hardware API are standard embedded-test practice.",
+    "useWhen": "Simulator to see and hear real MicroPython; stub tests for fast, exact, offline logic checks - neither proves timing or V1 behaviour.",
+    "simulatorVsReal": "Stub vs simulator: the unit tests use labs/sim_stub, a hand-written CPython fake of the microbit API (no timing, fonts, audio or real sensor models) - it proves the lab logic, not MicroPython behaviour. The simulator shows a V2 board: V2-only code works there but fails on a V1. The simulator iframe itself has no serial terminal or sensor UI; the Python Editor provides them.",
+    "checkpoint": "Pass if the simulator prints 'tick 2' and run_tests.py prints 'ALL LABS PASSED'.",
+    "checkYourself": [
+      {
+        "q": "Which message carries your program to the simulator?",
+        "a": "flash, with main.py as bytes in filesystem."
+      },
+      {
+        "q": "Why does the test not hang on while True?",
+        "a": "The loop runs only when __name__ is \"__main__\"; tests import the file under another name."
+      }
+    ],
+    "sources": [
+      {
+        "title": "micro:bit Python Editor guide",
+        "url": "https://support.microbit.org/support/solutions/articles/19000135210-python-editor-guide"
+      },
+      {
+        "title": "The micro:bit Python Editor (features & FAQ)",
+        "url": "https://microbit.org/new-microbit-python-editor/"
+      },
+      {
+        "title": "MicroPython micro:bit V2 simulator (README)",
+        "url": "https://github.com/microbit-foundation/micropython-microbit-v2-simulator"
+      },
+      {
+        "title": "MicroPython docs: Accessing the REPL",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/devguide/repl.html"
+      },
+      {
+        "title": "Details of micro:bit V2",
+        "url": "https://support.microbit.org/support/solutions/articles/19000119052-details-of-micro-bit-v2"
+      },
+      {
+        "title": "MDN - Window.postMessage",
+        "url": "https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage"
+      },
+      {
+        "title": "WebAssembly",
+        "url": "https://webassembly.org/"
+      },
+      {
+        "title": "MicroPython docs: machine.Pin",
+        "url": "https://docs.micropython.org/en/latest/library/machine.Pin.html"
+      },
+      {
+        "title": "Homebrew formula python@3.12",
+        "url": "https://formulae.brew.sh/formula/python@3.12"
+      },
+      {
+        "title": "Python docs: Using Python on Windows (py launcher)",
+        "url": "https://docs.python.org/3/using/windows.html"
+      },
+      {
+        "title": "Python docs: venv (activation per shell, execution policy)",
+        "url": "https://docs.python.org/3/library/venv.html"
+      },
+      {
+        "title": "Playwright: Installation and system requirements",
+        "url": "https://playwright.dev/docs/intro"
+      },
+      {
+        "title": "micro:bit support: hardware, OS and browser requirements",
+        "url": "https://support.microbit.org/support/solutions/articles/19000013991-hardware-operating-system-and-browser-requirements-for-the-micro-bit"
+      },
+      {
+        "title": "winget-pkgs: Python.Python.3.12 manifests",
+        "url": "https://github.com/microsoft/winget-pkgs/tree/master/manifests/p/Python/Python/3/12"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran `python3 -m unittest -v` in labs/L100/01-setup: 4 tests OK against labs/sim_stub (CPython 3.12.15, sandbox), incl. test_try_it.py, which asserts both tryIt results; `python3 try_it.py` was run and its observed output is quoted in tryIt. This validates the lab logic only. The same main.py in the real simulator is checked by harness/simulator.spec.js test '01-setup prints hello and ticks' in GitHub Actions; that run is pending-ci and was not observed here (no internet in the sandbox). tryIt: both items validated-stub on the stub; simulator confirmation of item 1 is pending-ci via harness/tryit.spec.js (same try_it.json edits; needs internet, not run in the sandbox). Item 2 is stub-only (on a board main.py always runs as __main__). Platforms: run on Linux only; macOS (macos-latest, arm64) and Windows (windows-latest) runs are in the CI matrix and pending-ci, hence platforms = expected.",
+      "pendingCi": [
+        "harness/simulator.spec.js: '01-setup prints hello and ticks' (MicroPython V2 simulator, needs internet)",
+        "harness/tryit.spec.js: 'tryIt 01 fast-tick: 4 ticks within ~1 s'",
+        "lesson 1 step 7 (Node 24 + Playwright install) on a Mac mini and a Windows 11 PC",
+        "CI matrix macos-latest (arm64) + windows-latest: stub tests and harness (platforms = expected)"
+      ]
+    },
+    "next": "L200 lesson 8 - data logging with the log module and CSV export",
+    "conceptNote": "content/concepts/01-setup.md",
+    "conceptSummary": "The same main.py runs in three places: the browser simulator (real MicroPython compiled to WebAssembly, driven by postMessage), a physical board, and CPython with a stub for unit tests. Flash sends the file, print() comes back as serial, and sliders send set_value messages.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "led-display",
+    "number": 2,
+    "level": "L100",
+    "title": "The LED display",
+    "phase": "Output",
+    "category": "display",
+    "description": "Scroll text, show built-in and custom images, and set LED brightness per pixel.",
+    "outcome": "You can put text, built-in images and your own 5x5 images on the display at chosen brightness.",
+    "environment": "micro:bit Python Editor v3 (python.microbit.org) with its MicroPython micro:bit V2 simulator (iframe python-simulator.usermbit.org/v/0.1; MIT; embeds MicroPython for micro:bit 2.1.1 per the repo's lib folder). Local: Python 3.12 stdlib + labs/sim_stub. CI: Node 24 + @playwright/test 1.64.1. Hosts: Apple-silicon Mac mini (macOS 14+) and Windows 11, same browser simulator; tests run with python3 (macOS) / py (Windows); see documentation/HARDWARE.md.",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "The display is a 5x5 grid of LEDs, each with brightness 0 (off) to 9 (brightest); text scrolls, images show at once."
+    ],
+    "prerequisites": [
+      "Lesson 1"
+    ],
+    "glossary": [
+      {
+        "term": "Image",
+        "meaning": "A grid of brightness digits, e.g. Image(\"90009:...\"); ':' ends a row."
+      },
+      {
+        "term": "scroll vs show",
+        "meaning": "scroll moves text across; show displays an image or one character at a time."
+      }
+    ],
+    "concepts": [
+      "display.scroll(text) and display.show(image or text); both block unless wait=False.",
+      "Built-in images such as Image.HEART are read-only; copy() before changing them.",
+      "Brightness is per pixel (0-9) in MicroPython; there is no separate global brightness call."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "Paste labs/L100/02-led-display/main.py into the editor and press play.",
+        "expected": "'Hi' scrolls, then a heart, then the diamond.",
+        "ifNot": "Check the serial panel for a Python error and line number."
+      },
+      {
+        "title": "Watch the brightness ramp",
+        "detail": "Keep it running and open serial.",
+        "expected": "The whole display steps from off to fully lit; serial shows 'brightness 0' ... 'brightness 9', repeating.",
+        "ifNot": "If the display stays dark, check level_image() still calls img.fill(level)."
+      },
+      {
+        "title": "Edit the custom image",
+        "detail": "Change a digit in DIAMOND (e.g. the centre 1 to 9) and run again.",
+        "expected": "That LED is brighter in the diamond.",
+        "ifNot": "Each row needs exactly 5 digits 0-9; rows end with ':'."
+      },
+      {
+        "title": "Try a built-in image",
+        "detail": "Replace Image.HEART with Image.HAPPY.",
+        "expected": "A smiley appears in place of the heart.",
+        "ifNot": "Names are upper case; use auto-complete after 'Image.'."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "In labs/L100/02-led-display run: python3 -m unittest -v (Windows: py -m unittest -v)",
+        "expected": "6 tests OK.",
+        "ifNot": "If you changed DIAMOND, update test_custom_image_pixels to match."
+      }
+    ],
+    "code": "# Lab 02 - the 5x5 LED display: scroll text, built-in and custom images,\n# per-pixel brightness (0 = off .. 9 = brightest).\nfrom microbit import *\n\n# Custom image: one string per row, digits are brightness, \":\" ends a row.\n# display buffer: these 25 numbers are what the driver scans onto the LEDs.\nDIAMOND = Image(\"00900:\"\n                \"09590:\"\n                \"95159:\"\n                \"09590:\"\n                \"00900\")\n\n\ndef intro():\n    display.scroll(\"Hi\")          # blocking call: returns only after the text has scrolled past\n    display.show(Image.HEART)     # built-in image (read-only: copy() before editing)\n    sleep(500)\n    display.show(DIAMOND)         # show() replaces the whole buffer\n    sleep(500)\n    print(\"intro done\")\n\n\ndef level_image(level):\n    # Whole display at one brightness level.\n    img = Image()                 # blank 5x5\n    img.fill(level)               # per-pixel brightness 0-9 (not 0-255 as in MakeCode)\n    return img\n\n\ndef step(level):\n    # One loop iteration: show the next brightness level and log it.\n    display.show(level_image(level))\n    print(\"brightness\", level)\n    return (level + 1) % 10       # 0..9 then wrap\n\n\ndef main():\n    intro()\n    level = 0\n    while True:\n        level = step(level)\n        sleep(200)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/02-led-display/main.py",
+        "purpose": "Lab program; paste into the Python Editor or flash as main.py"
+      },
+      {
+        "path": "labs/L100/02-led-display/test_main.py",
+        "purpose": "unittest: lab logic against labs/sim_stub with injected inputs"
+      },
+      {
+        "path": "labs/L100/02-led-display/try_it.py",
+        "purpose": "Runs the tryIt edits (try_it.json) on the stub; test_try_it.py asserts them"
+      },
+      {
+        "path": "labs/L100/02-led-display/README.md",
+        "purpose": "Run commands and observed test output"
+      }
+    ],
+    "expectedResults": [
+      "Scrolling 'Hi', heart, diamond, then a repeating 0-9 brightness ramp.",
+      "Serial: 'intro done' then 'brightness N' lines."
+    ],
+    "testCases": [
+      {
+        "action": "Run in simulator",
+        "expected": "Serial shows 'intro done' and later 'brightness 9'"
+      },
+      {
+        "action": "python3 -m unittest -v (Windows: py -m unittest -v)",
+        "expected": "6 tests OK (intro order, custom pixels, ramp wraps 9->0, read-only built-ins, 2 tryIt checks)"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "In DIAMOND change the centre row \"95159:\" to \"95959:\" (variant bright-centre). Predict lit LEDs and brightness sum.",
+        "predict": "Still 13 lit LEDs; the sum rises by 8 (centre 1 -> 9).",
+        "expected": "Observed (stub): lit=13, sum=101, centre=9 (was 93 with centre 1)."
+      },
+      {
+        "task": "In step() change (level + 1) % 10 to (level + 1) % 5 (variant ramp-mod5) and call step() 7 times from 0.",
+        "predict": "Levels 0 1 2 3 4 then back to 0 1.",
+        "expected": "Observed (stub): serial 'brightness' values 0 1 2 3 4 0 1."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "TypeError when calling set_pixel on Image.HEART",
+        "action": "Built-ins are read-only: use Image.HEART.copy() first."
+      },
+      {
+        "symptom": "ValueError: brightness out of bounds",
+        "action": "Use 0-9 per pixel."
+      }
+    ],
+    "equivalents": [
+      "MakeCode: led.setBrightness(0-255) sets whole-screen brightness (its docs say this is not supported in the MakeCode simulator).",
+      "Any LED matrix or OLED driver: a frame buffer of pixel values that you fill, then push to the hardware."
+    ],
+    "inRealSystems": "Every graphics stack, from LED matrices to GPUs, draws into a frame buffer that a driver scans out.",
+    "useWhen": "Use it for a state, icon or digit; use serial for long numbers or logs.",
+    "simulatorVsReal": "Stub vs simulator: tests prove the lab logic on labs/sim_stub, not MicroPython behaviour (see lesson 1). The stub records shown/scrolled items but does not render the font, so tests check images and history, not the scrolling animation. Perceived brightness levels on real LEDs may differ from the simulator's rendering.",
+    "checkpoint": "Pass if serial shows 'brightness 9' and the 6 unit tests pass.",
+    "checkYourself": [
+      {
+        "q": "Which pixel does index 12 in the flat list refer to?",
+        "a": "y = 12 // 5 = 2, x = 12 % 5 = 2: the centre (2, 2)."
+      },
+      {
+        "q": "Why can the micro:bit drive 25 LEDs with fewer than 25 pins?",
+        "a": "Multiplexing: rows are switched on in turn faster than the eye notices."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: Display",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/display.html"
+      },
+      {
+        "title": "MicroPython docs: Image",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/image.html"
+      },
+      {
+        "title": "MakeCode: set brightness",
+        "url": "https://makecode.microbit.org/reference/led/set-brightness"
+      },
+      {
+        "title": "micro:bit runtime: display and multiplexing",
+        "url": "https://lancaster-university.github.io/microbit-docs/ubit/display/"
+      },
+      {
+        "title": "MakeCode: screen",
+        "url": "https://makecode.microbit.org/device/screen"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran `python3 -m unittest -v` in labs/L100/02-led-display: 6 tests OK against labs/sim_stub (CPython 3.12.15, sandbox), incl. test_try_it.py, which asserts both tryIt results; `python3 try_it.py` was run and its observed output is quoted in tryIt. This validates the lab logic only. The same main.py in the real simulator is checked by harness/simulator.spec.js test '02-led-display runs intro then brightness ramp' in GitHub Actions; that run is pending-ci and was not observed here (no internet in the sandbox). tryIt: both validated-stub on the stub; simulator confirmation of item 2 is pending-ci via harness/tryit.spec.js (same try_it.json edits; needs internet, not run in the sandbox). Item 1 has no simulator check (the harness reads serial, not LEDs). Platforms: run on Linux only; macOS (macos-latest, arm64) and Windows (windows-latest) runs are in the CI matrix and pending-ci, hence platforms = expected.",
+      "pendingCi": [
+        "harness/simulator.spec.js: '02-led-display runs intro then brightness ramp' (MicroPython V2 simulator, needs internet)",
+        "harness/tryit.spec.js: 'tryIt 02 ramp-mod5: brightness wraps after 4'",
+        "CI matrix macos-latest (arm64) + windows-latest: stub tests and harness (platforms = expected)"
+      ]
+    },
+    "next": "L200 lesson 11 - a game as a state machine (display + running_time)",
+    "conceptNote": "content/concepts/02-led-display.md",
+    "conceptSummary": "The display is a 5x5 buffer of brightness numbers 0-9 that a driver scans onto the LEDs by multiplexing rows. show() replaces the buffer, set_pixel() edits one cell, and scroll() blocks unless wait=False.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "buttons",
+    "number": 3,
+    "level": "L100",
+    "title": "Buttons",
+    "phase": "Input",
+    "category": "buttons",
+    "description": "Use is_pressed, was_pressed and get_presses on buttons A and B to build a counter.",
+    "outcome": "You can pick the right button call: held now, pressed since last check, or number of presses.",
+    "environment": "micro:bit Python Editor v3 (python.microbit.org) with its MicroPython micro:bit V2 simulator (iframe python-simulator.usermbit.org/v/0.1; MIT; embeds MicroPython for micro:bit 2.1.1 per the repo's lib folder). Local: Python 3.12 stdlib + labs/sim_stub. CI: Node 24 + @playwright/test 1.64.1. Hosts: Apple-silicon Mac mini (macOS 14+) and Windows 11, same browser simulator; tests run with python3 (macOS) / py (Windows); see documentation/HARDWARE.md.",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "is_pressed() reports the button right now; was_pressed() and get_presses() remember presses between checks and reset when read."
+    ],
+    "prerequisites": [
+      "Lesson 1"
+    ],
+    "glossary": [
+      {
+        "term": "Polling",
+        "meaning": "Checking an input repeatedly in a loop."
+      },
+      {
+        "term": "Edge",
+        "meaning": "The moment a button goes from up to down (a 'press')."
+      }
+    ],
+    "concepts": [
+      "is_pressed(): level - True only while held.",
+      "was_pressed(): True once per press since the last call, then cleared.",
+      "get_presses(): running total since the last call, then reset to 0 - catches several quick presses."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "Paste labs/L100/03-buttons/main.py, press play, open serial.",
+        "expected": "'A = +1, B = reset'.",
+        "ifNot": "Restart with the serial panel open."
+      },
+      {
+        "title": "Count with A",
+        "detail": "Click the simulator's A button three times.",
+        "expected": "'count 1', 'count 2', 'count 3'; the display shows the last digit.",
+        "ifNot": "Click the button on the board image, not the keyboard letter."
+      },
+      {
+        "title": "Reset with B",
+        "detail": "Click B.",
+        "expected": "'count 0'.",
+        "ifNot": "Make sure the program is still running (play button)."
+      },
+      {
+        "title": "See why get_presses matters",
+        "detail": "Change sleep(100) to sleep(3000) and click A three times quickly.",
+        "expected": "One line 'count 3' (all presses counted in one iteration).",
+        "ifNot": "Restore sleep(100) afterwards."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "In labs/L100/03-buttons run: python3 -m unittest -v (Windows: py -m unittest -v)",
+        "expected": "7 tests OK.",
+        "ifNot": "Read the failing test name; each covers one call."
+      }
+    ],
+    "code": "# Lab 03 - buttons: is_pressed (held now?) vs was_pressed (pressed since\n# last check?) vs get_presses (how many presses since last check?).\nfrom microbit import *\n\n\ndef step(count):\n    # counted edges: get_presses() returns every press of A since the last\n    # call (even several during one sleep), then resets to 0.\n    count_before = count\n    count += button_a.get_presses()\n    # edge flag: was_pressed() is a single yes/no since last time, cleared on read.\n    if button_b.was_pressed():\n        count = 0\n    if count != count_before:\n        print(\"count\", count)\n        display.show(count % 10, wait=False)   # last digit, non-blocking\n    # level: is_pressed() is true only while the button is held down right now.\n    if button_a.is_pressed() and button_b.is_pressed():\n        print(\"both held\")\n    return count\n\n\ndef main():\n    print(\"A = +1, B = reset\")\n    count = 0\n    while True:\n        count = step(count)\n        sleep(100)    # polling interval: presses between polls wait in the runtime\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/03-buttons/main.py",
+        "purpose": "Lab program; paste into the Python Editor or flash as main.py"
+      },
+      {
+        "path": "labs/L100/03-buttons/test_main.py",
+        "purpose": "unittest: lab logic against labs/sim_stub with injected inputs"
+      },
+      {
+        "path": "labs/L100/03-buttons/try_it.py",
+        "purpose": "Runs the tryIt edits (try_it.json) on the stub; test_try_it.py asserts them"
+      },
+      {
+        "path": "labs/L100/03-buttons/README.md",
+        "purpose": "Run commands and observed test output"
+      }
+    ],
+    "expectedResults": [
+      "A increments, B resets, serial logs each change."
+    ],
+    "testCases": [
+      {
+        "action": "Click A x3 then B in the simulator",
+        "expected": "'count 3' then 'count 0'"
+      },
+      {
+        "action": "python3 -m unittest -v (Windows: py -m unittest -v)",
+        "expected": "7 tests OK (multi-press, no-press, reset, flag consumed, both held, 2 tryIt checks)"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "In the slow loop of step 4 (sleep(3000)), replace button_a.get_presses() with int(button_a.was_pressed()) (variant count-with-was-pressed). Click A three times between two polls.",
+        "predict": "Only 1 is added: the edge flag says 'yes', not 'how many'.",
+        "expected": "Observed (stub): count=1, serial 'count 1' (get_presses gives 3)."
+      },
+      {
+        "task": "Replace button_a.get_presses() with int(button_a.is_pressed()) (variant count-with-is-pressed). Click A three times between polls, then hold A for 3 polls.",
+        "predict": "Quick clicks count 0; holding counts once per poll.",
+        "expected": "Observed (stub): after 3 clicks count=0 and nothing printed; held for 3 polls: 'count 1', 'count 2', 'count 3'."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Presses missed with a long sleep()",
+        "action": "Use get_presses() or was_pressed() instead of is_pressed()."
+      },
+      {
+        "symptom": "B reset fires only once",
+        "action": "Expected: was_pressed() clears itself after returning True."
+      }
+    ],
+    "equivalents": [
+      "Any GPIO input: read the pin level (is_pressed) vs latch an edge or count it in an interrupt handler (was_pressed / get_presses).",
+      "Game loops: 'key is down' vs 'key went down this frame'."
+    ],
+    "inRealSystems": "MicroPython boards poll Pin.value() (level) or use Pin.irq() (edges); game loops separate 'key down' from 'key went down'.",
+    "useWhen": "is_pressed() for holds and chords, was_pressed() for one action per press, get_presses() for counters.",
+    "simulatorVsReal": "Stub vs simulator: tests prove the lab logic on labs/sim_stub, not MicroPython behaviour (see lesson 1). The stub has no contact bounce or timing; in the simulator buttons are set to 1/0 by clicks (or set_value messages in the harness). Real buttons also share pins 5 and 11.",
+    "checkpoint": "Pass if three A clicks print 'count 3', B prints 'count 0', and the 7 tests pass.",
+    "checkYourself": [
+      {
+        "q": "A loop sleeps 3 s; the user taps A five times. What does get_presses() return next?",
+        "a": "5."
+      },
+      {
+        "q": "What does was_pressed() return on the second call with no new press?",
+        "a": "False - the first call cleared it."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: Buttons",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/button.html"
+      },
+      {
+        "title": "MicroPython docs: Input/Output Pins (pin_logo)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/pin.html"
+      },
+      {
+        "title": "Simulator example embedding page v0.1",
+        "url": "https://python-simulator.usermbit.org/v/0.1/demo.html"
+      },
+      {
+        "title": "MicroPython docs: machine.Pin (irq)",
+        "url": "https://docs.micropython.org/en/latest/library/machine.Pin.html"
+      },
+      {
+        "title": "Arduino: Debounce",
+        "url": "https://www.arduino.cc/en/Tutorial/BuiltInExamples/Debounce"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran `python3 -m unittest -v` in labs/L100/03-buttons: 7 tests OK against labs/sim_stub (CPython 3.12.15, sandbox), incl. test_try_it.py, which asserts both tryIt results; `python3 try_it.py` was run and its observed output is quoted in tryIt. This validates the lab logic only. The same main.py in the real simulator is checked by harness/simulator.spec.js test '03-buttons counts A presses and resets with B' in GitHub Actions; that run is pending-ci and was not observed here (no internet in the sandbox). tryIt: both validated-stub on the stub; simulator confirmation of both items is pending-ci via harness/tryit.spec.js (same try_it.json edits; needs internet, not run in the sandbox). The simulator check of item 2 holds A instead of clicking. Platforms: run on Linux only; macOS (macos-latest, arm64) and Windows (windows-latest) runs are in the CI matrix and pending-ci, hence platforms = expected.",
+      "pendingCi": [
+        "harness/simulator.spec.js: '03-buttons counts A presses and resets with B' (MicroPython V2 simulator, needs internet)",
+        "harness/tryit.spec.js: 'tryIt 03 count-with-was-pressed: quick clicks in a slow loop count once'",
+        "harness/tryit.spec.js: 'tryIt 03 count-with-is-pressed: holding A keeps counting'",
+        "CI matrix macos-latest (arm64) + windows-latest: stub tests and harness (platforms = expected)"
+      ]
+    },
+    "next": "L200 lesson 11 - button and gesture events driving a state machine",
+    "conceptNote": "content/concepts/03-buttons.md",
+    "conceptSummary": "is_pressed() reads the level now, was_pressed() is an edge flag cleared on read, and get_presses() counts edges since the last call. A slow polling loop must ask for edges or counts, or it misses or double-counts presses.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "sound",
+    "number": 4,
+    "level": "L100",
+    "title": "Sound",
+    "phase": "Output",
+    "category": "sound",
+    "description": "Play a melody and a pitch with music, a V2 built-in Sound and a custom SoundEffect, and switch the V2 speaker off/on.",
+    "outcome": "You can make the micro:bit play notes, tones and sound effects and control where sound goes.",
+    "environment": "micro:bit Python Editor v3 (python.microbit.org) with its MicroPython micro:bit V2 simulator (iframe python-simulator.usermbit.org/v/0.1; MIT; embeds MicroPython for micro:bit 2.1.1 per the repo's lib folder). Local: Python 3.12 stdlib + labs/sim_stub. CI: Node 24 + @playwright/test 1.64.1. Hosts: Apple-silicon Mac mini (macOS 14+) and Windows 11, same browser simulator; tests run with python3 (macOS) / py (Windows); see documentation/HARDWARE.md.",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "music plays notes (works on V1 via pin 0 and on V2's speaker); audio.play plays V2 built-in sounds and custom SoundEffects; speaker.off() mutes only the V2 speaker."
+    ],
+    "prerequisites": [
+      "Lessons 1 and 3",
+      "Speakers or headphones on your computer"
+    ],
+    "glossary": [
+      {
+        "term": "Note string",
+        "meaning": "NOTE[octave][:ticks], e.g. 'c4:2'; octave and ticks carry over; 'r' is a rest."
+      },
+      {
+        "term": "SoundEffect",
+        "meaning": "V2 sound built from start/end frequency, duration, volume, waveform, fx, shape."
+      },
+      {
+        "term": "pin_logo",
+        "meaning": "V2 touch-sensitive logo, read with pin_logo.is_touched()."
+      }
+    ],
+    "concepts": [
+      "music.play(list_of_notes) and music.pitch(Hz, ms) block by default (wait=True).",
+      "audio.play(Sound.HELLO) and audio.play(audio.SoundEffect(...)) are V2 only.",
+      "Default output is pin 0 and (V2) the speaker; speaker.off() leaves pin 0 output on."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "Paste labs/L100/04-sound/main.py, make sure simulator sound is not muted, press play.",
+        "expected": "A 'hello' sound, a short beep, serial 'sound ready'.",
+        "ifNot": "Click inside the page first: browsers block audio until the user interacts."
+      },
+      {
+        "title": "Play the tune",
+        "detail": "Click A.",
+        "expected": "A short arpeggio; serial 'tune played'.",
+        "ifNot": "The tune is 20 ticks x 125 ms = 2.5 s and blocks; wait before clicking again."
+      },
+      {
+        "title": "Toggle the speaker",
+        "detail": "Click B, then A.",
+        "expected": "'speaker off'; on a real V2 the tune would still go to pin 0 but not the speaker.",
+        "ifNot": "Click B again for 'speaker on'."
+      },
+      {
+        "title": "Touch the logo",
+        "detail": "Click the gold logo on the simulated board.",
+        "expected": "A rising sweep; serial 'effect played'.",
+        "ifNot": "Logo touch is V2-only; the simulator is a V2 so it should be present."
+      },
+      {
+        "title": "Change the effect",
+        "detail": "Edit SWEEP: freq_end=4000, waveform=audio.SoundEffect.WAVEFORM_SINE.",
+        "expected": "A higher, smoother sweep.",
+        "ifNot": "Frequencies and duration must be 0-9999 or a ValueError is raised."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "In labs/L100/04-sound run: python3 -m unittest -v (Windows: py -m unittest -v)",
+        "expected": "7 tests OK.",
+        "ifNot": "If you edited TUNE or SWEEP, update the expected values in test_main.py."
+      }
+    ],
+    "code": "# Lab 04 - sound: music melodies and pitch, V2 built-in sounds, a custom\n# SoundEffect, and switching the V2 speaker on/off.\n# A = melody, B = speaker on/off, touch logo (V2) = sound effect.\nfrom microbit import *\nimport music\n\n# Note format: NOTE[octave][:ticks]; octave/ticks carry over to later notes.\n# pitch + duration: c4 = 261.63 Hz; 1 tick = 125 ms at the default tempo.\nTUNE = [\"c4:2\", \"e\", \"g\", \"c5:4\", \"r:2\", \"g4:2\", \"c5:6\"]\n\n# V2 only. Rising triangle-wave sweep, 0.4 s.\n# frequency over time: one slide from freq_start to freq_end.\nSWEEP = audio.SoundEffect(freq_start=400, freq_end=2000, duration=400,\n                          waveform=audio.SoundEffect.WAVEFORM_TRIANGLE)\n\n\ndef start():\n    audio.play(Sound.HELLO)       # V2 built-in sound\n    music.pitch(440, 200)         # concert A (A4 = 440 Hz) for 200 ms\n    print(\"sound ready\")\n\n\ndef step():\n    if button_a.was_pressed():\n        music.play(TUNE)          # blocking playback: the loop waits 2.5 s for the tune\n        print(\"tune played\")\n    if button_b.was_pressed():\n        if speaker.is_on():\n            speaker.off()         # output taps: speaker closed, pin 0 output still works\n        else:\n            speaker.on()\n        print(\"speaker\", \"on\" if speaker.is_on() else \"off\")\n    if pin_logo.is_touched():\n        audio.play(SWEEP)\n        print(\"effect played\")\n\n\ndef main():\n    start()\n    while True:\n        step()\n        sleep(50)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/04-sound/main.py",
+        "purpose": "Lab program; paste into the Python Editor or flash as main.py"
+      },
+      {
+        "path": "labs/L100/04-sound/test_main.py",
+        "purpose": "unittest: lab logic against labs/sim_stub with injected inputs"
+      },
+      {
+        "path": "labs/L100/04-sound/try_it.py",
+        "purpose": "Runs the tryIt edits (try_it.json) on the stub; test_try_it.py asserts them"
+      },
+      {
+        "path": "labs/L100/04-sound/README.md",
+        "purpose": "Run commands and observed test output"
+      },
+      {
+        "path": "labs/sim_stub/music.py",
+        "purpose": "Stub music module: records play/pitch calls"
+      },
+      {
+        "path": "labs/sim_stub/audio.py",
+        "purpose": "Stub for `import audio`"
+      }
+    ],
+    "expectedResults": [
+      "Sounds on start, A, and logo touch; serial logs each action; B toggles speaker state."
+    ],
+    "testCases": [
+      {
+        "action": "Simulator: B, A, logo",
+        "expected": "'speaker off', 'tune played', 'effect played'"
+      },
+      {
+        "action": "python3 -m unittest -v (Windows: py -m unittest -v)",
+        "expected": "7 tests OK (start sounds, tune, speaker toggle, speaker-off logging, effect params, 2 tryIt checks)"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Change the last note \"c5:6\" to \"c5\" (variant last-note-no-ticks). Predict how long pressing A now blocks the loop.",
+        "predict": "\"c5\" reuses the 2 ticks of \"g4:2\", so 4 ticks (500 ms) shorter.",
+        "expected": "Observed (try_it.py, documented note rules applied to the lab's TUNE; the stub makes no sound): 16 ticks = 2000 ms (original 20 ticks = 2500 ms)."
+      },
+      {
+        "task": "No code change: click B (speaker off), then A. Predict whether the tune is still played.",
+        "predict": "Yes - only the speaker tap closes; pin 0 still gets the tune.",
+        "expected": "Observed (stub): serial 'speaker off', 'tune played'; music.play called once with speaker_on=False."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "No sound in the browser",
+        "action": "Unmute the simulator and interact with the page once (autoplay rules)."
+      },
+      {
+        "symptom": "AttributeError for SoundEffect/Sound on a board",
+        "action": "That board is a V1; these APIs are V2 only."
+      }
+    ],
+    "equivalents": [
+      "MakeCode (v2): 'play sound giggle until done' and 'set built-in speaker ON/OFF'.",
+      "Any MCU: tones via PWM on a pin; sound effects are frequency/volume sweeps over time."
+    ],
+    "inRealSystems": "MIDI uses the same note numbering (60 = middle C); microcontrollers make tones by switching a pin at the note frequency (PWM).",
+    "useWhen": "music.pitch for beeps, music.play for short tunes, SoundEffect for V2 effects; avoid blocking playback in fast loops.",
+    "caution": "Lower your computer volume before running; SoundEffect volume defaults to the maximum (vol_start=255). With a real board, never connect headphones to pins other than pin 0 and GND.",
+    "simulatorVsReal": "Stub vs simulator: tests prove the lab logic on labs/sim_stub, not MicroPython behaviour (see lesson 1). The stub only records what would be played and whether the speaker was on; the simulator produces audio through the browser. Whether the simulator models speaker.off() audibly was not verified.",
+    "checkpoint": "Pass if serial shows 'tune played', 'speaker off' and 'effect played' and the 7 tests pass.",
+    "checkYourself": [
+      {
+        "q": "How long is \"a4:8\" at the default tempo?",
+        "a": "8 x 125 ms = 1000 ms."
+      },
+      {
+        "q": "After speaker.off(), where can sound still come out?",
+        "a": "Pin 0 (edge connector)."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: Music",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/music.html"
+      },
+      {
+        "title": "MicroPython docs: Audio (Sound, SoundEffect)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/audio.html"
+      },
+      {
+        "title": "MicroPython docs: Speaker V2",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/speaker.html"
+      },
+      {
+        "title": "MicroPython docs: Input/Output Pins (pin_logo)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/pin.html"
+      },
+      {
+        "title": "micropython-microbit-v2 releases",
+        "url": "https://github.com/microbit-foundation/micropython-microbit-v2/releases"
+      },
+      {
+        "title": "Scientific pitch notation",
+        "url": "https://en.wikipedia.org/wiki/Scientific_pitch_notation"
+      },
+      {
+        "title": "MakeCode: micro:bit V2",
+        "url": "https://makecode.microbit.org/device/v2"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran `python3 -m unittest -v` in labs/L100/04-sound: 7 tests OK against labs/sim_stub (CPython 3.12.15, sandbox), incl. test_try_it.py, which asserts both tryIt results; `python3 try_it.py` was run and its observed output is quoted in tryIt. This validates the lab logic only. The same main.py in the real simulator is checked by harness/simulator.spec.js test '04-sound reacts to A, B and logo' in GitHub Actions; that run is pending-ci and was not observed here (no internet in the sandbox). tryIt: item 1 computed by try_it.py from the lab's TUNE with the documented note rules (the stub has no timing); simulator timing is not asserted (gap). Item 2 validated-stub on the stub; simulator confirmation of item 2 is pending-ci via harness/tryit.spec.js (same try_it.json edits; needs internet, not run in the sandbox). Platforms: run on Linux only; macOS (macos-latest, arm64) and Windows (windows-latest) runs are in the CI matrix and pending-ci, hence platforms = expected.",
+      "pendingCi": [
+        "harness/simulator.spec.js: '04-sound reacts to A, B and logo' (MicroPython V2 simulator, needs internet)",
+        "harness/tryit.spec.js: 'tryIt 04 speaker off: tune still played'",
+        "CI matrix macos-latest (arm64) + windows-latest: stub tests and harness (platforms = expected)"
+      ]
+    },
+    "next": "L200 lesson 9 - pins and PWM on the edge connector",
+    "conceptNote": "content/concepts/04-sound.md",
+    "conceptSummary": "A melody is a list of (pitch, duration) pairs: note names map to frequencies with A4 = 440 Hz, and ticks map to milliseconds via the tempo (125 ms per tick by default). Sound goes to pin 0 and the V2 speaker; speaker.off() closes only the speaker.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "temperature-and-light",
+    "number": 5,
+    "level": "L100",
+    "title": "Sensing temperature and light",
+    "phase": "Input",
+    "category": "sensors",
+    "description": "Read temperature() and display.read_light_level(), log them to serial, and show a threshold result.",
+    "outcome": "You can read two sensors, log readings, and act on simple thresholds.",
+    "environment": "micro:bit Python Editor v3 (python.microbit.org) with its MicroPython micro:bit V2 simulator (iframe python-simulator.usermbit.org/v/0.1; MIT; embeds MicroPython for micro:bit 2.1.1 per the repo's lib folder). Local: Python 3.12 stdlib + labs/sim_stub. CI: Node 24 + @playwright/test 1.64.1. Hosts: Apple-silicon Mac mini (macOS 14+) and Windows 11, same browser simulator; tests run with python3 (macOS) / py (Windows); see documentation/HARDWARE.md.",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "temperature() returns whole degrees Celsius from the processor; read_light_level() uses the LEDs as a light sensor, 0 (dark) to 255 (bright)."
+    ],
+    "prerequisites": [
+      "Lessons 1 and 2"
+    ],
+    "glossary": [
+      {
+        "term": "Threshold",
+        "meaning": "A fixed value that splits readings into states, e.g. dark below 40."
+      },
+      {
+        "term": "Pure function",
+        "meaning": "classify(temp, light) depends only on its arguments, so it is easy to test."
+      }
+    ],
+    "concepts": [
+      "Read sensors in the loop, decide in a pure function, then output.",
+      "Log key=value lines on serial so they are easy to read and parse.",
+      "temperature() is an approximation of air temperature (sensor is inside the processor)."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "Paste labs/L100/05-temperature-light/main.py, press play, open serial.",
+        "expected": "One line per second like 'temp=..,light=..,state=ok' and a happy face.",
+        "ifNot": "Open the serial panel and restart."
+      },
+      {
+        "title": "Make it hot",
+        "detail": "Move the Temperature slider to 30.",
+        "expected": "'state=hot' and the letter H.",
+        "ifNot": "Threshold is HOT_C = 26 (inclusive)."
+      },
+      {
+        "title": "Make it dark",
+        "detail": "Move the Light level slider below 40.",
+        "expected": "'state=dark' and a sleeping face (dark wins over hot).",
+        "ifNot": "Check DARK_LEVEL = 40."
+      },
+      {
+        "title": "Tune thresholds",
+        "detail": "Change HOT_C or DARK_LEVEL and rerun.",
+        "expected": "States switch at the new values.",
+        "ifNot": "Update test_classify_thresholds to match."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "In labs/L100/05-temperature-light run: python3 -m unittest -v (Windows: py -m unittest -v)",
+        "expected": "12 tests OK (4 lab, 2 tryIt, 6 agent assist).",
+        "ifNot": "Read the assertion message: it shows the serial line produced."
+      },
+      {
+        "title": "Optional: agent explains the telemetry",
+        "detail": "In labs/L100/05-temperature-light run: python3 agent_assist.py --fake (Windows: py agent_assist.py --fake). With a local model running, drop --fake.",
+        "expected": "'code decision (authoritative): 5 readings, alarms: #3 hot ..., #4 dark ...', then the checked explanation and 'check: PASS'.",
+        "ifNot": "'agent: unavailable' = no server at LOCAL_MODEL_URL; the code decision still stands. 'REJECTED' = the model used numbers not in the telemetry."
+      }
+    ],
+    "code": "# Lab 05 - temperature and light: read both sensors, log to serial,\n# and show a simple threshold result on the display.\nfrom microbit import *\n\n# named thresholds: tune them here, not deep inside the loop.\nHOT_C = 26        # degrees Celsius (processor temperature, approximate)\nDARK_LEVEL = 40   # light level 0..255, larger = brighter\n\n\ndef classify(temp_c, light):\n    # classify: pure logic, easy to unit-test without any sensor.\n    # Priority: dark is checked first, so it wins over hot.\n    if light < DARK_LEVEL:\n        return \"dark\"\n    if temp_c >= HOT_C:   # single threshold (inclusive); hysteresis is the L200 upgrade\n        return \"hot\"\n    return \"ok\"\n\n\ndef step():\n    # sample: whole degrees C from the processor; light by running LEDs in reverse.\n    t = temperature()\n    light = display.read_light_level()\n    state = classify(t, light)\n    # act: log key=value lines, then show the decision.\n    print(\"temp={},light={},state={}\".format(t, light, state))\n    if state == \"dark\":\n        display.show(Image.ASLEEP)\n    elif state == \"hot\":\n        display.show(\"H\")\n    else:\n        display.show(Image.HAPPY)\n    return state\n\n\ndef main():\n    while True:\n        step()\n        sleep(1000)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/05-temperature-light/main.py",
+        "purpose": "Lab program; paste into the Python Editor or flash as main.py"
+      },
+      {
+        "path": "labs/L100/05-temperature-light/test_main.py",
+        "purpose": "unittest: lab logic against labs/sim_stub with injected inputs"
+      },
+      {
+        "path": "labs/L100/05-temperature-light/try_it.py",
+        "purpose": "Runs the tryIt edits (try_it.json) on the stub; test_try_it.py asserts them"
+      },
+      {
+        "path": "labs/L100/05-temperature-light/README.md",
+        "purpose": "Run commands and observed test output"
+      },
+      {
+        "path": "labs/L100/05-temperature-light/agent_assist.py",
+        "purpose": "Agent assist: code decides alarms, local model explains, code checks the explanation"
+      },
+      {
+        "path": "labs/L100/05-temperature-light/test_agent_assist.py",
+        "purpose": "unittest for agent assist against the fake model server only"
+      },
+      {
+        "path": "labs/_shared/local_agent/",
+        "purpose": "Vendored shared helper: client.chat() + deterministic fake_model_server (micro:bit rule added)"
+      }
+    ],
+    "expectedResults": [
+      "Serial lines 'temp=T,light=L,state=S' once per second; display follows the state."
+    ],
+    "testCases": [
+      {
+        "action": "Simulator: temperature 30, light 200",
+        "expected": "'temp=30,light=200,state=hot'"
+      },
+      {
+        "action": "Simulator: light 10",
+        "expected": "'state=dark'"
+      },
+      {
+        "action": "python3 -m unittest -v (Windows: py -m unittest -v)",
+        "expected": "12 tests OK"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Change HOT_C = 26 to HOT_C = 28 (variant hot-28); set temperature 27 and light 128.",
+        "predict": "27 is below the new threshold, so state ok (it was hot at 26).",
+        "expected": "Observed (stub): temp=27,light=128,state=ok."
+      },
+      {
+        "task": "In classify() move the hot check above the dark check (variant hot-first); set temperature 30 and light 10.",
+        "predict": "Hot now wins over dark.",
+        "expected": "Observed (stub): temp=30,light=10,state=hot (the lab as written gives dark)."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Temperature on a real board reads higher than the room",
+        "action": "It measures the processor; calibrate with an offset if needed."
+      },
+      {
+        "symptom": "State flickers near a threshold",
+        "action": "Add hysteresis (separate on/off thresholds) or average several readings."
+      }
+    ],
+    "equivalents": [
+      "MakeCode simulator offers the same temperature and light-level controls (its simulator page shows 21 °C and 128).",
+      "Any sensor node: sample, classify against thresholds, log key=value lines (same pattern as CSV/JSON telemetry)."
+    ],
+    "inRealSystems": "Home Assistant's Threshold helper turns a numeric sensor into on/off with optional hysteresis; thermostats and alert rules share the shape.",
+    "useWhen": "Simple thresholds for slow, rough indicators; add hysteresis or averaging when values hover at the edge.",
+    "simulatorVsReal": "Stub vs simulator: tests prove the lab logic on labs/sim_stub, not MicroPython behaviour (see lesson 1). In the simulator values come from sliders; on hardware light level depends on LED reverse-bias sensing and temperature on processor heat. The simulator's temperature slider range was not verified.",
+    "checkpoint": "Pass if serial shows 'state=hot' and 'state=dark' when you move the sliders, and the 6 tests pass.",
+    "checkYourself": [
+      {
+        "q": "With the lab's rule, what does classify(26, 39) return?",
+        "a": "dark - dark is checked first."
+      },
+      {
+        "q": "Why can hysteresis reduce state changes?",
+        "a": "A value must cross a band, not a single line, so small wobbles do not flip the state."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: microbit module (temperature, sleep)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/microbit.html"
+      },
+      {
+        "title": "MicroPython docs: Display",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/display.html"
+      },
+      {
+        "title": "micro:bit features: Sensors",
+        "url": "https://microbit.org/get-started/features/sensors/"
+      },
+      {
+        "title": "micro:bit Python Editor guide",
+        "url": "https://support.microbit.org/support/solutions/articles/19000135210-python-editor-guide"
+      },
+      {
+        "title": "Home Assistant: Threshold",
+        "url": "https://www.home-assistant.io/integrations/threshold/"
+      },
+      {
+        "title": "micro:bit runtime: display (light sensing)",
+        "url": "https://lancaster-university.github.io/microbit-docs/ubit/display/"
+      },
+      {
+        "title": "Ollama: OpenAI compatibility",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      },
+      {
+        "title": "Ollama docs: hardware support (Metal, NVIDIA, AMD)",
+        "url": "https://github.com/ollama/ollama/blob/main/docs/gpu.mdx"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran `python3 -m unittest -v` in labs/L100/05-temperature-light: 6 tests OK against labs/sim_stub (CPython 3.12.15, sandbox), incl. test_try_it.py, which asserts both tryIt results; `python3 try_it.py` was run and its observed output is quoted in tryIt. This validates the lab logic only. The same main.py in the real simulator is checked by harness/simulator.spec.js test '05-temperature-light follows injected sensor values' in GitHub Actions; that run is pending-ci and was not observed here (no internet in the sandbox). tryIt: both validated-stub on the stub; simulator confirmation of both items is pending-ci via harness/tryit.spec.js (same try_it.json edits; needs internet, not run in the sandbox). Platforms: run on Linux only; macOS (macos-latest, arm64) and Windows (windows-latest) runs are in the CI matrix and pending-ci, hence platforms = expected. Agent assist: `python3 -m unittest -v` now runs 12 tests (6 in test_agent_assist.py, fake model server only) and `python3 agent_assist.py --fake` was run; its observed output is quoted in agentAssist.expected. No real local model was run (sandbox has no Ollama).",
+      "pendingCi": [
+        "harness/simulator.spec.js: '05-temperature-light follows injected sensor values' (MicroPython V2 simulator, needs internet)",
+        "harness/tryit.spec.js: 'tryIt 05 hot-28: 27 C is ok'",
+        "harness/tryit.spec.js: 'tryIt 05 hot-first: hot wins over dark'",
+        "agent_assist.py with a real local model (Ollama/llama.cpp; manual - tests use the fake server only)",
+        "CI matrix macos-latest (arm64) + windows-latest: stub tests and harness (platforms = expected)"
+      ]
+    },
+    "next": "L200 lesson 8 - data logging; lesson 10 - an external I2C temperature sensor",
+    "conceptNote": "content/concepts/05-temperature-light.md",
+    "conceptSummary": "Sensor programs follow sample, classify, act: read temperature() and read_light_level(), decide in a pure function with named thresholds, then display and log. Hysteresis (separate on/off thresholds) stops flicker when readings hover at the edge.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "agentAssist": {
+      "task": "A local model explains the lab's serial telemetry (temperature/light) in plain language; classify() in main.py still decides every state and alarm.",
+      "prompt": "system: You explain BBC micro:bit sensor telemetry to a beginner in plain language, in 3-4 sentences. Only use numbers that appear in the telemetry. Do not give commands, do not change thresholds and do not decide alarms: the program already decided each state. | user: [[MICROBIT-TELEMETRY]] Explain these serial lines from a micro:bit (temp in degrees C, light 0-255): <telemetry> temp=..,light=..,state=.. lines </telemetry>",
+      "check": "check_explanation(): every number in the reply must occur in the telemetry, the state counts, the thresholds (HOT_C 26, DARK_LEVEL 40) or the 0-255 scale, and every alarm state classify() found (hot, dark) must be named. Failed check -> explanation dropped, code summary only. Server down -> code summary only. A logged state that differs from classify() is flagged by code.",
+      "expected": "Observed with the fake server: code decision (authoritative): 5 readings, alarms: #3 hot (temp=27, light=110), #4 dark (temp=30, light=35) / agent explanation (checked): The micro:bit sent 5 readings. Temperature started at 21 C and ended at 22 C, peaking at 30 C; this is the processor's own estimate, so it can read a little above the room. Light ranged from 35 to 200, where larger means brighter. The program itself labelled the readings: 1 hot and 1 dark; everything else was ok. / check: PASS (numbers all from telemetry; alarm states named)",
+      "realModelNote": "Ollama on the Mac mini (brew install ollama, then brew services start ollama; Metal) or Windows PC (OllamaSetup.exe from https://ollama.com/download; winget Ollama.Ollama lags behind): the server must be running before ollama pull qwen2.5:1.5b (986 MB), then python3 agent_assist.py (Windows: py agent_assist.py). Other OpenAI-compatible servers: set LOCAL_MODEL_URL / LOCAL_MODEL. Full setup: ../shared/WORKSTATION-SETUP.md. Expect small models to add averages or rounded numbers -> REJECTED; that is the check working. Not run with a real model here."
+    },
+    "caution": "Agent assist: the model never takes actions or decides alarms or any safety-relevant outcome; classify() decides, the model only explains, and code checks its text. Never send secrets or keys to a model.",
+    "learningTools": [
+      {
+        "name": "micro:bit Python Editor v3 (with V2 simulator)",
+        "role": "CHECK",
+        "exercise": "Paste labs/L100/05-temperature-light/main.py, press play, open serial; set the temperature slider to 30 with light 200, then light to 10.",
+        "expected": "Pending a manual run (no simulator/browser in the sandbox). Should match the lab's printed values: 'temp=30,light=200,state=hot' then 'temp=30,light=10,state=dark' (dark wins: classify() checks dark first).",
+        "mac": "Browser: open https://python.microbit.org/ (installable as an offline app)",
+        "windows": "Browser: Start-Process https://python.microbit.org/ (installable as an offline app)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microbit-foundation/python-editor-v3"
+      }
+    ]
+  },
+  {
+    "id": "motion-and-gestures",
+    "number": 6,
+    "level": "L100",
+    "title": "Motion and gestures",
+    "phase": "Input",
+    "category": "accelerometer",
+    "description": "Read accelerometer X/Y/Z, convert X into a tilt direction, detect 'shake' and other gestures, log to serial.",
+    "outcome": "You can read motion values and react to named gestures.",
+    "environment": "micro:bit Python Editor v3 (python.microbit.org) with its MicroPython micro:bit V2 simulator (iframe python-simulator.usermbit.org/v/0.1; MIT; embeds MicroPython for micro:bit 2.1.1 per the repo's lib folder). Local: Python 3.12 stdlib + labs/sim_stub. CI: Node 24 + @playwright/test 1.64.1. Hosts: Apple-silicon Mac mini (macOS 14+) and Windows 11, same browser simulator; tests run with python3 (macOS) / py (Windows); see documentation/HARDWARE.md.",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "The accelerometer reports milli-g on X, Y, Z (about +/-2000 by default); gestures such as 'shake' and 'face up' are named strings."
+    ],
+    "prerequisites": [
+      "Lessons 1 and 2"
+    ],
+    "glossary": [
+      {
+        "term": "milli-g",
+        "meaning": "1/1000 of standard gravity; the axis pointing straight down reads about 1000 in size when the board is still."
+      },
+      {
+        "term": "Gesture",
+        "meaning": "One of: up, down, left, right, face up, face down, freefall, 3g, 6g, 8g, shake."
+      }
+    ],
+    "concepts": [
+      "get_values() returns (x, y, z) in one call.",
+      "current_gesture() = gesture now; was_gesture(name) = happened since the last call (then cleared).",
+      "Gestures update only while your code keeps calling accelerometer methods - so poll in a loop."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "Paste labs/L100/06-motion-gestures/main.py, press play, open serial.",
+        "expected": "Lines like 'x=..,y=..,z=..,tilt=flat,gesture=...' five times a second.",
+        "ifNot": "Open serial and restart."
+      },
+      {
+        "title": "Tilt right",
+        "detail": "Expand the Accelerometer control and drag X to about 800.",
+        "expected": "'tilt=right' and an east arrow.",
+        "ifNot": "X must exceed TILT_MG = 300."
+      },
+      {
+        "title": "Shake",
+        "detail": "Choose 'shake' in the gesture list and press its send button.",
+        "expected": "'shake!' once and a surprised face.",
+        "ifNot": "The program must be running when you send the gesture."
+      },
+      {
+        "title": "Try another gesture",
+        "detail": "Send 'face down'.",
+        "expected": "gesture=face down in the log while it is active.",
+        "ifNot": "A sent gesture may stay active only briefly; look at the lines printed right after sending."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "In labs/L100/06-motion-gestures run: python3 -m unittest -v (Windows: py -m unittest -v)",
+        "expected": "6 tests OK.",
+        "ifNot": "Check the print format in step() if you changed it."
+      }
+    ],
+    "code": "# Lab 06 - motion: read the accelerometer (milli-g), turn X into a tilt\n# direction, react to gestures, and log everything to serial.\nfrom microbit import *\n\nTILT_MG = 300     # |x| above this counts as a left/right tilt\n\n\ndef tilt(x):\n    # axis threshold: X axis in milli-g -> direction (pure logic).\n    if x > TILT_MG:\n        return \"right\"\n    if x < -TILT_MG:\n        return \"left\"\n    return \"flat\"\n\n\ndef step():\n    # gravity vector: about 1000 mg in total when still, split across x, y, z.\n    x, y, z = accelerometer.get_values()\n    gesture = accelerometer.current_gesture()   # polling keeps gesture detection running\n    direction = tilt(x)\n    print(\"x={},y={},z={},tilt={},gesture={}\".format(x, y, z, direction, gesture))\n    if accelerometer.was_gesture(\"shake\"):      # one-shot event: True once per shake, then cleared\n        print(\"shake!\")\n        display.show(Image.SURPRISED)\n    elif direction == \"right\":\n        display.show(Image.ARROW_E)\n    elif direction == \"left\":\n        display.show(Image.ARROW_W)\n    else:\n        display.clear()\n    return direction\n\n\ndef main():\n    while True:\n        step()\n        sleep(200)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/06-motion-gestures/main.py",
+        "purpose": "Lab program; paste into the Python Editor or flash as main.py"
+      },
+      {
+        "path": "labs/L100/06-motion-gestures/test_main.py",
+        "purpose": "unittest: lab logic against labs/sim_stub with injected inputs"
+      },
+      {
+        "path": "labs/L100/06-motion-gestures/try_it.py",
+        "purpose": "Runs the tryIt edits (try_it.json) on the stub; test_try_it.py asserts them"
+      },
+      {
+        "path": "labs/L100/06-motion-gestures/README.md",
+        "purpose": "Run commands and observed test output"
+      }
+    ],
+    "expectedResults": [
+      "Continuous x/y/z/tilt/gesture log; arrows for tilt; 'shake!' once per shake."
+    ],
+    "testCases": [
+      {
+        "action": "Simulator: X = 800",
+        "expected": "'tilt=right'"
+      },
+      {
+        "action": "Simulator: send 'shake'",
+        "expected": "'shake!' printed once"
+      },
+      {
+        "action": "python3 -m unittest -v (Windows: py -m unittest -v)",
+        "expected": "6 tests OK"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Change TILT_MG = 300 to TILT_MG = 100 (variant tilt-100); set x to 200 mg.",
+        "predict": "200 > 100, so tilt=right (it was flat).",
+        "expected": "Observed (stub): x=200,y=0,z=-1024,tilt=right,gesture=."
+      },
+      {
+        "task": "Replace was_gesture(\"shake\") with is_gesture(\"shake\") (variant is-gesture); send one shake and let the loop poll 3 times.",
+        "predict": "shake! is printed on every poll while the gesture is current, not once.",
+        "expected": "Observed (stub): 'shake!' printed 3 times in 3 polls (once with was_gesture)."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "'shake' never detected",
+        "action": "Keep calling accelerometer methods in the loop with a short sleep; gestures are not updated in the background."
+      },
+      {
+        "symptom": "'shake!' printed repeatedly",
+        "action": "Use was_gesture() (cleared after reading), not is_gesture()."
+      }
+    ],
+    "equivalents": [
+      "Web browsers: DeviceMotionEvent.accelerationIncludingGravity gives the same 3 axes in m/s² instead of milli-g.",
+      "Any IMU library: raw axes plus a gesture/activity classifier on top."
+    ],
+    "inRealSystems": "Browsers expose the same axes as DeviceMotionEvent (in m/s2); phones rotate the screen from accelerometer orientation.",
+    "useWhen": "Raw axes for continuous values (tilt game), gestures for discrete events (shake); compass for heading.",
+    "simulatorVsReal": "Stub vs simulator: tests prove the lab logic on labs/sim_stub, not MicroPython behaviour (see lesson 1). The stub sets axes and gestures directly and does no gesture recognition; the simulator lets you set axes and send a named gesture; on hardware gestures are recognised from real motion and need continuous polling.",
+    "checkpoint": "Pass if X = 800 prints 'tilt=right', a shake prints 'shake!' once, and the 6 tests pass.",
+    "checkYourself": [
+      {
+        "q": "Board lying still on its side: roughly what is get_strength()?",
+        "a": "About 1000 mg - gravity alone."
+      },
+      {
+        "q": "Lab rule: x = 300 - which tilt?",
+        "a": "flat - the rule is strictly greater than 300."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: Accelerometer",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/accelerometer.html"
+      },
+      {
+        "title": "MicroPython docs tutorial: Gestures",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/tutorials/gestures.html"
+      },
+      {
+        "title": "Simulator example embedding page v0.1",
+        "url": "https://python-simulator.usermbit.org/v/0.1/demo.html"
+      },
+      {
+        "title": "MDN - DeviceMotionEvent",
+        "url": "https://developer.mozilla.org/en-US/docs/Web/API/DeviceMotionEvent"
+      },
+      {
+        "title": "micro:bit runtime: accelerometer",
+        "url": "https://lancaster-university.github.io/microbit-docs/ubit/accelerometer/"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran `python3 -m unittest -v` in labs/L100/06-motion-gestures: 6 tests OK against labs/sim_stub (CPython 3.12.15, sandbox), incl. test_try_it.py, which asserts both tryIt results; `python3 try_it.py` was run and its observed output is quoted in tryIt. This validates the lab logic only. The same main.py in the real simulator is checked by harness/simulator.spec.js test '06-motion-gestures reports tilt and shake' in GitHub Actions; that run is pending-ci and was not observed here (no internet in the sandbox). tryIt: both validated-stub on the stub; simulator confirmation of both items is pending-ci via harness/tryit.spec.js (same try_it.json edits; needs internet, not run in the sandbox). Whether the simulator keeps 'shake' current until 'none' is sent is unverified. Platforms: run on Linux only; macOS (macos-latest, arm64) and Windows (windows-latest) runs are in the CI matrix and pending-ci, hence platforms = expected.",
+      "pendingCi": [
+        "harness/simulator.spec.js: '06-motion-gestures reports tilt and shake' (MicroPython V2 simulator, needs internet)",
+        "harness/tryit.spec.js: 'tryIt 06 tilt-100: x=200 is right'",
+        "harness/tryit.spec.js: 'tryIt 06 is-gesture: one shake reported repeatedly'",
+        "CI matrix macos-latest (arm64) + windows-latest: stub tests and harness (platforms = expected)"
+      ]
+    },
+    "next": "L200 lesson 11 - gestures as game events; lesson 7 - radio between two boards",
+    "conceptNote": "content/concepts/06-motion-gestures.md",
+    "conceptSummary": "The accelerometer gives a gravity vector in milli-g on X, Y and Z; comparing an axis with a threshold gives tilt, while the vector's strength stays near 1 g when still. Named gestures like shake are detected by the runtime while you keep polling, and was_gesture() reports each one once.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "micro:bit Python Editor v3 (with V2 simulator)",
+        "role": "CHECK",
+        "exercise": "Run labs/L100/06-motion-gestures/main.py; drag accelerometer X to 800, then choose 'shake' in the gesture control and send it once.",
+        "expected": "Pending a manual run (no simulator/browser in the sandbox). Should match the lab's printed values: a line with 'x=800' and 'tilt=right', then exactly one 'shake!' per shake sent (was_gesture).",
+        "mac": "Browser: open https://python.microbit.org/ (installable as an offline app)",
+        "windows": "Browser: Start-Process https://python.microbit.org/ (installable as an offline app)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microbit-foundation/python-editor-v3"
+      },
+      {
+        "name": "Microsoft MakeCode for micro:bit",
+        "role": "SEE",
+        "exercise": "In Blocks build 'on shake -> show icon' and trigger it with the MakeCode simulator's shake control; compare with the lab's was_gesture('shake') loop.",
+        "expected": "Pending a manual run (no simulator/browser in the sandbox). Expect one reaction per shake, like the lab's single 'shake!' line. MakeCode runs its own runtime; the lab's main.py does not run there.",
+        "mac": "Browser: open https://makecode.microbit.org/ (works offline once cached)",
+        "windows": "Browser: Start-Process https://makecode.microbit.org/ (offline app availability unclear)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microsoft/pxt-microbit"
+      }
+    ]
+  }
+]

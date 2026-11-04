@@ -1,0 +1,102 @@
+# L600 Mac mini track: runs every integrated project on YOUR Mac mini as a self-hosted GitHub Actions runner.
+# Guide: integrated/mac-mini/RUNNER.md. Opt-in: the job runs only when the repository variable MAC_MINI_RUNNER is 'true'
+# (Settings -> Secrets and variables -> Actions -> Variables), so forks and repos without the runner never queue a job.
+# Security: use a self-hosted runner only with a PRIVATE repository (GitHub's warning: forks of a public repo can run
+# code on your machine through pull requests); this workflow has no pull_request trigger on purpose.
+# Per project: scorecard (must pass), failure lab (must FAIL), unit tests, checks_NN.py, then the Mac mini folder:
+# mac_mini/tests, checks_NN_mac.py and mac_mini/ci.sh (Mac experiments that need no model server) if they exist.
+# Experiments that need Ollama (mac_mini/ci_ollama.sh) run only when MAC_MINI_OLLAMA is 'true' as well.
+# Every step's JSONL goes to kb-runs-ci/ and is uploaded as an artifact.
+name: mac mini (self-hosted)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 21 * * *"  # 21:30 UTC daily; GitHub may delay scheduled runs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-mini
+  cancel-in-progress: false
+
+jobs:
+  profile:
+    if: vars.MAC_MINI_RUNNER == 'true'
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Machine profile (RAM, cores, model size class, statevector limit)
+        run: |
+          mkdir -p kb-runs-ci
+          python3 integrated/mac-mini/scripts/mac_profile.py
+          python3 integrated/mac-mini/scripts/mac_profile.py --json > kb-runs-ci/profile.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-mini-profile
+          path: kb-runs-ci/
+
+  projects:
+    if: vars.MAC_MINI_RUNNER == 'true'
+    needs: profile
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 1  # one Mac mini: run the projects one after another
+      matrix:
+        include:
+          - { lab: 01-pq-replicated-messaging, inject: "leader-counter", nn: "01" }
+          - { lab: 02-quantum-safe-migration, inject: "bypass", nn: "02" }
+          - { lab: 03-agent-driven-simulation, inject: "few-reps", nn: "03" }
+          - { lab: 04-microbit-sensor-fleet, inject: "wallclock-lww", nn: "04" }
+          - { lab: 05-observatory-scheduler, inject: "local-as-utc", nn: "05" }
+          - { lab: 06-signed-science-data, inject: "float-format", nn: "06" }
+          - { lab: 07-quantum-job-service, inject: "lease-expiry", nn: "07" }
+          - { lab: 08-secure-agent-tools, inject: "naive-host", nn: "08" }
+    defaults:
+      run:
+        shell: bash
+        working-directory: integrated/labs/L600/${{ matrix.lab }}
+    env:
+      PYTHONUTF8: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      KB_RUNS_DIR: ${{ github.workspace }}/kb-runs-ci
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies (wheels only)
+        run: "python -m pip install --only-binary=:all: numpy==2.5.3 cryptography==50.0.2"
+      - name: Scorecard (all milestones, seams and fitness functions must pass)
+        run: |
+          mkdir -p "$KB_RUNS_DIR"
+          python run_project.py | tee "$KB_RUNS_DIR/${{ matrix.nn }}-scorecard.jsonl"
+      - name: Failure lab (the seeded integration fault must make the scorecard fail)
+        run: |
+          if python run_project.py --inject ${{ matrix.inject }} > "$KB_RUNS_DIR/${{ matrix.nn }}-failure-lab.jsonl"; then
+            echo "::error::--inject ${{ matrix.inject }} did not fail the scorecard"; exit 1
+          fi
+      - name: Unit, seam and failure-lab tests
+        run: python -m unittest discover -s tests -v
+      - name: Number checks
+        run: python ../../../research/checks_${{ matrix.nn }}.py
+      - name: Mac mini tests and checks (if the project has a mac_mini folder)
+        run: |
+          if [ -d mac_mini/tests ]; then python -m unittest discover -s mac_mini/tests -v; fi
+          if [ -f ../../../research/checks_${{ matrix.nn }}_mac.py ]; then python ../../../research/checks_${{ matrix.nn }}_mac.py; fi
+      - name: Mac experiments that need no model server (mac_mini/ci.sh)
+        run: if [ -f mac_mini/ci.sh ]; then bash mac_mini/ci.sh; else echo "no mac_mini/ci.sh"; fi
+      - name: Mac experiments with the local model server (opt-in, MAC_MINI_OLLAMA)
+        if: vars.MAC_MINI_OLLAMA == 'true'
+        env:
+          LOCAL_MODEL_URL: http://127.0.0.1:11434/v1
+        run: if [ -f mac_mini/ci_ollama.sh ]; then bash mac_mini/ci_ollama.sh; else echo "no mac_mini/ci_ollama.sh"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-mini-${{ matrix.nn }}
+          path: kb-runs-ci/
+          if-no-files-found: ignore

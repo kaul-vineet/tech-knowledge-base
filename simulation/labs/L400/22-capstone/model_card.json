@@ -1,0 +1,45 @@
+{
+ "model": "service-centre digital twin (DES with abandonment, hourly staffing)",
+ "model_version": "1.0.0",
+ "purpose": "Recommend agents per hour (08:00-20:00) so that >= 80% of calls are answered within 1 minute and <= 5% abandon.",
+ "intended_use": "Daily staffing plan plus intraday re-plan when the live demand twin raises a drift alarm; advisory - the duty manager signs off.",
+ "assumptions": [
+  "Poisson arrivals, rate constant within an hour",
+  "lognormal handle time (KS-selected)",
+  "exponential patience, calibrated to abandonment",
+  "one skill, one FIFO queue, no callbacks or retrials",
+  "hour-by-hour staffing approximation, checked by full-day simulation"
+ ],
+ "inputs": {
+  "service_distribution": "lognormal",
+  "fit_days": [
+   1,
+   2,
+   3
+  ]
+ },
+ "validation": {
+  "holdout_days": [
+   4,
+   5
+  ],
+  "sl_mae_pp": 1.5,
+  "abandon_mae_pp": 1.0
+ },
+ "validity_envelope": {
+  "max_rate_per_min": 5.6,
+  "agents": [
+   5,
+   40
+  ]
+ },
+ "limitations": [
+  "Patience is weakly identified (flat calibration error from about 3 to 5.5 min); peak service level is insensitive to it (elasticity about -0.04)",
+  "Rates above 5.6 calls/min were never observed: such plans carry a review flag"
+ ],
+ "versions": {
+  "centre.py": "f28874c1f43c1c690a4e38cfd57124e5b18b8a342719ce9af5f1b7e1653f539f",
+  "pipeline.py": "bbadc5d3c01653aae6b302e851471aaadee8f48952b30aab6d5e9cfc323640ce",
+  "data/history_kpis.jsonl": "8a1aa4fdbded5f40f622538225e7902d99f5dbe8ddee0fed73198d53f2ae7f7f"
+ }
+}

@@ -1,0 +1,760 @@
+[
+  {
+    "id": "ds-L300-001",
+    "level": "L300",
+    "lesson": 12,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A seven-node Raft cluster: how many votes or acknowledgements make a majority, and how many nodes can fail while it still elects and commits?",
+    "options": [
+      "majority 3, tolerates 4 failed nodes",
+      "majority 4, tolerates 4 failed nodes",
+      "majority 5, tolerates 2 failed nodes",
+      "majority 4, tolerates 3 failed nodes"
+    ],
+    "answer": 3,
+    "explanation": "A majority is floor(7/2) + 1 = 4, so the cluster keeps working with 3 nodes down; any two majorities of 4 overlap in at least one node. With 4 down only 3 remain, which is not a majority.",
+    "source": "Lesson 12 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L300-002",
+    "level": "L300",
+    "lesson": 12,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A voter whose log ends at (last_term 3, last_index 4) applies the election restriction to four candidates. What does it print?",
+    "code": "def up_to_date(cand, mine):\n    return cand >= mine  # (last_term, last_index)\n\nmine = (3, 4)\nprint([up_to_date(c, mine) for c in [(2, 9), (3, 4), (3, 3), (4, 1)]])",
+    "options": [
+      "[True, True, False, False]",
+      "[False, True, True, True]",
+      "[False, True, False, True]",
+      "[True, True, True, False]"
+    ],
+    "answer": 2,
+    "explanation": "Tuples compare the last term first and use the index only to break ties, so (2, 9) loses despite its longer log and (4, 1) wins with a shorter one. Comparing log length first is the common mistake.",
+    "source": "Lesson 12 glossary (election restriction); checkYourself"
+  },
+  {
+    "id": "ds-L300-003",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In the failure lab, n3 restarts with an empty log and wins term 2 with n2's vote, then overwrites committed x=1 and x=2. Which rule prevents this?",
+    "options": [
+      "Only the node with the lowest id may stand for election",
+      "A restarted node must wait one full term before voting",
+      "Deny the vote if the candidate's log is less up-to-date than the voter's",
+      "Leaders must commit each entry on every node instead of a majority, so no node can lag behind"
+    ],
+    "answer": 2,
+    "explanation": "With the election restriction, n2 refuses n3 because n2's log is newer, so only a node holding every committed entry can win (0 of 20 seeds lose data, versus 11 of 20 without it). Requiring all nodes would kill availability instead.",
+    "source": "Lesson 12 failureLab; tryIt 2"
+  },
+  {
+    "id": "ds-L300-004",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why may a Raft leader not mark an entry from an older term as committed just because a majority now stores it?",
+    "options": [
+      "A later candidate can still win without that entry and overwrite it (paper Figure 8)",
+      "Older-term entries are always discarded when a new leader is elected",
+      "The commit index may only move forward by one entry per term, so the old entry must wait its turn",
+      "Followers reject AppendEntries that contain entries from older terms"
+    ],
+    "answer": 0,
+    "explanation": "Counting replicas is only safe for entries of the leader's current term; committing a current-term entry on top makes the older ones safe too. Older entries are not automatically discarded; they can survive or be overwritten depending on who wins next.",
+    "source": "Lesson 12 checkYourself; codeWalkthrough (commit rule)"
+  },
+  {
+    "id": "ds-L300-005",
+    "level": "L300",
+    "lesson": 12,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A five-node leader in term 2 applies the commit rule. What commit index does it print?",
+    "code": "log_terms = {1: 1, 2: 1, 3: 2, 4: 2}  # index -> term on the leader\nmatch = {\"n2\": 4, \"n3\": 2, \"n4\": 3, \"n5\": 1}  # followers' match index\ncurrent_term, n, commit = 2, 5, 0\nfor N in sorted(log_terms, reverse=True):\n    if 1 + sum(m >= N for m in match.values()) > n // 2 and log_terms[N] == current_term:\n        commit = N\n        break\nprint(commit)",
+    "options": [
+      "3",
+      "4",
+      "2",
+      "1"
+    ],
+    "answer": 0,
+    "explanation": "Index 4 is stored on only 2 of 5 nodes; index 3 is on the leader plus n2 and n4 (3 of 5) and has the current term, so it commits. Index 2 is also on a majority but scanning stops at the highest qualifying index.",
+    "source": "Lesson 12 codeWalkthrough (commit rule)"
+  },
+  {
+    "id": "ds-L300-006",
+    "level": "L300",
+    "lesson": 12,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "In a three-node cluster both followers crash, and a client proposes x=5 on the leader. What happens to the commit index?",
+    "options": [
+      "It advances, because the leader alone holds the newest entry and can commit it on its own",
+      "It resets to 0 until the followers come back",
+      "It advances once the client retries the proposal",
+      "It stays where it was: x=5 is appended but never stored on a majority"
+    ],
+    "answer": 3,
+    "explanation": "The leader can append, but commitment needs a majority (2 of 3), so x=5 stays uncommitted while the followers are down. Retrying does not create a majority.",
+    "source": "Lesson 12 tryIt 1"
+  },
+  {
+    "id": "ds-L300-007",
+    "level": "L300",
+    "lesson": 12,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Elections keep failing: candidates time out together and split the vote over and over. The heartbeat is 3 ticks. What should you change first?",
+    "options": [
+      "Give every node the same fixed timeout so that they all agree on one leader at the same moment",
+      "Let each node vote for every candidate that asks in a term",
+      "Remove the term number so old votes carry over",
+      "Widen the random election-timeout range relative to the message delay"
+    ],
+    "answer": 3,
+    "explanation": "Randomised timeouts make one node usually time out first and win before the others start; a wider range relative to message delay makes split votes rare and short. Identical timeouts make split votes more likely, and multiple votes per term break safety.",
+    "source": "Lesson 12 troubleshooting; codeWalkthrough (randomized election timeout)"
+  },
+  {
+    "id": "ds-L300-008",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What must a real Raft node do with its current term, vote and new log entries before replying to an RPC?",
+    "options": [
+      "Send them to every other node so they can be restored from peers",
+      "Write them to disk with fsync, so a power loss cannot undo them",
+      "Keep them only in memory; the leader will resend everything",
+      "Write them asynchronously and reply immediately to save latency"
+    ],
+    "answer": 1,
+    "explanation": "If a node votes or acknowledges and then forgets after a power loss, it can vote twice or lose committed entries. The lab keeps state in memory across simulated crashes; a real implementation must persist it first.",
+    "source": "Lesson 12 caution"
+  },
+  {
+    "id": "ds-L300-009",
+    "level": "L300",
+    "lesson": 12,
+    "type": "design",
+    "difficulty": 3,
+    "question": "You need a store for leader ids, locks and feature configuration that must survive any single node failure without losing an acknowledged write. Which option fits best?",
+    "options": [
+      "Primary-backup with asynchronous replication",
+      "A Raft-replicated store such as etcd",
+      "Leaderless quorums with last-writer-wins",
+      "A single node with nightly backups"
+    ],
+    "answer": 1,
+    "explanation": "Small, critical state wants linearizable writes that survive a minority of failures, which is what a consensus log provides. Async primary-backup is faster but can lose the last acknowledged writes on failover.",
+    "source": "Lesson 12 tradeOffs; useWhen"
+  },
+  {
+    "id": "ds-L300-010",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "A request to a node gets no reply within the timeout. What can the caller conclude?",
+    "options": [
+      "Nothing certain: a dropped, slow or crashed node all look like a timeout",
+      "The node has crashed and should be removed from the cluster",
+      "The request was never received, so retrying is always safe",
+      "The request ran, but the reply was lost on its way back, so the caller must not retry it"
+    ],
+    "answer": 0,
+    "explanation": "Down and slow are indistinguishable to the caller; the request may or may not have run. Assuming 'crashed' or 'never received' is exactly the reasoning that leads to split brain or duplicates.",
+    "source": "Lesson 13 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L300-011",
+    "level": "L300",
+    "lesson": 13,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Write w1 runs from t=0 to t=10. A read during [2, 3] returns w1's value; a later read during [4, 5] returns the old value. Is the history linearizable?",
+    "options": [
+      "Yes: w1 had not finished, so either value is allowed for both reads",
+      "Yes: reads may return any value written at some point",
+      "No: once a read has seen w1, every later read must see w1 or newer",
+      "No: a read must never see a write that has not finished yet"
+    ],
+    "answer": 2,
+    "explanation": "During w1 a read may return either value, but after one read returns the new value, a later read returning the old one cannot be explained by any single instant of the write. Seeing an unfinished write is allowed.",
+    "source": "Lesson 13 checkYourself; glossary (linearizable)"
+  },
+  {
+    "id": "ds-L300-012",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Fencing tokens are on. Can a deposed leader still give clients wrong data?",
+    "options": [
+      "Yes, from local reads; fencing only rejects its stale writes",
+      "No, fencing makes every request from a stale node fail",
+      "Only if its clock is ahead of the storage node's clock",
+      "No, the storage also rejects reads that carry a lower fencing token than the newest one"
+    ],
+    "answer": 0,
+    "explanation": "In tryIt 2, c1 read 1 via the deposed n1 after a newer write, and the history stayed non-linearizable even with fencing. Reads must also go through the fenced resource or a quorum.",
+    "source": "Lesson 13 concepts; tryIt 2"
+  },
+  {
+    "id": "ds-L300-013",
+    "level": "L300",
+    "lesson": 13,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "During a partition two nodes act as leader at once. The renewal path looks like this. What is the bug?",
+    "code": "def step(self):\n    try:\n        self.lease.renew(self.name, self.token)\n    except Timeout:\n        pass  # network blip: keep leading\n    if self.is_leader:\n        self.serve_writes()",
+    "options": [
+      "renew() should be called less often to reduce network load",
+      "Timeout should be caught inside the lease store instead of the node, so the node only ever sees yes or no",
+      "The node should retry renew() forever until it succeeds",
+      "A timeout is treated as success; the node keeps leading after its lease may have expired"
+    ],
+    "answer": 3,
+    "explanation": "A timed-out renewal is not a 'no' but not a 'yes' either; the node must stop acting as leader once its lease may have lapsed, and the resource should fence it anyway. Retrying forever keeps the split brain going.",
+    "source": "Lesson 13 codeWalkthrough (timeout is not 'no')"
+  },
+  {
+    "id": "ds-L300-014",
+    "level": "L300",
+    "lesson": 13,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A single-writer register history is scanned for stale reads (a read older than a write that finished before the read began). What is printed?",
+    "code": "writes = [(0, 1.0, 1), (7, 7.8, 3)]  # (start, end, value)\nreads = [(2, 2.5, 1), (8, 8.5, 2)]\nstale = [r for r in reads\n         if any(w_end < r[0] and w_val > r[2] for _, w_end, w_val in writes)]\nprint(stale)",
+    "options": [
+      "[]",
+      "[(8, 8.5, 2)]",
+      "[(2, 2.5, 1), (8, 8.5, 2)]",
+      "[(2, 2.5, 1)]"
+    ],
+    "answer": 1,
+    "explanation": "Write 3 finished at 7.8, before the read at 8 began, so returning 2 is stale; the read at 2 returned the latest finished value. This is the lab's 'c2 read -> 2 ... but c1 write 3 had already finished'.",
+    "source": "Lesson 13 steps (read the history and the verdict)"
+  },
+  {
+    "id": "ds-L300-015",
+    "level": "L300",
+    "lesson": 13,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "In the lab's partition, n2 acquires the lease at t=4 while n1 still thinks it leads; n1 only learns otherwise when the link is healed at t=9. Counting ticks 4 up to 8, how many ticks have two leaders?",
+    "options": [
+      "4 ticks",
+      "7 ticks",
+      "9 ticks",
+      "5 ticks"
+    ],
+    "answer": 3,
+    "explanation": "Both lead at t=4, 5, 6, 7 and 8, which is the lab's '4:n1+n2 ... 8:n1+n2'. A clean partition makes split brain last until the deposed node can hear 'no'.",
+    "source": "Lesson 13 failureLab; steps"
+  },
+  {
+    "id": "ds-L300-016",
+    "level": "L300",
+    "lesson": 13,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Instead of a clean partition, 50% of n1's lease requests are dropped (seeds 13, 14, 15). Does every seed produce two leaders?",
+    "options": [
+      "Yes: any packet loss produces split brain on every seed",
+      "No: with partial loss n1 never loses the lease",
+      "No: leadership changes in every seed, but only seed 14 has a two-leader tick",
+      "Yes, and the two-leader period lasts longer than with the clean partition in every one of the seeds"
+    ],
+    "answer": 2,
+    "explanation": "Partial loss causes leadership changes (n2 takes the lease at t=3 or 5) but split brain only sometimes (1 tick in seed 14). Fault injection needs several seeds because one run can miss the bug.",
+    "source": "Lesson 13 tryIt 1"
+  },
+  {
+    "id": "ds-L300-017",
+    "level": "L300",
+    "lesson": 13,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Reads of a lock-owner record must never be stale, even during a partition, and the minority side may stop answering. Which approach fits?",
+    "options": [
+      "Fencing tokens at the storage, with leader-local reads",
+      "Leader leases with clock bounds for fast local reads",
+      "Cache reads at each node and invalidate on write",
+      "Serve every operation through a majority quorum, as Raft does"
+    ],
+    "answer": 3,
+    "explanation": "A majority quorum means the minority side cannot read or write at all, so no stale value is served. Fencing alone guards writes only, and clock-bounded leases are correct only while drift and pauses stay below the bound.",
+    "source": "Lesson 13 tradeOffs"
+  },
+  {
+    "id": "ds-L300-018",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Where should you run Toxiproxy-style fault injection, and how should you expose its API?",
+    "options": [
+      "Only against test environments, with the API bound to localhost",
+      "In production first, so the faults match real traffic",
+      "Anywhere, because the API requires an auth token by default",
+      "On a public interface, so CI runners elsewhere can reach it"
+    ],
+    "answer": 0,
+    "explanation": "Toxiproxy's API on :8474 is unauthenticated by default (a token is optional since 2.13.0), so anyone who reaches it can break your links. Keep it local and use it in tests.",
+    "source": "Lesson 13 caution"
+  },
+  {
+    "id": "ds-L300-019",
+    "level": "L300",
+    "lesson": 14,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "A saga runs: reserve stock, charge card, ship. The charge step fails. Which compensations run?",
+    "options": [
+      "Refund the card first and then release the stock, newest step first",
+      "Only release stock: the failed charge did nothing to undo",
+      "Release stock, then refund the card",
+      "None: a failed step rolls back the saga automatically"
+    ],
+    "answer": 1,
+    "explanation": "Only completed steps are compensated, newest first, and here only the reservation completed. There is no automatic rollback across services; that is why sagas need compensations.",
+    "source": "Lesson 14 checkYourself"
+  },
+  {
+    "id": "ds-L300-020",
+    "level": "L300",
+    "lesson": 14,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "An orchestrator runs steps until shipping fails, then compensates. What does it print?",
+    "code": "steps = [(\"create\", \"cancel\"), (\"reserve\", \"release\"), (\"charge\", \"refund\"), (\"ship\", None)]\ndone, log = [], []\nfor name, comp in steps:\n    if name == \"ship\":\n        log.append(\"ship failed\")\n        break\n    done.append(comp)\n    log.append(name)\nfor comp in reversed(done):\n    log.append(comp)\nprint(log[-3:])",
+    "options": [
+      "['cancel', 'release', 'refund']",
+      "['refund', 'release', 'cancel']",
+      "['charge', 'ship failed', 'refund']",
+      "['release', 'refund', 'cancel']"
+    ],
+    "answer": 1,
+    "explanation": "Completed steps' compensations are collected in order and run reversed: the newest step (charge) is undone first. Running them in forward order would cancel the order before refunding it.",
+    "source": "Lesson 14 concepts (undo in reverse order)"
+  },
+  {
+    "id": "ds-L300-021",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is shipping placed as the last step of the order saga?",
+    "options": [
+      "It is the slowest step, and slow steps should run last",
+      "It cannot be undone, so every step that can still fail must come before it",
+      "Shipping needs the saga log to be complete before it runs",
+      "Compensations always run in forward order, so the step placed last is the safest one to fail"
+    ],
+    "answer": 1,
+    "explanation": "An irreversible step (the pivot) has no compensation, so all fallible, compensable steps go first. Speed has nothing to do with the ordering.",
+    "source": "Lesson 14 checkYourself; codeWalkthrough (steps as data)"
+  },
+  {
+    "id": "ds-L300-022",
+    "level": "L300",
+    "lesson": 14,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "The orchestrator crashed after calling charge but before writing 'charge done' to the saga log. What should recovery do?",
+    "options": [
+      "Assume the charge never happened, and run the charge step again from the start without any key",
+      "Treat the charge as in doubt and refund it idempotently, or ask payments by saga id",
+      "Mark the saga completed, because the charge was probably fine",
+      "Delete the saga log entry and start the saga again from scratch"
+    ],
+    "answer": 1,
+    "explanation": "Recovery cannot know whether the charge ran, so it compensates (a no-op if nothing happened) or queries the payment service by saga id. Re-running without an idempotency key risks a double charge.",
+    "source": "Lesson 14 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L300-023",
+    "level": "L300",
+    "lesson": 14,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "After the orchestrator crashed right after a refund and recovered from the saga log, the customer got two refunds. What should change?",
+    "code": "def refund(saga_id, amount):\n    ledger.append((saga_id, -amount))\n    return \"refunded\"",
+    "options": [
+      "Make refund idempotent per saga id, checked in the payment service",
+      "Write the saga log after every refund call instead of before",
+      "Disable recover() so a crashed saga is never resumed",
+      "Refund by deleting the original charge from the ledger"
+    ],
+    "answer": 0,
+    "explanation": "Recovery re-runs in-doubt compensations, so the refund must recognise a repeat (the lab went from [-10, -10] to [-10]). Deleting the charge would lose the accounting history; a refund is a new negative entry.",
+    "source": "Lesson 14 tryIt 1; troubleshooting"
+  },
+  {
+    "id": "ds-L300-024",
+    "level": "L300",
+    "lesson": 14,
+    "type": "design",
+    "difficulty": 2,
+    "question": "An order flow has eight steps with branching for gift cards, and auditors want every saga's state in one place. Orchestration or choreography?",
+    "options": [
+      "Orchestration: the whole flow lives in one place that is easy to log and recover",
+      "Choreography: services react to events, so there is no flow to audit",
+      "Choreography: it handles branching better, because each service decides its own next step locally",
+      "Neither: use two-phase commit across all eight services"
+    ],
+    "answer": 0,
+    "explanation": "Many steps, branching and audit needs favour a coordinator with a saga log. Choreography spreads the flow across handlers, which makes it harder to see and change; 2PC needs participants that all support it.",
+    "source": "Lesson 14 tradeOffs"
+  },
+  {
+    "id": "ds-L300-025",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In the lab, how does a refund undo a charge?",
+    "options": [
+      "It deletes the original charge entry from the ledger",
+      "It appends a negative ledger entry, keeping the full history",
+      "It rolls back the payments database transaction",
+      "It edits the charge entry's amount down to zero, so the ledger total is correct again"
+    ],
+    "answer": 1,
+    "explanation": "A compensation is a semantic undo recorded as a new change; accounting needs the full story. There is no transaction left to roll back, because the charge already committed locally.",
+    "source": "Lesson 14 glossary; codeWalkthrough (semantic undo)"
+  },
+  {
+    "id": "ds-L300-026",
+    "level": "L300",
+    "lesson": 14,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "The choreographed saga runs over a bus that duplicates about 20% of events, with the lesson's Payments service. What does the audit find?",
+    "options": [
+      "Nothing: choreography has no orchestrator, so duplicates cannot cause harm",
+      "Orders stuck half-way, because duplicated events are dropped",
+      "An order refunded twice, because the ShippingFailed handler is not idempotent",
+      "Lost orders, because the bus discards the original event"
+    ],
+    "answer": 2,
+    "explanation": "With at-least-once delivery the refund handler ran twice for o6 (money kept -60 of 60); the solution's idempotent Payments passes the audit. Choreography relies on idempotent consumers just as much.",
+    "source": "Lesson 14 tryIt 2; tradeOffs"
+  },
+  {
+    "id": "ds-L300-027",
+    "level": "L300",
+    "lesson": 15,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A service receives this traceparent and builds the header for its downstream call. What does it print?",
+    "code": "tp = \"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\"\nversion, trace_id, parent_id, flags = tp.split(\"-\")\nmy_span_id = \"b7ad6b7169203331\"\nprint(\"-\".join([version, trace_id, my_span_id, flags]))",
+    "options": [
+      "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+      "00-b7ad6b7169203331-00f067aa0ba902b7-01",
+      "00-4bf92f3577b34da6a3ce929d0e0e4736-b7ad6b7169203331-01",
+      "00-4bf92f3577b34da6a3ce929d0e0e4736-b7ad6b7169203331-00"
+    ],
+    "answer": 2,
+    "explanation": "Keep the version, trace id and flags; put your own span id in the parent-id field so the callee becomes your child. Forwarding the incoming parent id would make the callee your sibling.",
+    "source": "Lesson 15 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L300-028",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The gateway receives a traceparent whose hex is uppercase, and another whose trace id is all zeros. What does it do?",
+    "options": [
+      "Continues both traces after normalising the values",
+      "Rejects both requests with 400 Bad Request",
+      "Starts a new trace in both cases, with no parent",
+      "Continues the uppercase one and restarts the all-zero one"
+    ],
+    "answer": 2,
+    "explanation": "The W3C format allows lowercase hex only and forbids all-zero ids; an invalid header means 'start a new trace' (and count how often), not reject the request. Normalising would accept headers the spec says are invalid.",
+    "source": "Lesson 15 tryIt 1; codeWalkthrough (strict parsing)"
+  },
+  {
+    "id": "ds-L300-029",
+    "level": "L300",
+    "lesson": 15,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "orders GET /create runs from 10 ms to 190 ms. Its children on the critical path are payments /authorize (30-150 ms) and receipt (160-185 ms). What is /create's self time?",
+    "options": [
+      "35 ms",
+      "180 ms",
+      "60 ms",
+      "145 ms"
+    ],
+    "answer": 0,
+    "explanation": "Self time is the span's duration (180 ms) minus the time covered by its children on the critical path (120 + 25 ms). If the payments hop did not propagate, those 120 ms would wrongly show up as /create's self time.",
+    "source": "Lesson 15 glossary (self time)"
+  },
+  {
+    "id": "ds-L300-030",
+    "level": "L300",
+    "lesson": 15,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Spans from one checkout request are grouped by trace id. What does this print?",
+    "code": "spans = [{\"trace\": \"a\", \"parent\": None}, {\"trace\": \"a\", \"parent\": \"s1\"},\n         {\"trace\": \"b\", \"parent\": None}, {\"trace\": \"a\", \"parent\": \"s2\"}]\nroots = [s for s in spans if s[\"parent\"] is None]\nprint(len({s[\"trace\"] for s in spans}), len(roots))",
+    "options": [
+      "1 1",
+      "1 2",
+      "2 1",
+      "2 2"
+    ],
+    "answer": 3,
+    "explanation": "There are two distinct trace ids and two root spans (parent None), so one request produced two traces: a hop did not propagate traceparent. A healthy request has exactly one trace and one root.",
+    "source": "Lesson 15 steps (group the spans); codeWalkthrough (analysis)"
+  },
+  {
+    "id": "ds-L300-031",
+    "level": "L300",
+    "lesson": 15,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "One checkout yields two trace ids, payments /authorize has parent_id null, and orders /create shows ~88 ms of self time. What is the fix?",
+    "options": [
+      "Increase the sampling rate so payments' spans are not dropped",
+      "Synchronise the clocks of orders and payments with NTP",
+      "Add a correlation id to the logs of the payments service so they can be joined by hand",
+      "Propagate in client middleware so every outgoing call injects traceparent"
+    ],
+    "answer": 3,
+    "explanation": "The orders-to-payments hop uses a raw HTTP call without the header, so payments starts a new trace and its time is hidden inside /create. Sampling and clocks do not change which trace a span joins.",
+    "source": "Lesson 15 failureLab"
+  },
+  {
+    "id": "ds-L300-032",
+    "level": "L300",
+    "lesson": 15,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Sampled traces are missing some services' spans, and unsampled requests show up downstream. One hop builds its header like this. What is wrong?",
+    "code": "def outgoing_headers(ctx):\n    return {\"traceparent\": f\"00-{ctx.trace_id}-{ctx.span_id}-01\"}",
+    "options": [
+      "It should generate a new trace id for each outgoing call",
+      "The parent-id field should be the incoming parent, not its own span",
+      "It hard-codes flags 01 instead of passing the incoming sampled flag on",
+      "The version must be ff for services that make their own decisions"
+    ],
+    "answer": 2,
+    "explanation": "Overwriting trace-flags turns unsampled requests into sampled ones downstream (and breaks the caller's decision); pass the incoming flag unchanged unless the service makes its own sampling decision. Using its own span id as parent is correct.",
+    "source": "Lesson 15 troubleshooting"
+  },
+  {
+    "id": "ds-L300-033",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why can a span's 'self time' be misleading?",
+    "options": [
+      "It includes calls the trace cannot see, so a broken hop looks like slow local work",
+      "It double-counts children that run in parallel, so it is always larger than the true local work",
+      "It is measured with wall clocks, so it is always negative",
+      "It ignores time spent waiting for the network"
+    ],
+    "answer": 0,
+    "explanation": "Time spent in an unpropagated downstream call has no child span, so it is attributed to the caller; the lab blamed orders /create for payments' work. Self time is computed from durations, not clock comparisons across hosts.",
+    "source": "Lesson 15 checkYourself"
+  },
+  {
+    "id": "ds-L300-034",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Child spans appear to start before their parent when you compare timestamps across hosts. What is the likely cause, and what should you compare?",
+    "options": [
+      "A propagation bug: the child joined the wrong trace and inherited another request's timestamps",
+      "The sampler dropped the parent's first event",
+      "The parent's span id was reused by the child",
+      "Clock skew between hosts; compare durations rather than absolute times"
+    ],
+    "answer": 3,
+    "explanation": "Each host stamps spans with its own wall clock, which can be off by milliseconds; durations measured on one host are reliable. Wrong-trace bugs show up as extra roots, not as reordered times.",
+    "source": "Lesson 15 troubleshooting"
+  },
+  {
+    "id": "ds-L300-035",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which value is acceptable to place in traceparent or tracestate?",
+    "options": [
+      "The user's email, to make traces easy to search",
+      "Random ids from a cryptographic source, nothing personal",
+      "A customer id, as long as it is hashed with MD5",
+      "The session cookie, so traces can be tied to logins"
+    ],
+    "answer": 1,
+    "explanation": "Trace headers cross trust boundaries, so the W3C privacy section says to keep personal data out; production ids should come from a cryptographic random source. A hashed customer id is still personal data that can be linked.",
+    "source": "Lesson 15 caution"
+  },
+  {
+    "id": "ds-L300-036",
+    "level": "L300",
+    "lesson": 16,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A service receives 300 requests per second and each spends 40 ms in the system on average. How many requests are in the system at a time?",
+    "options": [
+      "7.5 requests",
+      "120 requests",
+      "12 requests",
+      "40 requests"
+    ],
+    "answer": 2,
+    "explanation": "Little's law: requests in system = arrival rate x time in system = 300/s x 0.040 s. Multiplying by 40 instead of 0.040 forgets to convert milliseconds to seconds.",
+    "source": "Lesson 16 concepts"
+  },
+  {
+    "id": "ds-L300-037",
+    "level": "L300",
+    "lesson": 16,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A server has 6 workers and each request takes 15 ms of work. The queue is bounded at 60. What is its capacity and the worst-case queueing delay?",
+    "options": [
+      "capacity 90/s, worst queue wait about 667 ms",
+      "capacity 400/s, worst queue wait about 150 ms",
+      "capacity 400/s, worst queue wait about 60 ms",
+      "capacity 400/s, worst queue wait about 900 ms"
+    ],
+    "answer": 1,
+    "explanation": "Capacity is workers x 1000 / service_ms = 400/s, and a full queue of 60 drains in 60 / 400 s = 150 ms (plus service time). This is how a queue bound is chosen from a latency budget.",
+    "source": "Lesson 16 codeWalkthrough (capacity); checkYourself"
+  },
+  {
+    "id": "ds-L300-038",
+    "level": "L300",
+    "lesson": 16,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Arrivals are 500 requests/s for 8 s into an unbounded queue with capacity 400/s, then fall to 300/s. How big is the backlog, and how long after the burst until it is gone?",
+    "options": [
+      "backlog 800, drained 8 s after the burst",
+      "backlog 800, drained 2 s after the burst",
+      "backlog 4000, drained 40 s after the burst",
+      "backlog 800, drained 2.7 s after the burst"
+    ],
+    "answer": 0,
+    "explanation": "The backlog grows by 100/s for 8 s, then drains at only 400 - 300 = 100/s, taking 8 s. Dividing by the full capacity (800 / 400) forgets that new arrivals keep coming.",
+    "source": "Lesson 16 checkYourself; codeWalkthrough (burst profile)"
+  },
+  {
+    "id": "ds-L300-039",
+    "level": "L300",
+    "lesson": 16,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A caller's AIMD concurrency limit starts at 20. What does it print after this sequence of outcomes?",
+    "code": "limit = 20.0\nfor ok in [True] * 10 + [False, False] + [True] * 5:\n    limit = limit + 1 / limit if ok else limit * 0.9\nprint(round(limit, 2))",
+    "options": [
+      "16.9",
+      "20.0",
+      "16.2",
+      "22.0"
+    ],
+    "answer": 0,
+    "explanation": "Each success adds 1/limit (about +0.05 at this size) and each 503 multiplies by 0.9, so two failures remove far more than fifteen successes add. That asymmetry is what makes AIMD back off quickly and probe slowly.",
+    "source": "Lesson 16 glossary (AIMD); tryIt 2"
+  },
+  {
+    "id": "ds-L300-040",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Under a burst, the unbounded-queue server returned 0 errors. Why is that the worst outcome here?",
+    "options": [
+      "Zero errors means the metrics pipeline is broken, so nothing was measured",
+      "A server should always return some errors to signal health",
+      "Zero errors means the clients retried too aggressively, hiding every failure behind a later success",
+      "Every request waited; most answers arrived after clients gave up, so goodput collapsed"
+    ],
+    "answer": 3,
+    "explanation": "Goodput was 3,781 of 10,686: two thirds of the work was answered after the 1 s client timeout and wasted. Shedding some requests early lets the accepted ones finish in time (goodput 8,779 with a bound of 40).",
+    "source": "Lesson 16 checkYourself; failureLab"
+  },
+  {
+    "id": "ds-L300-041",
+    "level": "L300",
+    "lesson": 16,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Queue bounds of 10, 40 and 400 were tried on the same burst. The bound of 400 had the most successful answers (9,139). Why is it still the worst choice?",
+    "options": [
+      "It shed the most requests, so clients saw the most errors",
+      "Its goodput was lowest (6,710): many answers came after clients had given up",
+      "It used the most memory, which is the resource a queue bound is meant to keep as small as possible",
+      "It had the lowest p99, which hides overload from dashboards"
+    ],
+    "answer": 1,
+    "explanation": "A long queue converts errors into late answers: p99 was 1,115 ms and goodput 6,710, versus 8,779 at a bound of 40. Queues should be bounded by a latency budget, not by memory.",
+    "source": "Lesson 16 tryIt 1; concepts"
+  },
+  {
+    "id": "ds-L300-042",
+    "level": "L300",
+    "lesson": 16,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Your service sheds load with 503s, yet CPU stays at 100% and accepted requests are still slow. What is the likely cause?",
+    "options": [
+      "It rejects too early, so the workers sit idle while clients wait",
+      "Its 503 responses lack a body, so clients keep their connections open and the workers stay busy waiting",
+      "It rejects too late, after parsing, auth or database work; move admission to the front door",
+      "Its queue bound is too small, so workers have no buffer"
+    ],
+    "answer": 2,
+    "explanation": "Shedding only saves capacity if the refused request costs almost nothing; rejecting after expensive work spends the CPU anyway. Admission control belongs at the very start of request handling.",
+    "source": "Lesson 16 troubleshooting"
+  },
+  {
+    "id": "ds-L300-043",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why must a shedding server send Retry-After with its 503s?",
+    "options": [
+      "HTTP forbids a 503 response without a Retry-After header",
+      "Retry-After makes each 503 much cheaper for the server to produce, because the headers can be cached",
+      "Without it, aggressive clients retry at once and the rejected load comes straight back",
+      "Clients cannot parse a 503 unless a Retry-After is present"
+    ],
+    "answer": 2,
+    "explanation": "Shedding works only if clients back off; a 503 without Retry-After plus aggressive retries can be worse than not shedding. Combine it with client backoff and retry budgets from lesson 4.",
+    "source": "Lesson 16 caution; useWhen"
+  },
+  {
+    "id": "ds-L300-044",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Raising load from 80% to 95% of capacity raised the mean queue wait from 5.9 ms to 30.4 ms. What does this show?",
+    "options": [
+      "Waiting grows in proportion to load at every level",
+      "The simulation is unstable above 90% load",
+      "Queue wait depends only on service time, not load",
+      "Near capacity, waiting grows much faster than load"
+    ],
+    "answer": 3,
+    "explanation": "A 19% increase in load produced about a fivefold increase in waiting, because idle gaps that absorb randomness disappear as utilisation approaches 100%. That is why queues need bounds before you reach capacity.",
+    "source": "Lesson 16 concepts; expectedResults"
+  }
+]

@@ -1,0 +1,1283 @@
+[
+ {
+  "id": "crossmatch",
+  "number": 7,
+  "level": "L200",
+  "title": "Catalogues and cross-matching: angular separation and a k-d tree",
+  "phase": "Catalogues",
+  "category": "cross-match",
+  "description": "Match 2042 sources to a 2000-source catalogue across RA 0/360 with unit vectors and a k-d tree; then make the match one-to-one.",
+  "outcome": "You can compute angular separations safely, index a catalogue with a k-d tree and decide how to handle blends.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3; no new packages for the main lab (CI: labs/L200/requirements.txt = L100 pins + rebound 5.2.2); Astropy match_to_catalog_sky and SciPy cKDTree equivalents in CI; TOPCAT for a no-code check",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "Unit vectors turn sky matching into 3-D nearest-neighbour search; a k-d tree makes it fast."
+  ],
+  "prerequisites": [
+   "Lessons 2 and 4"
+  ],
+  "glossary": [
+   {
+    "term": "cross-match",
+    "meaning": "Pairing sources in two catalogues that are the same object."
+   },
+   {
+    "term": "k-d tree",
+    "meaning": "Binary tree that splits space on one axis at a time, for fast nearest-neighbour search."
+   },
+   {
+    "term": "chord",
+    "meaning": "Straight-line distance between two points on the unit sphere: 2 sin(angle/2)."
+   },
+   {
+    "term": "blend",
+    "meaning": "Two sources close enough to claim the same counterpart."
+   }
+  ],
+  "concepts": [
+   "Vincenty separation handles wrap-around and poles.",
+   "Angle radius -> chord radius.",
+   "k-d tree prunes far branches.",
+   "Nearest-neighbour is not one-to-one."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python crossmatch.py` (synthetic, seeded catalogues).",
+    "mac": "cd labs/L200/07-crossmatch\npython crossmatch.py",
+    "windows": "cd labs\\L200\\07-crossmatch\npython crossmatch.py",
+    "expected": "A 2000 sources, B 2042 sources (1812 true counterparts); 549 sources at RA 359.x deg.",
+    "ifNot": "Run from the lab folder (kdtree.py is imported)."
+   },
+   {
+    "title": "Matches within 1 arcsec",
+    "detail": "Nearest A for every B, accepted if the chord is <= 2 sin(0.5 arcsec).",
+    "expected": "matched 1842; correct 1812/1812; median sep 0.233 arcsec",
+    "ifNot": "Check the chord conversion (radians, half angle)."
+   },
+   {
+    "title": "Tree vs brute force",
+    "detail": "Count distance evaluations instead of timing (deterministic on every machine).",
+    "expected": "k-d tree distance evaluations: 38,999 vs brute force 4,084,000",
+    "ifNot": "If counts are close to brute force, the pruning test is wrong."
+   },
+   {
+    "title": "Blends",
+    "detail": "How many A sources are claimed by more than one B source.",
+    "expected": "25 A sources claimed twice",
+    "ifNot": "That is expected: 30 synthetic blends were injected."
+   },
+   {
+    "title": "RA wrap-around",
+    "detail": "Naive RA difference vs the true separation.",
+    "expected": "naive |dRA| = 359.9998 deg, true separation = 0.6357 arcsec",
+    "ifNot": "Use angular_sep(), never raw RA differences."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v` (includes test_build_task on the solution).",
+    "mac": "cd labs/L200/07-crossmatch\npython -m unittest -v",
+    "windows": "cd labs\\L200\\07-crossmatch\npython -m unittest -v",
+    "expected": "Ran 10 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the Astropy/SciPy comparison (pending-ci)."
+   },
+   {
+    "title": "Build it: one-to-one matching",
+    "detail": "Edit match_one_to_one() in crossmatch.py, then test your file.",
+    "mac": "cd labs/L200/07-crossmatch\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L200\\07-crossmatch\n$env:BUILD_TARGET = \"mine\"; python -m unittest test_build_task -v",
+    "expected": "Shipped file: 1 failure (an A source claimed twice). After your change: 3 tests OK; solution prints 1817 matches, 1807/1812 true kept, 0 duplicates.",
+    "ifNot": "Compare with solution/crossmatch.py."
+   }
+  ],
+  "code": "\"\"\"L200 Catalogues and cross-matching: angular separation, nearest neighbour with a k-d tree.\n\nSynthetic, seeded catalogues (not real stars): A = 2000 sources around RA 0.5 deg, Dec +28 deg (the field\nstraddles RA 0/360); B = 90% of A re-measured with 0.2 arcsec scatter + 200 unrelated + 30 blended sources.\npython crossmatch.py            # add --export to write cat_a.csv / cat_b.csv (for TOPCAT)\n\"\"\"\nimport sys\n\nimport numpy as np\n\nfrom kdtree import KDTree\n\nARCSEC = np.pi / 180 / 3600\n\n\ndef unit_vectors(ra_deg, dec_deg):\n    ra, dec = np.radians(ra_deg), np.radians(dec_deg)\n    return np.column_stack([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)])\n\n\ndef angular_sep(ra1, dec1, ra2, dec2):\n    \"\"\"Vincenty formula (degrees in, degrees out): accurate for tiny and large angles.\"\"\"\n    r1, d1, r2, d2 = map(np.radians, (ra1, dec1, ra2, dec2))\n    dra = r2 - r1\n    num = np.hypot(np.cos(d2) * np.sin(dra), np.cos(d1) * np.sin(d2) - np.sin(d1) * np.cos(d2) * np.cos(dra))\n    return np.degrees(np.arctan2(num, np.sin(d1) * np.sin(d2) + np.cos(d1) * np.cos(d2) * np.cos(dra)))\n\n\ndef make_catalogues(seed=7, n=2000):\n    rng = np.random.default_rng(seed)\n    ra_a = (0.5 + rng.uniform(-1, 1, n) / np.cos(np.radians(28))) % 360  # wraps: some RA near 359.x\n    dec_a = 28 + rng.uniform(-1, 1, n)\n    keep = rng.random(n) < 0.9\n    jitter = rng.normal(0, 0.2, (2, keep.sum())) / 3600  # 0.2 arcsec per axis\n    ra_b = (ra_a[keep] + jitter[0] / np.cos(np.radians(dec_a[keep]))) % 360\n    dec_b = dec_a[keep] + jitter[1]\n    truth = np.flatnonzero(keep)  # B row i is A row truth[i]\n    blend = rng.choice(n, 30, replace=False)  # unrelated faint neighbours 0.3-0.7 arcsec from an A star\n    off = rng.uniform(0.3, 0.7, 30) / 3600\n    ra_x = np.concatenate([(0.5 + rng.uniform(-1, 1, 200) / np.cos(np.radians(28))) % 360, (ra_a[blend] + off) % 360])\n    dec_x = np.concatenate([28 + rng.uniform(-1, 1, 200), dec_a[blend]])\n    return (ra_a, dec_a), (np.concatenate([ra_b, ra_x]), np.concatenate([dec_b, dec_x])), truth\n\n\ndef match(cat_a, cat_b, radius_arcsec=1.0):\n    \"\"\"For every B source: index of the nearest A source within the radius (-1 if none) and separation.\"\"\"\n    tree = KDTree(unit_vectors(*cat_a))\n    chord_max = 2 * np.sin(radius_arcsec * ARCSEC / 2)  # angle -> straight-line (chord) distance on the unit sphere\n    idx, sep = np.full(len(cat_b[0]), -1), np.full(len(cat_b[0]), np.nan)\n    for i, q in enumerate(unit_vectors(*cat_b)):\n        j, chord = tree.nearest(q)\n        if chord <= chord_max:\n            idx[i], sep[i] = j, np.degrees(2 * np.arcsin(chord / 2)) * 3600\n    return idx, sep, tree.evaluations\n\n\ndef match_one_to_one(cat_a, cat_b, radius_arcsec=1.0):\n    # build task: an A source may be claimed by several B sources (blends); keep only the closest claim\n    idx, sep, _ = match(cat_a, cat_b, radius_arcsec)\n    return idx, sep\n\n\ndef main():\n    a, b, truth = make_catalogues()\n    idx, sep, evals = match(a, b)\n    n_true = len(truth)\n    correct = int(np.sum(idx[:n_true] == truth))\n    print(f\"A {len(a[0])} sources, B {len(b[0])} sources ({n_true} true counterparts); the field wraps: \"\n          f\"{np.sum(a[0] > 180)} sources at RA 359.x deg\")\n    print(f\"matched {np.sum(idx >= 0)} within 1 arcsec; correct {correct}/{n_true}; median sep {np.nanmedian(sep):.3f} arcsec\")\n    print(f\"k-d tree distance evaluations: {evals:,} vs brute force {len(a[0]) * len(b[0]):,}\")\n    claimed = np.bincount(idx[idx >= 0], minlength=len(a[0]))\n    print(f\"A sources claimed by more than one B source (blends): {np.sum(claimed > 1)}\")\n    print(f\"RA 359.9999 vs 0.0001 at Dec 28: naive |dRA| = {abs(359.9999 - 0.0001):.4f} deg, \"\n          f\"true separation = {angular_sep(359.9999, 28, 0.0001, 28) * 3600:.4f} arcsec\")\n    if \"--export\" in sys.argv:\n        for name, (ra, dec) in ((\"cat_a.csv\", a), (\"cat_b.csv\", b)):\n            np.savetxt(name, np.column_stack([ra, dec]), delimiter=\",\", header=\"ra,dec\", comments=\"\", fmt=\"%.7f\")\n        print(\"wrote cat_a.csv, cat_b.csv\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "unit_vectors()",
+    "detail": "(RA, Dec) -> (x, y, z); RA 359.9999 and 0.0001 become neighbouring points, so wrap-around disappears."
+   },
+   {
+    "title": "chord_max = 2 * np.sin(radius / 2)",
+    "detail": "Converts the angular radius into a Euclidean distance on the unit sphere, so the tree can use plain distances."
+   },
+   {
+    "title": "KDTree._search: if abs(q[axis] - split) < best[0]",
+    "detail": "Visit the far branch only if the splitting plane is closer than the best match so far; this is what cuts 4.08 M evaluations to 39 k."
+   },
+   {
+    "title": "match_one_to_one()",
+    "detail": "Shipped as plain nearest-neighbour (blends claim one A source twice); the build task resolves conflicts by keeping the closest claim."
+   }
+  ],
+  "buildTask": {
+   "task": "Make match_one_to_one() return at most one B source per A source: when several B sources claim the same A source (blends), keep the closest and mark the others unmatched (-1).",
+   "hints": [
+    "Sort the matched B rows by separation, closest first (np.argsort with NaN replaced by inf).",
+    "Walk through them and remember which A indices are taken (a set).",
+    "Copy idx/sep before changing them."
+   ],
+   "solution": "labs/L200/07-crossmatch/solution/crossmatch.py",
+   "check": "python -m unittest test_build_task -v  (Ran 3 tests ... OK on the solution). BUILD_TARGET=mine checks your edited file: on the shipped file 1 of 3 tests fails (Ran 3 tests ... FAILED (failures=1))."
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L200/07-crossmatch/crossmatch.py",
+    "purpose": "main lab code (match_one_to_one unfinished)"
+   },
+   {
+    "path": "labs/L200/07-crossmatch/kdtree.py",
+    "purpose": "numpy k-d tree with an evaluation counter"
+   },
+   {
+    "path": "labs/L200/07-crossmatch/solution/crossmatch.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L200/07-crossmatch/crossmatch_astropy.py",
+    "purpose": "Astropy + SciPy cKDTree equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L200/07-crossmatch/test_crossmatch.py",
+    "purpose": "separation, tree vs brute force, match counts"
+   },
+   {
+    "path": "labs/L200/07-crossmatch/test_build_task.py",
+    "purpose": "buildTask check (BUILD_TARGET=mine switch)"
+   },
+   {
+    "path": "labs/L200/07-crossmatch/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "1812/1812 true counterparts matched",
+   "105x fewer distance evaluations than brute force",
+   "One-to-one: 0 duplicates, 1807 true kept"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 10 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task",
+    "expected": "Ran 3 tests ... FAILED (failures=1)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Matches vanish near RA 0",
+    "action": "You compared RA values directly; use unit vectors or angular_sep()."
+   },
+   {
+    "symptom": "RecursionError in the tree",
+    "action": "Duplicate points with leaf_size 1; keep leaf_size >= 4."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Match radius 0.5, 1 and 3 arcsec.",
+    "predict": "More matches with 3 arcsec - are they better?",
+    "expected": "radius 0.5 arcsec: matched 1768, correct 1743/1812 | radius 1.0 arcsec: matched 1842, correct 1812/1812 | radius 3.0 arcsec: matched 1842, correct 1812/1812"
+   },
+   {
+    "task": "Leaf size 4, 16, 256.",
+    "predict": "Fewer or more distance evaluations?",
+    "expected": "leaf size   4: 12,568 distance evaluations | leaf size  16: 38,999 distance evaluations | leaf size 256: 517,250 distance evaluations"
+   }
+  ],
+  "equivalents": [
+   "Astropy: SkyCoord.match_to_catalog_sky / search_around_sky (k-d tree inside).",
+   "SciPy: scipy.spatial.cKDTree on unit vectors.",
+   "TOPCAT / STILTS tmatch2 (Sky algorithm); CDS X-Match service for big catalogues."
+  ],
+  "learningTools": [
+   {
+    "name": "TOPCAT",
+    "role": "CHECK",
+    "exercise": "Run `python crossmatch.py --export`, load cat_a.csv and cat_b.csv, then Joins > Pair Match with algorithm Sky, max error 1 arcsec. Try 'Best match for each Table 2 row' and then 'Best match, symmetric'.",
+    "expected": "Per-row best match should give 1842 pairs (the lab's match()); symmetric best match should give 1817 (the build-task solution). Pending a manual run.",
+    "mac": "brew install --cask topcat   # 4.10-8, signed and notarized DMG",
+    "windows": "java -jar topcat-full.jar   # jar from the TOPCAT page; needs a Java runtime",
+    "licence": "GPL (Starjava; OSI: yes; licence file not re-read 2026-10-29)",
+    "url": "https://www.star.bristol.ac.uk/mbt/topcat/"
+   }
+  ],
+  "seeAlso": [
+   "distributed-systems L200 #9 Sharding with consistent hashing: virtual nodes, key movement, hot keys: another way to partition a key space so lookups touch only a small part of the data.",
+   "astronomy L400 #19 Big catalogues: sky indexing, cone-search performance and TAP/ADQL: the same angular separation, scaled up with sky indexing and cone searches."
+  ],
+  "inRealSystems": [
+   "Gaia, 2MASS and Pan-STARRS cross-matches (CDS X-Match, astropy) use spatial indexes on unit vectors or HEALPix.",
+   "Transient brokers match every alert to known catalogues within ~1 arcsec."
+  ],
+  "useWhen": "Use a k-d tree for in-memory catalogues; move to sky tiling and a database for survey scale (L400 #19).",
+  "caution": "The catalogues are synthetic (truth known). Real matches need radii from the catalogues' astrometric errors and care with proper motion between epochs.",
+  "checkpoint": "PASS: 1812/1812 matched and the one-to-one build task passes on your file.",
+  "checkYourself": [
+   {
+    "q": "Why does a 3-arcsec radius find no extra matches here?",
+    "a": "The synthetic field is sparse; in crowded fields it would add false matches."
+   },
+   {
+    "q": "Why convert to unit vectors?",
+    "a": "Euclidean distance between them grows monotonically with angle and has no wrap-around."
+   }
+  ],
+  "sources": [
+   {
+    "title": "PyPI: astropy 8.0.2 (BSD-3-Clause, Python >= 3.11, macOS arm64 + Windows wheels)",
+    "url": "https://pypi.org/project/astropy/"
+   },
+   {
+    "title": "SciPy (PyPI): scipy 1.18.1 (cKDTree)",
+    "url": "https://pypi.org/project/scipy/"
+   },
+   {
+    "title": "TOPCAT home (4.10-8, 21 August 2026)",
+    "url": "https://www.star.bristol.ac.uk/mbt/topcat/"
+   }
+  ],
+  "next": "L300 #14 Plate solving (astrometry-lite): match star triangles, fit a WCS, check residuals (matching without knowing where the image points)",
+  "validation": {
+   "status": "validated-local",
+   "how": "crossmatch.py, solution/crossmatch.py, try_it.py and unittests (Ran 10 tests ... OK (skipped=1)) ran on Python 3.12.15 + numpy 2.5.3; BUILD_TARGET=mine on the shipped file: Ran 3 tests ... FAILED (failures=1). Astropy/SciPy equivalence is pending-ci.",
+   "pendingCi": [
+    "labs/L200/07-crossmatch/crossmatch_astropy.py",
+    "test_crossmatch.py: TestLibraryEquivalent",
+    "TOPCAT exercise (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L200/07-crossmatch.md",
+  "conceptSummary": "Cross-matching on unit vectors avoids RA wrap-around and lets a k-d tree find nearest neighbours with far fewer distance evaluations. Nearest-neighbour matching is not one-to-one; blends need an explicit rule."
+ },
+ {
+  "id": "fits-wcs",
+  "number": 8,
+  "level": "L200",
+  "title": "FITS images and WCS: a minimal reader and a TAN projection",
+  "phase": "Images",
+  "category": "fits-wcs",
+  "description": "Write and read a FITS image by hand (80-character cards, 2880-byte blocks, big-endian data) and convert pixels to RA/Dec with a TAN WCS.",
+  "outcome": "You can explain every byte of a simple FITS file, avoid the 0/1-based pixel trap, and map pixels to sky and back.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3; no new packages for the main lab (CI: labs/L200/requirements.txt = L100 pins + rebound 5.2.2); astropy.io.fits + astropy.wcs equivalent in CI; SAOImage DS9 to inspect the file",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "A FITS file is ASCII cards plus big-endian numbers in 2880-byte blocks; WCS cards map pixels to the sky."
+  ],
+  "prerequisites": [
+   "Lessons 2 and 7"
+  ],
+  "glossary": [
+   {
+    "term": "HDU",
+    "meaning": "Header and Data Unit; this lab writes only the primary HDU."
+   },
+   {
+    "term": "BITPIX",
+    "meaning": "Data type: 8, 16, 32 (integers), -32, -64 (IEEE floats)."
+   },
+   {
+    "term": "CRPIX / CRVAL / CD",
+    "meaning": "Reference pixel, its sky position, and the degrees-per-pixel matrix."
+   },
+   {
+    "term": "TAN",
+    "meaning": "Gnomonic projection onto a plane touching the sky at CRVAL."
+   }
+  ],
+  "concepts": [
+   "2880-byte blocks.",
+   "Big-endian data, NAXIS1 = columns.",
+   "Pixel -> plane -> sky.",
+   "FITS pixels are 1-based."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python fitslite.py` writes star_field.fits (synthetic) and reads it back.",
+    "mac": "cd labs/L200/08-fits-wcs\npython fitslite.py",
+    "windows": "cd labs\\L200\\08-fits-wcs\npython fitslite.py",
+    "expected": "Six lines: size, read-back, three pixel-to-sky lines, brightest pixel.",
+    "ifNot": "Run from the lab folder (field.py is imported)."
+   },
+   {
+    "title": "Blocks",
+    "detail": "Header and data are each padded to 2880 bytes.",
+    "expected": "20160 bytes = 7 blocks of 2880; 17 header cards incl. END",
+    "ifNot": "Header padding is spaces, data padding zeros."
+   },
+   {
+    "title": "Read it back",
+    "detail": "Big-endian float32, shape (NAXIS2, NAXIS1).",
+    "expected": "shape (64, 64), dtype float32, identical: True",
+    "ifNot": "Check '>f4' and the axis order."
+   },
+   {
+    "title": "Pixel to sky",
+    "detail": "FITS pixel (x, y) -> RA/Dec with the TAN WCS.",
+    "expected": "(32.5, 32.5) -> 83.822100 -5.391100 (CRVAL); (1, 1) -> 83.830889 -5.399850",
+    "ifNot": "Subtract CRPIX before multiplying by CD."
+   },
+   {
+    "title": "Pixel conventions",
+    "detail": "numpy [row, col] vs FITS (x, y).",
+    "expected": "brightest pixel: numpy [row 45, col 51] = FITS pixel (52, 46)",
+    "ifNot": "x = col + 1, y = row + 1."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L200/08-fits-wcs\npython -m unittest -v",
+    "windows": "cd labs\\L200\\08-fits-wcs\npython -m unittest -v",
+    "expected": "Ran 10 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the Astropy comparison (pending-ci)."
+   },
+   {
+    "title": "Build it: sky_to_pixel",
+    "detail": "Implement the inverse transform, then test your file.",
+    "mac": "cd labs/L200/08-fits-wcs\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L200\\08-fits-wcs\n$env:BUILD_TARGET = \"mine\"; python -m unittest test_build_task -v",
+    "expected": "Shipped file: 3 errors (NotImplementedError). After your change: 3 tests OK; round trip error < 1e-8 pixel, also with a rotated CD matrix.",
+    "ifNot": "Compare with solution/fitslite.py."
+   }
+  ],
+  "code": "\"\"\"L200 FITS images and WCS: a minimal FITS writer/reader (2880-byte blocks) and a TAN (gnomonic) WCS.\n\npython fitslite.py      # writes star_field.fits (synthetic, seeded), reads it back, converts pixels to sky\nPixel convention: FITS pixel (1, 1) is the CENTRE of the first pixel; numpy index [0, 0] is the same pixel.\n\"\"\"\nfrom pathlib import Path\n\nimport numpy as np\n\nfrom field import synthetic_field\n\nBLOCK = 2880  # every FITS header and data unit is padded to a multiple of 2880 bytes (36 cards x 80 chars)\nDTYPES = {8: \">u1\", 16: \">i2\", 32: \">i4\", -32: \">f4\", -64: \">f8\"}  # BITPIX -> big-endian numpy dtype\n\n\ndef card(key, value):\n    if isinstance(value, str):\n        return f\"{key:<8}= '{value:<8}'\".ljust(80)  # strings: quote in column 11, at least 8 characters\n    v = \"T\" if value is True else repr(value)\n    return f\"{key:<8}= {v:>20}\".ljust(80)  # fixed format: keyword in columns 1-8, '= ' in 9-10, value ends col 30\n\n\ndef write_fits(path, data, extra):\n    data = np.asarray(data)\n    bitpix = {v: k for k, v in DTYPES.items()}[data.dtype.newbyteorder(\">\").str]\n    cards = [card(\"SIMPLE\", True), card(\"BITPIX\", bitpix), card(\"NAXIS\", data.ndim)]\n    cards += [card(f\"NAXIS{i + 1}\", n) for i, n in enumerate(data.shape[::-1])]  # NAXIS1 = columns (fastest axis)\n    cards += [card(k, v) for k, v in extra.items()] + [\"END\".ljust(80)]\n    header = \"\".join(cards).encode(\"ascii\")\n    raw = data.astype(DTYPES[bitpix]).tobytes()\n    with open(path, \"wb\") as f:\n        f.write(header + b\" \" * (-len(header) % BLOCK))  # header padded with spaces\n        f.write(raw + b\"\\0\" * (-len(raw) % BLOCK))  # data padded with zeros\n\n\ndef parse_value(text):\n    text = text.split(\"/\")[0].strip() if not text.strip().startswith(\"'\") else text.strip()\n    if text.startswith(\"'\"):\n        return text[1:text.index(\"'\", 1)].rstrip()\n    if text in (\"T\", \"F\"):\n        return text == \"T\"\n    return float(text) if any(c in text for c in \".EeDd\") else int(text)\n\n\ndef read_fits(path):\n    raw = Path(path).read_bytes()\n    header, pos = {}, 0\n    while True:\n        block = raw[pos:pos + BLOCK].decode(\"ascii\")\n        pos += BLOCK\n        for i in range(0, BLOCK, 80):\n            key, rest = block[i:i + 8].strip(), block[i + 8:i + 80]\n            if key == \"END\":\n                shape = [header[f\"NAXIS{n}\"] for n in range(header[\"NAXIS\"], 0, -1)]\n                count = int(np.prod(shape))\n                data = np.frombuffer(raw, DTYPES[header[\"BITPIX\"]], count, pos).reshape(shape)\n                return header, data.astype(data.dtype.newbyteorder(\"=\"))\n            if rest.startswith(\"= \"):\n                header[key] = parse_value(rest[2:])\n\n\ndef pixel_to_sky(h, x, y):\n    \"\"\"FITS pixel (1-based) -> (RA, Dec) degrees for CTYPE RA---TAN / DEC--TAN with a CD matrix.\"\"\"\n    dx, dy = np.asarray(x, float) - h[\"CRPIX1\"], np.asarray(y, float) - h[\"CRPIX2\"]\n    xi = np.radians(h[\"CD1_1\"] * dx + h[\"CD1_2\"] * dy)  # intermediate world coordinates (standard coords)\n    eta = np.radians(h[\"CD2_1\"] * dx + h[\"CD2_2\"] * dy)\n    ra0, dec0 = np.radians(h[\"CRVAL1\"]), np.radians(h[\"CRVAL2\"])\n    den = np.cos(dec0) - eta * np.sin(dec0)  # inverse gnomonic projection: the tangent plane back onto the sphere\n    ra = ra0 + np.arctan2(xi, den)\n    dec = np.arctan2(eta * np.cos(dec0) + np.sin(dec0), np.hypot(xi, den))\n    return np.degrees(ra) % 360, np.degrees(dec)\n\n\ndef sky_to_pixel(h, ra, dec):\n    raise NotImplementedError(\"build task: invert pixel_to_sky (gnomonic projection, then the inverse CD matrix)\")\n\n\nWCS = {\"CTYPE1\": \"RA---TAN\", \"CTYPE2\": \"DEC--TAN\", \"CRPIX1\": 32.5, \"CRPIX2\": 32.5, \"CRVAL1\": 83.8221,\n       \"CRVAL2\": -5.3911, \"CD1_1\": -2.7778e-4, \"CD1_2\": 0.0, \"CD2_1\": 0.0, \"CD2_2\": 2.7778e-4, \"BUNIT\": \"adu\"}\n\n\ndef main():\n    path = Path(\"star_field.fits\")\n    write_fits(path, synthetic_field(), WCS)\n    size = path.stat().st_size\n    h, data = read_fits(path)\n    print(f\"wrote {path} ({size} bytes = {size // BLOCK} blocks of {BLOCK}); header cards: {len(h) + 1} incl. END\")\n    print(f\"read back: shape {data.shape}, dtype {data.dtype}, identical: {np.array_equal(data, synthetic_field())}\")\n    for x, y in ((32.5, 32.5), (1, 1), (64, 64)):\n        ra, dec = pixel_to_sky(h, x, y)\n        print(f\"pixel ({x:>4}, {y:>4}) -> RA {ra:.6f} Dec {dec:+.6f}\")\n    row, col = (int(i) for i in np.unravel_index(np.argmax(data), data.shape))\n    print(f\"brightest pixel: numpy [row {row}, col {col}] = FITS pixel ({col + 1}, {row + 1})\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "card()",
+    "detail": "Fixed format: keyword in columns 1-8, '= ' in 9-10, numbers right-aligned to column 30, strings start with a quote in column 11; every card is exactly 80 characters."
+   },
+   {
+    "title": "write_fits(): b' ' * (-len(header) % BLOCK)",
+    "detail": "Pads the header with spaces (data with zeros) to the next multiple of 2880 bytes; -n % 2880 is 0 when already aligned."
+   },
+   {
+    "title": "np.frombuffer(raw, DTYPES[BITPIX], count, pos)",
+    "detail": "Reads big-endian numbers starting after the header blocks; reshape to (NAXIS2, NAXIS1) because NAXIS1 varies fastest."
+   },
+   {
+    "title": "pixel_to_sky()",
+    "detail": "Pixel minus CRPIX, times CD -> tangent-plane (xi, eta) in degrees; inverse gnomonic projection around CRVAL -> RA/Dec."
+   }
+  ],
+  "buildTask": {
+   "task": "Implement sky_to_pixel(h, ra, dec): the gnomonic (TAN) projection of (RA, Dec) onto the tangent plane at CRVAL, then the inverse CD matrix plus CRPIX.",
+   "hints": [
+    "Projection: cos c = sin d sin d0 + cos d cos d0 cos(a - a0); xi = cos d sin(a - a0) / cos c; eta = (sin d cos d0 - cos d sin d0 cos(a - a0)) / cos c.",
+    "Convert xi, eta to degrees before undoing the CD matrix (np.linalg.solve).",
+    "Add CRPIX: FITS pixels are 1-based."
+   ],
+   "solution": "labs/L200/08-fits-wcs/solution/fitslite.py",
+   "check": "python -m unittest test_build_task -v  (Ran 3 tests ... OK on the solution). BUILD_TARGET=mine checks your edited file: on the shipped file all 3 tests fail (NotImplementedError) (Ran 3 tests ... FAILED (errors=3))."
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L200/08-fits-wcs/fitslite.py",
+    "purpose": "main lab code (sky_to_pixel unfinished)"
+   },
+   {
+    "path": "labs/L200/08-fits-wcs/field.py",
+    "purpose": "synthetic seeded star field"
+   },
+   {
+    "path": "labs/L200/08-fits-wcs/solution/fitslite.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L200/08-fits-wcs/fits_astropy.py",
+    "purpose": "astropy.io.fits + astropy.wcs equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L200/08-fits-wcs/test_fitslite.py",
+    "purpose": "blocks, byte order, axis order, WCS"
+   },
+   {
+    "path": "labs/L200/08-fits-wcs/test_build_task.py",
+    "purpose": "buildTask check (BUILD_TARGET=mine switch)"
+   },
+   {
+    "path": "labs/L200/08-fits-wcs/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "File size multiple of 2880",
+   "Exact read-back",
+   "CRPIX maps to CRVAL; 1 arcsec per pixel"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 10 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task",
+    "expected": "Ran 3 tests ... FAILED (errors=3)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Values like 1e-38 or 4e+9",
+    "action": "Byte order: read with '>f4' (big-endian)."
+   },
+   {
+    "symptom": "Stars 1 arcsec off in DS9",
+    "action": "0-based vs 1-based pixels: FITS (1, 1) is numpy [0, 0]."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Add 20 extra header cards.",
+    "predict": "Does the file grow? By how much?",
+    "expected": " 0 extra cards: 20160 bytes | 20 extra cards: 23040 bytes"
+   },
+   {
+    "task": "Use pixel (0, 0) instead of (1, 1).",
+    "predict": "How far off on the sky?",
+    "expected": "pixel (1,1) vs (0,0): dRA*cos(dec) = 1.000 arcsec, dDec = -1.000 arcsec"
+   }
+  ],
+  "equivalents": [
+   "Astropy: fits.open / fits.writeto; WCS(header).all_pix2world(x, y, 1) / all_world2pix.",
+   "CFITSIO (C library) and fitsio (Python wrapper); WCSLIB (the C library behind astropy.wcs)."
+  ],
+  "learningTools": [
+   {
+    "name": "SAOImage DS9",
+    "role": "INSPECT",
+    "exercise": "Run `python fitslite.py`, open star_field.fits, File > Header, then hover over pixel (32.5, 32.5) with the WCS readout in sexagesimal.",
+    "expected": "Header shows the 16 cards written by the lab; the reference pixel reads about 5:35:17.30 -5:23:28.0 (= 83.8221, -5.3911 deg). Pending a manual run.",
+    "mac": "Aqua .dmg (Apple silicon port) from the DS9 download page; the Homebrew cask is deprecated (fails Gatekeeper)",
+    "windows": "Windows installer from the DS9 download page (8.8)",
+    "licence": "GPL-3.0-only (OSI: yes; Zenodo record of v8.7)",
+    "url": "https://sites.google.com/cfa.harvard.edu/saoimageds9/download"
+   }
+  ],
+  "seeAlso": [
+   "cryptography L100 #2 Hashing and integrity: SHA-256 and HMAC: FITS archives publish CHECKSUM/DATASUM cards and file hashes to detect corrupted downloads.",
+   "astronomy L300 #14 Plate solving (astrometry-lite): match star triangles, fit a WCS, check residuals: plate solving fits the TAN WCS that this lesson reads."
+  ],
+  "inRealSystems": [
+   "Every major archive (MAST, ESO, NOIRLab) serves FITS; Astropy and CFITSIO read it.",
+   "Plate solvers (astrometry.net) write TAN-SIP WCS cards into FITS headers."
+  ],
+  "useWhen": "Write your own reader to learn or for tiny dependency-free tools; use astropy.io.fits for real data (compression, extensions, tables).",
+  "caution": "The image is synthetic. This minimal reader handles one primary image HDU only - no extensions, compression, BSCALE/BZERO or SIP distortion.",
+  "checkpoint": "PASS: 7 blocks, exact read-back, and sky_to_pixel round trips with your file.",
+  "checkYourself": [
+   {
+    "q": "Why is a 1-card change able to add 2880 bytes?",
+    "a": "The header is padded to whole 2880-byte blocks; crossing a 36-card boundary adds a block."
+   },
+   {
+    "q": "What does CD1_1 < 0 mean?",
+    "a": "RA increases to the left (east left, as on the sky seen from inside)."
+   }
+  ],
+  "sources": [
+   {
+    "title": "FITS Standard Document, Version 4.0 (IAU FITS Working Group)",
+    "url": "https://fits.gsfc.nasa.gov/fits_standard.html"
+   },
+   {
+    "title": "PyPI: astropy 8.0.2 (BSD-3-Clause, Python >= 3.11, macOS arm64 + Windows wheels)",
+    "url": "https://pypi.org/project/astropy/"
+   },
+   {
+    "title": "SAOImageDS9 download page (8.8, 1 October 2026)",
+    "url": "https://sites.google.com/cfa.harvard.edu/saoimageds9/download"
+   }
+  ],
+  "next": "L300 #13 Calibration frames: bias, dark, flat and cosmic-ray rejection (the FITS frames you now read get calibrated)",
+  "validation": {
+   "status": "validated-local",
+   "how": "fitslite.py, solution/fitslite.py, try_it.py and unittests (Ran 10 tests ... OK (skipped=1)) ran on Python 3.12.15 + numpy 2.5.3; BUILD_TARGET=mine on the shipped file: Ran 3 tests ... FAILED (errors=3). Astropy reading our file is pending-ci.",
+   "pendingCi": [
+    "labs/L200/08-fits-wcs/fits_astropy.py",
+    "test_fitslite.py: TestAstropyEquivalent",
+    "DS9 exercise (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L200/08-fits-wcs.md",
+  "conceptSummary": "A FITS file is 80-character ASCII cards and big-endian data, both padded to 2880-byte blocks. TAN WCS cards map a 1-based pixel to a tangent plane and then to RA/Dec; the inverse maps the sky back to pixels."
+ },
+ {
+  "id": "aperture-photometry",
+  "number": 9,
+  "level": "L200",
+  "title": "Aperture photometry: background annulus and signal-to-noise",
+  "phase": "Images",
+  "category": "photometry",
+  "description": "Measure five synthetic stars with a circular aperture and a median sky annulus, predict their SNR with the CCD equation, then calibrate magnitudes.",
+  "outcome": "You can measure a star's flux with an honest error, choose an aperture radius, and turn fluxes into calibrated magnitudes.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3; no new packages for the main lab (CI: labs/L200/requirements.txt = L100 pins + rebound 5.2.2); photutils 3.1.1 equivalent in CI; AstroImageJ for a GUI check",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "Sum the light in a circle, subtract the sky measured in a ring, and predict the noise."
+  ],
+  "prerequisites": [
+   "Lessons 4 and 8"
+  ],
+  "glossary": [
+   {
+    "term": "aperture",
+    "meaning": "Circle around the star whose pixel values are summed."
+   },
+   {
+    "term": "annulus",
+    "meaning": "Ring around the aperture used to estimate the sky per pixel."
+   },
+   {
+    "term": "CCD equation",
+    "meaning": "SNR = N / sqrt(N + npix (1 + npix/nsky)(sky + dark + read noise^2))."
+   },
+   {
+    "term": "zero point",
+    "meaning": "Offset that turns instrumental magnitudes into catalogue magnitudes."
+   }
+  ],
+  "concepts": [
+   "Sub-pixel aperture weights.",
+   "Median sky in an annulus.",
+   "CCD-equation SNR.",
+   "sigma_m = 1.0857 / SNR."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python photometry.py` (synthetic 101x101 image: sky 100 e-/px, read noise 5 e-, PSF sigma 1.5 px).",
+    "mac": "cd labs/L200/09-aperture-photometry\npython photometry.py",
+    "windows": "cd labs\\L200\\09-aperture-photometry\npython photometry.py",
+    "expected": "A 5-row table: true vs measured flux, sky per pixel, SNR.",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Sky background",
+    "detail": "Median of the annulus 10-15 px.",
+    "expected": "sky/px between 99.28 and 101.15 (true 100)",
+    "ifNot": "A neighbour star in the annulus pushes the sky up (tryIt 2)."
+   },
+   {
+    "title": "Net flux vs truth",
+    "detail": "net = aperture sum - npix x sky.",
+    "expected": "star 0: 20006.2 of 20000 (1.000); star 3: 827.5 of 1000 (0.827)",
+    "ifNot": "Large misses on faint stars are noise; compare with 1/SNR."
+   },
+   {
+    "title": "Signal-to-noise",
+    "detail": "CCD equation including the sky-estimate term.",
+    "expected": "SNR 102.6, 48.4, 21.0, 6.0, 3.2",
+    "ifNot": "Use read noise squared, per pixel."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L200/09-aperture-photometry\npython -m unittest -v",
+    "windows": "cd labs\\L200\\09-aperture-photometry\npython -m unittest -v",
+    "expected": "Ran 11 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the photutils comparison (pending-ci)."
+   },
+   {
+    "title": "Build it: calibrated magnitudes",
+    "detail": "Implement calibrate(), then test your file.",
+    "mac": "cd labs/L200/09-aperture-photometry\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L200\\09-aperture-photometry\n$env:BUILD_TARGET = \"mine\"; python -m unittest test_build_task -v",
+    "expected": "Shipped: 3 errors. After your change: 3 tests OK; solution prints star 1 V = 11.026 +/- 0.022, star 4 V = 14.154 +/- 0.338.",
+    "ifNot": "Compare with solution/photometry.py."
+   }
+  ],
+  "code": "\"\"\"L200 Aperture photometry: synthetic star field, circular aperture, background annulus, CCD-equation SNR.\n\nSynthetic and seeded (not a real image): 101x101 pixels, gain 1 e-/ADU, sky 100 e-/pixel, read noise 5 e-,\nGaussian PSF sigma 1.5 px, five stars with known fluxes. Exposure 60 s.\npython photometry.py            # add --export to write field.fits for AstroImageJ / DS9\n\"\"\"\nimport sys\n\nimport numpy as np\n\nSKY, READ_NOISE, SIGMA, EXPTIME = 100.0, 5.0, 1.5, 60.0\nSTARS = [(30.0, 30.0, 20000.0), (70.0, 30.0, 8000.0), (50.0, 50.0, 3000.0), (30.0, 72.0, 1000.0), (72.0, 70.0, 300.0)]\n\n\ndef make_image(seed=9, n=101):\n    yy, xx = np.mgrid[0:n, 0:n]\n    model = np.full((n, n), SKY)\n    for x0, y0, flux in STARS:\n        model += flux / (2 * np.pi * SIGMA**2) * np.exp(-((xx - x0) ** 2 + (yy - y0) ** 2) / (2 * SIGMA**2))\n    rng = np.random.default_rng(seed)\n    return rng.poisson(model) + rng.normal(0.0, READ_NOISE, (n, n))  # photon (Poisson) noise + read noise\n\n\ndef aperture_weights(shape, x0, y0, r, sub=5):\n    \"\"\"Fraction of each pixel inside a circle, by sub-sampling each pixel sub x sub times.\"\"\"\n    off = (np.arange(sub) + 0.5) / sub - 0.5\n    yy, xx = np.mgrid[0:shape[0], 0:shape[1]]\n    w = np.zeros(shape)\n    for dy in off:\n        for dx in off:\n            w += ((xx + dx - x0) ** 2 + (yy + dy - y0) ** 2 <= r * r)\n    return w / sub**2\n\n\ndef measure(img, x0, y0, r=6.0, r_in=10.0, r_out=15.0):\n    w = aperture_weights(img.shape, x0, y0, r)\n    npix = w.sum()\n    yy, xx = np.mgrid[0:img.shape[0], 0:img.shape[1]]\n    d2 = (xx - x0) ** 2 + (yy - y0) ** 2\n    ring = img[(d2 >= r_in**2) & (d2 <= r_out**2)]\n    bkg = np.median(ring)  # median: robust against a neighbour star in the annulus\n    net = (w * img).sum() - npix * bkg  # aperture sum minus the sky expected under the aperture\n    noise = np.sqrt(max(net, 0) + npix * (1 + npix / ring.size) * (bkg + READ_NOISE**2))  # CCD equation\n    return {\"net\": net, \"bkg\": bkg, \"npix\": npix, \"snr\": net / noise}\n\n\ndef calibrate(results, ref_index, ref_mag):\n    raise NotImplementedError(\"build task: zero point from the reference star, calibrated magnitudes and errors\")\n\n\ndef write_fits(path, img):\n    cards = [f\"{'SIMPLE':<8}= {'T':>20}\", f\"{'BITPIX':<8}= {-32:>20}\", f\"{'NAXIS':<8}= {2:>20}\",\n             f\"{'NAXIS1':<8}= {img.shape[1]:>20}\", f\"{'NAXIS2':<8}= {img.shape[0]:>20}\", \"END\"]\n    head = \"\".join(c.ljust(80) for c in cards).encode(\"ascii\")\n    data = img.astype(\">f4\").tobytes()\n    with open(path, \"wb\") as f:\n        f.write(head + b\" \" * (-len(head) % 2880) + data + b\"\\0\" * (-len(data) % 2880))\n\n\ndef main():\n    img = make_image()\n    print(\"star  true(e-)  measured(e-)  ratio   sky/px  SNR\")\n    results = []\n    for i, (x, y, flux) in enumerate(STARS):\n        m = measure(img, x, y)\n        results.append(m)\n        print(f\"{i:>4} {flux:9.0f} {m['net']:13.1f} {m['net'] / flux:6.3f} {m['bkg']:8.2f} {m['snr']:6.1f}\")\n    print(f\"aperture r=6 px holds {1 - np.exp(-36 / (2 * SIGMA**2)):.5f} of a star's light (Gaussian PSF)\")\n    if \"--export\" in sys.argv:\n        write_fits(\"field.fits\", img)  # FITS pixel = numpy index + 1: star 0 is at FITS (31, 31)\n        print(\"wrote field.fits\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "make_image(): rng.poisson(model) + rng.normal(0, READ_NOISE)",
+    "detail": "Photon noise is Poisson on the full model (star + sky); read noise is Gaussian and independent of the signal."
+   },
+   {
+    "title": "aperture_weights()",
+    "detail": "Each pixel is split into 5 x 5 sub-pixels; the fraction inside the circle weights edge pixels, so npix is close to pi r^2."
+   },
+   {
+    "title": "bkg = np.median(ring)",
+    "detail": "The median ignores the few bright pixels a neighbour adds to the annulus; the mean does not (tryIt 2)."
+   },
+   {
+    "title": "noise = sqrt(net + npix (1 + npix/nsky)(bkg + RN^2))",
+    "detail": "Star photon noise + sky and read noise in the aperture, inflated by the uncertainty of the sky estimate."
+   }
+  ],
+  "buildTask": {
+   "task": "Implement calibrate(results, ref_index, ref_mag): instrumental magnitudes -2.5 log10(net / EXPTIME), a zero point from the reference star, calibrated magnitudes, and errors 1.0857 / SNR; non-detections (net <= 0) give NaN.",
+   "hints": [
+    "zero_point = ref_mag - instrumental[ref_index].",
+    "2.5 / ln(10) = 1.0857: a 1% flux error is about 0.011 mag.",
+    "Return a list of (mag, err) tuples in star order."
+   ],
+   "solution": "labs/L200/09-aperture-photometry/solution/photometry.py",
+   "check": "python -m unittest test_build_task -v  (Ran 3 tests ... OK on the solution). BUILD_TARGET=mine checks your edited file: on the shipped file all 3 tests fail (NotImplementedError) (Ran 3 tests ... FAILED (errors=3))."
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L200/09-aperture-photometry/photometry.py",
+    "purpose": "main lab code (calibrate unfinished)"
+   },
+   {
+    "path": "labs/L200/09-aperture-photometry/solution/photometry.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L200/09-aperture-photometry/photometry_photutils.py",
+    "purpose": "photutils 3.1.1 equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L200/09-aperture-photometry/test_photometry.py",
+    "purpose": "aperture area, sky, flux within 3 sigma, noise-free exactness"
+   },
+   {
+    "path": "labs/L200/09-aperture-photometry/test_build_task.py",
+    "purpose": "buildTask check (BUILD_TARGET=mine switch)"
+   },
+   {
+    "path": "labs/L200/09-aperture-photometry/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "Sky recovered within 2 e-/px",
+   "Every star within 3 sigma of truth",
+   "SNR falls with flux; sigma_m = 0.011 for the bright star"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 11 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task",
+    "expected": "Ran 3 tests ... FAILED (errors=3)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Faint star flux negative",
+    "action": "Normal at low SNR; report it with its error, do not clip to zero."
+   },
+   {
+    "symptom": "All fluxes too low by a few %",
+    "action": "Aperture too small for the PSF; enlarge it or apply an aperture correction."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Aperture radius 2-9 px for the bright and the faint star.",
+    "predict": "Best radius for each?",
+    "expected": "r=2.0: star0 SNR   99.6   star3 SNR  10.4 | r=3.0: star0 SNR  118.3   star3 SNR  11.2 | r=4.0: star0 SNR  118.5   star3 SNR   9.7 | r=6.0: star0 SNR  102.6   star3 SNR   6.0 | r=9.0: star0 SNR   74.1   star3 SNR   2.3"
+   },
+   {
+    "task": "Move star 1 into star 0's annulus; compare median and mean sky.",
+    "predict": "How wrong does star 0 get?",
+    "expected": "median sky 102.29 -> net 19877.2 e- | mean sky 118.43 -> net 18059.1 e- (true 20000)"
+   }
+  ],
+  "equivalents": [
+   "photutils: CircularAperture, CircularAnnulus, ApertureStats(...).median, aperture_photometry(method='subpixel').",
+   "SExtractor / sep (Python): detection + aperture photometry; AstroImageJ and Siril (GUI)."
+  ],
+  "learningTools": [
+   {
+    "name": "AstroImageJ",
+    "role": "CHECK",
+    "exercise": "Run `python photometry.py --export`, open field.fits, set aperture radius 6 and sky annulus 10-15, and click star 0 at FITS pixel (31, 31) (numpy [30, 30]).",
+    "expected": "Net counts should be close to the lab's 20006.2 e- (gain 1) and the sky close to 100.21 per pixel; small differences come from AIJ's own centroiding and pixel weighting. Pending a manual run.",
+    "mac": "AstroImageJ-6.0.11.00-mac-aarch64.pkg from the GitHub releases page",
+    "windows": "AstroImageJ-6.0.11.00-windows-x64.msi from the GitHub releases page",
+    "licence": "GPL-3.0 (OSI: yes; licence file not re-read 2026-10-29)",
+    "url": "https://github.com/AstroImageJ/astroimagej/releases"
+   }
+  ],
+  "seeAlso": [
+   "microbit L100 #5 Sensing temperature and light: the board's light level is a one-pixel photometer without a background estimate.",
+   "astronomy L300 #13 Calibration frames: bias, dark, flat and cosmic-ray rejection: calibrate the frames before measuring them; a wrong flat fakes variability."
+  ],
+  "inRealSystems": [
+   "Exoplanet transit surveys and AAVSO observers use aperture photometry with comparison stars.",
+   "photutils and SExtractor run in survey pipelines."
+  ],
+  "useWhen": "Use aperture photometry for isolated stars; switch to PSF fitting in crowded fields.",
+  "caution": "The image is synthetic with a known PSF and gain; real data need calibration (bias, dark, flat: L300 #13) first.",
+  "checkpoint": "PASS: all five stars within 3 sigma and calibrate() passes on your file.",
+  "checkYourself": [
+   {
+    "q": "Why can a smaller aperture give a better SNR?",
+    "a": "It drops pixels that add more sky and read noise than star light."
+   },
+   {
+    "q": "A star has SNR 20. Its magnitude error?",
+    "a": "1.0857 / 20 = 0.054 mag."
+   }
+  ],
+  "sources": [
+   {
+    "title": "PyPI: photutils 3.1.1 (BSD-3-Clause, Python >= 3.12)",
+    "url": "https://pypi.org/project/photutils/"
+   },
+   {
+    "title": "AstroImageJ releases (6.0.11.00; macOS arm64 .pkg, Windows x64 .msi)",
+    "url": "https://github.com/AstroImageJ/astroimagej/releases"
+   }
+  ],
+  "next": "L300 #13 Calibration frames: bias, dark, flat and cosmic-ray rejection (failure lab: a wrong flat creates fake variability)",
+  "validation": {
+   "status": "validated-local",
+   "how": "photometry.py, solution/photometry.py, try_it.py and unittests (Ran 11 tests ... OK (skipped=1)) ran on Python 3.12.15 + numpy 2.5.3; BUILD_TARGET=mine on the shipped file: Ran 3 tests ... FAILED (errors=3). photutils comparison pending-ci.",
+   "pendingCi": [
+    "labs/L200/09-aperture-photometry/photometry_photutils.py",
+    "test_photometry.py: TestPhotutilsEquivalent",
+    "AstroImageJ exercise (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L200/09-aperture-photometry.md",
+  "conceptSummary": "Aperture photometry sums the light in a circle and subtracts the sky measured robustly in a ring. The CCD equation predicts the signal-to-noise, which sets the magnitude error and the best aperture size."
+ },
+ {
+  "id": "light-curves-periods",
+  "number": 10,
+  "level": "L200",
+  "title": "Light curves and periods: Lomb-Scargle, transits vs variable stars",
+  "phase": "Time domain",
+  "category": "time-series",
+  "description": "Find the period of a synthetic pulsating star in gappy ground-based data with a numpy Lomb-Scargle periodogram, see the 1-day alias, and see why it misses a transit.",
+  "outcome": "You can compute a Lomb-Scargle periodogram, recognise aliases, judge significance and know when to use a transit search instead.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3; no new packages for the main lab (CI: labs/L200/requirements.txt = L100 pins + rebound 5.2.2); Astropy 8.0.2 LombScargle equivalent in CI; TOPCAT to phase-fold; optional Ollama for agent assist",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "Fit a sine at every trial frequency; peaks mark periods, daily gaps add aliases, and short transits hide from sines."
+  ],
+  "prerequisites": [
+   "Lessons 3 and 9"
+  ],
+  "glossary": [
+   {
+    "term": "periodogram",
+    "meaning": "Power as a function of trial frequency."
+   },
+   {
+    "term": "alias",
+    "meaning": "False peak at f +/- 1 cycle/day caused by daily sampling gaps."
+   },
+   {
+    "term": "false-alarm probability",
+    "meaning": "Chance that noise alone produces a peak this high."
+   },
+   {
+    "term": "phase fold",
+    "meaning": "Plot magnitude against (t / P) mod 1."
+   }
+  ],
+  "concepts": [
+   "Lomb-Scargle for uneven sampling.",
+   "Fine frequency grid.",
+   "1-day aliases.",
+   "Sine model vs box-shaped transit."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python periods.py` (synthetic, seeded light curves).",
+    "mac": "cd labs/L200/10-light-curves\npython periods.py",
+    "windows": "cd labs\\L200\\10-light-curves\npython periods.py",
+    "expected": "A sampling line, one line per star, an alias line.",
+    "ifNot": "Takes a few seconds."
+   },
+   {
+    "title": "Sampling",
+    "detail": "30 nights, ~30% clouded out, 48 points per clear night.",
+    "expected": "1104 points over 29.3 d (23 clear nights)",
+    "ifNot": "Seeded: same on every machine."
+   },
+   {
+    "title": "The pulsating variable",
+    "detail": "Peak and next distinct peak.",
+    "expected": "true P 0.5671 d | LS best 0.5669 d (power 0.770) | next peak 1.3074 d; 1-day alias 1.3100 d",
+    "ifNot": "A coarse grid shifts the peak; keep oversample=10."
+   },
+   {
+    "title": "The transit star",
+    "detail": "Same periodogram on a 1% box-shaped transit.",
+    "expected": "true P 3.2127 d | LS best 0.3211 d (power 0.032) | skew +0.82: Lomb-Scargle misses it; the skew hints at dips",
+    "ifNot": "Expected: use box least squares (Capstone #22)."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L200/10-light-curves\npython -m unittest -v",
+    "windows": "cd labs\\L200\\10-light-curves\npython -m unittest -v",
+    "expected": "Ran 13 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the Astropy comparison (pending-ci)."
+   },
+   {
+    "title": "Build it: bootstrap false-alarm probability",
+    "detail": "Implement bootstrap_fap(), then test your file.",
+    "mac": "cd labs/L200/10-light-curves\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L200\\10-light-curves\n$env:BUILD_TARGET = \"mine\"; python -m unittest test_build_task -v",
+    "expected": "Shipped: 3 errors. After your change: 3 tests OK; solution prints FAP 0.010 for the variable and the transit, 0.386 for pure noise.",
+    "ifNot": "Compare with solution/periods.py."
+   },
+   {
+    "title": "Agent assist (optional)",
+    "detail": "`python agent_assist.py --fake` (drop --fake to use local Ollama).",
+    "expected": "Agent proposes 1.31 d; code overrules it as the 1-day alias of 0.5669 d and flags 0.001 as UNVERIFIED.",
+    "ifNot": "No server: use --fake."
+   }
+  ],
+  "code": "\"\"\"L200 Light curves and periods: Lomb-Scargle periodogram in numpy; a pulsating variable vs a transiting planet.\n\nSynthetic and seeded (not real stars): 30 nights from one ground site, 8 h per night every 10 min, ~30% of\nnights clouded out. Variable: sawtooth, P = 0.5671 d, 0.6 mag. Transit: P = 3.2127 d, 1% deep, 2.4 h long.\npython periods.py               # add --export to write variable.csv / transit.csv (for TOPCAT)\n\"\"\"\nimport sys\n\nimport numpy as np\n\nP_VAR, P_TRANSIT = 0.5671, 3.2127\n\n\ndef sample_times(seed=10, nights=30):\n    rng = np.random.default_rng(seed)\n    clear = np.flatnonzero(rng.random(nights) > 0.3)\n    t = (clear[:, None] + 0.25 + np.arange(48)[None, :] / 144).ravel()  # 48 points x 10 min each clear night\n    return t + rng.normal(0, 0.001, t.size)  # small jitter in the time stamps\n\n\ndef variable_star(t, seed=11):\n    phase = (t / P_VAR) % 1.0\n    shape = np.where(phase < 0.15, 1 - phase / 0.15, (phase - 0.15) / 0.85)  # fast rise, slow decline\n    return 12.0 + 0.6 * shape + np.random.default_rng(seed).normal(0, 0.02, t.size)\n\n\ndef transit_star(t, seed=12):\n    phase = ((t / P_TRANSIT) + 0.5) % 1.0 - 0.5\n    flux = np.where(np.abs(phase * P_TRANSIT) < 0.05, 0.99, 1.0)  # box-shaped dip, 0.1 d = 2.4 h\n    return 11.0 - 2.5 * np.log10(flux) + np.random.default_rng(seed).normal(0, 0.003, t.size)\n\n\ndef lomb_scargle(t, y, freqs):\n    \"\"\"Classical Lomb-Scargle (Scargle 1982), 'standard' normalisation: power in [0, 1].\"\"\"\n    y = y - y.mean()\n    w = 2 * np.pi * freqs[:, None]\n    tau = np.arctan2(np.sin(2 * w * t).sum(1), np.cos(2 * w * t).sum(1))[:, None] / (2 * w)  # time offset\n    c, s = np.cos(w * (t - tau)), np.sin(w * (t - tau))  # makes the sine and cosine terms orthogonal\n    power = (c @ y) ** 2 / (c * c).sum(1) + (s @ y) ** 2 / (s * s).sum(1)\n    return power / (y @ y)\n\n\ndef frequency_grid(t, f_min=0.1, f_max=5.0, oversample=10):\n    return np.arange(f_min, f_max, 1 / (oversample * (t.max() - t.min())))\n\n\ndef skewness(y):\n    d = y - y.mean()\n    return float((d**3).mean() / (d**2).mean() ** 1.5)  # transits: rare, one-sided dips -> large positive skew in mag\n\n\ndef bootstrap_fap(t, y, freqs, n=200, seed=0):\n    raise NotImplementedError(\"build task: false-alarm probability by shuffling the magnitudes\")\n\n\ndef analyse(t, y):\n    f = frequency_grid(t)\n    p = lomb_scargle(t, y, f)\n    top = np.argsort(p)[::-1]\n    best = 1 / f[top[0]]\n    second = next(1 / f[i] for i in top if abs(1 / f[i] - best) / best > 0.05)  # next peak that is not the same one\n    return {\"best_period_days\": best, \"power\": float(p[top[0]]), \"second_period_days\": second, \"skew\": skewness(y)}\n\n\ndef main():\n    t = sample_times()\n    print(f\"{t.size} points over {t.max() - t.min():.1f} d ({np.unique(np.floor(t)).size} clear nights)\")\n    for name, y, true_p in ((\"variable\", variable_star(t), P_VAR), (\"transit\", transit_star(t), P_TRANSIT)):\n        r = analyse(t, y)\n        print(f\"{name:<8} true P {true_p:.4f} d | LS best {r['best_period_days']:.4f} d (power {r['power']:.3f}) | \"\n              f\"next peak {r['second_period_days']:.4f} d | skew {r['skew']:+.2f}\")\n        if \"--export\" in sys.argv:\n            np.savetxt(f\"{name}.csv\", np.column_stack([t, y]), delimiter=\",\", header=\"t_days,mag\", comments=\"\", fmt=\"%.6f\")\n    print(f\"1-day alias of the variable: 1 / (1/{P_VAR} - 1) = {1 / (1 / P_VAR - 1):.4f} d\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "sample_times()",
+    "detail": "Clear nights x 48 points every 10 min from 0.25 d: the daily gaps are what create the 1-day alias."
+   },
+   {
+    "title": "tau = arctan2(sum sin 2wt, sum cos 2wt) / 2w",
+    "detail": "Scargle's time offset makes the cosine and sine terms orthogonal, so power is the variance explained by the best-fit sine."
+   },
+   {
+    "title": "frequency_grid(oversample=10)",
+    "detail": "Step 1/(10 x baseline): a peak is about 1/baseline wide, so 10 samples across it."
+   },
+   {
+    "title": "analyse(): second distinct peak",
+    "detail": "Skips neighbours of the best peak (within 5%) to show the next real candidate - here the alias at 1.3074 d."
+   }
+  ],
+  "buildTask": {
+   "task": "Implement bootstrap_fap(t, y, freqs, n, seed): shuffle the magnitudes n times (same times, same noise, no signal), record the highest Lomb-Scargle peak each time, and return (count >= observed peak + 1) / (n + 1).",
+   "hints": [
+    "rng = np.random.default_rng(seed); rng.permutation(y) keeps the values but destroys the periodicity.",
+    "Compare maxima over the whole grid, not the power at one frequency.",
+    "+1 in numerator and denominator: never report exactly 0."
+   ],
+   "solution": "labs/L200/10-light-curves/solution/periods.py",
+   "check": "python -m unittest test_build_task -v  (Ran 3 tests ... OK on the solution). BUILD_TARGET=mine checks your edited file: on the shipped file all 3 tests fail (NotImplementedError) (Ran 3 tests ... FAILED (errors=3))."
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L200/10-light-curves/periods.py",
+    "purpose": "main lab code (bootstrap_fap unfinished)"
+   },
+   {
+    "path": "labs/L200/10-light-curves/solution/periods.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L200/10-light-curves/periods_astropy.py",
+    "purpose": "Astropy 8.0.2 LombScargle equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L200/10-light-curves/agent_assist.py",
+    "purpose": "agent proposes class + period; code decides and checks"
+   },
+   {
+    "path": "labs/L200/10-light-curves/test_periods.py",
+    "purpose": "sine recovery, alias, transit miss"
+   },
+   {
+    "path": "labs/L200/10-light-curves/test_build_task.py",
+    "purpose": "buildTask check (BUILD_TARGET=mine switch)"
+   },
+   {
+    "path": "labs/L200/10-light-curves/test_agent_assist.py",
+    "purpose": "agent-assist tests (fake server only)"
+   },
+   {
+    "path": "labs/L200/10-light-curves/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/_shared/local_agent/",
+    "purpose": "vendored chat client + fake model server"
+   }
+  ],
+  "expectedResults": [
+   "Variable: 0.5669 d (true 0.5671)",
+   "1-day alias at 1.3074 d",
+   "Transit missed by Lomb-Scargle (power 0.032)"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 13 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task",
+    "expected": "Ran 3 tests ... FAILED (errors=3)"
+   },
+   {
+    "action": "Agent proposes 1.31 d",
+    "expected": "overruled: 1-day alias of the code's period"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Best period is 1.31 d instead of 0.567 d",
+    "action": "Alias: check f +/- 1 cycle/day and phase-fold both."
+   },
+   {
+    "symptom": "Very slow",
+    "action": "N x frequencies grows fast; use astropy's fast method for large data."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Observe without daily gaps (several sites or a satellite).",
+    "predict": "What happens to the alias?",
+    "expected": "one site      : peak power 0.770, power at the 1-day alias 0.541 | no daily gaps : peak power 0.777, power at the 1-day alias 0.005"
+   },
+   {
+    "task": "8 nights instead of 30.",
+    "predict": "How does period precision change?",
+    "expected": "8 nights: best period 0.5665 d (true 0.5671), error 55 s | 30 nights: best period 0.5669 d (true 0.5671), error 15 s"
+   }
+  ],
+  "equivalents": [
+   "Astropy: LombScargle(t, y).power(f) / autopower() / false_alarm_probability().",
+   "lightkurve: LightCurve.to_periodogram() for Kepler/TESS (wraps astropy).",
+   "Box least squares: astropy.timeseries.BoxLeastSquares for transits."
+  ],
+  "learningTools": [
+   {
+    "name": "TOPCAT",
+    "role": "SEE",
+    "exercise": "Run `python periods.py --export`, load variable.csv, add a column phase = (t_days / 0.5669) % 1 and plot mag against phase; repeat with 1.3074.",
+    "expected": "With 0.5669 d a clean sawtooth (fast rise, slow decline); with the 1.3074 d alias the points scatter. Pending a manual run.",
+    "mac": "brew install --cask topcat   # 4.10-8, signed and notarized DMG",
+    "windows": "java -jar topcat-full.jar   # jar from the TOPCAT page; needs a Java runtime",
+    "licence": "GPL (Starjava; OSI: yes; licence file not re-read 2026-10-29)",
+    "url": "https://www.star.bristol.ac.uk/mbt/topcat/"
+   }
+  ],
+  "seeAlso": [
+   "microbit L200 #8 Data logging: logged sensor rows are uneven time series - the same kind of data a periodogram analyses.",
+   "ai-agents L400 #20 Deterministic core, LLM at the edge: the agent assist here follows that pattern - code decides the period.",
+   "astronomy L300 #15 Fitting with honest uncertainty: least squares, bootstrap and MCMC for a transit: fit the transit you found, with bootstrap and MCMC error bars.",
+   "astronomy Capstone #22 Capstone: an exoplanet transit search pipeline: the full transit search: detrend, BLS-lite, vetting, fit."
+  ],
+  "inRealSystems": [
+   "Variable-star surveys (ZTF, Gaia) run Lomb-Scargle on millions of light curves.",
+   "TESS and Kepler transit searches use box least squares, not sines."
+  ],
+  "useWhen": "Use Lomb-Scargle for smooth periodic variability in uneven data; use BLS for transits and eclipses.",
+  "caution": "Light curves are synthetic (periods known). Agent assist: the model sees only summary numbers, never decides, and gets no secrets.",
+  "checkpoint": "PASS: variable period within 0.1%, alias identified, bootstrap FAP passes on your file.",
+  "checkYourself": [
+   {
+    "q": "Why does a single site produce an alias at 1.31 d?",
+    "a": "Sampling repeats daily, so frequencies f and |f - 1| cycle/day fit the same points almost equally."
+   },
+   {
+    "q": "The transit peak was 'significant' (FAP 0.010). Is 0.3211 d the right period?",
+    "a": "No: significance says something periodic is there, not that a sine at that period is the right model."
+   }
+  ],
+  "sources": [
+   {
+    "title": "VanderPlas (2018), Understanding the Lomb-Scargle Periodogram, ApJS 236, 16 (arXiv:1703.09824)",
+    "url": "https://arxiv.org/abs/1703.09824"
+   },
+   {
+    "title": "PyPI: astropy 8.0.2 (BSD-3-Clause, Python >= 3.11, macOS arm64 + Windows wheels)",
+    "url": "https://pypi.org/project/astropy/"
+   },
+   {
+    "title": "TOPCAT home (4.10-8, 21 August 2026)",
+    "url": "https://www.star.bristol.ac.uk/mbt/topcat/"
+   },
+   {
+    "title": "Ollama docs: OpenAI compatibility",
+    "url": "https://docs.ollama.com/api/openai-compatibility"
+   }
+  ],
+  "next": "L300 #15 Fitting with honest uncertainty: least squares, bootstrap and MCMC for a transit (fit a transit model and get the error bars right)",
+  "validation": {
+   "status": "validated-local",
+   "how": "periods.py, solution/periods.py, try_it.py, agent_assist.py --fake and unittests (Ran 13 tests ... OK (skipped=1)) ran on Python 3.12.15 + numpy 2.5.3; BUILD_TARGET=mine on the shipped file: Ran 3 tests ... FAILED (errors=3). Astropy comparison pending-ci. Agent assist against the fake server only.",
+   "pendingCi": [
+    "labs/L200/10-light-curves/periods_astropy.py",
+    "test_periods.py: TestAstropyEquivalent",
+    "agent_assist.py against a real local model (fake server only)",
+    "TOPCAT exercise (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "agentAssist": {
+   "task": "A local model proposes a class and period from summary numbers and explains the result table; code computes the periodogram, decides class and period, names a 1-day alias and checks quoted numbers.",
+   "prompt": "[[ASTRO-PERIOD]] A star was observed on 23 nights from one site. Summary: {points, baseline_days, amplitude_mag, skew}. Which class is it, one of ['pulsating variable', 'transit', 'unknown'], and what is its period in days? Reply with ONE JSON object... Then: Explain this result in 2 sentences. Quote only numbers from the table.",
+   "check": "validate(): class must be one of three; period a real number in [0.05, 100] (not bool or string). decide(): power > 0.3 -> pulsating variable; else skew > 0.5 -> transit; else unknown. judge_period(): agrees within 1%, or names a 1-day alias (|1/Pa - 1/Pc| = 1 c/d). check_numbers(): quoted numbers must match the table.",
+   "expected": "1. agent proposed: class='pulsating variable', period=1.31 d\n2. code decided: class='pulsating variable' (agent agrees), period=0.5669 d -> agent period overruled: 1-day alias of the code's period\n3. agent explained: The periodogram peaks at 0.5669 days, so the star repeats every 0.5669 days. The false-alarm probability is below 0.001%, so the signal is certain.\n4. code checked 3 quoted numbers: 2 match; UNVERIFIED (treat as the model's guess): 0.001",
+   "realModelNote": "`python agent_assist.py` uses LOCAL_MODEL_URL (default http://localhost:11434/v1) and LOCAL_MODEL (default qwen2.5:1.5b). Real replies vary: a reply without a valid object is rejected and nothing runs. Not run here: no model in the sandbox."
+  },
+  "conceptNote": "content/concepts/L200/10-light-curves.md",
+  "conceptSummary": "Lomb-Scargle fits a sine at each trial frequency and finds periods in unevenly sampled data. Daily gaps create 1-day aliases, short transits hide from sines, and a bootstrap shows whether a peak could be noise."
+ },
+ {
+  "id": "nbody",
+  "number": 11,
+  "level": "L200",
+  "title": "N-body simulation: leapfrog vs Euler and energy conservation",
+  "phase": "Solar system",
+  "category": "simulation",
+  "description": "Integrate Sun + Earth + Jupiter for 12 years with Euler and leapfrog, compare energy drift and orbits, and move the system to the centre-of-mass frame.",
+  "outcome": "You can write a vectorised N-body force loop, pick a symplectic integrator and verify it with conserved quantities.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3; no new packages for the main lab (CI: labs/L200/requirements.txt = L100 pins + rebound 5.2.2); REBOUND 5.2.2 (GPL-3.0-or-later) equivalent in CI; Stellarium to watch real orbits",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "Step positions and velocities; leapfrog keeps energy bounded where Euler drifts."
+  ],
+  "prerequisites": [
+   "Lesson 5"
+  ],
+  "glossary": [
+   {
+    "term": "symplectic",
+    "meaning": "Integrator that preserves phase-space structure: energy error stays bounded."
+   },
+   {
+    "term": "kick / drift",
+    "meaning": "Velocity update / position update."
+   },
+   {
+    "term": "barycentre",
+    "meaning": "Centre of mass of the system."
+   }
+  ],
+  "concepts": [
+   "Pairwise gravity, vectorised.",
+   "Euler drifts, leapfrog oscillates.",
+   "Energy as a test oracle.",
+   "Barycentric frame."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python nbody.py` (12 years, dt = 0.001 yr = 8.8 h).",
+    "mac": "cd labs/L200/11-nbody\npython nbody.py",
+    "windows": "cd labs\\L200\\11-nbody\npython nbody.py",
+    "expected": "One line per integrator and a Kepler period line.",
+    "ifNot": "Takes a few seconds (2 x 12,000 steps)."
+   },
+   {
+    "title": "Energy drift",
+    "detail": "Relative change of total energy after 12 years.",
+    "expected": "Euler |dE/E| = 1.24e-02; leapfrog 1.22e-12",
+    "ifNot": "Both use one force evaluation per step."
+   },
+   {
+    "title": "Earth's orbit",
+    "detail": "Earth-Sun distance at the end (start: 1 au, circular).",
+    "expected": "Euler 1.55347 au; leapfrog 1.00000 au",
+    "ifNot": "Euler spirals outward: it adds energy every orbit."
+   },
+   {
+    "title": "Centre of mass",
+    "detail": "How far the barycentre moved.",
+    "expected": "0.0315 au for both: the Sun starts at rest, so the system drifts (fixed in the build task)",
+    "ifNot": "That is the bug the build task fixes."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L200/11-nbody\npython -m unittest -v",
+    "windows": "cd labs\\L200\\11-nbody\npython -m unittest -v",
+    "expected": "Ran 10 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the REBOUND comparison (pending-ci)."
+   },
+   {
+    "title": "Build it: barycentric frame",
+    "detail": "Implement to_com_frame(), then test your file.",
+    "mac": "cd labs/L200/11-nbody\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L200\\11-nbody\n$env:BUILD_TARGET = \"mine\"; python -m unittest test_build_task -v",
+    "expected": "Shipped: 3 failures. After your change: 3 tests OK; solution prints centre of mass moved 0.0000 au.",
+    "ifNot": "Compare with solution/nbody.py."
+   }
+  ],
+  "code": "\"\"\"L200 N-body simulation: Euler vs leapfrog, energy conservation, Sun + Earth + Jupiter.\n\nUnits: au, years, solar masses, so G = 4 pi^2. Start: circular orbits in one plane, Sun at rest at the origin\n(illustrative initial conditions, not an ephemeris).\npython nbody.py\n\"\"\"\nimport numpy as np\n\nG = 4 * np.pi**2\nNAMES = (\"Sun\", \"Earth\", \"Jupiter\")\nMASSES = np.array([1.0, 3.003e-6, 9.546e-4])  # solar masses\n\n\ndef initial_state():\n    pos = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 5.2026, 0.0]])\n    vel = np.array([[0.0, 0.0, 0.0], [0.0, 2 * np.pi, 0.0], [-2 * np.pi / np.sqrt(5.2026), 0.0, 0.0]])  # v = sqrt(GM/r)\n    return pos, vel\n\n\ndef to_com_frame(pos, vel, m):\n    return pos, vel  # build task: move to the centre-of-mass (barycentric) frame\n\n\ndef accelerations(pos, m):\n    d = pos[None, :, :] - pos[:, None, :]  # d[i, j] = r_j - r_i\n    r3 = (np.sum(d * d, axis=2) + np.eye(len(m))) ** 1.5  # + eye: avoid 0/0 on the diagonal (d_ii = 0 anyway)\n    return G * np.sum(d * (m[None, :, None] / r3[:, :, None]), axis=1)\n\n\ndef energy(pos, vel, m):\n    kinetic = 0.5 * np.sum(m * np.sum(vel * vel, axis=1))\n    i, j = np.triu_indices(len(m), 1)\n    potential = -G * np.sum(m[i] * m[j] / np.linalg.norm(pos[i] - pos[j], axis=1))\n    return kinetic + potential\n\n\ndef step_euler(pos, vel, m, dt):\n    a = accelerations(pos, m)\n    return pos + vel * dt, vel + a * dt  # both updates use the OLD state: energy drifts every orbit\n\n\ndef step_leapfrog(pos, vel, m, dt):\n    vel = vel + 0.5 * dt * accelerations(pos, m)  # kick\n    pos = pos + dt * vel  # drift\n    return pos, vel + 0.5 * dt * accelerations(pos, m)  # kick: symplectic and time-reversible\n\n\ndef run(step, years=12.0, dt=0.001, com=True):\n    pos, vel = initial_state()\n    if com:\n        pos, vel = to_com_frame(pos, vel, MASSES)\n    e0 = energy(pos, vel, MASSES)\n    com0 = MASSES @ pos / MASSES.sum()\n    for _ in range(int(round(years / dt))):\n        pos, vel = step(pos, vel, MASSES, dt)\n    drift = abs(energy(pos, vel, MASSES) - e0) / abs(e0)\n    com_shift = np.linalg.norm(MASSES @ pos / MASSES.sum() - com0)\n    return pos, vel, drift, com_shift\n\n\ndef main():\n    for name, step in ((\"Euler\", step_euler), (\"leapfrog\", step_leapfrog)):\n        pos, vel, drift, com_shift = run(step)\n        r_earth = np.linalg.norm(pos[1] - pos[0])\n        print(f\"{name:<8} 12 yr, dt=0.001 yr: |dE/E| = {drift:.2e}, Earth-Sun distance {r_earth:.5f} au, \"\n              f\"centre of mass moved {com_shift:.4f} au\")\n    print(f\"Jupiter period from Kepler's third law: {5.2026**1.5:.3f} yr\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "d = pos[None, :, :] - pos[:, None, :]",
+    "detail": "All pairwise separation vectors at once (N x N x 3); no Python loop over pairs."
+   },
+   {
+    "title": "+ np.eye(len(m))",
+    "detail": "Avoids 0/0 on the diagonal; the diagonal separation is zero, so the self-force term is zero anyway."
+   },
+   {
+    "title": "step_leapfrog: kick-drift-kick",
+    "detail": "Half velocity update, full position update, half velocity update with the new forces: symplectic and time-reversible."
+   },
+   {
+    "title": "run(): energy() before and after",
+    "detail": "Total energy is conserved by the physics, so its change measures only integrator error - a test oracle without a reference solution."
+   }
+  ],
+  "buildTask": {
+   "task": "Implement to_com_frame(pos, vel, m): subtract the mass-weighted mean position and velocity so the centre of mass sits at the origin with zero momentum.",
+   "hints": [
+    "Centre of mass: m @ pos / m.sum() (a 3-vector).",
+    "Do the same for velocities (total momentum / total mass).",
+    "Return new arrays; do not change the inputs in place."
+   ],
+   "solution": "labs/L200/11-nbody/solution/nbody.py",
+   "check": "python -m unittest test_build_task -v  (Ran 3 tests ... OK on the solution). BUILD_TARGET=mine checks your edited file: on the shipped file 3 of 3 tests fail (Ran 3 tests ... FAILED (failures=3))."
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L200/11-nbody/nbody.py",
+    "purpose": "main lab code (to_com_frame unfinished)"
+   },
+   {
+    "path": "labs/L200/11-nbody/solution/nbody.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L200/11-nbody/nbody_rebound.py",
+    "purpose": "REBOUND 5.2.2 equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L200/11-nbody/test_nbody.py",
+    "purpose": "Newton's laws, energy, reversibility"
+   },
+   {
+    "path": "labs/L200/11-nbody/test_build_task.py",
+    "purpose": "buildTask check (BUILD_TARGET=mine switch)"
+   },
+   {
+    "path": "labs/L200/11-nbody/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "Leapfrog |dE/E| ~1e-12, Euler ~1e-2",
+   "Leapfrog keeps Earth at 1.00000 au",
+   "Barycentric frame: no drift"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 10 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task",
+    "expected": "Ran 3 tests ... FAILED (failures=3)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "RuntimeWarning: divide by zero",
+    "action": "The diagonal of r3 is zero; add np.eye or mask it."
+   },
+   {
+    "symptom": "Energy error grows with dt^1",
+    "action": "That is Euler (first order); leapfrog's error scales as dt^2 and stays bounded."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Make the time step 10x larger.",
+    "predict": "Which integrator suffers more?",
+    "expected": "dt=0.001  Euler   : |dE/E| = 1.24e-02, Earth-Sun 1.5535 au | dt=0.001  leapfrog: |dE/E| = 1.22e-12, Earth-Sun 1.0000 au | dt=0.01   Euler   : |dE/E| = 6.98e-02, Earth-Sun 3.7634 au | dt=0.01   leapfrog: |dE/E| = 1.98e-10, Earth-Sun 1.0000 au"
+   },
+   {
+    "task": "Run forward 1 year, then backward 1 year.",
+    "predict": "Back where Earth started?",
+    "expected": "Euler   : Earth ends 5.85e-01 au from its start | leapfrog: Earth ends 1.17e-14 au from its start"
+   }
+  ],
+  "equivalents": [
+   "REBOUND (C + Python, GPL-3.0-or-later): integrators 'leapfrog', 'whfast', 'ias15'; sim.add(m=..., a=...).",
+   "SciPy solve_ivp (non-symplectic, adaptive) - see simulation L200 #9.",
+   "AMUSE / galpy for larger astrophysical simulations."
+  ],
+  "learningTools": [
+   {
+    "name": "Stellarium",
+    "role": "SEE",
+    "exercise": "Select Jupiter, zoom in until the Galilean moons show, and step time by 1 hour (= and - keys). Note which moon moves fastest.",
+    "expected": "Inner moons move fastest, as Kepler's third law (period ~ a^1.5) and this lab's orbits predict. Qualitative check; pending a manual run.",
+    "mac": "brew install --cask stellarium   # cask 26.2; stellarium.org lists 26.3 (macOS 11+, universal)",
+    "windows": "Installer from https://stellarium.org/ (Windows x86_64 Qt6, Windows 10+; ARM64 build also listed)",
+    "licence": "GPL-2.0-or-later (OSI: yes; licence file not re-read 2026-10-29)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "seeAlso": [
+   "simulation L200 #9 ODE solvers in practice: adaptive steps, tolerances, stiffness: adaptive solvers vs the fixed-step symplectic leapfrog used here.",
+   "simulation L100 #4 Time-stepped physics: a parcel dropped from a drone: the same Euler-vs-better-method lesson on a falling parcel."
+  ],
+  "inRealSystems": [
+   "REBOUND and Mercury integrate planetary systems with symplectic (WHFast) or adaptive (IAS15) schemes.",
+   "Galaxy and cluster codes (GADGET, AMUSE) use leapfrog with tree or mesh forces."
+  ],
+  "useWhen": "Use leapfrog (or WHFast) for long, smooth orbits; use an adaptive integrator when bodies pass close to each other.",
+  "caution": "Initial conditions are illustrative circular orbits, not an ephemeris; this lab is not for predicting real positions (use lesson 5 or JPL).",
+  "checkpoint": "PASS: leapfrog |dE/E| < 1e-9 over 2 years and your to_com_frame() passes.",
+  "checkYourself": [
+   {
+    "q": "Why is total energy a good test oracle?",
+    "a": "Physics conserves it exactly, so any change is integrator error."
+   },
+   {
+    "q": "Euler's total energy changed only 1.2% but Earth moved to 1.55 au. How?",
+    "a": "Jupiter dominates the energy; Earth's own orbit error is hidden in the total."
+   }
+  ],
+  "sources": [
+   {
+    "title": "PyPI: rebound 5.2.2 (GPL-3.0-or-later; leapfrog, WHFast, IAS15)",
+    "url": "https://pypi.org/project/rebound/"
+   },
+   {
+    "title": "JPL Solar System Dynamics: Approximate Positions of the Planets (Standish & Williams)",
+    "url": "https://ssd.jpl.nasa.gov/planets/approx_pos.html"
+   },
+   {
+    "title": "Stellarium home (26.3; macOS 11+ universal, Windows x86_64/ARM64)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "next": "L300 #12 Observation planning: airmass, twilight, Moon distance and a scheduler under constraints (from computed positions to planning a real night)",
+  "validation": {
+   "status": "validated-local",
+   "how": "nbody.py, solution/nbody.py, try_it.py and unittests (Ran 10 tests ... OK (skipped=1)) ran on Python 3.12.15 + numpy 2.5.3; BUILD_TARGET=mine on the shipped file: Ran 3 tests ... FAILED (failures=3). REBOUND comparison pending-ci (wheel availability for Windows/macOS arm64 not checked; CI installs it).",
+   "pendingCi": [
+    "labs/L200/11-nbody/nbody_rebound.py",
+    "test_nbody.py: TestReboundEquivalent",
+    "rebound 5.2.2 install on macOS arm64 / Windows"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L200/11-nbody.md",
+  "conceptSummary": "N-body codes sum pairwise gravity and step positions and velocities forward. Leapfrog keeps energy bounded and is time-reversible where Euler drifts, and a barycentric frame stops the whole system from drifting."
+ }
+]

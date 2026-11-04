@@ -1,0 +1,945 @@
+[
+  {
+    "id": "aa-L400-001",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "The shadow run compared 2,000 requests, found 108 mismatches and 0 candidate errors. The cut-over criteria are >= 1,000 comparisons, mismatch rate <= 0.1 % and 0 errors. What does cutover_decision say?",
+    "options": [
+      "ready False: mismatch rate 0.54% > 0.10%",
+      "ready False: only 108 comparisons (< 1000)",
+      "ready True: 2,000 comparisons is enough evidence",
+      "ready False: mismatch rate 5.40% > 0.10%"
+    ],
+    "answer": 3,
+    "explanation": "108 / 2,000 = 5.40 %, far above the 0.1 % budget, so the gate stays closed despite plenty of evidence. 0.54 % is a slipped decimal point.",
+    "source": "Lesson 17 steps (Shadow the extracted service)"
+  },
+  {
+    "id": "aa-L400-002",
+    "level": "L400",
+    "lesson": 17,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The monolith uses Decimal with ROUND_HALF_UP; the extracted service uses float and round(). What does this print for a student 3 days late?",
+    "code": "from decimal import Decimal, ROUND_HALF_UP\n\ndays_late, chargeable = 3, 1\nlegacy = (Decimal(\"0.25\") * chargeable / 2).quantize(Decimal(\"0.01\"), rounding=ROUND_HALF_UP)\nservice = f\"{round(0.25 * chargeable * 0.5, 2):.2f}\"\nprint(legacy, service)",
+    "options": [
+      "0.13 0.13",
+      "0.12 0.13",
+      "0.12 0.12",
+      "0.13 0.12"
+    ],
+    "answer": 3,
+    "explanation": "One chargeable day for a student is 0.125. ROUND_HALF_UP gives 0.13; round() rounds half to even, giving 0.12. Unit tests on adult fines never hit the half cent.",
+    "source": "Lesson 17 failureLab"
+  },
+  {
+    "id": "aa-L400-003",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Students pay 0.125 per chargeable day (days late minus 2). For days_late 3 to 10, on which days do the Decimal-HALF_UP monolith and the float-round() service disagree?",
+    "options": [
+      "4, 6, 8 and 10",
+      "3, 5, 7 and 9",
+      "3 and 7",
+      "every odd day: 3, 5, 7, 9"
+    ],
+    "answer": 2,
+    "explanation": "Odd chargeable days give x.x25 or x.x75 half cents, but 0.375 and 0.875 round the same either way (8 is even). Only 0.125 and 0.625 differ, at 3 and 7 days late, matching the lab's '3, 7, 11 ...' pattern.",
+    "source": "Lesson 17 failureLab"
+  },
+  {
+    "id": "aa-L400-004",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why may the parallel run only wrap operations without side effects?",
+    "options": [
+      "Side effects make the mismatch rate impossible to compute for that request type",
+      "Both implementations run, so every write happens twice",
+      "The facade cannot pass request bodies to the new service",
+      "Writes are too slow to compare within the shadow budget"
+    ],
+    "answer": 1,
+    "explanation": "Shadowing executes the candidate for real. Writes need idempotent dual writes and reconciliation instead.",
+    "source": "Lesson 17 checkYourself"
+  },
+  {
+    "id": "aa-L400-005",
+    "level": "L400",
+    "lesson": 17,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "After the fix, shadowing 300 requests shows 0 mismatches, yet the gate refuses. Why?",
+    "options": [
+      "The candidate must also run in canary mode before it may run in shadow mode",
+      "The mismatch rate is undefined until the first mismatch",
+      "Too little evidence: rare cases may not have shown up yet",
+      "The gate refuses any cut-over during business hours"
+    ],
+    "answer": 2,
+    "explanation": "The criteria require at least 1,000 comparisons, because rare inputs (students at odd chargeable days) may not have shown up yet. A rate of 0.0 is defined and fine.",
+    "source": "Lesson 17 tryIt"
+  },
+  {
+    "id": "aa-L400-006",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does the canary choose members by `sha256(member_id) % 100` rather than `random.random()` per request?",
+    "options": [
+      "SHA-256 spreads load more evenly than random numbers",
+      "A member stays in the same cohort on every request",
+      "Hashing hides the member id from the decision logs",
+      "random.random() is too slow to call for a decision on every single request"
+    ],
+    "answer": 1,
+    "explanation": "Sticky buckets mean a member does not flip between old and new behaviour, and per-cohort metrics make sense. Both approaches spread load evenly over many members.",
+    "source": "Lesson 17 codeWalkthrough"
+  },
+  {
+    "id": "aa-L400-007",
+    "level": "L400",
+    "lesson": 17,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A developer adds new_feature.py that imports legacy_monolith 'just to reuse the old rule'. What does fitness_legacy.py report?",
+    "options": [
+      "ok False, migrated ['new_feature.py'], callers 2",
+      "ok True, because reusing a rule is not a new dependency",
+      "ok False, new ['new_feature.py'], callers 3",
+      "ok True, with callers 3 added to legacy_callers.json"
+    ],
+    "answer": 2,
+    "explanation": "The ratchet lets the known callers only shrink; any new importer fails the gate. 'migrated' lists callers that went away, which is the opposite case.",
+    "source": "Lesson 17 tryIt"
+  },
+  {
+    "id": "aa-L400-008",
+    "level": "L400",
+    "lesson": 17,
+    "type": "design",
+    "difficulty": 3,
+    "question": "The fines rule is under-specified, wrong fines reach members, and trunk must stay releasable. Which migration path does the lesson choose?",
+    "options": [
+      "Port + facade, shadow until criteria pass, sticky canary, cut over",
+      "Rewrite the rules from the documentation and compare the outputs by hand",
+      "Keep it in the monolith behind a flag permanently",
+      "Deploy the service and switch all callers in one release"
+    ],
+    "answer": 0,
+    "explanation": "Big bang would have charged 108 of 2,000 members wrongly. In-process branch by abstraction is the first step but does not give the independent deploy the team wanted.",
+    "source": "Lesson 17 options"
+  },
+  {
+    "id": "aa-L400-009",
+    "level": "L400",
+    "lesson": 18,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A shared-schema overdue report forgot `WHERE tenant_id`. There are 20 libraries, each with 14 overdue loans. For one library, how many rows does the report return and how many belong to others?",
+    "options": [
+      "280 rows, 280 from other libraries",
+      "14 rows, 0 from other libraries",
+      "266 rows, 252 from other libraries",
+      "280 rows, 266 from other libraries"
+    ],
+    "answer": 3,
+    "explanation": "Without the filter every library's overdue rows come back: 20 x 14 = 280, of which 280 - 14 = 266 are other libraries'. Per-tenant layouts would have returned 14 and looked fine.",
+    "source": "Lesson 18 testCases"
+  },
+  {
+    "id": "aa-L400-010",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why did database-per-tenant isolate a bulk import while schema-per-tenant did not?",
+    "options": [
+      "Schema-per-tenant puts all tenants' rows in one table",
+      "SQLite locks the whole file for writes; tables in one file share it",
+      "Database-per-tenant disables transactions during imports",
+      "Per-tenant schemas have no indexes, so each bulk import takes much longer to finish"
+    ],
+    "answer": 1,
+    "explanation": "BEGIN IMMEDIATE holds the file's write lock, so neighbours in the same file got 'database is locked' (20 of 20). Schema-per-tenant does keep rows in separate tables.",
+    "source": "Lesson 18 checkYourself"
+  },
+  {
+    "id": "aa-L400-011",
+    "level": "L400",
+    "lesson": 18,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "With per-tenant tables the unscoped report returned only the right 14 rows. Why fix the query anyway?",
+    "options": [
+      "Per-tenant tables are slower for unscoped queries",
+      "It is still unscoped; a shared tier or cross-table report would leak",
+      "The fix is needed only so that the static gate's exit code turns green in CI",
+      "SQLite returns rows in random order without the filter"
+    ],
+    "answer": 1,
+    "explanation": "Layout is not a substitute for scoping. Today's 0 leaked rows depend on where the data happens to live.",
+    "source": "Lesson 18 checkYourself"
+  },
+  {
+    "id": "aa-L400-012",
+    "level": "L400",
+    "lesson": 18,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A simplified TenantGuard for the session of lib00, checking expanded SQL. What does it print?",
+    "code": "import re\n\ndef violation(sql, tenant):\n    return bool(re.search(r\"\\bloans\\b\", sql)) and f\"'{tenant}'\" not in sql\n\nstatements = [\n    \"SELECT id FROM loans WHERE tenant_id = 'lib00' AND due < '2026-10-28'\",\n    \"SELECT id FROM loans WHERE due < '2026-10-28'\",\n    \"SELECT id FROM loans WHERE tenant_id = 'lib01'\",\n    \"SELECT name FROM books WHERE id = 'b1'\"]\nprint([violation(s, \"lib00\") for s in statements])",
+    "options": [
+      "[False, True, False, False]",
+      "[True, True, True, False]",
+      "[False, True, True, True]",
+      "[False, True, True, False]"
+    ],
+    "answer": 3,
+    "explanation": "A statement on the loans table must name the current tenant's quoted id: the second has no tenant and the third names lib01. The books query does not touch a tenant table.",
+    "source": "Lesson 18 tryIt"
+  },
+  {
+    "id": "aa-L400-013",
+    "level": "L400",
+    "lesson": 18,
+    "type": "design",
+    "difficulty": 3,
+    "question": "50 small libraries now, a few large or regulated ones later, one codebase. Which layout does the lesson's ADR choose?",
+    "options": [
+      "Shared schema with guards; database per tenant as premium tier",
+      "Shared schema for everyone, with no premium tier",
+      "Database per tenant for everyone, for the maximum possible isolation",
+      "Schema per tenant for everyone, using SQLite ATTACH"
+    ],
+    "answer": 0,
+    "explanation": "Shared schema needs 1 migration and is cheapest; tenants needing write isolation or their own restore get their own database. ATTACH stops at 10 databases and does not isolate writes.",
+    "source": "Lesson 18 options"
+  },
+  {
+    "id": "aa-L400-014",
+    "level": "L400",
+    "lesson": 18,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A handler reads the tenant id from a `tenant` field in the JSON request body. What is wrong?",
+    "options": [
+      "The field should be read from the URL path instead",
+      "Nothing is wrong, as long as the guard checks every statement",
+      "The caller controls it; use the verified token instead",
+      "The id must be hashed before it is bound into SQL"
+    ],
+    "answer": 2,
+    "explanation": "The guard only checks that statements match the session's tenant; if the caller picks that tenant, the guard happily enforces the wrong one. A URL is just as caller-controlled.",
+    "source": "Lesson 18 caution"
+  },
+  {
+    "id": "aa-L400-015",
+    "level": "L400",
+    "lesson": 18,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "During one library's bulk import, other libraries see 'database is locked'. What does the lesson recommend?",
+    "options": [
+      "Short write batches or a busy timeout; busy tenants get own files",
+      "Switch every tenant to schema per tenant inside the same shared database file",
+      "Add a tenant_id index, which removes write locks",
+      "Run the import with timeout 0 so it never waits"
+    ],
+    "answer": 0,
+    "explanation": "SQLite has one writer per file, so long write transactions block neighbours. Separate tables in the same file share that lock.",
+    "source": "Lesson 18 troubleshooting"
+  },
+  {
+    "id": "aa-L400-016",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why is the shared-schema index defined as (tenant_id, member_id), tenant first?",
+    "options": [
+      "member_id is unique across tenants, so it cannot lead",
+      "Every shared-schema query starts by narrowing to one tenant",
+      "Tenant-first indexes prevent cross-tenant leaks by themselves",
+      "SQLite requires the leftmost index column to be NOT NULL"
+    ],
+    "answer": 1,
+    "explanation": "Queries always filter on tenant_id, so it must lead for the index to be used. An index speeds queries up but does not stop an unscoped query from reading other tenants.",
+    "source": "Lesson 18 codeWalkthrough"
+  },
+  {
+    "id": "aa-L400-017",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does an RBAC role table miss the rule 'a member may borrow only for themselves'?",
+    "options": [
+      "Role tables are evaluated only for librarians",
+      "RBAC cannot express any rule about borrowing",
+      "It needs subject.id == resource.member_id, invisible to roles",
+      "Members are not recognised as a role in the NIST RBAC reference model"
+    ],
+    "answer": 2,
+    "explanation": "Both members hold the borrow permission; the rule is an attribute relation. That is why RBAC scored 7 of 14 cases.",
+    "source": "Lesson 19 checkYourself"
+  },
+  {
+    "id": "aa-L400-018",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "In the policy lab, what is the PEP and what is the PDP?",
+    "options": [
+      "PEP: the handler that asks; PDP: the policy that decides",
+      "PEP: the policy file; PDP: the decision log",
+      "PEP: the identity provider; PDP: the database",
+      "PEP and PDP are two different names for the very same component"
+    ],
+    "answer": 0,
+    "explanation": "Handlers call authorize() first (enforcement) and the decision point evaluates loans.rego. Splitting them keeps rules in one reviewable file.",
+    "source": "Lesson 19 glossary"
+  },
+  {
+    "id": "aa-L400-019",
+    "level": "L400",
+    "lesson": 19,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A tiny decision point where deny overrides allow. What does it print?",
+    "code": "def decide(inp):\n    allow = inp[\"role\"] == \"librarian\" or inp[\"subject\"] == inp[\"owner\"]\n    deny = [\"account suspended\"] if inp.get(\"suspended\") else []\n    return allow and not deny, deny\n\nprint(decide({\"role\": \"librarian\", \"subject\": \"u7\", \"owner\": \"m2\", \"suspended\": True}))",
+    "options": [
+      "(True, [])",
+      "(True, ['account suspended'])",
+      "(False, ['account suspended'])",
+      "(False, [])"
+    ],
+    "answer": 2,
+    "explanation": "The librarian rule allows, but a matching deny wins: allowed = allow and not deny. Returning the reasons lets the PEP explain the refusal.",
+    "source": "Lesson 19 testCases"
+  },
+  {
+    "id": "aa-L400-020",
+    "level": "L400",
+    "lesson": 19,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "As in Rego, a missing path is undefined and an undefined comparison is false. What does this print?",
+    "code": "UNDEFINED = object()\n\ndef path(doc, dotted):\n    for part in dotted.split(\".\"):\n        doc = doc.get(part, UNDEFINED) if isinstance(doc, dict) else UNDEFINED\n    return doc\n\ninp = {\"subject\": {\"role\": \"librarian\"}, \"resource\": {\"tenant\": \"lib00\"}}\nleft, right = path(inp, \"subject.tenant\"), path(inp, \"resource.tenant\")\nprint(left is not UNDEFINED and left == right)",
+    "options": [
+      "None",
+      "False",
+      "True",
+      "KeyError: 'tenant'"
+    ],
+    "answer": 1,
+    "explanation": "The subject has no tenant attribute, so the lookup yields UNDEFINED and the comparison is false. A missing attribute never allows anything.",
+    "source": "Lesson 19 codeWalkthrough"
+  },
+  {
+    "id": "aa-L400-021",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why is the policy revision (a SHA-256 of the policy text) logged with every decision?",
+    "options": [
+      "To let OPA cache compiled policies between restarts of the service",
+      "To identify which user wrote the policy",
+      "To detect tampering with the decision log file",
+      "To audit a decision against the exact policy that made it"
+    ],
+    "answer": 3,
+    "explanation": "Policies change; an auditor needs the exact rules that produced each decision. Caching and authorship are not what the revision is for.",
+    "source": "Lesson 19 checkYourself"
+  },
+  {
+    "id": "aa-L400-022",
+    "level": "L400",
+    "lesson": 19,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A new renew() handler does its work without calling authorize(). Which gate catches it?",
+    "options": [
+      "rule-coverage, because no rule mentions renew",
+      "None; handlers are trusted once they have been deployed to production",
+      "pep-coverage, which lists renew as unprotected",
+      "policy-tests, because a case for renew fails"
+    ],
+    "answer": 2,
+    "explanation": "PEP coverage checks every public handler asks first. Policy tests and rule coverage look at the policy, which renew never consults.",
+    "source": "Lesson 19 tryIt"
+  },
+  {
+    "id": "aa-L400-023",
+    "level": "L400",
+    "lesson": 19,
+    "type": "design",
+    "difficulty": 3,
+    "question": "The policy decision point runs as a remote service and adds a network hop to every request; list pages ask for one decision per row. What does the lesson suggest?",
+    "options": [
+      "Move all rules back into each handler",
+      "Cache every decision forever, keyed by user",
+      "Allow by default whenever the remote PDP is unreachable or slow to answer",
+      "Run the PDP as sidecar or library; filter lists in the query"
+    ],
+    "answer": 3,
+    "explanation": "A remote PDP per request adds latency and a failure mode; per-row decisions do not scale. Failing open would turn an outage into a data leak.",
+    "source": "Lesson 19 scalingLimits"
+  },
+  {
+    "id": "aa-L400-024",
+    "level": "L400",
+    "lesson": 19,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "A policy rule never matches although the request looks right. What does the lesson tell you to check first?",
+    "options": [
+      "Whether the decision log is full",
+      "Whether the rule is listed last in the file, after all the other rules",
+      "The attribute names: missing paths are undefined (false)",
+      "Whether OPA is installed on the machine"
+    ],
+    "answer": 2,
+    "explanation": "A misspelt attribute yields undefined, which silently fails the condition. Rule order does not matter: bodies with the same name are OR-ed.",
+    "source": "Lesson 19 troubleshooting"
+  },
+  {
+    "id": "aa-L400-025",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The backfill is complete. Why is it still unsafe to drop members.name?",
+    "options": [
+      "API v1 consumers read the old column directly from the database",
+      "Running v2 instances still write it; their inserts would break",
+      "The backfill must run a second time after the flag flips",
+      "DROP COLUMN cannot run while the table has rows"
+    ],
+    "answer": 1,
+    "explanation": "The contract step is guarded by who still uses the column, not by the data or the calendar: 50 v2 writes failed in the lab. API v1 rebuilds name from the new columns.",
+    "source": "Lesson 20 checkYourself"
+  },
+  {
+    "id": "aa-L400-026",
+    "level": "L400",
+    "lesson": 20,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The fixed can_contract() during the v3 rollout. What does this print?",
+    "code": "USES_OLD_COLUMN = {1: True, 2: True, 3: False}\n\ndef can_contract(unbackfilled, fleet_versions):\n    reasons = []\n    if unbackfilled:\n        reasons.append(f\"{unbackfilled} rows not backfilled\")\n    old = sorted({v for v in fleet_versions if USES_OLD_COLUMN[v]})\n    if old:\n        reasons.append(f\"instances on v{', v'.join(map(str, old))} still use members.name\")\n    return not reasons, reasons\n\nprint(can_contract(0, [3, 3, 2, 2]))",
+    "options": [
+      "(True, [])",
+      "(False, ['instances on v2, v3 still use members.name'])",
+      "(False, ['instances on v2 still use members.name'])",
+      "(False, ['0 rows not backfilled'])"
+    ],
+    "answer": 2,
+    "explanation": "Two instances still run v2, which dual-writes the old column, so the guard refuses even though nothing is left to backfill. v3 does not use the column.",
+    "source": "Lesson 20 buildTask"
+  },
+  {
+    "id": "aa-L400-027",
+    "level": "L400",
+    "lesson": 20,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The flag gate with today = 2026-12-01. What does it print?",
+    "code": "from datetime import date\n\nflags = {\"read_split_name\": {\"expires\": \"2026-11-30\"},\n         \"dark_launch\": {\"expires\": \"2027-01-15\"}}\ntoday = date(2026, 12, 1)\nprint(sorted(n for n, f in flags.items() if date.fromisoformat(f[\"expires\"]) < today))",
+    "options": [
+      "[]",
+      "['dark_launch']",
+      "['read_split_name']",
+      "['read_split_name', 'dark_launch']"
+    ],
+    "answer": 2,
+    "explanation": "Only read_split_name expired (2026-11-30 < 2026-12-01); dark_launch runs until 2027. A release toggle that outlives its date fails the build.",
+    "source": "Lesson 20 tryIt"
+  },
+  {
+    "id": "aa-L400-028",
+    "level": "L400",
+    "lesson": 20,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "After deploying v3 (which writes only the new columns) inserts fail with 'NOT NULL constraint failed: members.name'. What is the fix?",
+    "options": [
+      "Backfill name from the new columns after each insert",
+      "Make the old column nullable or defaulted first",
+      "Roll back to v2 permanently and skip the contract step altogether",
+      "Drop the NOT NULL rule by deleting the members table"
+    ],
+    "answer": 1,
+    "explanation": "Code that no longer knows a column must still be able to insert; in the try-it, NOT NULL caused 38 failed requests. SQLite needs ALTER COLUMN (3.53+) or the documented table rebuild.",
+    "source": "Lesson 20 troubleshooting"
+  },
+  {
+    "id": "aa-L400-029",
+    "level": "L400",
+    "lesson": 20,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Which order of steps lets every intermediate state work with every running version?",
+    "options": [
+      "Expand, backfill, contract, then deploy v2 and v3 one by one",
+      "Deploy v3, expand, backfill, contract",
+      "Contract, expand, deploy v3, backfill",
+      "Expand, v2 dual write, backfill, flag on, v3, contract"
+    ],
+    "answer": 3,
+    "explanation": "Additive changes first, then code that writes both, then data, then the switch, and the drop only when no code uses the old column. Contracting before v3 is the failure lab.",
+    "source": "Lesson 20 conceptSummary"
+  },
+  {
+    "id": "aa-L400-030",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why keep API /v1 and rebuild `name` from the new columns instead of keeping the old column?",
+    "options": [
+      "Rebuilding is faster than reading one column",
+      "The API contract is separate from storage; v1 lives until its sunset",
+      "v1 consumers are required to migrate the same day",
+      "The old column can no longer be read once the new columns have been added"
+    ],
+    "answer": 1,
+    "explanation": "Storage can move on while consumers keep their shape; the sunset date ends v1 deliberately. Old columns stay readable until they are dropped.",
+    "source": "Lesson 20 checkYourself"
+  },
+  {
+    "id": "aa-L400-031",
+    "level": "L400",
+    "lesson": 20,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The backfill splits names like this. What does it print?",
+    "code": "def split(name):\n    given, _, family = name.partition(\" \")\n    return given, family\n\nprint(split(\"Barbara Liskov\"), split(\"Cher\"), split(\"Ada King Lovelace\"))",
+    "options": [
+      "('Barbara', 'Liskov') ('Cher', '') ('Ada', 'King')",
+      "('Barbara', 'Liskov') ('Cher', '') ('Ada', 'King Lovelace')",
+      "('Barbara', 'Liskov') ('Cher', '') ('Ada', 'Lovelace')",
+      "('Barbara', 'Liskov') ('Cher', 'Cher') ('Ada', 'King Lovelace')"
+    ],
+    "answer": 1,
+    "explanation": "str.partition splits at the first space and returns '' when there is none. Real names do not always split cleanly, one more reason to keep v1 rebuilding name from both parts.",
+    "source": "Lesson 20 code (split)"
+  },
+  {
+    "id": "aa-L400-032",
+    "level": "L400",
+    "lesson": 21,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Peak demand is 120 req/s and the mean time in the system is 45.2 ms. By Little's law, how many requests are in flight on average?",
+    "options": [
+      "26.5",
+      "54.2",
+      "2.7",
+      "5.4"
+    ],
+    "answer": 3,
+    "explanation": "L = λW = 120 x 0.0452 s = 5.4. Forgetting to convert milliseconds to seconds gives 5,424.",
+    "source": "Lesson 21 codeWalkthrough"
+  },
+  {
+    "id": "aa-L400-033",
+    "level": "L400",
+    "lesson": 21,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "One instance meets the p99 SLO up to 75 req/s. Plan at 80 % of that, size for a peak of 120 req/s, and add one spare. How many instances?",
+    "options": [
+      "2",
+      "3",
+      "4",
+      "1"
+    ],
+    "answer": 1,
+    "explanation": "ceil(120 / (75 x 0.8)) + 1 = ceil(2.0) + 1 = 3. Two serve the peak at exactly 80 %; dropping the spare means one failure overloads the survivor.",
+    "source": "Lesson 21 buildTask"
+  },
+  {
+    "id": "aa-L400-034",
+    "level": "L400",
+    "lesson": 21,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Sending the email inside POST /loans cuts SLO-safe capacity to 35 req/s per instance. With the same peak (120), headroom (80 %) and spare, how many instances are needed?",
+    "options": [
+      "4",
+      "7",
+      "6",
+      "5"
+    ],
+    "answer": 2,
+    "explanation": "ceil(120 / 28) + 1 = ceil(4.29) + 1 = 6, twice the async option. Rounding 4.29 down gives the tempting 5.",
+    "source": "Lesson 21 options"
+  },
+  {
+    "id": "aa-L400-035",
+    "level": "L400",
+    "lesson": 21,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Instances cost a hypothetical 0.10 USD per hour and average traffic is 40 req/s. What is the cost per million requests for 3 instances and for 6?",
+    "options": [
+      "2.08 and 2.08 USD",
+      "0.69 and 1.39 USD",
+      "2.08 and 4.17 USD",
+      "6.25 and 12.50 USD"
+    ],
+    "answer": 2,
+    "explanation": "Cost = instances x price / (avg rps x 3600) x 1e6: 0.30 / 144,000 x 1e6 = 2.08. Using the peak (120 req/s) instead of the average gives 0.69, which understates the real cost.",
+    "source": "Lesson 21 code (cost_per_million)"
+  },
+  {
+    "id": "aa-L400-036",
+    "level": "L400",
+    "lesson": 21,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "At 800 libraries the peak doubles to 240 req/s. With async email (75 req/s per instance) or async + cache (105 req/s), headroom 80 % and one spare, how many instances does each need?",
+    "options": [
+      "6 without cache, 4 with cache",
+      "5 without cache, 4 with cache",
+      "5 without cache, 5 with cache",
+      "4 without cache, 3 with cache"
+    ],
+    "answer": 1,
+    "explanation": "ceil(240 / 60) + 1 = 5 and ceil(240 / 84) + 1 = 4: the cache saves one instance only at this size. At 400 libraries both options need 3.",
+    "source": "Lesson 21 tryIt"
+  },
+  {
+    "id": "aa-L400-037",
+    "level": "L400",
+    "lesson": 21,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Each instance has 4 workers and a mean service time of 45.2 ms, so c / S is about 88.5 req/s. The base sizing divides the average (40 req/s) by it. How many instances does that give, and what is the offered utilization λS/c on that instance at the 120 req/s peak?",
+    "options": [
+      "1 instance, utilization 1.36",
+      "1 instance, utilization 0.45",
+      "2 instances, utilization 0.68",
+      "3 instances, utilization 0.45"
+    ],
+    "answer": 0,
+    "explanation": "ceil(40 / 88.5) = 1, and 120 / 88.5 = 1.36 > 1, so the queue grows without bound (the lab simulates 1.35 and p99 of 58 s). 0.45 is the utilization at the average, not at the peak.",
+    "source": "Lesson 21 failureLab"
+  },
+  {
+    "id": "aa-L400-038",
+    "level": "L400",
+    "lesson": 21,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "POST /loans is 20 % of the 120 req/s peak, and each confirmation email takes 150 ms in the outbox sender. How many emails are in flight, and how many sender slots does the plan use at 80 % headroom?",
+    "options": [
+      "3.6 in flight, 5 slots",
+      "3.6 in flight, 4 slots",
+      "18.0 in flight, 23 slots",
+      "24.0 in flight, 30 slots"
+    ],
+    "answer": 0,
+    "explanation": "Little's law: 120 x 0.2 x 0.150 s = 3.6; ceil(3.6 / 0.8) = 5. Four slots would run at 90 % busy, above the planned headroom.",
+    "source": "Lesson 21 options"
+  },
+  {
+    "id": "aa-L400-039",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "c / S is 88.5 req/s. Why plan with 75 req/s, and then only 80 % of it?",
+    "options": [
+      "75 is the average rate and 80 % converts it to the peak",
+      "The SLO requires every instance to idle 20 % of the time",
+      "88.5 was measured on a laptop, and production machines are about 15 % slower",
+      "88.5 is 100 % busy; 75 meets the SLO; 80 % leaves room for spikes"
+    ],
+    "answer": 3,
+    "explanation": "Near utilization 1 the queue's p99 jumps from about 245 ms to seconds. The benchmark finds the highest rate within the SLO, and headroom covers spikes, GC and deploys.",
+    "source": "Lesson 21 checkYourself"
+  },
+  {
+    "id": "aa-L400-040",
+    "level": "L400",
+    "lesson": 21,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "To save cost, the team drops the spare: 2 instances carry the 120 req/s peak. One fails at peak. What happens?",
+    "options": [
+      "The survivor runs at 80 % and p99 stays under 300 ms",
+      "Requests spill over to the database, which absorbs the extra load for a while",
+      "Nothing: the 20 % headroom covers a lost instance",
+      "The survivor runs at utilization about 1.35; p99 near 58 s"
+    ],
+    "answer": 3,
+    "explanation": "Headroom covers spikes, not half the fleet; one instance alone is far over capacity. That is why the plan is N + 1 and the gate checks p99 with one instance down.",
+    "source": "Lesson 21 tryIt"
+  },
+  {
+    "id": "aa-L400-041",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does the cross-tenant policy fault also fail 'cross-library reads', a tenancy criterion?",
+    "options": [
+      "The policy let the librarian in; scoped SQL then returned the rows",
+      "The fault also removes WHERE tenant_id from the SQL",
+      "Cross-library reads is computed directly from the policy requirement test results",
+      "TenantGuard is disabled whenever a policy allows a request"
+    ],
+    "answer": 0,
+    "explanation": "Tenant-scoped SQL cannot know the caller was not allowed; only the policy can. That is why the capstone layers both guards (ADR 0007).",
+    "source": "Lesson 22 checkYourself"
+  },
+  {
+    "id": "aa-L400-042",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why may the local model explain the scorecard but not decide the release?",
+    "options": [
+      "Its text can be fluent and wrong; code computes the verdict",
+      "Local models are not allowed to read JSON files",
+      "Release notes must always be written before the scorecard runs in CI",
+      "The model would need internet access to decide"
+    ],
+    "answer": 0,
+    "explanation": "Code computes GO/NO-GO from 19 criteria, and check_note() rejects notes that disagree. The model adds wording, never the decision.",
+    "source": "Lesson 22 checkYourself"
+  },
+  {
+    "id": "aa-L400-043",
+    "level": "L400",
+    "lesson": 22,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Someone loosens the cut-over budget to 6 % and runs the capstone with the buggy fines service. What happens?",
+    "options": [
+      "The run crashes because 6 % is not a valid budget",
+      "NO-GO: the fines criterion still fails at 5.4 %",
+      "NO-GO, because test_faults.py runs inside run_capstone.py itself",
+      "GO at mismatch rate 0.054: the weak threshold lets it pass"
+    ],
+    "answer": 3,
+    "explanation": "Thresholds are part of the gate; at 6 % a 5.4 % mismatch rate passes and the facade cuts over. test_faults.py pins the expected failures so such loosening is caught in CI.",
+    "source": "Lesson 22 tryIt"
+  },
+  {
+    "id": "aa-L400-044",
+    "level": "L400",
+    "lesson": 22,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The capstone's verdict logic, applied to a run with three failing criteria. What does it print?",
+    "code": "rows = [{\"pass\": True}] * 16 + [{\"pass\": False}] * 3\npassed = sum(r[\"pass\"] for r in rows)\nsummary = {\"passed\": passed, \"total\": len(rows),\n           \"verdict\": \"GO\" if passed == len(rows) else \"NO-GO\"}\nprint(summary)",
+    "options": [
+      "{'passed': 16, 'total': 19, 'verdict': 'NO-GO'}",
+      "{'passed': 16, 'total': 19, 'verdict': 'GO'}",
+      "{'passed': 3, 'total': 19, 'verdict': 'NO-GO'}",
+      "{'passed': 19, 'total': 19, 'verdict': 'NO-GO'}"
+    ],
+    "answer": 0,
+    "explanation": "GO requires every criterion to pass; 16 of 19 is NO-GO with exit code 1. There is no partial-credit threshold.",
+    "source": "Lesson 22 codeWalkthrough"
+  },
+  {
+    "id": "aa-L400-045",
+    "level": "L400",
+    "lesson": 22,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A capstone run logs 615 requests, and 1 of them returns 503. Does the availability criterion (>= 0.999) pass?",
+    "options": [
+      "No: 99.8374% is below 99.9%",
+      "Yes: one error is within any budget",
+      "Yes: 99.9187% is above 99.9%",
+      "No: 99.0000% is below 99.9%"
+    ],
+    "answer": 0,
+    "explanation": "614 / 615 = 99.8374 %, just under the 99.9 % threshold, so one failure is already too many at this volume. Small samples make tight SLOs strict.",
+    "source": "Lesson 22 rubric"
+  },
+  {
+    "id": "aa-L400-046",
+    "level": "L400",
+    "lesson": 22,
+    "type": "design",
+    "difficulty": 3,
+    "question": "The capstone puts the policy check before tenant-scoped SQL and TenantGuard. Why keep both layers instead of only one?",
+    "options": [
+      "Policy decides who may act; SQL scoping keeps queries in one tenant",
+      "Two layers halve the latency of each authorization",
+      "TenantGuard replaces the policy once it has reported 0 violations in a full run",
+      "The policy only runs in tests, the guard only in production"
+    ],
+    "answer": 0,
+    "explanation": "Each guard catches faults the other cannot see: the cross-tenant policy fault passes SQL scoping, while the unscoped-query fault passes the policy.",
+    "source": "Lesson 22 decisionRecords"
+  },
+  {
+    "id": "aa-L400-047",
+    "level": "L400",
+    "lesson": 22,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "With `--fault duplicate-delivery`, consumers are not idempotent. Which capstone criterion should turn the verdict NO-GO?",
+    "options": [
+      "Capacity N+1: p99 with one instance down",
+      "Outbox completeness: committed changes vs outbox rows",
+      "Tenant guard: statements that run without the current tenant id",
+      "Idempotent consumers: rows wrong after full redelivery"
+    ],
+    "answer": 3,
+    "explanation": "Redelivery is normal with at-least-once delivery; only a non-idempotent consumer turns it into wrong rows. The outbox itself still holds exactly one event per change.",
+    "source": "Lesson 22 rubric"
+  },
+  {
+    "id": "aa-L400-048",
+    "level": "L400",
+    "lesson": 22,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "A `--fault` run unexpectedly prints verdict GO. What does the lesson say this means?",
+    "options": [
+      "The model's release note overrode the verdict",
+      "A gate or threshold was weakened; test_faults.py pins it",
+      "Seeded faults are random and sometimes miss",
+      "The fault was injected only after the scorecard had already been computed"
+    ],
+    "answer": 1,
+    "explanation": "Faults are seeded and deterministic, so each must turn the verdict NO-GO; a GO points at a loosened gate. The model never touches the verdict.",
+    "source": "Lesson 22 troubleshooting"
+  },
+  {
+    "id": "aa-L400-049",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What does 'move traffic, not code' mean in the strangler-fig lab?",
+    "options": [
+      "All traffic is mirrored to the new service, which then answers every request",
+      "The monolith's code is deleted file by file while traffic stays put",
+      "A facade decides per request which implementation answers",
+      "Code is copied into the new service first, and traffic follows a week later"
+    ],
+    "answer": 2,
+    "explanation": "The facade's mode switch moves slices of traffic between implementations behind one port. In shadow mode the new service is compared, but members still get the legacy answer.",
+    "source": "Lesson 17 concepts"
+  },
+  {
+    "id": "aa-L400-050",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "How does the tenancy lab measure the noisy-neighbour effect?",
+    "options": [
+      "A bulk import holds the write lock; blocked neighbour writes are counted",
+      "It measures CPU usage per tenant while the overdue report runs",
+      "It counts rows of other tenants returned by the unscoped query",
+      "It compares each tenant's row count with the average row count across all tenants"
+    ],
+    "answer": 0,
+    "explanation": "BEGIN IMMEDIATE holds the write lock, and a neighbour's write fails with 'database is locked' when they share a file (20 of 20) and succeeds with separate files (0 of 20). Leaked rows measure isolation, not noise.",
+    "source": "Lesson 18 codeWalkthrough"
+  },
+  {
+    "id": "aa-L400-051",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What happens to `subject.email` when a decision is logged?",
+    "options": [
+      "It is logged in full, because audits need the identity",
+      "It is erased before writing and listed under `erased`",
+      "It is hashed with SHA-256 so that auditors can still match the same users",
+      "It is moved to a separate log file with longer retention"
+    ],
+    "answer": 1,
+    "explanation": "Like OPA's mask, /input/subject/email is removed and the path recorded, so the log stays useful without personal data. A hash of an email can often be reversed by guessing.",
+    "source": "Lesson 19 codeWalkthrough"
+  },
+  {
+    "id": "aa-L400-052",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does every release toggle in flags.json carry an owner and an expiry date?",
+    "options": [
+      "Expired flags switch themselves on for all users",
+      "The date tells the backfill job when to start",
+      "Release toggles are transitional; an expired one fails the build",
+      "The flag library deletes the flag and its code automatically on that date"
+    ],
+    "answer": 2,
+    "explanation": "A release toggle separates deploy from release and must be removed; gate_flags() turns an expired one into a failing check. Nothing is deleted or switched automatically.",
+    "source": "Lesson 20 glossary"
+  },
+  {
+    "id": "aa-L400-053",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does the lab record fitness metrics per rollout step instead of one result per build?",
+    "options": [
+      "A single green build hides failing steps and trends",
+      "Per-step records make each deploy run faster",
+      "CI systems cannot store more than one result per build or per pipeline run",
+      "Rollout steps are the only place errors can occur"
+    ],
+    "answer": 0,
+    "explanation": "The dashboard judges every step (errors, unbackfilled rows, fleet, flags), which is how the premature contract shows up. One final green state can hide 62 failed requests along the way.",
+    "source": "Lesson 20 concepts"
+  },
+  {
+    "id": "aa-L400-054",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What does fitness_capacity.py check, and when should it be re-run?",
+    "options": [
+      "That every instance runs exactly 4 workers; re-run after each scaling event",
+      "That the cloud bill stays under budget; re-run monthly",
+      "That the cache hit ratio is above 0.65; re-run nightly",
+      "p99 and peak share with one down; re-run when service times change"
+    ],
+    "answer": 3,
+    "explanation": "The gate keeps the plan true: p99 <= 300 ms and peak <= 80 % of capacity with one down. A code change elsewhere can change service times and silently invalidate the plan.",
+    "source": "Lesson 21 fitnessFunction"
+  },
+  {
+    "id": "aa-L400-055",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What does reuse.py do in the capstone?",
+    "options": [
+      "Imports the earlier labs by path, so their own code and fixes run",
+      "Replaces earlier lab code with simplified capstone versions",
+      "Copies the earlier labs into the capstone folder at startup",
+      "Downloads published versions of the earlier labs from a package registry"
+    ],
+    "answer": 0,
+    "explanation": "Running the real lesson code means a regression in any earlier fix shows up in the scorecard. Copies or simplified versions could drift from what the lessons teach.",
+    "source": "Lesson 22 codeWalkthrough"
+  }
+]

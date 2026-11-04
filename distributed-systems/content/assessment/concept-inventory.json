@@ -1,0 +1,257 @@
+[
+  {
+    "id": "ds-CI-01",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "A client's request to a server timed out. What does the client know?",
+    "options": [
+      "Nothing certain: it may or may not have run",
+      "The request did not run on the server",
+      "The server has crashed",
+      "The request ran, but the server's reply was lost on the way"
+    ],
+    "answer": 0,
+    "explanation": "A timeout only says no reply arrived in time; the request may have been lost, run slowly, or run with the reply lost (L100 #3, T23.4). That is why retries need idempotency keys.",
+    "source": "Lessons 3, 5, 23"
+  },
+  {
+    "id": "ds-CI-02",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Two events on different machines have wall-clock timestamps 10:00:00.002 and 10:00:00.005. Which is true?",
+    "options": [
+      "The first happened before the second",
+      "Either may have happened first",
+      "They are concurrent in the happened-before sense",
+      "The second caused the first"
+    ],
+    "answer": 1,
+    "explanation": "Clock skew can exceed 3 ms (problem 23-P7 computes a 7 ms bound), so wall clocks cannot order them. Whether they are causally related depends on messages, not times.",
+    "source": "Lessons 6, 23"
+  },
+  {
+    "id": "ds-CI-03",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Is retrying a failed request always safe?",
+    "options": [
+      "Yes, the server ignores duplicates automatically",
+      "Yes, as long as each retry uses exponential backoff with jitter",
+      "Only if the operation is idempotent or deduplicated",
+      "No, retries are never safe in distributed systems"
+    ],
+    "answer": 2,
+    "explanation": "Backoff protects the server from overload; it does not stop a non-idempotent operation from running twice (L100 #4 and #5).",
+    "source": "Lessons 4, 5"
+  },
+  {
+    "id": "ds-CI-04",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does 'exactly-once delivery' usually mean in a working system?",
+    "options": [
+      "The network never duplicates a message",
+      "The broker is configured to send each message exactly one time",
+      "Consumers acknowledge before processing",
+      "At-least-once delivery plus idempotent processing"
+    ],
+    "answer": 3,
+    "explanation": "Messages are redelivered after crashes; exactly-once *effect* comes from deduplication or idempotent handlers (L200 #8). Acking before processing gives at-most-once.",
+    "source": "Lessons 5, 8"
+  },
+  {
+    "id": "ds-CI-05",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A quorum system has N = 3, R = 2, W = 2. Which is true?",
+    "options": [
+      "Reads meet writes, but it may still not be linearizable",
+      "It is linearizable because R + W > N",
+      "Stale reads are possible because R < N",
+      "It tolerates two replicas being down"
+    ],
+    "answer": 0,
+    "explanation": "Overlap removes stale reads of finished writes, but lab 17 still found new-then-old inversions until read write-back was added. It tolerates one replica down, not two.",
+    "source": "Lessons 17, 24"
+  },
+  {
+    "id": "ds-CI-06",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does the CAP theorem forbid?",
+    "options": [
+      "Any system from being both consistent and available at any time",
+      "Atomic and always-available answers during message loss",
+      "Partition tolerance in a single data centre",
+      "Consensus in an asynchronous network"
+    ],
+    "answer": 1,
+    "explanation": "Gilbert and Lynch prove that no register can be both linearizable and always respond when messages may be lost. With no partition, both are possible; FLP, not CAP, is about consensus termination.",
+    "source": "Lesson 24 T24.3"
+  },
+  {
+    "id": "ds-CI-07",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does the FLP result mean for Raft?",
+    "options": [
+      "Raft can decide two different values",
+      "Raft only works with synchronised clocks",
+      "Raft stays safe but may not elect a leader in bad timing",
+      "Raft cannot tolerate even one crashed server in an asynchronous network"
+    ],
+    "answer": 2,
+    "explanation": "FLP rules out guaranteed termination for deterministic asynchronous consensus; Raft keeps safety always and relies on timing (randomised timeouts) for liveness.",
+    "source": "Lesson 24 T24.2"
+  },
+  {
+    "id": "ds-CI-08",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A server is 90% busy (M/M/1). Compared with 50% busy, the mean time a request spends in the system is about...",
+    "options": [
+      "1.8 times longer",
+      "the same",
+      "40% longer",
+      "5 times longer"
+    ],
+    "answer": 3,
+    "explanation": "W = (1/μ)/(1 - ρ): 10 service times at 0.9 vs 2 at 0.5, i.e. 5 times (T25.1). Linear intuition (1.8x) underestimates queueing.",
+    "source": "Lessons 16, 25"
+  },
+  {
+    "id": "ds-CI-09",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A request fans out to 100 servers that are each slow 1% of the time. Roughly how often is the request slow?",
+    "options": [
+      "About 63% of the time",
+      "About 1% of the time",
+      "About 10% of the time",
+      "Always"
+    ],
+    "answer": 0,
+    "explanation": "1 - 0.99^100 = 0.63 (Dean & Barroso; T25.3). The root waits for the slowest leaf.",
+    "source": "Lesson 25 T25.3"
+  },
+  {
+    "id": "ds-CI-10",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Adding more nodes to a system that shares writable state will...",
+    "options": [
+      "Always increase throughput, more slowly each time",
+      "Help up to a point, then may reduce throughput",
+      "Always increase throughput linearly",
+      "Never change throughput"
+    ],
+    "answer": 1,
+    "explanation": "Amdahl predicts diminishing returns; the USL's coherency term makes throughput fall beyond p* (T25.4).",
+    "source": "Lesson 25 T25.4"
+  },
+  {
+    "id": "ds-CI-11",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A lease-based leader pauses for 10 s (GC) and its lease expires. What prevents its stale writes?",
+    "options": [
+      "The leader re-checking its own clock just before every write",
+      "A longer lease duration",
+      "Storage that rejects writes with an old fencing token",
+      "Heartbeats from the followers"
+    ],
+    "answer": 2,
+    "explanation": "Checking the clock is racy after a pause; only the storage can reject a stale token (L200 #7, L300 #13). Safety must not depend on timing (T23.4).",
+    "source": "Lessons 7, 13"
+  },
+  {
+    "id": "ds-CI-12",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A majority of Raft servers store an entry. Is it committed?",
+    "options": [
+      "Yes, always",
+      "Only after every server stores it",
+      "Only after the client acknowledges it",
+      "Only if it is from the leader's current term"
+    ],
+    "answer": 3,
+    "explanation": "Raft's Figure 8: an old-term entry on a majority can still be overwritten; leaders commit current-term entries by counting replicas.",
+    "source": "Lessons 12, 27"
+  },
+  {
+    "id": "ds-CI-13",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which statement about a blameless post-mortem is correct?",
+    "options": [
+      "It assigns action items to owners without blaming people",
+      "It avoids naming what actions were taken",
+      "It is only needed when customers notice",
+      "It replaces fixing the root cause"
+    ],
+    "answer": 0,
+    "explanation": "Blameless means causes without indicting people; it still records actions, has owners, and is triggered by criteria such as monitoring failures (Google SRE ch. 15).",
+    "source": "Lesson 26"
+  },
+  {
+    "id": "ds-CI-14",
+    "level": "L500",
+    "lesson": 23,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Your EU service's personal data is replicated to a non-EEA region for disaster recovery. What is the correct first question?",
+    "options": [
+      "Is the data encrypted in transit?",
+      "What is the legal basis for this transfer?",
+      "Is the other region cheaper?",
+      "Did users click accept on the banner?"
+    ],
+    "answer": 1,
+    "explanation": "GDPR Chapter V governs transfers: adequacy or appropriate safeguards with enforceable rights (CJEU C-311/18). Encryption helps but does not answer the transfer question.",
+    "source": "Lesson 26"
+  },
+  {
+    "id": "ds-CI-15",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which kind of property can a finite test run prove violated?",
+    "options": [
+      "A liveness property",
+      "Both kinds equally",
+      "A safety property",
+      "Neither kind"
+    ],
+    "answer": 2,
+    "explanation": "Safety violations have finite witnesses; a liveness violation always has an extension that could still satisfy it (Alpern & Schneider; T23.3).",
+    "source": "Lesson 23 T23.3"
+  }
+]

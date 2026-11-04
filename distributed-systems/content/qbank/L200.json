@@ -1,0 +1,760 @@
+[
+  {
+    "id": "ds-L200-001",
+    "level": "L200",
+    "lesson": 7,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A lease's TTL is 8 s. The leader last renewed at t=23 and then crashed. When can another node acquire the lease?",
+    "options": [
+      "t=31",
+      "t=23",
+      "t=27",
+      "t=39"
+    ],
+    "answer": 0,
+    "explanation": "Failover time is the last renewal plus the TTL, so the key expires at 23 + 8. Before that, the CAS create-if-absent of any other node fails because the old lease still exists.",
+    "source": "Lesson 7 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L200-002",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why can't a paused leader simply check that it still holds the lease right before each write?",
+    "options": [
+      "Checking the lease costs a network round trip, which makes every write too slow to be practical for a leader",
+      "The lease store does not let a node read its own lease",
+      "It can pause again between the check and the write; only the resource can reject the late write",
+      "A paused leader's lease is renewed automatically, so the check always passes"
+    ],
+    "answer": 2,
+    "explanation": "Any check done by the leader can be outdated by the time the write lands, because a pause can fall between them. Fencing moves the check to the resource, which sees writes in their real order.",
+    "source": "Lesson 7 checkYourself; codeWalkthrough (work before renew)"
+  },
+  {
+    "id": "ds-L200-003",
+    "level": "L200",
+    "lesson": 7,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The storage keeps the highest fencing token it has seen. What does this print?",
+    "code": "class FencedStorage:\n    def __init__(self):\n        self.max_token, self.log = 0, []\n    def write(self, token, value):\n        if token < self.max_token:\n            return \"REJECTED\"\n        self.max_token = token\n        self.log.append(value)\n        return \"ok\"\n\nst = FencedStorage()\nr = [st.write(1, \"a\"), st.write(4, \"b\"), st.write(1, \"c\"), st.write(4, \"d\")]\nprint(r, st.log)",
+    "options": [
+      "['ok', 'ok', 'ok', 'ok'] ['a', 'b', 'c', 'd']",
+      "['ok', 'ok', 'REJECTED', 'ok'] ['a', 'b', 'd']",
+      "['ok', 'ok', 'REJECTED', 'REJECTED'] ['a', 'b']",
+      "['ok', 'REJECTED', 'ok', 'ok'] ['a', 'c', 'd']"
+    ],
+    "answer": 1,
+    "explanation": "Token 4 raises max_token, so the late write with token 1 is rejected, while another write with the same token 4 is still accepted (the check is token < max). Rejecting equal tokens would block the current leader's own second write.",
+    "source": "Lesson 7 codeWalkthrough (fenced storage)"
+  },
+  {
+    "id": "ds-L200-004",
+    "level": "L200",
+    "lesson": 7,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "n1 renews a 3 s lease at t=0, 1 and 2, then pauses; n2 takes over as soon as the lease expires. What does this print?",
+    "code": "TTL, last_renew, holder = 3, 0, []\nfor t in range(9):\n    if t <= 2:\n        last_renew = t  # n1 renews at t=0, 1, 2, then pauses\n    holder.append(\"1\" if t < last_renew + TTL else \"2\")\nprint(\"\".join(holder))",
+    "options": [
+      "111112222",
+      "111222222",
+      "111111111",
+      "111122222"
+    ],
+    "answer": 0,
+    "explanation": "The last renewal at t=2 keeps the lease until t=5, so n1 holds ticks 0-4 and n2 from t=5 on, matching the lab's '111112222'. Expecting n2 at t=3 forgets that the TTL runs from the last renewal.",
+    "source": "Lesson 7 expectedResults"
+  },
+  {
+    "id": "ds-L200-005",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "What is a fencing token?",
+    "options": [
+      "A number that grows with every new lease holder; the resource rejects lower ones",
+      "A random secret that the leader attaches to prove it is allowed to write to the shared resource",
+      "The lease's remaining TTL, sent with each write so stale writes expire",
+      "A per-write sequence number that the leader resets after each renewal"
+    ],
+    "answer": 0,
+    "explanation": "Each new holder gets a larger token (here the key's creation revision), so the resource can refuse anything from an older holder. It is not a secret or a time value; its only job is to be monotonic across holders.",
+    "source": "Lesson 7 glossary"
+  },
+  {
+    "id": "ds-L200-006",
+    "level": "L200",
+    "lesson": 7,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "With this renew(), a leader that wakes up from a long pause sometimes takes the lease back from the node that replaced it. What is the fix?",
+    "code": "def renew(self):\n    # refresh my lease\n    self.store.put(KEY, self.name, ttl=3)\n    return True",
+    "options": [
+      "Shorten the TTL so the paused leader's lease expires sooner",
+      "Call renew() twice in a row so that at least one of the two calls succeeds even after a long pause",
+      "Renew with a CAS on the revision you created; a mismatch means you lost the lease",
+      "Check the system clock before renewing and skip renewal if it jumped"
+    ],
+    "answer": 2,
+    "explanation": "An unconditional put overwrites whoever holds the key; renewing must be a compare-and-swap on your own revision so a woken ex-leader gets 409 and steps down. A shorter TTL changes timing, not this correctness bug.",
+    "source": "Lesson 7 concepts; codeWalkthrough (renew on my revision)"
+  },
+  {
+    "id": "ds-L200-007",
+    "level": "L200",
+    "lesson": 7,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "In the lab n1 pauses for 4 ticks right after renewing at t=2. With TTL 3 s n2 takes over at t=5. What happens with TTL 6 s?",
+    "options": [
+      "n2 takes over at t=8, just after the longer lease expires",
+      "n2 takes over at t=5 as before; the TTL does not matter",
+      "No failover: n1 resumes and renews before its lease expires",
+      "Both nodes hold the lease from t=5 until n1 renews"
+    ],
+    "answer": 2,
+    "explanation": "With TTL 6 the lease would last until t=8, but n1 wakes up earlier and renews, so the holder stays n1 every tick. A longer TTL hides short pauses but makes a real failover slower.",
+    "source": "Lesson 7 tryIt 2"
+  },
+  {
+    "id": "ds-L200-008",
+    "level": "L200",
+    "lesson": 7,
+    "type": "design",
+    "difficulty": 2,
+    "question": "Failover after a leader crash takes too long for your job scheduler. Which change addresses it without weakening safety?",
+    "options": [
+      "Remove fencing tokens so a new leader can start writing immediately",
+      "Let any node write while the lease is unclear, then merge their results once the new leader is known",
+      "Shorten the TTL and resign the lease on clean shutdown, keeping fencing on writes",
+      "Make the TTL much longer so the leader never loses its lease"
+    ],
+    "answer": 2,
+    "explanation": "A shorter TTL (renewed more often) and resign() on shutdown cut the gap, while fencing keeps a paused ex-leader harmless. Dropping fencing or letting everyone write trades a slow failover for corrupted data.",
+    "source": "Lesson 7 troubleshooting; caution"
+  },
+  {
+    "id": "ds-L200-009",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "How does a node acquire a free lease in the lab's store?",
+    "options": [
+      "A compare-and-swap that creates the key only if it is absent",
+      "A plain write of its name, last writer wins",
+      "Reading the key, then writing it if it looked empty",
+      "Asking every other node to vote, as in Raft"
+    ],
+    "answer": 0,
+    "explanation": "CAS create-if-absent (expect revision 0) succeeds for exactly one node, and its creation revision becomes the fencing token. Read-then-write has a race: two nodes can both see the key empty.",
+    "source": "Lesson 7 concepts; codeWalkthrough (CAS create-if-absent)"
+  },
+  {
+    "id": "ds-L200-010",
+    "level": "L200",
+    "lesson": 8,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A message is first received at t=5 with a 20 s visibility timeout. The consumer crashes every time before acking, and the broker uses MAX_RECEIVES = 3. When does the message move to the dead-letter queue?",
+    "options": [
+      "t=45",
+      "t=25",
+      "t=85",
+      "t=65"
+    ],
+    "answer": 3,
+    "explanation": "It is delivered at t=5, 25 and 45; when it becomes visible again at t=65 the receive count has reached the limit, so the broker dead-letters it instead of delivering a 4th time. t=45 is the third delivery, not the dead-lettering.",
+    "source": "Lesson 8 codeWalkthrough (dead-letter check first)"
+  },
+  {
+    "id": "ds-L200-011",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does acking a message before doing its work avoid duplicates but risk losing it?",
+    "options": [
+      "The broker ignores early acks and redelivers anyway, so nothing is lost",
+      "An early ack makes the visibility timeout infinite for that message",
+      "Early acks are rejected with 409, so the work is never started",
+      "A crash after the ack and before the work loses the message: at-most-once"
+    ],
+    "answer": 3,
+    "explanation": "Once acked, the broker deletes the message; if the consumer then crashes, nobody will ever process it. That is at-most-once delivery, the opposite trade-off from acking after the work.",
+    "source": "Lesson 8 checkYourself; caution"
+  },
+  {
+    "id": "ds-L200-012",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In the lab, the ledger shows 9 charges for 6 orders although every crash happened before any charge was lost. Where do the duplicates come from?",
+    "options": [
+      "The broker sent each message to two consumers at once on purpose",
+      "The poison message was retried and charged a different order",
+      "The effect ran, then the consumer crashed before acking, so the message was redelivered",
+      "The visibility timeout was too long, so the broker assumed the consumers were dead and delivered twice"
+    ],
+    "answer": 2,
+    "explanation": "The charge is appended before the crash check: the effect happened but the ack did not, so redelivery runs it again. A longer visibility timeout delays redelivery; it does not create duplicates.",
+    "source": "Lesson 8 concepts; codeWalkthrough (where duplicates come from)"
+  },
+  {
+    "id": "ds-L200-013",
+    "level": "L200",
+    "lesson": 8,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Nothing crashed, yet some orders were processed twice. Handling takes about 40 s and the visibility timeout is 30 s. What is happening?",
+    "options": [
+      "The broker is losing acks under load, so the consumers should switch to acking before they do the work",
+      "The message reappeared before the ack; raise the timeout or extend it while working",
+      "The consumer is not idempotent, so it crashes on the second delivery",
+      "The dead-letter queue is full, so the broker redelivers instead"
+    ],
+    "answer": 1,
+    "explanation": "When work outlasts the visibility timeout, the broker assumes the consumer died and hands the message to someone else. Acking first would trade duplicates for possible loss.",
+    "source": "Lesson 8 troubleshooting"
+  },
+  {
+    "id": "ds-L200-014",
+    "level": "L200",
+    "lesson": 8,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "You raise the visibility timeout from 3 s to 10 s in the lab's crash scenario. What changes?",
+    "options": [
+      "Duplicates disappear, because consumers have more time to ack",
+      "Fewer messages are dead-lettered, and the run finishes earlier",
+      "More duplicates, because messages stay hidden for longer",
+      "Same 9 charges, but the last delivery moves from t=9 to t=23"
+    ],
+    "answer": 3,
+    "explanation": "Crashes, not slowness, cause the duplicates here, so the count stays at 9; the longer timeout only delays redelivery and recovery. Expecting fewer duplicates confuses this with slow-but-alive consumers.",
+    "source": "Lesson 8 tryIt 1"
+  },
+  {
+    "id": "ds-L200-015",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Over 30 seeded runs, a good order was dead-lettered in 12 runs with MAX_RECEIVES 2 and in 2 runs with 5. What trade-off does the limit control?",
+    "options": [
+      "Higher limits remove duplicates, because each message is then processed fewer times by the consumers overall",
+      "Low limits make consumers idempotent, because each message runs only once",
+      "Low limits park poison messages fast but also dead-letter good messages hit by transient failures",
+      "The limit only matters for poison messages; good orders are never affected"
+    ],
+    "answer": 2,
+    "explanation": "Every failed delivery counts, including transient crashes, so a low limit sends good orders to the DLQ more often while a high one retries a poison message longer. Alert on DLQ depth either way.",
+    "source": "Lesson 8 tryIt 2; troubleshooting"
+  },
+  {
+    "id": "ds-L200-016",
+    "level": "L200",
+    "lesson": 8,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A consumer crashes after the effect on its first receive. What does this simulation print?",
+    "code": "ledger, acked = [], set()\ncrash_on = {1}  # crash after the effect on receive #1\nfor receive in [1, 2, 3]:\n    if \"m1\" in acked:\n        break\n    ledger.append(\"o1\")  # the effect\n    if receive in crash_on:\n        continue  # crashed: no ack\n    acked.add(\"m1\")\nprint(len(ledger), sorted(acked))",
+    "options": [
+      "1 ['m1']",
+      "3 ['m1']",
+      "2 []",
+      "2 ['m1']"
+    ],
+    "answer": 3,
+    "explanation": "Receive 1 charges and crashes before acking, so the message is redelivered; receive 2 charges again and acks, and the loop stops. One logical order produced two effects, the reason consumers must deduplicate.",
+    "source": "Lesson 8 concepts"
+  },
+  {
+    "id": "ds-L200-017",
+    "level": "L200",
+    "lesson": 8,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "This consumer deduplicates by message id, yet a restart after a crash still produces a duplicate charge. Why?",
+    "code": "processed = set()  # in memory\n\ndef handle(msg):\n    if msg.id in processed:\n        return ack(msg)\n    charge(msg.order)  # commits to the payments DB\n    processed.add(msg.id)\n    ack(msg)",
+    "options": [
+      "The handler should ack before charging so the broker stops redelivering",
+      "Message ids are reused by the broker, so checking them is pointless",
+      "The ack must happen inside the 'if' branch only, never after a charge",
+      "The processed id is not stored in the same transaction as the charge"
+    ],
+    "answer": 3,
+    "explanation": "A crash between charge() and processed.add() (or losing the in-memory set) leaves an effect with no record, so redelivery charges again. Store the processed id with the side effect in one transaction; acking first would risk loss.",
+    "source": "Lesson 8 caution"
+  },
+  {
+    "id": "ds-L200-018",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The lab's broker issues a new receipt (id#receives) for every delivery. What does that prevent?",
+    "options": [
+      "The same message ever being delivered more than once, to the same or to different consumers",
+      "A consumer whose timeout expired acking a later delivery it does not own",
+      "A poison message reaching the dead-letter queue",
+      "Two consumers processing different messages at once"
+    ],
+    "answer": 1,
+    "explanation": "A slow consumer still holding receipt #1 gets 409 (stale receipt) if it acks after the message was redelivered as #2, so it cannot delete work someone else is doing. It does not stop redelivery itself.",
+    "source": "Lesson 8 codeWalkthrough (new receipt per delivery)"
+  },
+  {
+    "id": "ds-L200-019",
+    "level": "L200",
+    "lesson": 9,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Keys are spread evenly. You grow from 8 nodes to 9. Roughly what share of keys moves with a consistent-hash ring (ideal) and with hash % N?",
+    "options": [
+      "ring about 11.1%, hash % N about 88.9%",
+      "ring about 88.9%, hash % N about 11.1%",
+      "ring about 12.5%, hash % N about 50.0%",
+      "ring about 11.1%, hash % N about 11.1%"
+    ],
+    "answer": 0,
+    "explanation": "A ring moves only the new node's share (1/9), while modulo changes the owner of every key whose remainder differs (8/9 of them). This is the lab's 18.9% vs 80.3% for 4 to 5 nodes.",
+    "source": "Lesson 9 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L200-020",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "With 1 vnode per node the busiest node had 2.20x the average load; with 100 vnodes, 1.03x. Why do more vnodes help?",
+    "options": [
+      "More vnodes give each node more memory, so it can hold more keys",
+      "More points per node make the arcs each node owns average out to an even share",
+      "Vnodes replicate each key to more nodes, splitting the reads",
+      "Vnodes switch placement from hashing to round-robin assignment, which is perfectly even by design"
+    ],
+    "answer": 1,
+    "explanation": "Each node owns many small arcs instead of one random-length arc, so the total share converges to 1/N. Vnodes do not replicate data; replication is a separate walk around the ring.",
+    "source": "Lesson 9 concepts; steps; codeWalkthrough (virtual nodes)"
+  },
+  {
+    "id": "ds-L200-021",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Node B serves about 40% of all requests because of one key, user:42. Why won't more vnodes fix it?",
+    "options": [
+      "More vnodes would fix it, but only after a full rebalance of all keys",
+      "Vnodes only help when nodes join or leave the cluster, not while the membership stays the same",
+      "The hash function is biased toward B, so the key needs a new hash",
+      "A key maps to one ring position; vnodes spread many keys, not one key's traffic"
+    ],
+    "answer": 3,
+    "explanation": "However many points exist, one key still lands on one node; vnodes even out the number of keys, not one key's popularity. Splitting the key (user:42#0..7) is what spreads its traffic.",
+    "source": "Lesson 9 checkYourself"
+  },
+  {
+    "id": "ds-L200-022",
+    "level": "L200",
+    "lesson": 9,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A tiny ring has points at 10 (A), 40 (B) and 70 (C). What owners does the lookup print?",
+    "code": "import bisect\npoints = [(10, \"A\"), (40, \"B\"), (70, \"C\")]\npos = [p for p, _ in points]\n\ndef owner(h):\n    return points[bisect.bisect(pos, h) % len(points)][1]\n\nprint([owner(h) for h in [5, 10, 41, 69, 95]])",
+    "options": [
+      "['A', 'A', 'C', 'C', 'A']",
+      "['A', 'B', 'C', 'C', 'A']",
+      "['A', 'B', 'B', 'C', 'C']",
+      "['B', 'B', 'C', 'A', 'A']"
+    ],
+    "answer": 1,
+    "explanation": "bisect finds the first point strictly after the hash, so 10 maps to B (not A), 41 and 69 to C, and 95 wraps to A. Assuming a hash equal to a point belongs to that point gives a different second entry.",
+    "source": "Lesson 9 codeWalkthrough (lookup)"
+  },
+  {
+    "id": "ds-L200-023",
+    "level": "L200",
+    "lesson": 9,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Key placement is different every time the service restarts, so caches start cold. What is wrong with this ring?",
+    "code": "import bisect\n\nclass Ring:\n    def __init__(self, nodes, vnodes=100):\n        self.points = sorted((hash(f\"{n}#{i}\"), n) for n in nodes for i in range(vnodes))\n        self.keys = [p for p, _ in self.points]\n    def owner(self, key):\n        i = bisect.bisect(self.keys, hash(key)) % len(self.keys)\n        return self.points[i][1]",
+    "options": [
+      "bisect needs the points list to be sorted in descending order",
+      "The ring needs at least 1,000 vnodes per node before the placement of keys becomes stable across runs",
+      "Python's hash() is salted per process; use a stable hash such as hashlib.md5",
+      "int() of a hash must be taken modulo the number of nodes"
+    ],
+    "answer": 2,
+    "explanation": "str hashes are randomised per process (PYTHONHASHSEED), so every restart builds a different ring; the lab's h() uses the first 8 bytes of md5 for the same position everywhere. More vnodes do not fix a moving hash.",
+    "source": "Lesson 9 troubleshooting; codeWalkthrough (stable hash)"
+  },
+  {
+    "id": "ds-L200-024",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Replicas are found by walking clockwise from the key. Why must the walk skip points until it has N distinct physical nodes?",
+    "options": [
+      "Distinct nodes keep the walk shorter, so lookups for replicas finish faster on a large ring of vnodes",
+      "The ring only stores one key per physical node",
+      "Neighbouring points may be vnodes of the same node, so copies there would die together",
+      "Skipping points makes key movement exactly 1/N when a node joins"
+    ],
+    "answer": 2,
+    "explanation": "With vnodes, two adjacent points can belong to one machine; replicas on it would not survive that machine's failure. The rule is about fault independence, not lookup speed.",
+    "source": "Lesson 9 concepts"
+  },
+  {
+    "id": "ds-L200-025",
+    "level": "L200",
+    "lesson": 9,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "You split hot key user:42 into 8 sub-keys user:42#0..7. The imbalance falls from 1.59 to 1.10. What new cost do you take on?",
+    "options": [
+      "Every other key must move to a new node after the split",
+      "The ring now needs 8 times as many vnodes per node to spread the sub-keys evenly across the nodes",
+      "Cache hit rates drop to zero for all keys on node B",
+      "Reads or writes of that logical key must touch and combine up to 8 sub-keys"
+    ],
+    "answer": 3,
+    "explanation": "Spreading one key across 8 positions spreads its traffic, but clients must now fan out and merge (or pick a sub-key) for that key. Other keys keep their placement.",
+    "source": "Lesson 9 tryIt 2"
+  },
+  {
+    "id": "ds-L200-026",
+    "level": "L200",
+    "lesson": 9,
+    "type": "design",
+    "difficulty": 2,
+    "question": "Your service needs ordered range scans over user ids and runs on a fixed set of 4 storage nodes. Is consistent hashing a good fit?",
+    "options": [
+      "Yes: consistent hashing keeps ranges together if you add enough vnodes",
+      "Yes: it is always better than modulo, whatever the access pattern",
+      "No: consistent hashing only works with more than 4 nodes",
+      "No: hashing scatters neighbouring ids; use range partitioning instead"
+    ],
+    "answer": 3,
+    "explanation": "Hashing destroys key order, so a range scan would hit every node; and with a fixed node set its main benefit (little movement on join/leave) does not apply. Vnodes make that worse, not better, for ranges.",
+    "source": "Lesson 9 useWhen"
+  },
+  {
+    "id": "ds-L200-027",
+    "level": "L200",
+    "lesson": 10,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A price is cached at t=5 s with a TTL of 45 s and no invalidation. The database value changes at t=20 s. Until when are reads stale, and for how long?",
+    "options": [
+      "until t=65 s (45 s of stale reads)",
+      "until t=50 s (30 s of stale reads)",
+      "until t=50 s (45 s of stale reads)",
+      "until t=20 s (0 s of stale reads)"
+    ],
+    "answer": 1,
+    "explanation": "The entry expires at 5 + 45 = 50 s, so readers see the old price from the change at 20 s until 50 s. The TTL counts from when the entry was cached, not from when the data changed.",
+    "source": "Lesson 10 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L200-028",
+    "level": "L200",
+    "lesson": 10,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Cache-aside with a TTL of 20 s, no invalidation, and one read every second from t=0 to t=59. How many database reads happen?",
+    "options": [
+      "3 database reads",
+      "60 database reads",
+      "20 database reads",
+      "2 database reads"
+    ],
+    "answer": 0,
+    "explanation": "A miss at t=0 fills the entry until t=20, another miss refills it until t=40, and one more until t=60: three loads for 60 reads. A shorter TTL means fresher data but more database reads (lab: TTL 5 s gave 12).",
+    "source": "Lesson 10 tryIt 1"
+  },
+  {
+    "id": "ds-L200-029",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "On a write, why does the lab delete the cache key instead of setting it to the new value?",
+    "options": [
+      "Deletes are idempotent; concurrent setters can leave an older value cached",
+      "Setting the value would bypass the TTL, so the new entry would stay cached forever after the write",
+      "Deleting is faster than setting in every cache product",
+      "The cache cannot store a value until the database has read it back"
+    ],
+    "answer": 0,
+    "explanation": "Two writers setting the cache can finish in the wrong order and leave the older value; a delete just forces the next reader to load the current one. Facebook's memcache uses delete-on-write for this reason.",
+    "source": "Lesson 10 checkYourself; inRealSystems"
+  },
+  {
+    "id": "ds-L200-030",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "With cache-aside, in which order should a write touch the two stores?",
+    "options": [
+      "Write the database first, then delete the cache key",
+      "Delete the cache key first, then write the database later",
+      "Write only the cache; it flushes to the database on expiry",
+      "Write the new value to the cache, then to the database"
+    ],
+    "answer": 0,
+    "explanation": "The database is the source of truth, so it is updated first and the cache entry is then removed; the TTL stays as a backstop. Writing only to the cache makes it the source of truth, which the lesson forbids.",
+    "source": "Lesson 10 concepts; caution"
+  },
+  {
+    "id": "ds-L200-031",
+    "level": "L200",
+    "lesson": 10,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A cold, popular key gets 50 concurrent reads, and the lab shows 50 database reads. What is the targeted fix?",
+    "options": [
+      "Raise the TTL from 60 s to an hour so the key expires, and is reloaded, far less often",
+      "Delete the key on every read so it is always fresh",
+      "Coalesce misses per key so one loader runs and the others share its result",
+      "Add more cache nodes so the misses spread out"
+    ],
+    "answer": 2,
+    "explanation": "Request coalescing (single-flight) lets one caller load while the other 49 wait for its value. A longer TTL makes herds rarer but each expiry still releases all concurrent misses at once.",
+    "source": "Lesson 10 glossary; steps"
+  },
+  {
+    "id": "ds-L200-032",
+    "level": "L200",
+    "lesson": 10,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this TTL cache print?",
+    "code": "class TTLCache:\n    def __init__(self, ttl):\n        self.ttl, self.d = ttl, {}\n    def get(self, k, now):\n        v = self.d.get(k)\n        return v[0] if v and now < v[1] else None\n    def set(self, k, v, now):\n        self.d[k] = (v, now + self.ttl)\n\nc = TTLCache(30)\nc.set(\"p\", 5, now=0)\nprint([c.get(\"p\", t) for t in (0, 29, 30)])",
+    "options": [
+      "[5, 5, 5]",
+      "[5, None, None]",
+      "[None, 5, None]",
+      "[5, 5, None]"
+    ],
+    "answer": 3,
+    "explanation": "get() returns the value only while now < expiry (0 + 30), so t=0 and t=29 hit and t=30 misses. Expiry is checked on read, with no background thread.",
+    "source": "Lesson 10 codeWalkthrough (TTL on read)"
+  },
+  {
+    "id": "ds-L200-033",
+    "level": "L200",
+    "lesson": 10,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "A slow reader loads price 5, a writer then stores 11 and deletes the key, and finally the slow reader caches 5. What bounds how long the stale 5 is served?",
+    "code": "def get_price(item):\n    v = cache.get(item)\n    if v is None:\n        v = db.read(item)  # slow: a writer may update + delete meanwhile\n        cache.set(item, v)\n    return v\n\ndef set_price(item, price):\n    db.write(item, price)\n    cache.delete(item)",
+    "options": [
+      "Nothing: the stale value stays cached until the next write",
+      "The delete: it runs last, so the cache is already fresh",
+      "The database: it rejects the reader's late cache fill",
+      "The TTL: the stale value stays until its entry expires"
+    ],
+    "answer": 3,
+    "explanation": "The reader's cache.set lands after the writer's delete, putting old data back, and only the TTL removes it (the lab serves 5 until t=30). This is why a TTL stays as a backstop even with invalidation.",
+    "source": "Lesson 10 tryIt 2; troubleshooting"
+  },
+  {
+    "id": "ds-L200-034",
+    "level": "L200",
+    "lesson": 10,
+    "type": "design",
+    "difficulty": 2,
+    "question": "The database spikes every 60 s because thousands of keys were loaded together and expire together. Which change fits best?",
+    "options": [
+      "Shorten the TTL to 5 s so each spike is smaller",
+      "Coalesce misses and add random jitter to the TTLs of keys loaded together",
+      "Remove the TTL and rely only on delete-on-write",
+      "Cache the whole table under a single key so that only one entry expires and reloads at a time"
+    ],
+    "answer": 1,
+    "explanation": "Jittered TTLs spread expiries over time and coalescing caps each key at one load. A shorter TTL makes spikes more frequent, and removing the TTL loses the backstop for missed invalidations.",
+    "source": "Lesson 10 troubleshooting"
+  },
+  {
+    "id": "ds-L200-035",
+    "level": "L200",
+    "lesson": 10,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A multi-tenant API caches 'GET /invoices/latest' under the key 'invoices:latest'. What is the risk?",
+    "options": [
+      "One tenant can be served another tenant's cached invoices",
+      "The key is too short, so the cache will reject it",
+      "Invoices will never be cached because the path is dynamic",
+      "The TTL will apply to every tenant's request separately"
+    ],
+    "answer": 0,
+    "explanation": "The cache key must include everything that changes the answer, including the tenant or user; otherwise data leaks across tenants. The lesson's caution is never to cache data across users or tenants with the same key.",
+    "source": "Lesson 10 caution"
+  },
+  {
+    "id": "ds-L200-036",
+    "level": "L200",
+    "lesson": 11,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "A token bucket has rate 5/s and burst 8. A client idle for a minute sends 30 requests at once. How many pass immediately?",
+    "options": [
+      "5 requests",
+      "30 requests",
+      "8 requests",
+      "13 requests"
+    ],
+    "answer": 2,
+    "explanation": "The bucket refills only up to the burst size, so an idle minute leaves 8 tokens, not 300. The rate limits the average afterwards; the burst limits what passes at once.",
+    "source": "Lesson 11 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L200-037",
+    "level": "L200",
+    "lesson": 11,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A token bucket (rate 2/s, burst 5) starts full. A client sends 10 requests at t=0 and 10 more at t=1.5 s. How many are allowed in total?",
+    "options": [
+      "10 requests (5 + 5)",
+      "8 requests (5 + 3)",
+      "6 requests (5 + 1)",
+      "13 requests (10 + 3)"
+    ],
+    "answer": 1,
+    "explanation": "The first batch drains the 5 tokens; by t=1.5 s the bucket has refilled 1.5 * 2 = 3 tokens, so 3 more pass. Assuming a full refill in 1.5 s ignores the rate.",
+    "source": "Lesson 11 codeWalkthrough (lazy refill)"
+  },
+  {
+    "id": "ds-L200-038",
+    "level": "L200",
+    "lesson": 11,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A limiter refills 0.25 tokens per second and the client's bucket holds 0.1 tokens. Using the lab's rule, what header does the 429 carry?",
+    "options": [
+      "Retry-After: 3",
+      "Retry-After: 4",
+      "Retry-After: 1",
+      "Retry-After: 0.9"
+    ],
+    "answer": 1,
+    "explanation": "The wait is (1 - 0.1) / 0.25 = 3.6 s, and the lab sends max(1, ceil(wait)) because delay-seconds is a whole number. Rounding down to 3 would make the client retry too early and fail again.",
+    "source": "Lesson 11 concepts; codeWalkthrough"
+  },
+  {
+    "id": "ds-L200-039",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "5 requests arrive at t=0.99 s and 5 at t=1.00 s. A fixed 5-per-second window allows 10; a token bucket (rate 5, burst 5) allows 5. Why the difference?",
+    "options": [
+      "The token bucket counts the requests twice, once per window",
+      "The window resets at the boundary, so two full windows fit into 10 ms",
+      "The fixed window refills continuously, so it is always more generous",
+      "The bucket rejects requests that arrive within 1 ms of each other"
+    ],
+    "answer": 1,
+    "explanation": "A fixed window forgets everything at t=1.00, so a burst straddling the boundary gets double the limit. A token bucket tracks tokens continuously, so the burst size caps any short interval.",
+    "source": "Lesson 11 tryIt 1"
+  },
+  {
+    "id": "ds-L200-040",
+    "level": "L200",
+    "lesson": 11,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this token bucket (rate 2/s, burst 3) print?",
+    "code": "class TokenBucket:\n    def __init__(self, rate, burst):\n        self.rate, self.burst, self.tokens, self.last = rate, burst, float(burst), 0.0\n    def allow(self, now):\n        self.tokens = min(self.burst, self.tokens + (now - self.last) * self.rate)\n        self.last = now\n        if self.tokens >= 1:\n            self.tokens -= 1\n            return True\n        return False\n\nb = TokenBucket(rate=2, burst=3)\nprint(sum(b.allow(t) for t in [0, 0, 0, 0, 0.4, 0.5, 1.0, 1.0]))",
+    "options": [
+      "5",
+      "3",
+      "4",
+      "8"
+    ],
+    "answer": 0,
+    "explanation": "Three requests at t=0 drain the bucket and the fourth is refused; 0.8 tokens by t=0.4 is not enough, 1.0 at t=0.5 allows one, and 1.0 at t=1.0 allows one more. Tokens are computed lazily when each request arrives.",
+    "source": "Lesson 11 codeWalkthrough (lazy refill)"
+  },
+  {
+    "id": "ds-L200-041",
+    "level": "L200",
+    "lesson": 11,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Your API runs on 4 instances, each with a per-client token bucket of 10 requests/s. A client measures about 40 requests/s accepted. Why?",
+    "options": [
+      "The token bucket refills four times faster under load",
+      "The client ignores Retry-After, so its retries are counted as new requests",
+      "Each instance has its own buckets; share the counters or divide the limit",
+      "The burst size is added to the rate on every instance"
+    ],
+    "answer": 2,
+    "explanation": "With in-memory buckets per instance, a client spread across 4 instances gets 4 independent limits. Share the counters (for example in Valkey) or set each instance to a quarter of the limit.",
+    "source": "Lesson 11 troubleshooting; simulatorVsReal"
+  },
+  {
+    "id": "ds-L200-042",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which value should a per-client rate limiter be keyed on?",
+    "options": [
+      "An authenticated identity such as the API key or user id",
+      "An X-Client-Id header that the client chooses itself",
+      "The User-Agent string sent by the client library",
+      "The request path, so each endpoint gets one bucket"
+    ],
+    "answer": 0,
+    "explanation": "A key the client can set freely can be spoofed to bypass its own limit or exhaust someone else's. The lab uses X-Client-Id for simplicity; the caution says to use an authenticated identity in real systems.",
+    "source": "Lesson 11 caution"
+  },
+  {
+    "id": "ds-L200-043",
+    "level": "L200",
+    "lesson": 11,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Alice honours Retry-After and Bob retries every 0.1 s. Both get 12 successful requests. What did ignoring Retry-After cost?",
+    "options": [
+      "Bob finished much later than Alice, because the limiter blocked his client for every rejected try",
+      "35 rejected requests for Bob versus 4 for Alice, for no extra successes",
+      "Bob got fewer successes because his bucket was emptied",
+      "Nothing: the server handles 429s for free"
+    ],
+    "answer": 1,
+    "explanation": "Bob finished about the same time (3.5 s vs 4 s) with the same 12 successes but sent 35 rejected requests, load the server still had to handle. Honouring Retry-After gets the same result with far less waste.",
+    "source": "Lesson 11 expectedResults; steps"
+  },
+  {
+    "id": "ds-L200-044",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why are per-client rate limits not enough on their own to protect a service from overload?",
+    "options": [
+      "They only work for clients that send the Retry-After header",
+      "They reject requests only after the service has already done the work, so they save no capacity",
+      "They require a shared clock between every client and the server",
+      "They cap each client's rate but do not see total load across all clients"
+    ],
+    "answer": 3,
+    "explanation": "Many well-behaved clients, each within its limit, can still exceed capacity together; that needs load shedding based on the server's own state (lesson 16). Rate limiting is about fairness between callers.",
+    "source": "Lesson 11 useWhen"
+  }
+]

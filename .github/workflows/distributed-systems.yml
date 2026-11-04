@@ -1,0 +1,423 @@
+# Root-level CI for the distributed-systems topic (GENERATED from distributed-systems/.github/workflows/labs.yml by tools/sync_root_ci.py).
+# kb/ is the repository root; every job runs inside distributed-systems/. Edit the topic file, then re-run the script.
+# Runs every L100 and L200 lab demo, its unittest suite and its tryIt script on the target platforms:
+# macos-latest (Apple silicon arm64, like the Mac mini), windows-latest (like the Windows 11 PC) and
+# ubuntu-latest. The labs are stdlib-only: no pip dependencies. Agent-assist runs ONLY against the
+# vendored deterministic fake model server (no model download). The optional Compose lab runs on
+# Linux with Docker and with Podman (podman-compose). L200 adds the etcd (lesson 7) and Valkey
+# (lesson 10) equivalents on Linux only; the build-task tests run against the reference solutions.
+# L300 adds lessons 12-16 (same matrix; stdlib only; failure labs are seeded) and the `otel` job, which installs
+# the pinned OpenTelemetry packages for lesson 15's otel_equivalent.py (not runnable in the authoring sandbox).
+# L400 adds lessons 17-21 and the capstone (same matrix; stdlib only; seeded simulations): demo, reference solution,
+# tests, fail-before proofs for the build task AND the fitness function, tryIt; plus the `automerge` job (Node 24 +
+# @automerge/automerge 3.3.2, lesson 18) and the `tla` job (TLC from tla2tools.jar v1.7.4 on Election.tla, lesson 21).
+# L500 (theory) adds lessons 23-25's seeded proof checks + tests on the same matrix, and the `l500-checks` job:
+# research/l500_checks.py (theorem outputs, problem-set and exam numbers), check_l500_qbank.py and qbank_checks.py.
+name: distributed-systems labs
+
+on:
+  push:
+    paths: ['distributed-systems/**', 'shared/**', '.github/workflows/distributed-systems.yml']
+  pull_request:
+    paths: ['distributed-systems/**', 'shared/**', '.github/workflows/distributed-systems.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-labs:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - { dir: 01-setup-local-lab,        demo: "lab.py demo 3" }
+          - { dir: 02-two-services,           demo: "two_services.py" }
+          - { dir: 03-timeouts,               demo: "timeouts.py" }
+          - { dir: 04-retries-backoff-jitter, demo: "retries.py" }
+          - { dir: 05-idempotency-keys,       demo: "idempotency.py" }
+          - { dir: 06-lamport-clocks,         demo: "lamport.py" }
+    defaults:
+      run:
+        shell: bash
+        working-directory: distributed-systems/labs/L100/${{ matrix.lab.dir }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # "3.12" (latest 3.12 build per OS): python.org ships no Windows/macOS installers for
+          # 3.12 security releases, so an exact patch pin may not exist on every runner.
+          python-version: "3.12"
+      - name: Dependencies
+        run: echo "stdlib only - nothing to install" && python --version && python -c "import platform; print(platform.platform(), platform.machine())"
+      - name: Run demo
+        run: python ${{ matrix.lab.demo }}
+      - name: Run tests
+        run: python -m unittest -v
+      - name: Run tryIt experiments
+        run: python try_it.py
+      - name: Agent assist (fake model server)
+        if: matrix.lab.dir == '04-retries-backoff-jitter'
+        run: python agent_assist.py --fake
+
+  python-labs-l200:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - { dir: 07-leader-election-leases,  demo: "election.py",  solution: "solution_election.py" }
+          - { dir: 08-at-least-once-messaging, demo: "broker.py",    solution: "solution_broker.py" }
+          - { dir: 09-consistent-hashing,      demo: "ring.py",      solution: "solution_ring.py" }
+          - { dir: 10-caching-invalidation,    demo: "cache.py",     solution: "solution_cache.py" }
+          - { dir: 11-rate-limiting,           demo: "ratelimit.py", solution: "solution_ratelimit.py" }
+    defaults:
+      run:
+        shell: bash
+        working-directory: distributed-systems/labs/L200/${{ matrix.lab.dir }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run demo
+        run: python ${{ matrix.lab.demo }}
+      - name: Run build-task reference solution
+        run: python ${{ matrix.lab.solution }}
+      - name: Run tests (lesson + build task against the solution)
+        run: python -m unittest -v
+      - name: Run tryIt experiments
+        run: python try_it.py
+      - name: Agent assist (fake model server)
+        if: matrix.lab.dir == '09-consistent-hashing'
+        run: python agent_assist.py --fake
+
+  python-labs-l300:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - { dir: 12-raft-replicated-log,          demo: "raft.py",          solution: "solution_raft.py" }
+          - { dir: 13-partitions-fault-injection,   demo: "partition.py",     solution: "solution_partition.py" }
+          - { dir: 14-sagas-compensation,           demo: "saga.py",          solution: "solution_saga.py" }
+          - { dir: 15-distributed-tracing,          demo: "tracing.py",       solution: "solution_tracing.py" }
+          - { dir: 16-backpressure-load-shedding,   demo: "backpressure.py",  solution: "solution_backpressure.py" }
+    defaults:
+      run:
+        shell: bash
+        working-directory: distributed-systems/labs/L300/${{ matrix.lab.dir }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run demo (shows the injected fault)
+        run: python ${{ matrix.lab.demo }}
+      - name: Run hardened reference solution
+        run: python ${{ matrix.lab.solution }}
+      - name: Run tests (lesson + build task against the solution)
+        run: python -m unittest -v
+      - name: Failure lab proof - build-task tests must FAIL against the unmodified lesson file
+        run: |
+          if BUILD_TARGET=mine python -m unittest test_build_task; then
+            echo "expected the build-task tests to fail against the lesson file"; exit 1
+          fi
+      - name: Run tryIt experiments
+        run: python try_it.py
+      - name: Agent assist (fake model server)
+        if: matrix.lab.dir == '13-partitions-fault-injection'
+        run: python agent_assist.py --fake
+      - name: Real-clock overload target (Python cross-check of the k6 load)
+        if: matrix.lab.dir == '16-backpressure-load-shedding'
+        run: python serve_realtime.py --check
+
+  python-labs-l400:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - { dir: 17-consistency-quorums,     demo: "quorum.py",      solution: "solution_quorum.py" }
+          - { dir: 18-crdts-local-first,       demo: "crdts.py",       solution: "solution_crdts.py" }
+          - { dir: 19-multi-region,            demo: "multiregion.py", solution: "solution_multiregion.py" }
+          - { dir: 20-chaos-engineering,       demo: "chaos.py",       solution: "solution_chaos.py" }
+          - { dir: 21-verifying-correctness,   demo: "modelcheck.py",  solution: "solution_modelcheck.py" }
+    defaults:
+      run:
+        shell: bash
+        working-directory: distributed-systems/labs/L400/${{ matrix.lab.dir }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run demo (the measured options and the failure lab)
+        run: python ${{ matrix.lab.demo }}
+      - name: Run reference solution (the decided design)
+        run: python ${{ matrix.lab.solution }}
+      - name: Linearizability checker on lab 17 histories
+        if: matrix.lab.dir == '21-verifying-correctness'
+        run: python lincheck.py
+      - name: Run tests (lesson + build task + fitness function against the solution)
+        run: python -m unittest -v
+      - name: Failure lab proof - build-task tests must FAIL against the unmodified lesson file
+        run: |
+          if BUILD_TARGET=mine python -m unittest test_build_task; then
+            echo "expected the build-task tests to fail against the lesson file"; exit 1
+          fi
+      - name: Fitness function proof - it must FAIL against the unmodified lesson file
+        run: |
+          if BUILD_TARGET=mine python -m unittest test_fitness; then
+            echo "expected the fitness function to fail against the lesson file"; exit 1
+          fi
+      - name: Run tryIt experiments
+        run: python try_it.py
+
+  python-labs-l500:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - { dir: 23-system-models-time,       demo: "clocks_proofs.py" }
+          - { dir: 24-impossibility-consensus,  demo: "consensus_proofs.py" }
+          - { dir: 25-performance-theory,       demo: "perf_proofs.py" }
+    defaults:
+      run:
+        shell: bash
+        working-directory: distributed-systems/labs/L500/${{ matrix.lab.dir }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run the theorem checks (seeded; output must match the lab README)
+        run: python ${{ matrix.lab.demo }}
+      - name: Run tests
+        run: python -m unittest -v
+
+  l500-checks:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: distributed-systems
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Theorem outputs, problem-set and exam numbers
+        run: python research/l500_checks.py
+      - name: L500 question bank + concept inventory rules
+        run: python research/check_l500_qbank.py
+      - name: Recompute every qbank calculation and run every code-reading snippet (L100-L500)
+        run: python research/qbank_checks.py
+
+  capstone:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: distributed-systems/labs/L400/22-capstone
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run the pipeline once
+        run: python pipeline.py
+      - name: Scorecard (exit code 0 only if every criterion passes) + agent explanation against the fake model server
+        run: python run_capstone.py --explain --fake
+      - name: Milestone tests
+        run: python -m unittest -v
+      - name: Run tryIt experiments
+        run: python try_it.py
+
+  automerge:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: distributed-systems/labs/L400/18-crdts-local-first
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Install @automerge/automerge 3.3.2 (pinned in package.json)
+        run: npm install --no-audit --no-fund
+      - name: Automerge <-> lab 18 cross-check
+        run: node automerge_equivalent.mjs
+
+  tla:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: distributed-systems/labs/L400/21-verifying-correctness
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Fetch tla2tools.jar v1.7.4 and check its published SHA-1
+        run: |
+          curl -fsSL -o tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+          echo "bee4a54f3ee3d4afc347c3240ec2d9e93b075104  tla2tools.jar" | sha1sum -c -
+      - name: TLC must find the bug (PersistVote = FALSE)
+        run: |
+          if java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC -workers 1 -config Election.cfg Election.tla; then
+            echo "expected TLC to report an invariant violation"; exit 1
+          fi
+      - name: TLC must find no error with the fix (PersistVote = TRUE)
+        run: java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC -workers 1 -config ElectionFixed.cfg Election.tla
+
+  otel:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: distributed-systems/labs/L300/15-distributed-tracing
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install pinned OpenTelemetry packages (1.45.1)
+        run: python -m pip install -r requirements-otel.txt
+      - name: OpenTelemetry <-> lab traceparent cross-check
+        run: python otel_equivalent.py
+
+  shared-local-agent:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: distributed-systems/labs/_shared/local_agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Vendored helper tests (fake server only)
+        run: python -m unittest -v
+
+  compose-docker:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: distributed-systems/labs/L100/01-setup-local-lab
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start 3 nodes with Docker Compose (image docker.io/library/python:3.12.16-slim)
+        run: docker compose up -d
+      - name: Health-check every node
+        run: |
+          for port in 8001 8002 8003; do
+            for i in $(seq 1 30); do
+              curl -fsS "http://127.0.0.1:${port}/health" && echo && break
+              sleep 1
+            done
+            curl -fsS "http://127.0.0.1:${port}/health" > /dev/null
+          done
+      - name: Stop
+        if: always()
+        run: docker compose down
+
+  compose-podman:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: distributed-systems/labs/L100/01-setup-local-lab
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install podman-compose (podman itself comes with the runner image)
+        run: podman --version && python -m pip install "podman-compose==1.6.0"
+      - name: Start 3 nodes with podman-compose
+        run: podman-compose up -d
+      - name: Health-check every node
+        run: |
+          for port in 8001 8002 8003; do
+            for i in $(seq 1 30); do
+              curl -fsS "http://127.0.0.1:${port}/health" && echo && break
+              sleep 1
+            done
+            curl -fsS "http://127.0.0.1:${port}/health" > /dev/null
+          done
+      - name: Stop
+        if: always()
+        run: podman-compose down
+
+  etcd:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: distributed-systems/labs/L200/07-leader-election-leases
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Start etcd v3.7.3 (container) and fetch etcdctl from the same release
+        run: |
+          docker run -d --name etcd -p 2379:2379 gcr.io/etcd-development/etcd:v3.7.3 /usr/local/bin/etcd \
+            --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://127.0.0.1:2379
+          curl -fsSL https://github.com/etcd-io/etcd/releases/download/v3.7.3/etcd-v3.7.3-linux-amd64.tar.gz | tar xz
+          echo "ETCDCTL=$PWD/etcd-v3.7.3-linux-amd64/etcdctl" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do ./etcd-v3.7.3-linux-amd64/etcdctl endpoint health && break; sleep 1; done
+      - name: Lease + CAS + fencing token + election API on real etcd
+        run: python etcd_equivalent.py
+      - name: Stop
+        if: always()
+        run: docker rm -f etcd
+
+  valkey:
+    runs-on: ubuntu-24.04
+    services:
+      valkey:
+        image: docker.io/valkey/valkey:9.1.3
+        ports:
+          - 6379:6379
+    defaults:
+      run:
+        working-directory: distributed-systems/labs/L200/10-caching-invalidation
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Wait for Valkey
+        run: for i in $(seq 1 30); do python -c "import socket; socket.create_connection(('127.0.0.1', 6379), 1)" && break; sleep 1; done
+      - name: Cache-aside on real Valkey (SET EX, DEL, SET NX EX)
+        run: python valkey_equivalent.py

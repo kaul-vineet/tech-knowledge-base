@@ -1,0 +1,1514 @@
+[
+ {
+  "id": "cqrs-read-models",
+  "number": 12,
+  "level": "L300",
+  "title": "CQRS and read models: projections that survive crashes",
+  "phase": "Harden",
+  "category": "data",
+  "description": "Split Library Loans into a write model (the lesson-8 aggregate over an event log) and a read model built by a projector; measure the consistency window, crash the projector, and make it checkpointed and idempotent.",
+  "outcome": "You can build a projection with a checkpoint, measure how far it lags, detect drift, rebuild it, and make it survive a crash without losing or double-counting events.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux); unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100.",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "Commands go to the Member aggregate and append events; a projector thread turns events into a query table and logs `lag_ms` as JSON lines.",
+   "The base projector works until it is killed between saving its checkpoint and applying the event; then the view silently loses an event."
+  ],
+  "prerequisites": [
+   "Lesson 8 (aggregates)",
+   "Lesson 9 (events, idempotent consumers)"
+  ],
+  "glossary": [
+   {
+    "term": "Read model (projection)",
+    "meaning": "Query-shaped tables built only from events; disposable."
+   },
+   {
+    "term": "Checkpoint",
+    "meaning": "The last event seq a projector has applied, stored with the view."
+   },
+   {
+    "term": "Consistency window",
+    "meaning": "Time from a committed event to it being visible in the read model."
+   },
+   {
+    "term": "Drift",
+    "meaning": "Rows where the live view differs from a fresh rebuild."
+   }
+  ],
+  "concepts": [
+   "Commands change the aggregate; queries read a separate, eventually consistent view.",
+   "View change + checkpoint in one transaction; idempotent handlers tolerate replays.",
+   "A read model can always be rebuilt from the event log; drift checks prove it."
+  ],
+  "steps": [
+   {
+    "title": "Run the demo",
+    "detail": "cd labs/L300/12-cqrs-read-models && python app.py",
+    "expected": "40 commands -> 33 events, 7 rejected; consistency window p50 about 10 ms; most reads straight after a command are stale; rebuild: view identical, drift [].",
+    "ifNot": "Lag numbers vary per machine; the event counts and the view must match the README."
+   },
+   {
+    "title": "Read the projector log",
+    "detail": "Open out/projector.jsonl: one JSON object per applied event with seq, type and lag_ms.",
+    "expected": "33 lines; lag_ms below about 60 ms with the 20 ms poll.",
+    "ifNot": "Run step 1 first; it writes the file.",
+    "mac": "head -3 out/projector.jsonl",
+    "windows": "Get-Content out\\projector.jsonl -TotalCount 3"
+   },
+   {
+    "title": "Crash the projector (failureLab)",
+    "detail": "python failure_lab.py",
+    "expected": "base: died at seq 31, restarted at 33 of 33, drift 2 rows, rebuild() repairs it; solution: drift 0 rows.",
+    "ifNot": "The crash point is seeded (random.Random(12)); a different seq means the workload changed."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 11 tests ... OK (the symptom test pins the base projector's drift).",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Harden it (build task)",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "Before your change 3 tests fail (crash leaves drift, checkpoint moves past the crash, replay double-counts); after it, OK. Without CHECK_MINE the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   }
+  ],
+  "code": "\"\"\"Read side: a projector turns events into a query-shaped read model. Run the demo: python app.py\n\nWorks on the happy path. Hidden weakness (the failureLab): the checkpoint moves BEFORE the read model changes,\nin a separate transaction, and the counters are not idempotent. A crash in between skips an event for good.\n\"\"\"\nimport json\nimport sqlite3\nimport sys\nimport time\n\nREAD_SCHEMA = \"\"\"\nCREATE TABLE IF NOT EXISTS member_loans (member_id TEXT PRIMARY KEY, active INTEGER NOT NULL);\nCREATE TABLE IF NOT EXISTS book_status (book_id TEXT PRIMARY KEY, member_id TEXT);\nCREATE TABLE IF NOT EXISTS checkpoint (projector TEXT PRIMARY KEY, seq INTEGER NOT NULL);\n\"\"\"\n\n\nclass SimulatedCrash(Exception):\n    \"\"\"Seeded fault: the projector process dies at a chosen event.\"\"\"\n\n\ndef json_log(record, stream=sys.stdout):\n    print(json.dumps(record, sort_keys=True), file=stream)  # structured log: one JSON object per line\n\n\nclass Projector:\n    name = \"loans_view\"\n\n    def __init__(self, store, read_db=None, log=json_log, crash_at_seq=None):\n        self.store, self.log, self.crash_at_seq = store, log, crash_at_seq\n        self.db = read_db or sqlite3.connect(\":memory:\", check_same_thread=False)  # read model: its own database\n        self.db.executescript(READ_SCHEMA)\n\n    def position(self):  # checkpoint: the last event seq this projector has handled\n        row = self.db.execute(\"SELECT seq FROM checkpoint WHERE projector = ?\", (self.name,)).fetchone()\n        return row[0] if row else 0\n\n    def _save_checkpoint(self, seq):\n        with self.db:\n            self.db.execute(\"INSERT OR REPLACE INTO checkpoint VALUES (?, ?)\", (self.name, seq))\n\n    def apply(self, event_type, data):\n        member, book = data[\"memberId\"], data[\"bookId\"]\n        delta = 1 if event_type == \"LoanCreated\" else -1  # NOT idempotent: applying twice counts twice\n        self.db.execute(\"INSERT INTO member_loans VALUES (?, 0) ON CONFLICT(member_id) DO NOTHING\", (member,))\n        self.db.execute(\"UPDATE member_loans SET active = active + ? WHERE member_id = ?\", (delta, member))\n        self.db.execute(\"INSERT OR REPLACE INTO book_status VALUES (?, ?)\",\n                        (book, member if event_type == \"LoanCreated\" else None))\n\n    def run_once(self):\n        events = self.store.read_after(self.position())\n        for seq, event_type, data, recorded_at in events:\n            self._save_checkpoint(seq)  # weakness: position moves first, in its own transaction ...\n            if seq == self.crash_at_seq:\n                raise SimulatedCrash(f\"projector died at seq {seq}\")\n            with self.db:  # ... the read model changes in a second transaction\n                self.apply(event_type, data)\n            # consistency window: time from the write-side commit to this event being visible in the view\n            self.log({\"evt\": \"projected\", \"projector\": self.name, \"seq\": seq, \"type\": event_type,\n                      \"lag_ms\": round((time.time() - recorded_at) * 1000, 1)})\n        return len(events)\n\n    def rebuild(self):\n        \"\"\"Drop the view and replay every event from seq 0: the read model is disposable, the log is not.\"\"\"\n        with self.db:\n            self.db.execute(\"DELETE FROM member_loans\")\n            self.db.execute(\"DELETE FROM book_status\")\n            self.db.execute(\"DELETE FROM checkpoint WHERE projector = ?\", (self.name,))\n        replayed = 0\n        while (count := self.run_once()):\n            replayed += count\n        self.log({\"evt\": \"rebuilt\", \"projector\": self.name, \"replayed\": replayed, \"position\": self.position()})\n        return replayed\n\n\nclass LoansView:\n    \"\"\"Queries: cheap, shaped for the screen, and possibly a few milliseconds behind the write side.\"\"\"\n\n    def __init__(self, db):\n        self.db = db\n\n    def active_loans(self, member_id):\n        row = self.db.execute(\"SELECT active FROM member_loans WHERE member_id = ?\", (member_id,)).fetchone()\n        return row[0] if row else 0\n\n    def holder(self, book_id):\n        row = self.db.execute(\"SELECT member_id FROM book_status WHERE book_id = ?\", (book_id,)).fetchone()\n        return row[0] if row else None\n\n    def snapshot(self):\n        return {\"member_loans\": dict(self.db.execute(\"SELECT * FROM member_loans ORDER BY member_id\").fetchall()),\n                \"book_status\": dict(self.db.execute(\"SELECT * FROM book_status ORDER BY book_id\").fetchall())}\n\n\ndef drift(store, view_db, projector_cls=None):\n    \"\"\"Projection check: rebuild into a scratch database and list every row where the live view differs.\"\"\"\n    fresh = (projector_cls or Projector)(store, log=lambda record: None)\n    fresh.rebuild()\n    live, truth = LoansView(view_db).snapshot(), LoansView(fresh.db).snapshot()\n    return [f\"{table}[{key}]: view {live[table].get(key)!r}, events say {truth[table].get(key)!r}\"\n            for table in truth for key in sorted(set(truth[table]) | set(live[table]))\n            if live[table].get(key) != truth[table].get(key)]\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`READ_SCHEMA`: member_loans, book_status, checkpoint",
+    "detail": "The read model has its own database; the checkpoint table lives next to the rows it describes."
+   },
+   {
+    "title": "`position()`",
+    "detail": "Where a (re)started projector resumes: events with seq > checkpoint."
+   },
+   {
+    "title": "`self._save_checkpoint(seq)` before `apply`",
+    "detail": "The weakness: two transactions, and the position moves first. A crash in between skips the event."
+   },
+   {
+    "title": "`active = active + ?`",
+    "detail": "Not idempotent: replaying an event counts it twice. The fix recounts from book_status."
+   },
+   {
+    "title": "`lag_ms` in the JSON log",
+    "detail": "Now minus the event's recorded_at: the measured consistency window."
+   },
+   {
+    "title": "`rebuild()`",
+    "detail": "Delete the rows and the checkpoint, replay from seq 0. The log is the truth; the view is disposable."
+   },
+   {
+    "title": "`drift()`",
+    "detail": "Rebuild into a scratch database and diff row by row: the check you run after an incident or in a nightly job."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L300/12-cqrs-read-models/projector.py",
+    "purpose": "Projector, view, rebuild, drift (lesson code)"
+   },
+   {
+    "path": "labs/L300/12-cqrs-read-models/write_model.py",
+    "purpose": "Member aggregate + SQLite event store + command handlers"
+   },
+   {
+    "path": "labs/L300/12-cqrs-read-models/app.py",
+    "purpose": "Demo: projector thread, lag, stale reads, rebuild"
+   },
+   {
+    "path": "labs/L300/12-cqrs-read-models/failure_lab.py",
+    "purpose": "Seeded crash, base vs solution"
+   },
+   {
+    "path": "labs/L300/12-cqrs-read-models/solution/projector.py",
+    "purpose": "Build task solution"
+   },
+   {
+    "path": "labs/L300/12-cqrs-read-models/test_cqrs.py",
+    "purpose": "Write/read side, log, symptom"
+   },
+   {
+    "path": "labs/L300/12-cqrs-read-models/test_build_task.py",
+    "purpose": "Fail before / pass after"
+   }
+  ],
+  "expectedResults": [
+   "rebuild: view identical: True, drift: []",
+   "base projector: drift 2 row(s); solution: drift 0 row(s)",
+   "Ran 11 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "Read the view right after a borrow",
+    "expected": "holder is None until the projector runs"
+   },
+   {
+    "action": "Rewind the checkpoint by 3 and run again",
+    "expected": "solution: view unchanged (idempotent)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "`drift` lists rows after a restart",
+    "action": "The checkpoint moved without the view change; rebuild(), then fix the transaction boundary."
+   },
+   {
+    "symptom": "lag_ms keeps growing",
+    "action": "The projector is behind or stopped; compare its checkpoint with the last event seq."
+   }
+  ],
+  "equivalents": [
+   "KurrentDB (formerly EventStoreDB): catch-up subscriptions; you store the commit position as the checkpoint.",
+   ".NET: Marten async projections; `RebuildProjectionAsync` resets and replays.",
+   "Java: Axon streaming processors keep a token per segment and can reset to replay.",
+   "Kafka: commit consumer offsets together with the view update (the offset is the checkpoint)."
+  ],
+  "checkpoint": "PASS if failure_lab.py shows drift 0 for the solution and test_build_task passes on your projector.py.",
+  "checkYourself": [
+   {
+    "q": "Why is saving the checkpoint after apply, in a second transaction, still not enough?",
+    "a": "A crash between them replays the event; with `active + 1` it is counted twice (tryIt 2)."
+   },
+   {
+    "q": "Why can you delete the read model?",
+    "a": "It is derived: rebuild() replays the event log and produces the same rows."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Run the projector with a 200 ms poll instead of 20 ms.",
+    "predict": "How large is the consistency window now?",
+    "expected": "Observed: 20 ms poll -> p50 11.7-17.1 ms, max 53.7-58.4 ms; 200 ms poll -> p50 111-154 ms, max 197.5-197.8 ms."
+   },
+   {
+    "task": "'Half fix': apply first, save the checkpoint second (still two transactions, still `active + 1`), crash at seq 31.",
+    "predict": "Lost event, double count, or correct?",
+    "expected": "`restart -> drift: ['member_loans[m3]: view 3, events say 2']` - the replayed event is counted twice."
+   }
+  ],
+  "buildTask": {
+   "task": "Harden projector.py: apply the event and save the checkpoint in ONE transaction, and make the handlers idempotent so a replayed event changes nothing.",
+   "hints": [
+    "Move the checkpoint INSERT inside the `with self.db:` block that calls apply(), after apply().",
+    "Replace `active + ?` with a recount: `INSERT OR REPLACE INTO member_loans VALUES (?, (SELECT COUNT(*) FROM book_status WHERE member_id = ?))`."
+   ],
+   "solution": "labs/L300/12-cqrs-read-models/solution/projector.py",
+   "check": "labs/L300/12-cqrs-read-models/test_build_task.py (3 tests)"
+  },
+  "failureLab": {
+   "fault": "Seeded crash: random.Random(12) picks seq 31 of 33; the projector raises SimulatedCrash after saving checkpoint 31 and before applying event 31, then a new Projector restarts on the same read database.",
+   "symptom": "No error anywhere, but the view is wrong: `member_loans[m3]: view 1, events say 2` and `book_status[b6]: view None, events say 'm3'`.",
+   "fix": "View change + checkpoint in one transaction; idempotent handlers (recount from state); rebuild() to repair a view that is already wrong.",
+   "proof": "test_build_task.py: 3 of 3 FAIL with CHECK_MINE=1 on the base projector.py, 3 of 3 PASS on solution/projector.py."
+  },
+  "tradeOffs": [
+   {
+    "option": "Query the aggregate's tables directly",
+    "gains": "One model, always consistent",
+    "costs": "Queries shape the write model; slow joins under load",
+    "chooseWhen": "Simple CRUD, few readers"
+   },
+   {
+    "option": "CQRS read model, same process (this lab)",
+    "gains": "Query-shaped tables, rebuildable",
+    "costs": "Consistency window, checkpoints, drift checks",
+    "chooseWhen": "Reads and writes differ a lot in shape or volume"
+   },
+   {
+    "option": "Read model in another store (search index, cache)",
+    "gains": "Scale reads independently",
+    "costs": "No shared transaction: needs idempotent handlers and replays",
+    "chooseWhen": "Search or very high read volume"
+   }
+  ],
+  "inRealSystems": [
+   "Projections run as separate workers reading an event store or Kafka topic; checkpoints live in the view's database.",
+   "Teams rebuild projections in a blue/green way: build a new view from seq 0, then switch reads to it."
+  ],
+  "useWhen": "Use a read model when queries need a different shape or scale than the aggregate; avoid CQRS for plain CRUD.",
+  "next": "L300 #13 Resilience patterns: timeouts, circuit breaker, bulkhead, fallback",
+  "sources": [
+   {
+    "title": "Martin Fowler - CQRS",
+    "url": "https://martinfowler.com/bliki/CQRS.html"
+   },
+   {
+    "title": "Martin Fowler - Event Sourcing (Complete Rebuild, replay after a crash)",
+    "url": "https://martinfowler.com/eaaDev/EventSourcing.html"
+   },
+   {
+    "title": "Marten - Rebuilding projections",
+    "url": "https://martendb.io/events/projections/rebuilding.html"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py (5 runs; timings as ranges), failure_lab.py, try_it.py, `python -m unittest -v` (11 tests OK) and test_build_task with CHECK_MINE=1 (3 failures before the fix) on Python 3.12.15, 2026-10-28.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)"
+   ]
+  },
+  "conceptNote": "content/concepts/L300/12-cqrs-read-models.md",
+  "conceptSummary": "Commands change an aggregate and append events; a projector builds a query-shaped view that lags slightly. Keep view and checkpoint in one transaction, make handlers idempotent, and rebuild when in doubt.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "marimo",
+    "role": "CHECK",
+    "exercise": "Load out/projector.jsonl in a marimo notebook, plot lag_ms per seq as a histogram, and make the poll interval a cell that re-runs app.run(poll_s=...).",
+    "expected": "Pending a manual run. Should match app.py: p50 about 10 ms and max below about 60 ms at 20 ms; p50 above 100 ms at 200 ms (tryIt 1).",
+    "mac": "pip install marimo",
+    "windows": "pip install marimo",
+    "licence": "Apache-2.0 (OSI: yes)",
+    "url": "https://pypi.org/project/marimo/"
+   }
+  ],
+  "seeAlso": [
+   "distributed-systems L200 #8 At-least-once messaging: ack, visibility timeout, redelivery, dead letters: a projector is an idempotent consumer - redelivered events must not change the view twice.",
+   "distributed-systems L300 #14 Sagas with compensation: orchestration vs choreography, idempotent steps, saga log: a saga log and a projector checkpoint are the same idea - durable progress plus idempotent steps, so a crash resumes instead of repeating or skipping work."
+  ]
+ },
+ {
+  "id": "resilience-patterns",
+  "number": 13,
+  "level": "L300",
+  "title": "Resilience patterns: timeouts, circuit breaker, bulkhead, fallback",
+  "phase": "Harden",
+  "category": "resilience",
+  "description": "Wrap Library Loans' flaky catalogue dependency in a timeout, a circuit breaker and a fallback; then watch one slow dependency starve a shared thread pool and isolate it with a bulkhead.",
+  "outcome": "You can explain and configure closed/open/half-open, read breaker and pool logs, and size per-dependency bulkheads so one slow service cannot take down the others.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux); unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100. Uses threading and concurrent.futures.",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "Borrowing needs members (required) and the catalogue title (nice to have, fallback allowed); every outbound call has a 0.1 s timeout.",
+   "The breaker logs its transitions as JSON lines; each request in the failure lab logs ok, error and pool usage."
+  ],
+  "prerequisites": [
+   "Lesson 7 (ports and adapters)",
+   "distributed-systems L100 #3 helps (timeouts)"
+  ],
+  "glossary": [
+   {
+    "term": "Circuit breaker",
+    "meaning": "Stops calling a failing dependency for a while (open), then tries one call (half-open)."
+   },
+   {
+    "term": "Bulkhead",
+    "meaning": "A separate, bounded pool per dependency; excess calls are rejected, not queued."
+   },
+   {
+    "term": "Fallback",
+    "meaning": "A degraded answer for expected dependency errors."
+   },
+   {
+    "term": "Thread starvation",
+    "meaning": "All workers wait on one slow call; healthy work queues behind them."
+   }
+  ],
+  "concepts": [
+   "A timeout frees the caller, not the thread doing the work.",
+   "A breaker stops hammering a sick dependency; it does not give threads back.",
+   "Bulkheads contain a slow dependency; fallbacks only for nice-to-have data."
+  ],
+  "steps": [
+   {
+    "title": "Watch the breaker",
+    "detail": "cd labs/L300/13-resilience-patterns && python app.py",
+    "expected": "Transitions closed -> open -> half_open -> open -> half_open -> closed; while open the catalogue is not called (8 borrows, 3 calls).",
+    "ifNot": "Each transition is one JSON line; compare with the README."
+   },
+   {
+    "title": "Read the timeout and bulkhead code",
+    "detail": "In resilience.py read Pool.call (future.result(timeout=...)) and Bulkhead.call / _run (semaphore acquired by the caller, released by the worker).",
+    "expected": "You can say why a timed-out call still holds a worker.",
+    "ifNot": "Run test_timeout_frees_the_caller_not_the_thread."
+   },
+   {
+    "title": "Make the catalogue slow (failureLab)",
+    "detail": "python failure_lab.py",
+    "expected": "base: 8/24 ok, waves 2-3 `TimeoutError: shared: no answer within 0.1 s`, log pools shared 8/8; solution: 24/24 ok with fallback titles.",
+    "ifNot": "On a very busy machine a wave can straddle; the per-wave summary shows it."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 11 tests ... OK (about 2 s).",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Harden it (build task)",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "Before your change 2 of 3 tests fail (waves 2-3 time out; only one pool); after it, OK. Without CHECK_MINE the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   }
+  ],
+  "code": "\"\"\"Resilience patterns around a flaky dependency: timeout, circuit breaker, bulkhead, fallback (lesson 13 lab code).\n\nStdlib only. Same ideas as resilience4j (Java) and Polly (.NET). Run the demo: python app.py\n\"\"\"\nimport json\nimport sys\nimport threading\nimport time\nfrom collections import deque\nfrom concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout\n\n\ndef json_log(record, stream=sys.stdout):\n    print(json.dumps(record, sort_keys=True), file=stream)  # structured log: one JSON object per line\n\n\nclass CircuitOpen(Exception):\n    pass\n\n\nclass BulkheadFull(Exception):\n    pass\n\n\nclass Pool:\n    \"\"\"Worker threads with a busy gauge. A timeout frees the CALLER, not the worker thread.\"\"\"\n\n    def __init__(self, name, workers):\n        self.name, self.workers, self.busy, self._lock = name, workers, 0, threading.Lock()\n        self.executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix=name)\n\n    def _run(self, fn, args):\n        with self._lock:\n            self.busy += 1\n        try:\n            return fn(*args)\n        finally:\n            with self._lock:\n                self.busy -= 1\n\n    def call(self, fn, *args, timeout):\n        future = self.executor.submit(self._run, fn, args)\n        try:\n            return future.result(timeout=timeout)  # timeout: stop WAITING after `timeout` s ...\n        except FutureTimeout:\n            future.cancel()  # ... but a call that already started keeps its thread until it returns\n            raise TimeoutError(f\"{self.name}: no answer within {timeout} s\") from None\n\n    def shutdown(self):\n        self.executor.shutdown(wait=False, cancel_futures=True)\n\n\nclass Bulkhead(Pool):\n    \"\"\"Pool + semaphore for ONE dependency: at most `workers` calls in flight, the next is rejected at once.\"\"\"\n\n    def __init__(self, name, workers):\n        super().__init__(name, workers)\n        self._slots = threading.BoundedSemaphore(workers)\n\n    def _run(self, fn, args):\n        try:\n            return super()._run(fn, args)\n        finally:\n            self._slots.release()  # the slot frees when the WORKER finishes, not when the caller gives up\n\n    def call(self, fn, *args, timeout):\n        if not self._slots.acquire(blocking=False):  # bulkhead: fail fast instead of queueing behind stuck calls\n            raise BulkheadFull(f\"{self.name}: {self.workers} calls already in flight\")\n        return super().call(fn, *args, timeout=timeout)\n\n\nclass CircuitBreaker:\n    \"\"\"closed -> open when >= failure_rate of the last `window` calls failed; open -> half_open after open_s;\n    one trial call in half_open: success -> closed, failure -> open again.\"\"\"\n\n    def __init__(self, name, window=10, min_calls=5, failure_rate=0.5, open_s=1.0, clock=time.monotonic, log=json_log):\n        self.name, self.min_calls, self.failure_rate, self.open_s = name, min_calls, failure_rate, open_s\n        self.clock, self.log, self.state, self.opened_at, self.trial = clock, log, \"closed\", 0.0, False\n        self.results, self._lock = deque(maxlen=window), threading.Lock()  # count-based sliding window\n\n    def _move(self, to, **why):\n        self.log({\"evt\": \"breaker\", \"name\": self.name, \"from\": self.state, \"to\": to, **why})\n        self.state = to\n        if to == \"open\":\n            self.opened_at = self.clock()\n\n    def call(self, fn, *args, **kwargs):\n        with self._lock:\n            if self.state == \"open\":\n                if self.clock() - self.opened_at < self.open_s:\n                    raise CircuitOpen(f\"{self.name}: circuit open, failing fast\")  # no call, no waiting\n                self._move(\"half_open\")\n            if self.state == \"half_open\":\n                if self.trial:\n                    raise CircuitOpen(f\"{self.name}: half-open, trial call in progress\")\n                self.trial = True\n        try:\n            result = fn(*args, **kwargs)\n        except Exception:\n            self._record(False)\n            raise\n        self._record(True)\n        return result\n\n    def _record(self, ok):\n        with self._lock:\n            if self.state == \"half_open\":\n                self.trial = False\n                self.results.clear()\n                self._move(\"closed\" if ok else \"open\", trial=\"ok\" if ok else \"failed\")\n                return\n            self.results.append(ok)\n            rate = self.results.count(False) / len(self.results)\n            if self.state == \"closed\" and len(self.results) >= self.min_calls and rate >= self.failure_rate:\n                self._move(\"open\", failure_rate=round(rate, 2), calls=len(self.results))\n\n\ndef with_fallback(call, fallback):\n    \"\"\"Fallback: a degraded answer for the errors we expect from a sick dependency. Returns (value, degraded).\"\"\"\n    try:\n        return call(), False\n    except (TimeoutError, CircuitOpen, BulkheadFull, ConnectionError) as exc:\n        return fallback(exc), True\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`future.result(timeout=timeout)` + `future.cancel()`",
+    "detail": "The caller stops waiting; cancel() only works if the call never started, so the worker stays busy."
+   },
+   {
+    "title": "`Pool.busy` gauge",
+    "detail": "Counts running calls; `8/8` in a log line is the starvation signal."
+   },
+   {
+    "title": "`Bulkhead.call`: `acquire(blocking=False)`",
+    "detail": "Reject at once (BulkheadFull) instead of queueing behind stuck calls."
+   },
+   {
+    "title": "`Bulkhead._run`: `release()` in `finally`",
+    "detail": "The slot frees when the worker finishes, not when the caller gives up - otherwise the bulkhead leaks."
+   },
+   {
+    "title": "`CircuitBreaker._record`: window, `min_calls`, `failure_rate`",
+    "detail": "Count-based sliding window of 10; opens at >= 50 % failures after 5 calls (resilience4j uses 100 calls by default)."
+   },
+   {
+    "title": "`call()` in open / half_open",
+    "detail": "Open fails fast until open_s passes; half-open allows one trial call."
+   },
+   {
+    "title": "`with_fallback`",
+    "detail": "Only TimeoutError, CircuitOpen, BulkheadFull, ConnectionError become a degraded answer; bugs still raise."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L300/13-resilience-patterns/resilience.py",
+    "purpose": "Timeout pool, bulkhead, breaker, fallback (lesson code)"
+   },
+   {
+    "path": "labs/L300/13-resilience-patterns/loans_service.py",
+    "purpose": "Borrow path, one shared pool (base wiring)"
+   },
+   {
+    "path": "labs/L300/13-resilience-patterns/deps.py",
+    "purpose": "Members + switchable Catalogue (up/down/slow)"
+   },
+   {
+    "path": "labs/L300/13-resilience-patterns/app.py",
+    "purpose": "Breaker states demo"
+   },
+   {
+    "path": "labs/L300/13-resilience-patterns/failure_lab.py",
+    "purpose": "Three waves against a hung catalogue"
+   },
+   {
+    "path": "labs/L300/13-resilience-patterns/solution/loans_service.py",
+    "purpose": "Build task solution"
+   },
+   {
+    "path": "labs/L300/13-resilience-patterns/test_resilience.py",
+    "purpose": "Breaker, pool, bulkhead, symptom"
+   },
+   {
+    "path": "labs/L300/13-resilience-patterns/test_build_task.py",
+    "purpose": "Fail before / pass after"
+   }
+  ],
+  "expectedResults": [
+   "transitions: closed -> open -> half_open -> open -> half_open -> closed",
+   "base 8/24 ok; solution 24/24 ok",
+   "Ran 11 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "5 failures out of 5 calls",
+    "expected": "breaker open; next call raises CircuitOpen without calling"
+   },
+   {
+    "action": "Divide by zero inside a protected call",
+    "expected": "raises - a bug is not a dependency failure"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Timeouts on a healthy dependency",
+    "action": "Check the pool gauge; if busy == workers, give that dependency its own bulkhead."
+   },
+   {
+    "symptom": "Breaker flips open/closed constantly",
+    "action": "Raise min_calls or the window; check open_s against the dependency's recovery time."
+   }
+  ],
+  "equivalents": [
+   "Java: resilience4j CircuitBreaker (CLOSED/OPEN/HALF_OPEN; defaults failureRateThreshold 50 %, slidingWindowSize 100, waitDurationInOpenState 60 s) and Bulkhead (SemaphoreBulkhead, FixedThreadPoolBulkhead; maxConcurrentCalls 25).",
+   ".NET: Polly v8 resilience pipelines (circuit breaker, timeout, fallback); AddConcurrencyLimiter (Polly.RateLimiting) as the bulkhead.",
+   "Azure Architecture Center: Circuit Breaker and Bulkhead pattern pages (vendor docs, same patterns)."
+  ],
+  "checkpoint": "PASS if failure_lab.py shows 24/24 for the solution and test_build_task passes on your loans_service.py.",
+  "checkYourself": [
+   {
+    "q": "The breaker opened after wave 1. Why did waves 2-3 still fail in the base lab?",
+    "a": "The 8 calls already running keep the 8 shared threads until the 1 s hang ends; the members checks queue behind them."
+   },
+   {
+    "q": "Why no fallback for the members check?",
+    "a": "It is required for a correct decision; a made-up 'yes' would lend books to blocked members."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Set TIMEOUT_S to 2.0 s (longer than the 1 s hang) in a copy of loans_service.py and rerun the waves.",
+    "predict": "More successes? Faster?",
+    "expected": "Observed: `24/24 ok, 8 degraded, fastest 1003-1008 ms, slowest 2298-2408 ms` - no errors, but every borrow is slow."
+   },
+   {
+    "task": "Keep the shared pool and rely on the breaker alone.",
+    "predict": "Does opening the breaker save waves 2 and 3?",
+    "expected": "`breaker went closed -> open; still {1: {'ok': 8}, 2: {'TimeoutError': 8}, 3: {'TimeoutError': 8}}`."
+   }
+  ],
+  "buildTask": {
+   "task": "Change build_service() in loans_service.py so members gets its own Pool(4) and the catalogue a Bulkhead(4).",
+   "hints": [
+    "`Bulkhead` is already in resilience.py; it rejects call 5 with BulkheadFull, which with_fallback turns into the fallback title.",
+    "LoanService takes members_pool and catalogue_pool separately - pass two different pools."
+   ],
+   "solution": "labs/L300/13-resilience-patterns/solution/loans_service.py",
+   "check": "labs/L300/13-resilience-patterns/test_build_task.py (3 tests)"
+  },
+  "failureLab": {
+   "fault": "Catalogue(mode='slow') hangs every call for 1 s; failure_lab.py sends 3 waves of 8 concurrent borrows, 0.25 s apart.",
+   "symptom": "Shared pool of 8: 8/24 ok. Waves 2-3 fail with `TimeoutError: shared: no answer within 0.1 s` on the healthy members check; the request log shows `\"pools\": {\"shared\": \"8/8\"}`; the breaker opened but did not help.",
+   "fix": "Members gets its own pool of 4; the catalogue gets a bulkhead of 4 that rejects call 5 at once (fallback title).",
+   "proof": "test_build_task.py: 2 of 3 FAIL with CHECK_MINE=1 on the base loans_service.py, 3 of 3 PASS on the solution (24/24 ok, max wait < 300 ms, 2 pools)."
+  },
+  "tradeOffs": [
+   {
+    "option": "Timeout only",
+    "gains": "Simple; the caller never hangs",
+    "costs": "Threads still stuck; load keeps hitting a sick service",
+    "chooseWhen": "One dependency, low concurrency"
+   },
+   {
+    "option": "+ circuit breaker",
+    "gains": "Fails fast, gives the dependency room to recover",
+    "costs": "Tuning (window, threshold, open time); no thread isolation",
+    "chooseWhen": "Dependency fails hard (errors) more than it slows"
+   },
+   {
+    "option": "+ bulkhead per dependency",
+    "gains": "One slow dependency cannot starve others",
+    "costs": "More pools to size; rejects under bursts",
+    "chooseWhen": "Several dependencies share one process"
+   }
+  ],
+  "inRealSystems": [
+   "HTTP clients get per-host connection pools and timeouts; resilience4j/Polly add breakers and bulkheads around them.",
+   "Breaker state and pool saturation are exported as metrics and alerted on."
+  ],
+  "useWhen": "Use a breaker + bulkhead around every remote dependency whose slowness you cannot control; fall back only for optional data.",
+  "next": "L300 #14 Consumer-driven contract testing",
+  "sources": [
+   {
+    "title": "Martin Fowler - CircuitBreaker",
+    "url": "https://martinfowler.com/bliki/CircuitBreaker.html"
+   },
+   {
+    "title": "Google SRE Book - Addressing Cascading Failures (deadlines, fail fast, per-client thread limits)",
+    "url": "https://sre.google/sre-book/addressing-cascading-failures/"
+   },
+   {
+    "title": "resilience4j - CircuitBreaker",
+    "url": "https://resilience4j.readme.io/docs/circuitbreaker"
+   },
+   {
+    "title": "resilience4j - Bulkhead",
+    "url": "https://resilience4j.readme.io/docs/bulkhead"
+   },
+   {
+    "title": "Polly - circuit breaker strategy (docs in the repo)",
+    "url": "https://github.com/App-vNext/Polly/blob/main/docs/strategies/circuit-breaker.md"
+   },
+   {
+    "title": "Python - concurrent.futures",
+    "url": "https://docs.python.org/3/library/concurrent.futures.html"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py, failure_lab.py (several runs, same counts), try_it.py, `python -m unittest -v` (11 tests OK) and test_build_task with CHECK_MINE=1 (2 failures before the fix) on Python 3.12.15, 2026-10-28.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "Windows timer resolution may shift the 0.1 s timeout / 0.25 s wave margins; the per-wave counts are expected to hold"
+   ]
+  },
+  "conceptNote": "content/concepts/L300/13-resilience-patterns.md",
+  "conceptSummary": "Timeouts protect the caller, breakers protect the dependency, bulkheads protect everyone else, fallbacks keep optional features degraded rather than broken.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "Toxiproxy",
+    "role": "BUILD WITHOUT CODE",
+    "exercise": "Run lesson 14's provider (`python provider.py 8081`), put Toxiproxy in front of it with a 'latency' toxic of 1000 ms, and call it through `Pool('catalogue', 4).call(...)` with timeout 0.1 in a REPL.",
+    "expected": "Pending a manual run. Should match failure_lab.py: TimeoutError after about 0.1 s while `busy` stays at the number of stuck calls until the toxic's delay ends.",
+    "mac": "brew tap shopify/shopify && brew install toxiproxy",
+    "windows": "toxiproxy-server/cli-windows-amd64.exe from the GitHub releases",
+    "licence": "MIT (OSI: yes)",
+    "url": "https://github.com/Shopify/toxiproxy"
+   }
+  ],
+  "seeAlso": [
+   "distributed-systems L100 #3 Timeouts: fail fast instead of hanging: the client-side timeout this lesson builds on.",
+   "distributed-systems L100 #4 Retries with exponential backoff, jitter and a retry budget: retries behind an open breaker must be budgeted.",
+   "distributed-systems L300 #16 Backpressure and load shedding: bounded queues, 503 + Retry-After, AIMD concurrency limits: the server-side twin - a bulkhead caps what a caller spends on one dependency, a bounded queue caps what a server accepts.",
+   "ai-agents L300 #14 Reliability: timeouts, retries, budgets and fallbacks: its buildTask puts the same circuit breaker (closed/open/half-open) in front of a model server.",
+   "distributed-systems L300 #13 Network partitions and fault injection: proxy toxics, split brain, fencing and linearizability checking: same problem seen from the distributed systems side (reverse link)."
+  ]
+ },
+ {
+  "id": "consumer-driven-contracts",
+  "number": 14,
+  "level": "L300",
+  "title": "Consumer-driven contract testing",
+  "phase": "Harden",
+  "category": "testing",
+  "description": "Library Loans (consumer) writes its expectations of the catalogue (provider) as a versioned contract generated from its own tests; the provider's build replays it. A renamed field breaks the provider build, not production.",
+  "outcome": "You can generate a contract from consumer tests, verify a provider against it with provider states and type matchers, and explain what Pact and a broker add.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux); unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100. CI only: pact-python==4.2.0 (requirements-ci.txt; needs Python >= 3.11).",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "contract.py is a stdlib mini-Pact: mock provider from examples, a JSON contract in contracts/, a provider verifier with states.",
+   "The base verifier compares status codes only, so a renamed field passes every check until the real consumer calls it."
+  ],
+  "prerequisites": [
+   "Lesson 4 (API-first, contract check)",
+   "Lesson 11 (testing pyramid)"
+  ],
+  "glossary": [
+   {
+    "term": "Consumer-driven contract",
+    "meaning": "The provider's obligations, derived from what its consumers actually use."
+   },
+   {
+    "term": "Provider state",
+    "meaning": "Named test data the provider sets up before an interaction ('book b1 exists')."
+   },
+   {
+    "term": "Type matcher (like)",
+    "meaning": "Any value of the same JSON type is accepted."
+   },
+   {
+    "term": "can-i-deploy",
+    "meaning": "Pact Broker check: was this version verified against what is deployed?"
+   }
+  ],
+  "concepts": [
+   "Generate the contract from the consumer's real client, not by hand.",
+   "The provider verifies every consumer contract in its own build.",
+   "Match on shape and type; ignore extra fields (tolerant reader)."
+  ],
+  "steps": [
+   {
+    "title": "Consumer side: generate the contract",
+    "detail": "cd labs/L300/14-consumer-driven-contracts && python -m unittest -v test_consumer",
+    "expected": "3 tests OK; contracts/loans-service--catalogue-service.json (re)written with consumerVersion 1.4.0 and 2 interactions.",
+    "ifNot": "`mock provider: ... never called` means the client skipped a declared interaction."
+   },
+   {
+    "title": "Provider side: verify",
+    "detail": "python -m unittest -v test_provider",
+    "expected": "2 tests OK: the provider unit test and the verification of every file in contracts/.",
+    "ifNot": "Verification uses POST /_contract/state; it only exists with states=True (tests)."
+   },
+   {
+    "title": "Rename a field (failureLab)",
+    "detail": "python failure_lab.py",
+    "expected": "With the status-only verifier every CI check passes and only 'consumer in production' fails; the body verifier fails with `$.title: missing`.",
+    "ifNot": "Compare with the README table."
+   },
+   {
+    "title": "Harden it (build task)",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "Before your change 2 of 3 tests fail (rename and retype pass unnoticed); after it, OK. Without CHECK_MINE the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   },
+   {
+    "title": "Same flow with Pact (CI)",
+    "detail": "Install pact-python 4.2.0 and run pact/test_pact_contract.py (pending-ci; skipped without LOANS_PACT=1).",
+    "expected": "2 tests: the consumer writes a V4 pact into pact/pacts/, the provider Verifier replays it.",
+    "ifNot": "Without the variable or package the tests report `skipped`.",
+    "mac": "pip install -r requirements-ci.txt\nLOANS_PACT=1 python -m unittest discover -s pact -v",
+    "windows": "pip install -r requirements-ci.txt\n$env:LOANS_PACT = \"1\"; python -m unittest discover -s pact -v"
+   },
+   {
+    "title": "Run all tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 8 tests ... OK.",
+    "ifNot": "Run from the lab folder."
+   }
+  ],
+  "code": "\"\"\"Consumer-driven contracts, stdlib only (lesson 14 lab code). Same flow as Pact, NOT Pact's file format.\n\nConsumer side: declare interactions -> run the real client against a mock provider -> write contracts/*.json.\nProvider side: replay every interaction against the real provider and compare. Weakness (failureLab):\nverify_provider() only compares status codes.\n\"\"\"\nimport json\nimport pathlib\nimport threading\nimport urllib.error\nimport urllib.request\nfrom contextlib import contextmanager\nfrom http.server import BaseHTTPRequestHandler, ThreadingHTTPServer\n\n\ndef like(example):\n    \"\"\"Matcher: any value of the same type as `example` (the consumer cares about the field, not the value).\"\"\"\n    return {\"$like\": example}\n\n\ndef _example(body, rules, path=\"$\"):  # strip matchers -> (example body, {json path: \"type\"})\n    if isinstance(body, dict) and \"$like\" in body:\n        rules[path] = \"type\"\n        return body[\"$like\"]\n    if isinstance(body, dict):\n        return {key: _example(value, rules, f\"{path}.{key}\") for key, value in body.items()}\n    return body\n\n\nclass ContractBuilder:\n    def __init__(self, consumer, provider, consumer_version):\n        self.contract = {\"consumer\": consumer, \"provider\": provider, \"interactions\": [],\n                         \"metadata\": {\"format\": \"lesson-14 contract v1\", \"consumerVersion\": consumer_version}}\n\n    def interaction(self, description, state, method, path, status, body):\n        rules = {}\n        response = {\"status\": status, \"body\": _example(body, rules), \"matchingRules\": rules}\n        self.contract[\"interactions\"].append({\"description\": description, \"providerState\": state,\n                                              \"request\": {\"method\": method, \"path\": path}, \"response\": response})\n        return self\n\n    @contextmanager\n    def mock_provider(self):\n        \"\"\"Serve the declared responses; fail if the consumer skipped an interaction or sent an unexpected one.\"\"\"\n        routes = {(i[\"request\"][\"method\"], i[\"request\"][\"path\"]): i for i in self.contract[\"interactions\"]}\n        used, unexpected = set(), []\n\n        class Handler(BaseHTTPRequestHandler):\n            def do_GET(self):\n                found = routes.get((\"GET\", self.path))\n                (used.add((\"GET\", self.path)) if found else unexpected.append(f\"GET {self.path}\"))\n                status, body = (found[\"response\"][\"status\"], found[\"response\"][\"body\"]) if found else (500, {})\n                data = json.dumps(body).encode(\"utf-8\")\n                self.send_response(status)\n                self.send_header(\"Content-Type\", \"application/json\")\n                self.send_header(\"Content-Length\", str(len(data)))\n                self.end_headers()\n                self.wfile.write(data)\n\n            def log_message(self, *args):\n                pass\n\n        server = ThreadingHTTPServer((\"127.0.0.1\", 0), Handler)\n        threading.Thread(target=server.serve_forever, daemon=True).start()\n        try:\n            yield f\"http://127.0.0.1:{server.server_port}\"\n        finally:\n            server.shutdown()\n            server.server_close()\n        missing = sorted(set(routes) - used)\n        if unexpected or missing:\n            raise AssertionError(f\"mock provider: unexpected {unexpected}, never called {missing}\")\n\n    def write(self, folder):\n        path = pathlib.Path(folder) / f\"{self.contract['consumer']}--{self.contract['provider']}.json\"\n        path.parent.mkdir(parents=True, exist_ok=True)\n        path.write_text(json.dumps(self.contract, indent=2, sort_keys=True) + \"\\n\", encoding=\"utf-8\")\n        return path\n\n\ndef _request(base_url, method, path, body=None):\n    data = json.dumps(body).encode(\"utf-8\") if body is not None else None\n    req = urllib.request.Request(base_url + path, data=data, method=method,\n                                 headers={\"Content-Type\": \"application/json\"})\n    try:\n        with urllib.request.urlopen(req, timeout=5) as resp:\n            return resp.status, json.loads(resp.read().decode(\"utf-8\"))\n    except urllib.error.HTTPError as exc:\n        return exc.code, json.loads(exc.read().decode(\"utf-8\") or \"{}\")\n\n\ndef verify_provider(contract_path, provider_url):\n    \"\"\"Replay each interaction against the REAL provider (after setting its state). Returns a list of problems.\"\"\"\n    contract = json.loads(pathlib.Path(contract_path).read_text(encoding=\"utf-8\"))\n    problems = []\n    for item in contract[\"interactions\"]:\n        _request(provider_url, \"POST\", \"/_contract/state\", {\"state\": item[\"providerState\"]})\n        status, body = _request(provider_url, item[\"request\"][\"method\"], item[\"request\"][\"path\"])\n        expected = item[\"response\"]\n        if status != expected[\"status\"]:  # weakness: the body is never compared\n            problems.append(f\"{item['description']}: status {status}, contract says {expected['status']}\")\n    return problems\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`like(example)` and `_example()`",
+    "detail": "Matchers are stripped into `matchingRules` (`$.title: type`); the example value stays for the mock."
+   },
+   {
+    "title": "`ContractBuilder.interaction(...)`",
+    "detail": "State, request and expected response: one example of what the consumer relies on."
+   },
+   {
+    "title": "`mock_provider()`: `used` / `unexpected`",
+    "detail": "The real client runs against the examples; unused or unexpected requests fail the consumer test."
+   },
+   {
+    "title": "`write()`",
+    "detail": "One file per consumer-provider pair, sorted keys, `consumerVersion` - reviewable in Git like code."
+   },
+   {
+    "title": "`verify_provider()`: POST /_contract/state",
+    "detail": "Sets the provider state before each replayed request."
+   },
+   {
+    "title": "`if status != expected[\"status\"]`",
+    "detail": "The weakness: the body is never compared. The build task adds body_problems() with type matching."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L300/14-consumer-driven-contracts/contract.py",
+    "purpose": "Mini contract framework (lesson code)"
+   },
+   {
+    "path": "labs/L300/14-consumer-driven-contracts/consumer.py",
+    "purpose": "Library Loans' CatalogueClient"
+   },
+   {
+    "path": "labs/L300/14-consumer-driven-contracts/provider.py",
+    "purpose": "Catalogue HTTP provider (+ test-only state hook)"
+   },
+   {
+    "path": "labs/L300/14-consumer-driven-contracts/contracts/loans-service--catalogue-service.json",
+    "purpose": "Versioned contract in the repo"
+   },
+   {
+    "path": "labs/L300/14-consumer-driven-contracts/test_consumer.py",
+    "purpose": "Consumer tests (write the contract)"
+   },
+   {
+    "path": "labs/L300/14-consumer-driven-contracts/test_provider.py",
+    "purpose": "Provider unit test + verification"
+   },
+   {
+    "path": "labs/L300/14-consumer-driven-contracts/failure_lab.py",
+    "purpose": "Rename title -> name"
+   },
+   {
+    "path": "labs/L300/14-consumer-driven-contracts/solution/contract.py",
+    "purpose": "Build task solution"
+   },
+   {
+    "path": "labs/L300/14-consumer-driven-contracts/pact/test_pact_contract.py",
+    "purpose": "Pact equivalent (CI, pending-ci)"
+   },
+   {
+    "path": "labs/L300/14-consumer-driven-contracts/requirements-ci.txt",
+    "purpose": "pact-python==4.2.0"
+   }
+  ],
+  "expectedResults": [
+   "base: contract verification PASS while consumer in production FAILS",
+   "solution: `$.title: missing (the consumer reads it)`",
+   "Ran 8 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "Provider adds `isbn`, changes the title value",
+    "expected": "verification passes (tolerant reader, type matcher)"
+   },
+   {
+    "action": "Provider returns `available: \"yes\"`",
+    "expected": "`$.available: expected bool, got str 'yes'`"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Every harmless provider change breaks the contract",
+    "action": "Use like() for values the consumer does not branch on."
+   },
+   {
+    "symptom": "`no contracts in contracts/`",
+    "action": "Run the consumer tests first (step 1), or fetch contracts from the broker."
+   }
+  ],
+  "equivalents": [
+   "Pact (pact-python 4.2.0; Pact JVM, PactJS, Pact .NET): the same consumer test -> pact file -> provider Verifier flow, Pact specification V4.",
+   "Pact Broker (MIT): versioned pacts, verification matrix and `pact-broker can-i-deploy` in the pipeline.",
+   "Spring Cloud Contract: archived 2026-07-07, maintenance moved to Stubborn.sh - check its status before adopting.",
+   "Provider-driven alternative: OpenAPI schema checks (lesson 4) - catches schema breaks, not what each consumer relies on."
+  ],
+  "checkpoint": "PASS if failure_lab.py's solution run shows `contract verification FAIL [... $.title: missing ...]` and all tests pass.",
+  "checkYourself": [
+   {
+    "q": "Both teams' unit tests passed. Why?",
+    "a": "The provider updated its own test with the rename; the consumer's stub still returns title. Neither test exercises the other side."
+   },
+   {
+    "q": "Why allow extra fields in the provider's response?",
+    "a": "The provider must be able to add fields without breaking anyone; consumers only check what they read."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "The consumer adds `isbn` to its expectations, but the provider has no isbn.",
+    "predict": "Who notices, and when?",
+    "expected": "`['a request for an existing book: $.isbn: missing (the consumer reads it)']` - the provider build fails before anyone deploys."
+   },
+   {
+    "task": "The provider adds `isbn` and returns a different title value.",
+    "predict": "Does the contract break?",
+    "expected": "`[]` - extra fields and other values of the same type are fine."
+   }
+  ],
+  "buildTask": {
+   "task": "Make verify_provider() compare the response body: required keys present, `like` fields with the same JSON type, other values equal, extra keys allowed.",
+   "hints": [
+    "Write body_problems(expected, actual, rules, path='$') that recurses into dicts and builds paths like `$.title`.",
+    "Return messages like `$.title: missing (the consumer reads it)` and `$.available: expected bool, got str 'yes'`."
+   ],
+   "solution": "labs/L300/14-consumer-driven-contracts/solution/contract.py",
+   "check": "labs/L300/14-consumer-driven-contracts/test_build_task.py (3 tests)"
+  },
+  "failureLab": {
+   "fault": "provider.start(title_field='name'): the catalogue team renames `title` to `name` and updates its own unit test.",
+   "symptom": "Provider unit test PASS, consumer stub test PASS, status-only contract verification PASS - and the consumer in production fails with `KeyError: 'title'`.",
+   "fix": "Verify the response body against the contract's examples and type matchers (body_problems()).",
+   "proof": "test_build_task.py: 2 of 3 FAIL with CHECK_MINE=1 on the base contract.py (rename and retype pass), 3 of 3 PASS on solution/contract.py."
+  },
+  "tradeOffs": [
+   {
+    "option": "End-to-end tests of both services",
+    "gains": "Real integration",
+    "costs": "Slow, needs both deployed together, vague failures",
+    "chooseWhen": "A few critical journeys"
+   },
+   {
+    "option": "Provider schema (OpenAPI) checks",
+    "gains": "One spec, tooling everywhere",
+    "costs": "Does not know which fields each consumer uses",
+    "chooseWhen": "Public APIs with unknown consumers"
+   },
+   {
+    "option": "Consumer-driven contracts (this lab, Pact)",
+    "gains": "Each build fails on breaks that matter to a real consumer",
+    "costs": "Contracts to maintain, broker/process",
+    "chooseWhen": "Known consumers, independent deploys"
+   }
+  ],
+  "inRealSystems": [
+   "Consumers publish pacts to a broker on every build; providers verify them in CI and record results.",
+   "`can-i-deploy` gates each deploy on the verification matrix."
+  ],
+  "useWhen": "Use consumer-driven contracts between services owned by different teams that deploy independently; skip them inside one deployable.",
+  "next": "L300 #15 SLOs and error budgets: burn-rate alerts from request logs",
+  "sources": [
+   {
+    "title": "Pact docs - Introduction",
+    "url": "https://docs.pact.io/"
+   },
+   {
+    "title": "Ian Robinson - Consumer-Driven Contracts: A Service Evolution Pattern",
+    "url": "https://martinfowler.com/articles/consumerDrivenContracts.html"
+   },
+   {
+    "title": "pact-python (PyPI) 4.2.0",
+    "url": "https://pypi.org/project/pact-python/"
+   },
+   {
+    "title": "Pact docs - Python consumer tests",
+    "url": "https://docs.pact.io/implementation_guides/python/docs/consumer"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran test_consumer (writes the contract), test_provider, failure_lab.py, try_it.py, `python -m unittest -v` (8 tests OK) and test_build_task with CHECK_MINE=1 (2 failures before the fix) on Python 3.12.15, 2026-10-28. pact/test_pact_contract.py was only checked to skip cleanly.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "pact/test_pact_contract.py with pact-python==4.2.0 (LOANS_PACT=1): written from the 4.x docs, never run here (no pip)"
+   ]
+  },
+  "conceptNote": "content/concepts/L300/14-consumer-driven-contracts.md",
+  "conceptSummary": "Consumers record what they rely on as a contract generated from their tests; providers replay every contract in their own build. Shape and type matter, extra fields do not.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "Bruno",
+    "role": "CHECK",
+    "exercise": "Start `python provider.py 8081`, send GET /books/b1 in Bruno and add assertions that res.body.title is a string and res.body.available a boolean - the same rules as the contract's matchingRules.",
+    "expected": "Pending a manual run. Should match the contract: 200 with id b1, title 'Dune', available true. Start the provider with title_field='name' and the title assertion fails like `$.title: missing`.",
+    "mac": "brew install --cask bruno",
+    "windows": "winget install Bruno.Bruno",
+    "licence": "MIT, open-core (OSI: yes)",
+    "url": "https://github.com/usebruno/bruno"
+   },
+   {
+    "name": "Pact Broker (OSS)",
+    "role": "SEE",
+    "exercise": "Run the CI-only Pact flow (`LOANS_PACT=1 python -m unittest discover -s pact -v`) so pact/pacts/ holds the V4 file, start a local broker with SQLite, publish the file (HTTP PUT or the broker client) and open http://127.0.0.1:9292; then add a provider verification result to see the matrix.",
+    "expected": "Pending a manual run (the Pact flow is pending-ci). Should list loans-service -> catalogue-service with ONE interaction, 'a request for an existing book' given 'book b1 exists' -> 200, id b1, title and available as type matchers (examples 'Dune', true), as pact/test_pact_contract.py writes it. The 404 'no books' case is only in the lesson-format contracts/ file (README). Record whether the OSS UI renders the V4 file fully.",
+    "mac": "docker run -p 9292:9292 with PACT_BROKER_DATABASE_ADAPTER=sqlite (image pactfoundation/pact-broker; linux/arm64 available)",
+    "windows": "partial - same container via Docker Desktop (unofficial on Windows; the image is Linux-only)",
+    "licence": "MIT (OSI: yes)",
+    "url": "https://github.com/pact-foundation/pact-broker-docker"
+   }
+  ],
+  "seeAlso": [
+   "distributed-systems L100 #2 Two services talking over HTTP: the integration point this contract pins down.",
+   "application-architecture L400 #20 Evolutionary architecture: expand/contract migrations, API versions, flags, fitness over time: consumer contracts keep API v1 honest while the schema changes underneath."
+  ]
+ },
+ {
+  "id": "slo-error-budgets",
+  "number": 15,
+  "level": "L300",
+  "title": "SLOs and error budgets: burn-rate alerts from request logs",
+  "phase": "Harden",
+  "category": "observability",
+  "description": "Compute availability and latency SLIs from three days of structured request logs, turn SLOs into error budgets and multiwindow burn-rate alerts, and see an average hide a broken p99.",
+  "outcome": "You can define an SLI as good/valid events from logs, compute burn rate and budget consumed, configure page/ticket alerts per the SRE Workbook, and let a local model word an incident summary whose numbers code checks.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux); unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100. Agent assist: optional local model (Ollama, qwen2.5:1.5b); tests use the fake server.",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "traffic.py writes 25,920 seeded requests as JSON lines; slo.py computes SLIs, burn rates and alerts at 12:00 UTC.",
+   "From 10:30 one POST /loans in five takes about 3 s; the base latency check is an average and stays silent."
+  ],
+  "prerequisites": [
+   "Lesson 13 (timeouts, degraded answers)"
+  ],
+  "glossary": [
+   {
+    "term": "SLI",
+    "meaning": "Good events / valid events, e.g. requests under 300 ms / all POST /loans."
+   },
+   {
+    "term": "SLO",
+    "meaning": "Target for an SLI over a period, e.g. 99 % over 30 days."
+   },
+   {
+    "term": "Error budget",
+    "meaning": "1 - SLO: the bad events you may spend in the period."
+   },
+   {
+    "term": "Burn rate",
+    "meaning": "Bad ratio / (1 - SLO); 1 spends the budget exactly over the period."
+   }
+  ],
+  "concepts": [
+   "Measure the user's experience: counts of good and bad events, not averages.",
+   "Alert on burn rate over a long AND a short window.",
+   "Budget consumed = burn rate x window / period."
+  ],
+  "steps": [
+   {
+    "title": "Compute SLIs and alerts",
+    "detail": "cd labs/L300/15-slo-error-budgets && python app.py",
+    "expected": "25920 requests; availability 99.9884 % (budget used 1.2 %); last hour mean 147.9, p95 94.3, p99 2846.3 ms; mean check OK; alerts none.",
+    "ifNot": "The log is seeded; different numbers mean traffic.py changed."
+   },
+   {
+    "title": "Read the request log",
+    "detail": "Open the last lines of out/requests.jsonl and find POST /loans requests around 2.4-3.0 s.",
+    "expected": "One JSON object per request: ts, route, status, ms.",
+    "ifNot": "Run step 1 first (the file is about 2 MB).",
+    "mac": "tail -5 out/requests.jsonl",
+    "windows": "Get-Content out\\requests.jsonl -Tail 5"
+   },
+   {
+    "title": "Mean vs SLI (failureLab)",
+    "detail": "python failure_lab.py",
+    "expected": "base: latency problems none, alerts none; solution: `latency page: burn 19.7 over 1h/5m`.",
+    "ifNot": "Compare with the README."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 17 tests ... OK (10-30 s: three days of log are parsed several times).",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Harden it (build task)",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "Before your change 2 of 3 tests fail (no latency SLI, no page); after it, OK. Without CHECK_MINE the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   },
+   {
+    "title": "Agent assist: incident summary",
+    "detail": "python agent_assist.py (fake model).",
+    "expected": "attempt 1: REJECTED (p99 is 2846.3, the draft says 147.9; burn rate 1.97); attempt 2: OK; nothing is posted.",
+    "ifNot": "See agentAssist below."
+   }
+  ],
+  "code": "\"\"\"SLIs, SLOs and multiwindow burn-rate alerts from structured request logs (lesson 15 lab code).\n\nWorks for availability. Weakness (the failureLab): latency is only checked as an AVERAGE (mean <= 200 ms).\nRun the demo: python app.py\n\"\"\"\nimport bisect\nimport json\nfrom datetime import datetime, timezone\n\nPERIOD_DAYS = 30  # SLO period: error budget = (1 - SLO) x the requests in 30 days\n# SLI = good events / valid events. name: (is the request valid for this SLI?, was it good?)\nSLIS = {\"availability\": (lambda r: True, lambda r: r[\"status\"] < 500)}\nSLOS = {\"availability\": 0.999}\nMEAN_LATENCY_LIMIT_MS = 200\n# multiwindow, multi-burn-rate alerts (Google SRE Workbook, \"Alerting on SLOs\", table 5-8):\n# (severity, long window s, short window s, burn-rate threshold); short window = 1/12 of the long one\nALERTS = [(\"page\", 3600, 300, 14.4), (\"page\", 21600, 1800, 6.0), (\"ticket\", 259200, 21600, 1.0)]\n\n\ndef parse(lines):\n    records = [json.loads(line) for line in lines if line.strip()]\n    for r in records:\n        r[\"t\"] = datetime.strptime(r[\"ts\"], \"%Y-%m-%dT%H:%M:%SZ\").replace(tzinfo=timezone.utc).timestamp()\n    return sorted(records, key=lambda r: r[\"t\"])\n\n\ndef window(records, now, seconds):  # records are sorted by time: binary search for [now - seconds, now)\n    def at(t):\n        return bisect.bisect_left(records, t, key=lambda r: r[\"t\"])\n    return records[at(now - seconds):at(now)]\n\n\ndef bad_ratio(records, sli):\n    is_valid, is_good = SLIS[sli]\n    valid = [r for r in records if is_valid(r)]\n    return sum(not is_good(r) for r in valid) / len(valid) if valid else 0.0\n\n\ndef burn_rate(records, sli, now, seconds):\n    # burn rate 1 = spending the budget exactly over the SLO period; 14.4 = 2% of a 30-day budget in 1 hour\n    return bad_ratio(window(records, now, seconds), sli) / (1 - SLOS[sli])\n\n\ndef budget_consumed(records, sli, now, days=3):\n    \"\"\"Share of the 30-day error budget spent in the last `days` (= burn rate x window / period).\"\"\"\n    return burn_rate(records, sli, now, days * 86400) * days / PERIOD_DAYS\n\n\ndef label(seconds):\n    return f\"{seconds // 86400}d\" if seconds >= 86400 else f\"{seconds // 3600}h\" if seconds >= 3600 else f\"{seconds // 60}m\"\n\n\ndef alerts(records, now):\n    fired = []\n    for sli in SLOS:\n        for severity, long_s, short_s, threshold in ALERTS:\n            burn_long, burn_short = burn_rate(records, sli, now, long_s), burn_rate(records, sli, now, short_s)\n            if burn_long >= threshold and burn_short >= threshold:  # both: fires fast AND resets fast\n                fired.append({\"sli\": sli, \"severity\": severity, \"windows\": f\"{label(long_s)}/{label(short_s)}\",\n                              \"burn_long\": round(burn_long, 1), \"burn_short\": round(burn_short, 1),\n                              \"threshold\": threshold})\n    return fired\n\n\ndef percentile(values, p):  # nearest-rank: the value at or below which p% of the requests fall\n    ordered = sorted(values)\n    return ordered[max(0, -(-len(ordered) * p // 100) - 1)]\n\n\ndef latency_report(records, now, seconds=3600):\n    ms = [r[\"ms\"] for r in window(records, now, seconds)]\n    return {\"mean\": round(sum(ms) / len(ms), 1), \"p50\": percentile(ms, 50), \"p95\": percentile(ms, 95),\n            \"p99\": percentile(ms, 99), \"requests\": len(ms)}\n\n\ndef latency_problems(records, now):\n    mean = latency_report(records, now)[\"mean\"]  # weakness: a mean hides a slow tail\n    return [] if mean <= MEAN_LATENCY_LIMIT_MS else [f\"mean latency {mean} ms > {MEAN_LATENCY_LIMIT_MS} ms\"]\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`SLIS = {name: (is_valid, is_good)}`",
+    "detail": "An SLI is a ratio of events; valid decides the denominator (which routes), good the numerator."
+   },
+   {
+    "title": "`window()` with `bisect`",
+    "detail": "Records are sorted by time; a binary search cuts [now - window, now) without scanning 26k lines."
+   },
+   {
+    "title": "`burn_rate = bad_ratio / (1 - SLO)`",
+    "detail": "19.7 % bad against a 1 % budget is burn 19.7."
+   },
+   {
+    "title": "`ALERTS` table",
+    "detail": "Page 1h/5m >= 14.4, page 6h/30m >= 6, ticket 3d/6h >= 1 (SRE Workbook table 5-8); short window = 1/12 of the long one."
+   },
+   {
+    "title": "`if burn_long >= threshold and burn_short >= threshold`",
+    "detail": "Long window = enough evidence; short window = the problem is still happening, so alerts reset soon after recovery."
+   },
+   {
+    "title": "`budget_consumed`",
+    "detail": "burn x window / 30 days: what share of the month's budget this window spent."
+   },
+   {
+    "title": "`latency_problems`: mean <= 200 ms",
+    "detail": "The weakness: a mean hides a slow 4 % of traffic. The fix adds a latency SLI to SLIS/SLOS."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L300/15-slo-error-budgets/slo.py",
+    "purpose": "SLIs, burn rates, alerts (lesson code)"
+   },
+   {
+    "path": "labs/L300/15-slo-error-budgets/traffic.py",
+    "purpose": "Seeded 3-day request log (+ incident)"
+   },
+   {
+    "path": "labs/L300/15-slo-error-budgets/app.py",
+    "purpose": "Writes out/requests.jsonl and prints the SLO report"
+   },
+   {
+    "path": "labs/L300/15-slo-error-budgets/failure_lab.py",
+    "purpose": "Mean check vs latency SLI"
+   },
+   {
+    "path": "labs/L300/15-slo-error-budgets/agent_assist.py",
+    "purpose": "Local model drafts the incident summary; code checks numbers"
+   },
+   {
+    "path": "labs/L300/15-slo-error-budgets/solution/slo.py",
+    "purpose": "Build task solution"
+   },
+   {
+    "path": "labs/L300/15-slo-error-budgets/test_slo.py",
+    "purpose": "Burn-rate maths, windows, symptom"
+   },
+   {
+    "path": "labs/L300/15-slo-error-budgets/test_agent_assist.py",
+    "purpose": "Number checker + fake-model loop"
+   },
+   {
+    "path": "labs/L300/15-slo-error-budgets/test_build_task.py",
+    "purpose": "Fail before / pass after"
+   }
+  ],
+  "expectedResults": [
+   "mean 147.9 ms, p95 94.3 ms, p99 2846.3 ms; base: alerts none",
+   "solution: latency page, burn 19.7 over 1h/5m",
+   "Ran 17 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "1,000 requests in the last hour, 2 errors",
+    "expected": "availability burn rate 2.0"
+   },
+   {
+    "action": "2 % errors only in the first minutes of the hour",
+    "expected": "no page (5 m window is clean), 3d/6h ticket still fires"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Alerts flap on a quiet route",
+    "action": "Short windows hold few requests; group low-traffic routes or lengthen the short window."
+   },
+   {
+    "symptom": "Dashboard green, users complain about slowness",
+    "action": "Replace mean-latency checks with a threshold SLI (share of requests under X ms)."
+   }
+  ],
+  "equivalents": [
+   "Prometheus (Apache-2.0, 3.15.1): counters for good/total requests, recording rules for burn rates, histogram_quantile for p99 (prefer native histograms).",
+   "Grafana OSS (AGPL-3.0): dashboards and alert rules on those series.",
+   "Any log pipeline (Loki, OpenSearch): the same good/valid counts as queries over structured logs."
+  ],
+  "caution": "The agent only words facts that code computed; it never decides whether to page, and nothing is posted automatically. Do not send member data or secrets in the prompt.",
+  "checkpoint": "PASS if failure_lab.py's solution run pages on the latency SLI and all tests pass.",
+  "checkYourself": [
+   {
+    "q": "p95 for the whole service is 94.3 ms. Why does it miss the incident?",
+    "a": "Only about 4 % of all requests are slow (20 % of the 20 % that are POST /loans), so they sit above the 95th percentile."
+   },
+   {
+    "q": "What does burn rate 14.4 over 1 h mean for a 30-day SLO?",
+    "a": "14.4 x 1 h / 720 h = 2 % of the month's error budget spent in that hour."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Step 'now' minute by minute from 10:30 and find the first alert.",
+    "predict": "The workbook formula says (1-0.99)/0.197 x 60 min x 14.4 = 43.9 min. When does the lab page?",
+    "expected": "`first alert at 11:27 UTC (57 min later)` with burn 16.4 / 20.0: the 5-minute window (about 6 POST /loans) is noisy, so detection comes later."
+   },
+   {
+    "task": "Make 5 % of POST /loans slow instead of 20 %.",
+    "predict": "Page, ticket, or nothing?",
+    "expected": "`latency burn rates {'5m': 0.0, '1h': 1.4, '6h': 0.2, '3d': 0.0}; alerts none` - a small tail never pages; review the SLO trend instead."
+   }
+  ],
+  "buildTask": {
+   "task": "Add a latency SLI to slo.py: '99 % of POST /loans succeed in under 300 ms', with its own SLO, so the burn-rate alerts cover it.",
+   "hints": [
+    "Add `\"latency\": (lambda r: r[\"route\"] == \"POST /loans\", lambda r: r[\"status\"] < 500 and r[\"ms\"] < 300)` to SLIS.",
+    "Add `\"latency\": 0.99` to SLOS; alerts() then loops over it - no other change needed."
+   ],
+   "solution": "labs/L300/15-slo-error-budgets/solution/slo.py",
+   "check": "labs/L300/15-slo-error-budgets/test_build_task.py (3 tests)"
+  },
+  "failureLab": {
+   "fault": "traffic.py (seed 15): from 10:30 UTC on 2026-10-28, 20 % of POST /loans take 2.4-3.0 s; all other traffic stays healthy.",
+   "symptom": "At 12:00 the last hour shows mean 147.9 ms (< 200 ms: OK) and no alert, while p99 is 2846.3 ms.",
+   "fix": "A threshold latency SLI (99 % of POST /loans under 300 ms) with burn-rate alerts: page 1h/5m at burn 19.7.",
+   "proof": "test_build_task.py: 2 of 3 FAIL with CHECK_MINE=1 on the base slo.py, 3 of 3 PASS on solution/slo.py."
+  },
+  "tradeOffs": [
+   {
+    "option": "Threshold alerts on averages/CPU",
+    "gains": "Easy to set up",
+    "costs": "Miss tails, page on harmless causes",
+    "chooseWhen": "Never as the only signal"
+   },
+   {
+    "option": "Single-window burn-rate alert",
+    "gains": "Tied to the SLO",
+    "costs": "Slow to reset or noisy, depending on the window",
+    "chooseWhen": "Small services, one window as a start"
+   },
+   {
+    "option": "Multiwindow, multi-burn-rate (this lab)",
+    "gains": "Fast pages for big burns, tickets for slow leaks, quick reset",
+    "costs": "More rules; noisy at low traffic",
+    "chooseWhen": "User-facing services with steady traffic"
+   }
+  ],
+  "agentAssist": {
+   "task": "A local model drafts the on-call incident summary from SLO facts that code computed (alert, burn rate, windows, p99/p95/mean, budget used, start time).",
+   "prompt": "[[INCIDENT-SUMMARY]] Draft a 3-4 sentence incident summary for the on-call channel. Use only the numbers in the brief, each with its label; do not guess causes. <brief>evaluated_at, alert, windows, burn_rate, slow_since, p99_ms, p95_ms, mean_ms, budget_used_1h, availability_3d</brief>",
+   "check": "check_summary(): every number in the draft must appear in the facts; numbers after a label (p99, p95, mean, burn rate) must equal THAT fact; p99 and burn rate must be present. One retry with the findings; nothing is posted.",
+   "expected": "attempt 1: REJECTED (number 1.97 not in the facts; p99 is 2846.3, the draft says 147.9 - the mean). attempt 2: OK.",
+   "realModelNote": "Not run here. `python agent_assist.py --real` with Ollama (qwen2.5:1.5b) on the Mac mini or Windows PC; wording varies, the number checks do not."
+  },
+  "inRealSystems": [
+   "SLIs come from load-balancer or service metrics (Prometheus counters); burn-rate rules live in the alerting system.",
+   "Error-budget policy: when the budget is spent, reliability work wins over features until it recovers."
+  ],
+  "useWhen": "Use SLO burn-rate alerts for user-facing paths with steady traffic; keep cause-based alerts for diagnosis, not paging.",
+  "next": "L300 #16 Performance and architecture fitness functions in CI",
+  "sources": [
+   {
+    "title": "Google SRE Workbook - Alerting on SLOs",
+    "url": "https://sre.google/workbook/alerting-on-slos/"
+   },
+   {
+    "title": "Google SRE Book - Service Level Objectives",
+    "url": "https://sre.google/sre-book/service-level-objectives/"
+   },
+   {
+    "title": "Google SRE Workbook - Implementing SLOs",
+    "url": "https://sre.google/workbook/implementing-slos/"
+   },
+   {
+    "title": "Prometheus - Histograms and summaries",
+    "url": "https://prometheus.io/docs/practices/histograms/"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py, failure_lab.py, try_it.py, agent_assist.py (fake model), `python -m unittest -v` (17 tests OK) and test_build_task with CHECK_MINE=1 (1 failure + 1 error before the fix) on Python 3.12.15, 2026-10-28.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "agent_assist.py --real (real local model)"
+   ]
+  },
+  "conceptNote": "content/concepts/L300/15-slo-error-budgets.md",
+  "conceptSummary": "An SLI counts good events; an SLO sets the target; the error budget is what you may spend. Alert when two windows burn the budget too fast - not on averages.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "JupyterLab (+ JupyterLab Desktop)",
+    "role": "CHECK",
+    "exercise": "Read out/requests.jsonl into a notebook, plot POST /loans latency per minute from 09:00 to 12:00 with the mean and the 300 ms line, and recompute the 1h latency burn rate.",
+    "expected": "Pending a manual run. Should match failure_lab.py: last-hour mean 147.9 ms, p99 2846.3 ms, latency burn 19.7 over 1h.",
+    "mac": "pip install jupyterlab",
+    "windows": "pip install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   },
+   {
+    "name": "Prometheus (+ expression browser, promtool)",
+    "role": "CHECK",
+    "exercise": "Write rules.yml with the 1h/5m latency page alert: slow POST /loans / all POST /loans over [1h] and over [5m], each divided by 0.01, both >= 14.4. Write a promtool test whose input_series encode the lab's windows at 12:00 UTC (last hour: 71 POST /loans, 14 slower than 300 ms; last 5 min: 3, 1 slow), then run `promtool test rules test.yml`.",
+    "expected": "Pending a manual run. Should agree with failure_lab.py: 14/71 slow = burn 19.7 over 1h, 1/3 = 33.3 over 5m, both >= 14.4, so the page fires, as in the lab's alert {'windows': '1h/5m', 'burn_long': 19.7, 'burn_short': 33.3, 'threshold': 14.4}. promtool needs no running server.",
+    "mac": "prometheus-3.15.1.darwin-arm64.tar.gz (contains prometheus and promtool)",
+    "windows": "prometheus-3.15.1.windows-amd64.zip",
+    "licence": "Apache-2.0 (OSI: yes)",
+    "url": "https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/"
+   }
+  ],
+  "seeAlso": [
+   "simulation L100 #3 Discrete-event simulation: a single-server queue: queueing explains why the p99 explodes while the mean still looks fine.",
+   "distributed-systems L300 #16 Backpressure and load shedding: bounded queues, 503 + Retry-After, AIMD concurrency limits: shed requests (503) are bad events for an availability SLI, and its p99 under overload is the kind of latency this lesson's SLI catches.",
+   "application-architecture L400 #21 Cost and capacity planning: Little's law, benchmarks, headroom, cost per request: this lesson's request log is the load model for capacity planning."
+  ]
+ },
+ {
+  "id": "performance-fitness-ci",
+  "number": 16,
+  "level": "L300",
+  "title": "Performance and architecture fitness functions in CI",
+  "phase": "Harden",
+  "category": "quality",
+  "description": "Turn architecture qualities into CI gates: SQL query count (sqlite3 trace), import boundaries (ast), a timeit micro-benchmark and a load-test p95 budget - then catch an N+1 query a refactor slipped in.",
+  "outcome": "You can write deterministic fitness functions, give noisy timing gates honest budgets, detect N+1 queries by counting statements, and express a response-time budget as k6 thresholds.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux); unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100. Optional: Grafana k6 v2.3.0 (brew install k6 / winget install k6 --source winget) for k6/overdue.js.",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "fitness.py runs four gates and prints one JSON line per gate; the exit code fails the build.",
+   "The repository was 'tidied up' into N+1 queries: same rows, timing gates pass, the query-count gate fails."
+  ],
+  "prerequisites": [
+   "Lesson 3 (boundary fitness function)",
+   "Lesson 11 (speed budgets)"
+  ],
+  "glossary": [
+   {
+    "term": "Fitness function",
+    "meaning": "An automated, objective check of one architectural characteristic."
+   },
+   {
+    "term": "N+1 query",
+    "meaning": "One query for a list, then one more per row (here 2 per overdue loan)."
+   },
+   {
+    "term": "Micro-benchmark",
+    "meaning": "Timing one function many times; keep the minimum of the repeats."
+   },
+   {
+    "term": "Threshold (k6)",
+    "meaning": "Pass/fail criterion on load-test metrics, e.g. p(95)<200."
+   }
+  ],
+  "concepts": [
+   "Prefer deterministic gates (counts, imports) over timings.",
+   "A count that grows with the data is an N+1.",
+   "Timing gates need generous budgets and minimum-of-repeats."
+  ],
+  "steps": [
+   {
+    "title": "Run the gates",
+    "detail": "cd labs/L300/16-performance-fitness-ci && python fitness.py",
+    "expected": "4 JSON lines; query-count {10: 11, 500: 337} ok false; `fitness: FAILED query-count`; exit code 1.",
+    "ifNot": "Timing values vary; the query counts must match.",
+    "mac": "python fitness.py; echo \"exit $?\"",
+    "windows": "python fitness.py; \"exit $LASTEXITCODE\""
+   },
+   {
+    "title": "Diagnose (failureLab)",
+    "detail": "python failure_lab.py",
+    "expected": "Same rows; base FAILS query-count but PASSES p95; the trace shows SELECT name FROM members WHERE id = 15, SELECT title FROM books ...; with 0.5 ms round trips about 340 ms vs about 3 ms.",
+    "ifNot": "Round-trip times depend on the OS sleep resolution (larger on Windows)."
+   },
+   {
+    "title": "Harden it (build task)",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "Before your change 2 of 3 tests fail (query count grows with the data); after it, OK. Without CHECK_MINE the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   },
+   {
+    "title": "Gates again",
+    "detail": "python fitness.py --solution (or plain python fitness.py after your fix).",
+    "expected": "query-count {10: 1, 500: 1}; `fitness: all gates passed`; exit code 0.",
+    "ifNot": "Read the failing gate's JSON line."
+   },
+   {
+    "title": "Load test by hand, then with k6",
+    "detail": "Start the API, run the stdlib load test, then the same budget as k6 thresholds (k6 is pending-ci).",
+    "expected": "load_test.py prints requests 40, errors 0, p95 in ms; k6 exits 0 when p(95)<200 and errors < 1 %.",
+    "ifNot": "Port busy: pick another port and pass BASE_URL to k6 (-e BASE_URL=...).",
+    "mac": "python http_api.py 8016 &\npython load_test.py http://127.0.0.1:8016/reports/overdue\nbrew install k6 && k6 run k6/overdue.js\nkill %1",
+    "windows": "$api = Start-Process python -ArgumentList 'http_api.py','8016' -PassThru\npython load_test.py http://127.0.0.1:8016/reports/overdue\nwinget install k6 --source winget; k6 run k6\\overdue.js\nStop-Process -Id $api.Id"
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 10 tests ... OK.",
+    "ifNot": "Run from the lab folder."
+   }
+  ],
+  "code": "\"\"\"Architecture fitness functions as CI gates (lesson 16 lab code). Run: python fitness.py  (exit 1 = a gate failed)\n\nEach gate prints one JSON line {\"gate\", \"ok\", \"value\", \"budget\"}. Same ideas as import-linter contracts,\nk6 thresholds and pytest-benchmark comparisons. `--solution` runs the gates on solution/loans_repo.py.\n\"\"\"\nimport argparse\nimport ast\nimport importlib.util\nimport json\nimport pathlib\nimport sys\nimport timeit\n\nimport loans_repo\nfrom http_api import start\nfrom load_test import run_load\n\nHERE = pathlib.Path(__file__).resolve().parent\nQUERY_BUDGET = 2  # SQL statements per report - for 10 AND 500 loans: the count must not grow with the data\nBENCH_BUDGET_MS = 50  # generous on purpose: timing gates must not flake on a busy CI runner\nP95_BUDGET_MS = 200\nFORBIDDEN = {\"domain.py\": {\"sqlite3\", \"http\", \"urllib\", \"loans_repo\", \"http_api\"}}  # domain stays pure\n\n\nclass QueryCounter:\n    \"\"\"Counts the SQL statements SQLite actually executes (sqlite3 trace callback).\"\"\"\n\n    def __init__(self, conn):\n        self.conn, self.statements = conn, []\n\n    def __enter__(self):\n        self.conn.set_trace_callback(self.statements.append)\n        return self\n\n    def __exit__(self, *exc):\n        self.conn.set_trace_callback(None)\n\n\ndef gate_import_boundaries(folder=HERE):\n    found = []\n    for file, forbidden in FORBIDDEN.items():\n        tree = ast.parse((folder / file).read_text(encoding=\"utf-8\"))\n        names = ({a.name.split(\".\")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names} |\n                 {n.module.split(\".\")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module})\n        found += [f\"{file} imports {name}\" for name in sorted(names & forbidden)]\n    return {\"gate\": \"import-boundaries\", \"ok\": not found, \"value\": found, \"budget\": \"domain.py imports no adapters\"}\n\n\ndef gate_query_count(repo):\n    counts = {}\n    for loans in (10, 500):\n        conn = repo.seeded_db(loans=loans)\n        with QueryCounter(conn) as counter:\n            repo.overdue_report(conn)\n        counts[loans] = len(counter.statements)  # deterministic: same data, same count, on every machine\n    return {\"gate\": \"query-count\", \"ok\": max(counts.values()) <= QUERY_BUDGET, \"value\": counts, \"budget\": QUERY_BUDGET}\n\n\ndef gate_microbenchmark(repo):\n    conn = repo.seeded_db(loans=500)\n    runs = timeit.repeat(lambda: repo.overdue_report(conn), number=5, repeat=5)\n    best_ms = min(runs) / 5 * 1000  # min() of the repeats: the least disturbed run (timeit docs)\n    return {\"gate\": \"micro-benchmark\", \"ok\": best_ms <= BENCH_BUDGET_MS, \"value\": round(best_ms, 2),\n            \"budget\": BENCH_BUDGET_MS}\n\n\ndef gate_response_time(repo):\n    server, url = start(repo, loans=500)\n    try:\n        result = run_load(url + \"/reports/overdue\", users=4, requests_per_user=10)\n    finally:\n        server.shutdown()\n        server.server_close()\n    return {\"gate\": \"response-time-p95\", \"ok\": result[\"p95_ms\"] <= P95_BUDGET_MS and result[\"errors\"] == 0,\n            \"value\": result, \"budget\": P95_BUDGET_MS}\n\n\ndef main(argv=None, out=sys.stdout):\n    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])\n    parser.add_argument(\"--solution\", action=\"store_true\", help=\"check solution/loans_repo.py\")\n    repo = loans_repo\n    if parser.parse_args(argv).solution:\n        spec = importlib.util.spec_from_file_location(\"loans_repo_solution\", HERE / \"solution\" / \"loans_repo.py\")\n        repo = importlib.util.module_from_spec(spec)\n        spec.loader.exec_module(repo)\n    results = [gate_import_boundaries(), gate_query_count(repo), gate_microbenchmark(repo), gate_response_time(repo)]\n    for result in results:\n        print(json.dumps(result, sort_keys=True), file=out)\n    failed = [r[\"gate\"] for r in results if not r[\"ok\"]]\n    print(\"fitness: \" + (\"all gates passed\" if not failed else \"FAILED \" + \", \".join(failed)), file=out)\n    return 1 if failed else 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`QueryCounter`: `set_trace_callback(self.statements.append)`",
+    "detail": "SQLite calls back for every statement it actually executes; the list is the evidence."
+   },
+   {
+    "title": "`gate_query_count`: 10 and 500 loans",
+    "detail": "Two data sizes: a constant count passes, a growing one is an N+1. Deterministic on every OS."
+   },
+   {
+    "title": "`gate_import_boundaries`: `ast.Import` / `ast.ImportFrom`",
+    "detail": "Static import check of domain.py - lesson 3's rule as a CI gate."
+   },
+   {
+    "title": "`min(timeit.repeat(...))`",
+    "detail": "The least disturbed run; budgets stay generous (50 ms) so CI does not flake."
+   },
+   {
+    "title": "`gate_response_time`: `run_load(... users=4)`",
+    "detail": "p95 and errors of 40 requests against the real HTTP adapter; k6 thresholds express the same budget."
+   },
+   {
+    "title": "`print(json.dumps(result))` + `return 1 if failed`",
+    "detail": "Machine-readable results for dashboards; exit code for the pipeline."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L300/16-performance-fitness-ci/fitness.py",
+    "purpose": "Fitness gates (lesson code)"
+   },
+   {
+    "path": "labs/L300/16-performance-fitness-ci/loans_repo.py",
+    "purpose": "Overdue report after the refactor (N+1)"
+   },
+   {
+    "path": "labs/L300/16-performance-fitness-ci/domain.py",
+    "purpose": "Pure overdue/fine rules"
+   },
+   {
+    "path": "labs/L300/16-performance-fitness-ci/http_api.py",
+    "purpose": "GET /reports/overdue"
+   },
+   {
+    "path": "labs/L300/16-performance-fitness-ci/load_test.py",
+    "purpose": "Stdlib load test (threads, p95)"
+   },
+   {
+    "path": "labs/L300/16-performance-fitness-ci/k6/overdue.js",
+    "purpose": "Same load test for k6 with thresholds (pending-ci)"
+   },
+   {
+    "path": "labs/L300/16-performance-fitness-ci/failure_lab.py",
+    "purpose": "N+1 vs JOIN, with simulated round trips"
+   },
+   {
+    "path": "labs/L300/16-performance-fitness-ci/solution/loans_repo.py",
+    "purpose": "Build task solution"
+   },
+   {
+    "path": "labs/L300/16-performance-fitness-ci/test_fitness.py",
+    "purpose": "Gates, symptom, exit code"
+   },
+   {
+    "path": "labs/L300/16-performance-fitness-ci/test_build_task.py",
+    "purpose": "Fail before / pass after"
+   }
+  ],
+  "expectedResults": [
+   "base: `fitness: FAILED query-count` (exit 1)",
+   "solution: query-count {10: 1, 500: 1}, all gates passed",
+   "Ran 10 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "Add `import sqlite3` to a copy of domain.py",
+    "expected": "import-boundaries: `domain.py imports sqlite3`"
+   },
+   {
+    "action": "Report on 10 vs 500 loans with the N+1 code",
+    "expected": "11 vs 337 statements"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Timing gate fails on CI only",
+    "action": "Shared runners are noisy: compare min() of repeats, keep budgets generous, rely on counts for hard limits."
+   },
+   {
+    "symptom": "Load test shows about 1 s outliers",
+    "action": "Listen backlog too small (connection retries); http_api.py sets request_queue_size = 64 and load_test.py warms up."
+   }
+  ],
+  "equivalents": [
+   "Grafana k6 v2.3.0 (AGPL-3.0): thresholds such as http_req_duration p(95)<200 make `k6 run` exit non-zero.",
+   "pytest-benchmark 5.3.0 (--benchmark-compare-fail) and pyperf 2.10.0 for micro-benchmarks.",
+   "import-linter 2.15 (Python) and ArchUnit (Java) for import-boundary contracts.",
+   "ORMs: Django select_related/prefetch_related; Rails includes/strict_loading - the usual N+1 cures."
+  ],
+  "checkpoint": "PASS if `python fitness.py` exits 0 after your fix and test_build_task passes on your loans_repo.py.",
+  "checkYourself": [
+   {
+    "q": "Both versions pass the p95 budget. Why is the query count the better gate here?",
+    "a": "It is deterministic and grows with the data; timing on small in-process data hides the N+1."
+   },
+   {
+    "q": "Why min() of timeit repeats, not the mean?",
+    "a": "Other processes only add time; the minimum is the least disturbed measurement (timeit docs)."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Benchmark the N+1 and the JOIN report on 500 loans with timeit (in-process SQLite).",
+    "predict": "How much slower is the N+1 without network round trips?",
+    "expected": "Observed: N+1 1.2-21 ms, JOIN 0.4-3.8 ms per report (best of 5x5, 7 runs): 2.6-46x slower, yet under the 50 ms budget."
+   },
+   {
+    "task": "Plant `import sqlite3` in a copy of domain.py and run the import gate on it.",
+    "predict": "What does the gate print?",
+    "expected": "`{'gate': 'import-boundaries', 'ok': False, 'value': ['domain.py imports sqlite3'], ...}`."
+   }
+  ],
+  "buildTask": {
+   "task": "Rewrite overdue_report() in loans_repo.py as one JOIN that also filters overdue loans in SQL, so the statement count stays constant and the rows stay identical.",
+   "hints": [
+    "JOIN members and books ON their ids; `WHERE l.returned = 0 AND l.due < ?` with today.isoformat() (ISO dates sort as text).",
+    "Keep ORDER BY l.id so the rows come back in the same order as before."
+   ],
+   "solution": "labs/L300/16-performance-fitness-ci/solution/loans_repo.py",
+   "check": "labs/L300/16-performance-fitness-ci/test_build_task.py (3 tests)"
+  },
+  "failureLab": {
+   "fault": "A 'readability' refactor of overdue_report(): load loans, then SELECT the member and the book per overdue loan (seeded library, 500 loans).",
+   "symptom": "Same rows, unit tests green, p95 budget green - but 337 statements per report; with >= 0.5 ms per round trip the report takes about 340 ms instead of about 3 ms.",
+   "fix": "One JOIN with the overdue filter in SQL: 1 statement for any number of loans.",
+   "proof": "fitness.py exits 1 (query-count) before and 0 after; test_build_task.py: 2 of 3 FAIL with CHECK_MINE=1 on the base loans_repo.py, 3 of 3 PASS on the solution."
+  },
+  "tradeOffs": [
+   {
+    "option": "Deterministic gates (query count, imports)",
+    "gains": "Never flaky; exact diagnosis",
+    "costs": "Only cover what you thought to count",
+    "chooseWhen": "Hard architectural rules, every commit"
+   },
+   {
+    "option": "Timing gates (timeit, load test p95)",
+    "gains": "Catch regressions you did not predict",
+    "costs": "Noisy on shared runners; need generous budgets",
+    "chooseWhen": "Nightly or on a dedicated runner"
+   },
+   {
+    "option": "Production SLOs (lesson 15)",
+    "gains": "Real users, real data sizes",
+    "costs": "Feedback after the deploy",
+    "chooseWhen": "Always, as the backstop"
+   }
+  ],
+  "inRealSystems": [
+   "ORM test helpers assert query counts per request (e.g. Django's assertNumQueries).",
+   "Load tests with thresholds run nightly against a staging copy; fitness-function results are tracked over time."
+  ],
+  "useWhen": "Gate every commit on deterministic fitness functions; run timing and load gates where the environment is stable enough to trust them.",
+  "next": "L400 #17 Strangler-fig decomposition: facade, branch by abstraction, parallel run, cut-over",
+  "sources": [
+   {
+    "title": "Python - timeit",
+    "url": "https://docs.python.org/3.12/library/timeit.html"
+   },
+   {
+    "title": "Python - sqlite3 (Connection.set_trace_callback)",
+    "url": "https://docs.python.org/3/library/sqlite3.html"
+   },
+   {
+    "title": "Grafana k6 - Thresholds",
+    "url": "https://grafana.com/docs/k6/latest/using-k6/thresholds/"
+   },
+   {
+    "title": "Django - Database access optimization (N+1)",
+    "url": "https://docs.djangoproject.com/en/6.1/topics/db/optimization/"
+   },
+   {
+    "title": "import-linter (PyPI) 2.15",
+    "url": "https://pypi.org/project/import-linter/"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran fitness.py (exit 1) and fitness.py --solution (exit 0) several times, failure_lab.py, try_it.py, load_test.py via the gate, `python -m unittest -v` (10 tests OK) and test_build_task with CHECK_MINE=1 (2 failures before the fix) on Python 3.12.15, 2026-10-28.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "k6 run k6/overdue.js (Grafana k6 v2.3.0, CI job k6)"
+   ]
+  },
+  "conceptNote": "content/concepts/L300/16-performance-fitness-ci.md",
+  "conceptSummary": "Fitness functions turn architecture qualities into CI gates. Counts and import rules are deterministic; timings need honest, generous budgets. An N+1 shows up as a count that grows with the data.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "Grafana k6",
+    "role": "CHECK",
+    "exercise": "Run k6/overdue.js against `python http_api.py 8016` (4 VUs, 40 iterations) and compare k6's http_req_duration p(95) with load_test.py's p95_ms.",
+    "expected": "Pending a manual run. Should land in the same range as the lab's gate (p95 4.8-105 ms here, depending on host load) and exit 0; tighten the threshold to p(95)<10 to see k6 exit non-zero.",
+    "mac": "brew install k6",
+    "windows": "winget install k6 --source winget",
+    "licence": "AGPL-3.0 (OSI: yes)",
+    "url": "https://github.com/grafana/k6"
+   },
+   {
+    "name": "import-linter",
+    "role": "CHECK",
+    "exercise": "Write a forbidden contract: domain must not import sqlite3, http_api or loans_repo; run lint-imports and compare with gate_import_boundaries().",
+    "expected": "Pending a manual run. Should agree with fitness.py: no violation in domain.py; with tryIt 2's planted import both report sqlite3. Whether import-linter accepts these top-level single-file modules is unverified (see KNOWN-GAPS).",
+    "mac": "pip install import-linter",
+    "windows": "pip install import-linter",
+    "licence": "BSD-2-Clause (OSI: yes)",
+    "url": "https://github.com/seddonym/import-linter"
+   }
+  ],
+  "seeAlso": [
+   "distributed-systems L200 #11 Rate limiting: token bucket, per-client limits, 429 and Retry-After: k6 at a fixed arrival rate, the same tool as this lesson's load gate.",
+   "application-architecture L400 #20 Evolutionary architecture: expand/contract migrations, API versions, flags, fitness over time: the same gates kept as a history per rollout step."
+  ]
+ }
+]

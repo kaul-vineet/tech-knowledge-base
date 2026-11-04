@@ -1,0 +1,1182 @@
+[
+  {
+    "id": "foundations-mechanics",
+    "number": 23,
+    "level": "L500",
+    "title": "Foundations I: classical mechanics, gravitation and spherical trigonometry",
+    "phase": "Theory & Rigour",
+    "category": "foundations: mechanics",
+    "description": "Derive Kepler's third law, vis-viva, escape speed, the virial theorem and the alt-az formula of lesson 2 - then check each one numerically.",
+    "outcome": "You can derive the orbital and spherical-astronomy formulas the course has been using, state their assumptions, and verify them against an independent numerical computation.",
+    "estimatedTime": "4-5 hours (reading and proofs 2 h, checks 30 min, problem set 2 h)",
+    "prerequisites": [
+      "calculus: derivatives, chain rule, time averages as integrals",
+      "vectors: dot and cross products, unit vectors, rotation matrices",
+      "Newtonian mechanics: F = ma, kinetic and potential energy, angular momentum",
+      "trigonometry: sine/cosine of sums; radians vs degrees",
+      "Lesson 2 (Coordinates and the sky: RA/Dec to Alt/Az - is a star above the horizon now?) and Lesson 5 (Orbits: Kepler's laws, Kepler's equation and a planet's position)"
+    ],
+    "learningObjectives": [
+      "Derive Kepler's third law for circular two-body orbits, including the reduced-mass correction, and explain when the correction matters.",
+      "Derive the vis-viva equation from conservation of energy and angular momentum, and analyze escape as its a -> infinity limit.",
+      "Prove the virial theorem 2<K> + <U> = 0 for a bound gravitating system and explain why it holds only for time averages.",
+      "Derive the spherical cosine rule and use it to prove the altitude formula of lesson 2; evaluate it against an independent rotation-matrix computation.",
+      "Critique the floating-point behaviour of the cosine rule for tiny angles and justify the atan2 (Vincenty) form used in lesson 7."
+    ],
+    "glossary": [
+      {
+        "term": "reduced mass",
+        "meaning": "mu = m1 m2 / (m1 + m2): the two-body problem becomes one body of mass mu orbiting a fixed centre with G(m1 + m2)."
+      },
+      {
+        "term": "vis-viva",
+        "meaning": "v^2 = GM (2/r - 1/a): orbital speed at distance r on a Kepler orbit of semi-major axis a."
+      },
+      {
+        "term": "specific orbital energy",
+        "meaning": "E = v^2/2 - GM/r = -GM/(2a); negative = bound, zero = parabolic escape, positive = hyperbolic."
+      },
+      {
+        "term": "virial theorem",
+        "meaning": "For a bound system in a 1/r potential, the time averages satisfy 2<K> + <U> = 0."
+      },
+      {
+        "term": "astronomical (PZX) triangle",
+        "meaning": "Spherical triangle formed by the celestial pole P, the zenith Z and the star X; its sides are 90-phi, 90-delta and 90-h."
+      },
+      {
+        "term": "spherical cosine rule",
+        "meaning": "cos a = cos b cos c + sin b sin c cos A for a triangle of great-circle arcs on the unit sphere."
+      }
+    ],
+    "conceptNote": "content/concepts/L500/23-foundations-mechanics.md",
+    "conceptSummary": "Every orbital formula in the course follows from F = GMm/r^2 plus two conserved quantities (energy, angular momentum); every sky-coordinate formula follows from one dot product on the unit sphere. Here they are derived, their assumptions named, and each is checked against an independent numerical route.",
+    "theorems": [
+      {
+        "name": "Kepler's third law (circular two-body orbits)",
+        "statement": "Two point masses M and m on circular orbits about their common centre of mass, separated by a, have period $T^2 = 4\\pi^2 a^3 / (G(M+m))$. For m << M this is the familiar $T^2 \\propto a^3$ with the same constant for every planet.",
+        "proof": "Let $\\mathbf{r} = \\mathbf{r}_m - \\mathbf{r}_M$. Newton's law on each body gives $m\\ddot{\\mathbf{r}}_m = -GMm\\,\\mathbf{r}/r^3$ and $M\\ddot{\\mathbf{r}}_M = +GMm\\,\\mathbf{r}/r^3$. Divide by m and M respectively and subtract: $\\ddot{\\mathbf{r}} = -G(M+m)\\,\\mathbf{r}/r^3$. So the separation obeys a one-body equation with central 'mass' M + m (equivalently, a body of reduced mass $\\mu = Mm/(M+m)$ in the potential $-GMm/r$).\n\nFor a circular orbit of radius a the acceleration is centripetal with magnitude $\\omega^2 a$, where $\\omega = 2\\pi/T$. Equate magnitudes: $\\omega^2 a = G(M+m)/a^2$, so $\\omega^2 = G(M+m)/a^3$ and $T^2 = 4\\pi^2 a^3/(G(M+m))$. $\\blacksquare$\n\n*Remarks.* (i) The same result holds for ellipses with a the semi-major axis (problem 23.1: area law plus $A = \\pi a b$). (ii) In au, years and solar masses $G M_\\odot = 4\\pi^2$, which is why lesson 11 sets G = 4 pi^2. (iii) The factor $(1+m/M)^{-1/2}$ is Jupiter's 0.05 % shortening in the check.",
+        "check": "labs/L500/23-foundations-mechanics/mechanics.py (check_kepler3)",
+        "checkOutput": "Earth (a = 1 au, GM_sun): T = 365.2569 d\nJupiter's own mass shortens its period by a factor 0.999523 (= (1 + m/M)^-1/2)\nleapfrog circular orbit, m/M = 0.0009546: T = 0.99952317 yr vs formula 0.99952304 yr (rel. diff 1.3e-07)"
+      },
+      {
+        "name": "Vis-viva equation and escape speed",
+        "statement": "On a Kepler orbit with semi-major axis a about a central mass parameter GM, the speed at distance r is $v^2 = GM(2/r - 1/a)$; the specific energy is $E = -GM/(2a)$. Escape (E = 0, a -> infinity) requires $v_{esc} = \\sqrt{2GM/r} = \\sqrt{2}\\,v_{circ}$.",
+        "proof": "Two quantities are conserved for a central force: the specific energy $E = v^2/2 - GM/r$ (the force is conservative) and the specific angular momentum $h = |\\mathbf{r}\\times\\mathbf{v}|$ (the torque $\\mathbf{r}\\times\\mathbf{F}$ vanishes).\n\nAt the two apsides $r_p = a(1-e)$ and $r_a = a(1+e)$ the velocity is perpendicular to $\\mathbf{r}$, so $h = r_p v_p = r_a v_a$. Energy at both apsides: $v_p^2/2 - GM/r_p = v_a^2/2 - GM/r_a$. Substitute $v_a = v_p r_p/r_a$: $\\tfrac{1}{2}v_p^2(1 - r_p^2/r_a^2) = GM(1/r_p - 1/r_a)$. Factor $(1 - r_p^2/r_a^2) = (r_a - r_p)(r_a + r_p)/r_a^2$ and $(1/r_p - 1/r_a) = (r_a - r_p)/(r_p r_a)$, giving $v_p^2 = 2GM\\,r_a/(r_p(r_a + r_p))$. Then $E = v_p^2/2 - GM/r_p = GM\\,(r_a - (r_a + r_p))/(r_p(r_a + r_p)) = -GM/(r_a + r_p) = -GM/(2a)$.\n\nBecause E is the same everywhere on the orbit, $v^2/2 - GM/r = -GM/(2a)$ at every r, i.e. $v^2 = GM(2/r - 1/a)$. $\\blacksquare$\n\n*Corollary (escape).* A trajectory is unbound iff $E \\ge 0$. The threshold E = 0 corresponds to $1/a = 0$, so $v_{esc}^2 = 2GM/r$. A circular orbit has r = a, so $v_{circ}^2 = GM/r$ and $v_{esc} = \\sqrt{2}\\,v_{circ}$.",
+        "check": "labs/L500/23-foundations-mechanics/mechanics.py (check_vis_viva)",
+        "checkOutput": "e = 0.6 orbit, 100001 samples: a measured = 1.000000 au, max |v^2 - GM(2/r - 1/a)| / v^2 = 3.0e-08\nescape speed: Earth surface 11.18 km/s; from the Sun at 1 au 42.1 km/s\nlaunch at 0.99 v_esc from 1 au: after 100 yr r = 37.8 au, specific energy -0.785\nlaunch at 1.01 v_esc from 1 au: after 100 yr r = 170.3 au, specific energy +0.794"
+      },
+      {
+        "name": "Virial theorem for a bound gravitating system",
+        "statement": "For a system of point masses interacting only through Newtonian gravity whose positions and velocities stay bounded for all time, the long-time averages of kinetic energy K and potential energy U satisfy $2\\langle K\\rangle + \\langle U\\rangle = 0$.",
+        "proof": "Define the virial $G_v = \\sum_i \\mathbf{p}_i\\cdot\\mathbf{r}_i$. Differentiate: $\\dot G_v = \\sum_i \\dot{\\mathbf{p}}_i\\cdot\\mathbf{r}_i + \\sum_i \\mathbf{p}_i\\cdot\\dot{\\mathbf{r}}_i = \\sum_i \\mathbf{F}_i\\cdot\\mathbf{r}_i + 2K$.\n\n*The force term equals U.* With $U = -\\sum_{i<j} G m_i m_j/r_{ij}$ and $\\mathbf{F}_i = -\\nabla_i U$, pair (i, j) contributes $\\mathbf{F}_{ij}\\cdot\\mathbf{r}_i + \\mathbf{F}_{ji}\\cdot\\mathbf{r}_j = \\mathbf{F}_{ij}\\cdot(\\mathbf{r}_i - \\mathbf{r}_j) = -\\frac{G m_i m_j}{r_{ij}^3}\\,\\mathbf{r}_{ij}\\cdot\\mathbf{r}_{ij} = -\\frac{G m_i m_j}{r_{ij}}$. Summing over pairs gives exactly U. (Equivalently: U is homogeneous of degree -1 in the coordinates, and Euler's theorem gives $\\sum \\mathbf{r}_i\\cdot\\nabla_i U = -U$.)\n\nSo $\\dot G_v = 2K + U$. Average over $[0, \\tau]$: $\\frac{1}{\\tau}\\int_0^\\tau (2K + U)\\,dt = \\frac{G_v(\\tau) - G_v(0)}{\\tau}$. Bounded positions and momenta make $G_v$ bounded, so the right side tends to 0 as $\\tau \\to \\infty$. Hence $2\\langle K\\rangle + \\langle U\\rangle = 0$. $\\blacksquare$\n\n*What it does not say.* The instantaneous values need not satisfy it (on an e = 0.6 orbit, 2K/|U| swings from 0.4 to 1.6). For a periodic orbit the average over whole periods is exact; over part of a period it is not. Astronomers apply it to clusters assuming they are relaxed (time average = ensemble average) - an assumption, not a theorem. For a general power-law potential $U \\propto r^n$ the same proof gives $2\\langle K\\rangle = n\\langle U\\rangle$ (problem 23.5).",
+        "check": "labs/L500/23-foundations-mechanics/mechanics.py (check_virial)",
+        "checkOutput": "instantaneous 2K/|U| over an e = 0.6 orbit ranges 0.400 .. 1.600\ntime-averaged 2<K>/|<U>| over 3 whole orbits = 1.000000; over the first quarter orbit = 1.249"
+      },
+      {
+        "name": "Spherical cosine rule and the altitude formula of lesson 2",
+        "statement": "For a spherical triangle with sides (arcs) a, b, c opposite angles A, B, C on the unit sphere, $\\cos a = \\cos b\\cos c + \\sin b\\sin c\\cos A$. Applied to the pole-zenith-star triangle it gives $\\sin h = \\sin\\delta\\sin\\varphi + \\cos\\delta\\cos\\varphi\\cos H$ (altitude h, declination delta, latitude phi, hour angle H), the formula in `sky.py`.",
+        "proof": "Place vertex A at the north pole of the unit sphere: $\\hat A = (0,0,1)$. Vertices B and C lie at colatitudes c and b (their arc distances from A) and at longitudes differing by the angle A: $\\hat B = (\\sin c, 0, \\cos c)$, $\\hat C = (\\sin b\\cos A, \\sin b\\sin A, \\cos b)$. The arc BC has length a with $\\cos a = \\hat B\\cdot\\hat C = \\sin c\\sin b\\cos A + \\cos c\\cos b$. $\\blacksquare$\n\n*Astronomical triangle.* Let the vertices be the celestial pole P, the zenith Z and the star X. Arc PZ = 90 - phi (the pole stands phi above the horizon), arc PX = 90 - delta, arc ZX = 90 - h (zenith distance). The angle at P between the meridian (through Z) and the hour circle of X is the hour angle H. Apply the rule with side ZX opposite P: $\\cos(90-h) = \\cos(90-\\varphi)\\cos(90-\\delta) + \\sin(90-\\varphi)\\sin(90-\\delta)\\cos H$, i.e. $\\sin h = \\sin\\varphi\\sin\\delta + \\cos\\varphi\\cos\\delta\\cos H$. $\\blacksquare$\n\n*Azimuth.* Writing the star's unit vector in the (north, east, zenith) frame - the rotation used in the check - gives the east component $-\\cos\\delta\\sin H$ and the north component $\\sin\\delta\\cos\\varphi - \\cos\\delta\\sin\\varphi\\cos H$, so $A_z = \\mathrm{atan2}(-\\cos\\delta\\sin H,\\ \\sin\\delta\\cos\\varphi - \\cos\\delta\\sin\\varphi\\cos H)$ (north through east), exactly as in `sky.py`. Its zenith component reproduces the altitude formula, an independent confirmation. The azimuth is undefined at the zenith, where both components vanish.",
+        "check": "labs/L500/23-foundations-mechanics/mechanics.py (check_altaz)",
+        "checkOutput": "spherical cosine rule on 10000 random triangles: max error 1.9e-14\nsin h = sin d sin phi + cos d cos phi cos H vs rotation matrix, 20000 points: max |d alt| = 3.0e-13 deg\nlesson-2 sky.altaz vs rotation, 10 stars at Gurgaon 15:30 UTC: max |d alt| 7.1e-15 deg, max |d az| 2.8e-14 deg; Deneb alt 56.27 deg"
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "23.1",
+        "type": "derivation",
+        "difficulty": 2,
+        "marks": 8,
+        "problem": "Extend the proof of Kepler's third law to an elliptical orbit. Use the area law dA/dt = h/2, the ellipse area pi a b with b^2 = a^2 (1 - e^2), and h^2 = G(M + m) a (1 - e^2).",
+        "solution": "Over one period the radius vector sweeps the whole ellipse, so T (h/2) = pi a b, i.e. T = 2 pi a b / h. Square it: T^2 = 4 pi^2 a^2 b^2 / h^2 = 4 pi^2 a^2 a^2 (1 - e^2) / (G(M + m) a (1 - e^2)) = 4 pi^2 a^3 / (G(M + m)). The eccentricity cancels: the period depends only on the semi-major axis. (h^2 = G(M + m) a (1 - e^2) itself follows from h = r_p v_p and the v_p^2 found in the vis-viva proof: h^2 = r_p^2 x 2GM r_a / (r_p (r_a + r_p)) = GM x 2 r_a r_p / (2a) = GM a (1 - e^2).)"
+      },
+      {
+        "id": "23.2",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 4,
+        "problem": "A geostationary satellite must orbit once per sidereal day. Lesson 2's GMST rate (24.065709824279 sidereal hours per solar day) gives the sidereal day in seconds. With GM_Earth = 3.986004e14 m^3 s^-2 (IAU 2015 B3), find the orbital radius and the altitude above the equatorial radius 6378.1 km.",
+        "solution": "Sidereal day = 86400 x 24 / 24.065709824279 = 86164.0905 s. From Kepler III with m << M: r = (GM (T / 2 pi)^2)^(1/3) = 42164.2 km. Altitude = 42164.2 - 6378.1 = 35786.1 km."
+      },
+      {
+        "id": "23.3",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "A Hohmann transfer from Earth's orbit (1 au) to Mars's (1.524 au) is the ellipse touching both circles. Using vis-viva with GM_sun = 1.3271244e20 m^3 s^-2, find the transfer semi-major axis, the speed needed at departure compared with Earth's circular speed, the delta-v at departure, and the transfer time.",
+        "solution": "a_t = (1 + 1.524)/2 = 1.262 au. Earth's circular speed sqrt(GM/1 au) = 29.78 km/s. On the transfer ellipse at r = 1 au: v = sqrt(GM (2/r - 1/a_t)) = 32.73 km/s, so delta-v = 2.95 km/s at departure. At arrival (r = 1.524 au) the transfer speed is 21.48 km/s against Mars's circular 24.13 km/s (a second burn of 2.65 km/s). Transfer time = half the transfer period = 0.5 x 1.262^1.5 yr = 0.709 yr = 259 days."
+      },
+      {
+        "id": "23.4",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "Compute the escape speed from Earth's surface (GM_Earth = 3.986004e14 m^3 s^-2, R = 6.3781e6 m) and from the Sun's gravity at 1 au. Show that the second is sqrt(2) times Earth's orbital speed.",
+        "solution": "v_esc = sqrt(2 GM / R) = 11.18 km/s at Earth's surface. At 1 au from the Sun, sqrt(2 GM_sun / 1 au) = 42.1 km/s. Earth's circular orbital speed is 29.78 km/s and 29.78 x sqrt(2) = 42.1 km/s, as the vis-viva corollary requires (E = 0 means 1/a = 0)."
+      },
+      {
+        "id": "23.5",
+        "type": "proof",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Generalise the virial theorem: if every pair potential is a power law U_ij = k r_ij^n, prove 2<K> = n<U>. Check it for gravity (n = -1) and for a harmonic spring (n = 2).",
+        "solution": "The proof is unchanged up to the force term. For U_ij = k r_ij^n, F_ij = -(dU_ij/dr_ij) r_hat_ij = -n k r_ij^(n-1) r_hat_ij, so F_ij . (r_i - r_j) = -n k r_ij^n = -n U_ij. Summing over pairs: sum_i F_i . r_i = -n U. Then dG/dt = 2K - nU and the long-time average of a bounded G's derivative is 0, so 2<K> = n<U>. Gravity, n = -1: 2<K> = -<U> (the standard theorem). Spring, n = 2: <K> = <U>, the familiar equal sharing of energy in a harmonic oscillator."
+      },
+      {
+        "id": "23.6",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "A relaxed galaxy cluster has line-of-sight velocity dispersion sigma = 1000 km/s and radius R = 1 Mpc. Model it as a uniform sphere (U = -3GM^2/(5R)) with isotropic velocities (<v^2> = 3 sigma^2). Use the virial theorem to estimate M in solar masses, using GM_sun = 1.3271244e20 m^3 s^-2 and 1 Mpc = 10^6 x (648000/pi) au.",
+        "solution": "2<K> = -<U>: M <v^2> = 3GM^2/(5R), so M = 5 <v^2> R / (3G) = 5 sigma^2 R / G. In solar masses M / M_sun = 5 sigma^2 R / GM_sun = 5 x (1e6 m/s)^2 x 3.0857e22 m / 1.3271244e20 = 1.163e+15 M_sun. The answer depends on the assumed density profile (the 3/5) and on relaxation; it is an order-of-magnitude estimate, and it is far more than the light of the member galaxies suggests - the classic missing-mass argument."
+      },
+      {
+        "id": "23.7",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 4,
+        "problem": "From the altitude formula with H = 0, show that a star culminates at h = 90 - |phi - delta|. Find Vega's culmination altitude at Gurgaon (phi = 28.46, delta = 38.7837) and Polaris's (delta = 89.2641) upper and lower culmination altitudes.",
+        "solution": "With H = 0, sin h = sin delta sin phi + cos delta cos phi = cos(delta - phi), so h = 90 - |phi - delta|. Vega: 90 - 10.3237 = 79.68 deg (north of the zenith, since delta > phi). Polaris upper: 90 - (89.2641 - 28.46) = 29.20 deg. Lower culmination (H = 180): sin h = -cos(delta + phi) = sin(phi + delta - 90), so h = phi - (90 - delta) = 27.72 deg. Polaris stays within 0.74 deg of the latitude, which is why it is used to find latitude."
+      },
+      {
+        "id": "23.8",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Explain why `sky.py` uses atan2 for the azimuth rather than atan of the ratio, and what happens to the azimuth formula for a star exactly at the zenith. What should a robust pipeline do there?",
+        "solution": "atan returns only (-90, 90), losing which quadrant the star is in; atan2(num, den) uses both signs and returns the full 0-360 range. At the zenith cos h = 0, so the north and east components (the denominator and numerator) are both 0 and the azimuth is mathematically undefined; atan2(0, 0) returns 0 by convention, which is meaningless. A robust pipeline flags altitudes within a tolerance of 90 deg (e.g. above 89.9) and treats azimuth as undefined there (a telescope mount needs special handling near the zenith; the check in mechanics.py skips the azimuth comparison above 89.9 deg for this reason)."
+      },
+      {
+        "id": "23.9",
+        "type": "calculation",
+        "difficulty": 3,
+        "marks": 6,
+        "problem": "Two stars at declination 60 deg differ in RA so that they are 1 arcsec apart. Compute their separation in float64 with the spherical cosine rule (arccos form) and with the atan2 (Vincenty) form of lesson 7. Repeat for 0.01 arcsec. Explain the difference.",
+        "solution": "Cosine rule: 0.999997 arcsec (relative error 2.6e-06); Vincenty: 1.000000 arcsec. At 0.01 arcsec the cosine rule returns 0.009720 arcsec - almost 3 % wrong. The cosine of a tiny angle is 1 - theta^2/2 with theta^2 ~ 1e-15, close to float64's epsilon (2.2e-16), so most significant digits are lost before arccos, whose slope is infinite at 1 (catastrophic cancellation). The atan2 form computes a ratio of a small sine-like quantity to a cosine-like one and keeps full relative precision; haversine works for the same reason. This is why lesson 7's cross-match uses the Vincenty form."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Derivations and proofs",
+        "excellent": "Every step justified; assumptions (point masses, central force, boundedness) stated where used; result checked in a limit.",
+        "adequate": "Correct chain of steps with one or two unexplained jumps; assumptions mostly stated.",
+        "inadequate": "Result quoted rather than derived, or a step that only works for the special case being proved.",
+        "weight": 40
+      },
+      {
+        "criterion": "Calculations",
+        "excellent": "Correct values with units and sensible significant figures; constants cited (IAU B3); a sanity check (limit, order of magnitude).",
+        "adequate": "Correct values; units or sources occasionally missing.",
+        "inadequate": "Wrong value or unit error not noticed.",
+        "weight": 30
+      },
+      {
+        "criterion": "Numerical verification",
+        "excellent": "Explains what the check proves and what it cannot (integrator error, floating point); chooses an independent route.",
+        "adequate": "Runs the check and reports agreement.",
+        "inadequate": "Check is circular (uses the formula being tested) or not run.",
+        "weight": 20
+      },
+      {
+        "criterion": "Communication",
+        "excellent": "Clear notation, defined symbols, a sketch of the PZX triangle where helpful.",
+        "adequate": "Readable with minor notation slips.",
+        "inadequate": "Undefined symbols; reader cannot follow.",
+        "weight": 10
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L500/23-foundations-mechanics/mechanics.py",
+        "purpose": "The four numerical checks (python mechanics.py)."
+      },
+      {
+        "path": "labs/L500/23-foundations-mechanics/test_mechanics.py",
+        "purpose": "unittest: every check passes plus limit cases."
+      },
+      {
+        "path": "labs/L500/23-foundations-mechanics/README.md",
+        "purpose": "Run command and the real observed output."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Mamajek et al. 2015, IAU 2015 Resolution B3 on nominal solar and planetary conversion constants (arXiv:1510.07674)",
+        "url": "https://arxiv.org/abs/1510.07674"
+      },
+      {
+        "title": "IAU 2015 Resolution B3 text (nominal GM, radii; CODATA 2014 G quoted)",
+        "url": "https://www.pas.rochester.edu/~emamajek/IAU/IAUres_B3.pdf"
+      },
+      {
+        "title": "USNO: Computing Approximate Sidereal Time (GMST rate used for the sidereal day)",
+        "url": "https://aa.usno.navy.mil/faq/GAST"
+      },
+      {
+        "title": "JPL SSD: Approximate Positions of the Planets (semi-major axes)",
+        "url": "https://ssd.jpl.nasa.gov/planets/approx_pos.html"
+      }
+    ],
+    "seeAlso": [
+      "astronomy L100 #2 Coordinates and the sky: RA/Dec to Alt/Az - is a star above the horizon now?: the altitude/azimuth formula proved here (theorem 4) and checked against sky.py.",
+      "astronomy L100 #5 Orbits: Kepler's laws, Kepler's equation and a planet's position: Kepler's laws used there are derived here (theorems 1-2).",
+      "astronomy L200 #7 Catalogues and cross-matching: angular separation and a k-d tree: why the atan2 separation formula beats the cosine rule (problem 23.9).",
+      "astronomy L200 #11 N-body simulation: leapfrog vs Euler and energy conservation: the leapfrog integrator reused as the independent check for Kepler III, vis-viva and the virial theorem.",
+      "astronomy L400 #20 Model comparison: a galaxy rotation curve with and without a dark-matter halo: V^2 = GM(<R)/R is the circular-orbit result of theorem 1 applied to a galaxy."
+    ],
+    "next": "L500 #24 Foundations II: stars and radiation - luminosity, the HR diagram and the distance ladder: from orbits to the light of stars and how far away they are.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "python mechanics.py (ALL CHECKS PASS) and python -m unittest (Ran 5 tests ... OK) in labs/L500/23-foundations-mechanics, Linux, Python 3.12.15 + numpy 2.5.3; checkOutput fields are pasted from that run and re-verified by research/l500_checks.py, which also recomputes every problem-set number.",
+      "pendingCi": [
+        "macOS (Apple silicon) and Windows runs of the lab scripts and tests (CI job python-labs-l500)",
+        "seeded outputs on other platforms may differ in the last printed digit; research/l500_checks.py compares numbers with a last-digit tolerance"
+      ]
+    }
+  },
+  {
+    "id": "foundations-stars",
+    "number": 24,
+    "level": "L500",
+    "title": "Foundations II: stars and radiation - luminosity, the HR diagram and the distance ladder",
+    "phase": "Theory & Rigour",
+    "category": "foundations: stellar astrophysics",
+    "description": "Derive the Stefan-Boltzmann law from Planck, L = 4 pi R^2 sigma T^4 and the HR diagram, the mass-luminosity scaling and stellar lifetimes, and the distance ladder from parallax to Hubble's law.",
+    "outcome": "You can derive and use the relations that turn a star's measured flux, colour and period into luminosity, radius, mass, age and distance - and propagate the uncertainty up the distance ladder.",
+    "estimatedTime": "4-5 hours (reading and proofs 2 h, checks 30 min, problem set 2 h)",
+    "prerequisites": [
+      "calculus: improper integrals, substitution, geometric series",
+      "logarithms: log10 and ln, power laws on log-log axes",
+      "statistics: mean, standard deviation, first-order error propagation",
+      "Lesson 4 (Units and scales: AU, light-year, parsec, magnitudes and distance modulus) and Lesson 6 (Light and spectra: blackbody, Wien's law, Doppler shift and redshift)"
+    ],
+    "learningObjectives": [
+      "Derive the Stefan-Boltzmann law sigma = 2 pi^5 k^4 / (15 c^2 h^3) from the Planck function, and explain why lines of constant radius are straight on the HR diagram.",
+      "Explain the homology argument for L proportional to M^3 and analyze how the mass-luminosity exponent sets main-sequence lifetimes.",
+      "Derive the parallax distance and the distance modulus, and analyze how an error in each rung of the distance ladder propagates to H0.",
+      "Evaluate a synthetic distance ladder (parallax -> Cepheids -> Type Ia supernovae -> Hubble flow) and critique a calibration that rests on a single host.",
+      "Explain, at overview level, how a star's mass determines its evolution from the main sequence to its end state."
+    ],
+    "glossary": [
+      {
+        "term": "effective temperature",
+        "meaning": "Teff defined by L = 4 pi R^2 sigma Teff^4: the temperature of a blackbody with the star's radius and luminosity."
+      },
+      {
+        "term": "HR diagram",
+        "meaning": "Luminosity (or absolute magnitude) against temperature (or colour), temperature increasing to the left; most stars lie on the main sequence."
+      },
+      {
+        "term": "homology",
+        "meaning": "Assumption that stars of different mass are scaled copies of each other, so structure equations reduce to power-law scalings."
+      },
+      {
+        "term": "distance modulus",
+        "meaning": "mu = m - M = 5 log10(d / 10 pc), from the inverse-square law."
+      },
+      {
+        "term": "period-luminosity (Leavitt) relation",
+        "meaning": "M = a (log P - 1) + b for Cepheid variables; calibrated by parallaxes, it turns a period into a distance."
+      },
+      {
+        "term": "standardisable candle",
+        "meaning": "A source (e.g. a Type Ia supernova) whose peak luminosity can be inferred, after corrections, from observables."
+      }
+    ],
+    "conceptNote": "content/concepts/L500/24-foundations-stars.md",
+    "conceptSummary": "A star is characterised by luminosity, radius and temperature tied by L = 4 pi R^2 sigma T^4 (which itself comes from integrating Planck's law). Mass sets luminosity and therefore lifetime. Distances come from a ladder: geometry (parallax) calibrates Cepheids, Cepheids calibrate Type Ia supernovae, supernovae reach the Hubble flow - and every rung's error is inherited by the next.",
+    "theorems": [
+      {
+        "name": "Stefan-Boltzmann law from Planck's law, and L = 4 pi R^2 sigma T^4",
+        "statement": "The flux leaving a blackbody surface is $F = \\pi\\int_0^\\infty B_\\nu(T)\\,d\\nu = \\sigma T^4$ with $\\sigma = 2\\pi^5 k^4/(15 c^2 h^3)$. A spherical blackbody of radius R emits $L = 4\\pi R^2\\sigma T^4$; at fixed R, $\\log L = 4\\log T + \\mathrm{const}$ (straight lines of slope 4 on a log L - log T HR diagram).",
+        "proof": "Planck: $B_\\nu = \\frac{2h\\nu^3}{c^2}\\frac{1}{e^{h\\nu/kT}-1}$. For an isotropic field the flux through a surface is $\\int B_\\nu\\cos\\theta\\,d\\Omega$ over the outward hemisphere $= B_\\nu\\int_0^{2\\pi}\\int_0^{\\pi/2}\\cos\\theta\\sin\\theta\\,d\\theta\\,d\\phi = \\pi B_\\nu$.\n\nSubstitute $x = h\\nu/kT$: $\\pi\\int_0^\\infty B_\\nu d\\nu = \\frac{2\\pi k^4T^4}{c^2h^3}\\int_0^\\infty\\frac{x^3}{e^x-1}dx$.\n\n*The integral.* For x > 0, $\\frac{1}{e^x-1} = \\sum_{n\\ge1}e^{-nx}$ (geometric series, $e^{-x} < 1$). Monotone convergence lets us swap sum and integral: $\\int_0^\\infty x^3e^{-nx}dx = 3!/n^4$. So the integral is $6\\zeta(4) = 6\\cdot\\pi^4/90 = \\pi^4/15$ (Euler's value of $\\zeta(4)$). Hence $F = \\frac{2\\pi^5k^4}{15c^2h^3}T^4 = \\sigma T^4$. $\\blacksquare$\n\n*Luminosity.* Multiply by the surface area $4\\pi R^2$: $L = 4\\pi R^2\\sigma T^4$. Taking logs, $\\log L = 2\\log R + 4\\log T + \\log(4\\pi\\sigma)$, so at fixed R the locus is a line of slope 4. For a real star this defines $T_{eff}$; the Sun's nominal values (IAU 2015 B3) satisfy it to the rounding of the nominal constants.",
+        "check": "labs/L500/24-foundations-stars/stars.py (check_stefan_boltzmann)",
+        "checkOutput": "int_0^inf x^3/(e^x - 1) dx: quadrature 6.4939394023, series 6*sum(1/n^4) 6.4939391504, pi^4/15 6.4939394023\nsigma = 2 pi^5 k^4 / (15 c^2 h^3) = 5.670374419e-08 W m^-2 K^-4 (CODATA 5.670374419e-08)\npi * int B_lambda d lambda at 5772 K = 6.29386e+07 W/m^2 vs sigma T^4 = 6.29386e+07\n4 pi R_sun^2 sigma T_sun^4 = 3.8280e+26 W vs nominal L_sun 3.8280e+26 W (rel. diff 2.4e-06)\nHR diagram: at fixed R, d log L / d log T = 4.000000, 4.000000 (lines of constant radius have slope 4)"
+      },
+      {
+        "name": "Mass-luminosity scaling and main-sequence lifetime (homology sketch)",
+        "statement": "For homologous stars in hydrostatic equilibrium, supported by ideal-gas pressure, transporting energy by radiative diffusion with constant opacity kappa and mean molecular weight mu: $L \\propto \\mu^4 M^3/\\kappa$. Observed main-sequence stars follow $L \\propto M^{\\alpha}$ with alpha of about 3-4 over much of the range; with $L \\propto M^{\\alpha}$ the lifetime is $t \\propto M/L \\propto M^{1-\\alpha}$ (alpha = 3.5 gives $t \\propto M^{-2.5}$).",
+        "proof": "This is a scaling (proof sketch) argument: replace each structure equation by its characteristic size, which is exact for homologous models up to dimensionless constants.\n\n1. Hydrostatic equilibrium $dP/dr = -G M(r)\\rho/r^2$ gives $P \\sim GM\\rho/R \\sim GM^2/R^4$ (using $\\rho \\sim M/R^3$).\n2. Ideal gas $P = \\rho kT/(\\mu m_H)$ gives $T \\sim \\mu m_H P/(\\rho k) \\sim \\mu m_H GM/(kR)$.\n3. Radiative diffusion $L = -\\frac{16\\pi a c r^2T^3}{3\\kappa\\rho}\\frac{dT}{dr}$ gives $L \\sim \\frac{acR^2T^3}{\\kappa\\rho}\\frac{T}{R} = \\frac{acRT^4}{\\kappa\\rho} \\sim \\frac{acR^4T^4}{\\kappa M}$.\n4. Substitute T from step 2: $L \\sim \\frac{ac}{\\kappa M}R^4\\left(\\frac{\\mu m_H GM}{kR}\\right)^4 = \\frac{ac\\,G^4m_H^4}{k^4}\\,\\frac{\\mu^4M^3}{\\kappa}$. R cancels. $\\blacksquare$ (sketch)\n\n*Lifetime.* The main-sequence lifetime is the fuel available divided by the burn rate: $t = f\\,\\epsilon\\,Mc^2/L$, where a fraction f (about 0.1) of the mass is in the core and hydrogen burning releases a fraction epsilon = 0.007 of its rest energy. With $L \\propto M^{\\alpha}$, $t \\propto M^{1-\\alpha}$. For the Sun this gives about 10 Gyr. Limits of the sketch: opacity is not constant (Kramers' law changes the exponent), low-mass stars are convective, massive stars are radiation-pressure supported - which is why the empirical exponent varies along the main sequence; a full treatment is in any stellar-structure text.",
+        "check": "labs/L500/24-foundations-stars/stars.py (check_mass_luminosity)",
+        "checkOutput": "synthetic main sequence (60 stars, L = M^3.5 x 0.05 dex scatter): fitted log L = 3.481 log M + +0.002\n  M =   0.50 Msun  L =  1.033e-01 Lsun  R =  0.57 Rsun  Teff =    4317 K\n  M =   1.75 Msun  L =  6.026e+00 Lsun  R =  1.56 Rsun  Teff =    7236 K\n  M =   6.10 Msun  L =  5.061e+02 Lsun  R =  4.25 Rsun  Teff =   13285 K\n  M =  20.00 Msun  L =  3.265e+04 Lsun  R = 10.99 Rsun  Teff =   23410 K\nSun: M = GM/G = 1.98848e+30 kg; t = 0.007 x 0.1 x M c^2 / L = 10.36 Gyr\nt(M) = t_sun M / L = t_sun M^-2.5: 2 Msun 1.83 Gyr, 10 Msun 33 Myr, 0.5 Msun 59 Gyr"
+      },
+      {
+        "name": "Parallax distance, distance modulus and error propagation up the ladder",
+        "statement": "(a) A star whose annual parallax is p arcsec is at $d = 1/p$ pc (exactly $1\\,\\mathrm{au}/\\tan p$; the parsec is defined by this). (b) $m - M = 5\\log_{10}(d/10\\,\\mathrm{pc})$. (c) A Gaussian error $\\sigma_\\mu$ in a distance modulus gives, to first order, $\\sigma_d/d = (\\ln 10/5)\\,\\sigma_\\mu \\approx 0.461\\,\\sigma_\\mu$. (d) In the ladder $H_0 = cz/d$, an error $\\delta M$ in the supernova absolute-magnitude calibration multiplies every distance - and so H0 - by $10^{\\delta M/5}$, independent of how many Hubble-flow supernovae are used.",
+        "proof": "(a) Earth's orbit (radius 1 au) is the baseline; the star's direction shifts by p either side of its mean. Right triangle: $\\tan p = 1\\,\\mathrm{au}/d$. For small p, $\\tan p \\approx p$ (error $p^3/3$), so $d = 1\\,\\mathrm{au}/p$; with p in arcsec and $1\\,\\mathrm{pc} = 648000/\\pi$ au (IAU 2015 B2) this is $d = 1/p$ pc.\n\n(b) Flux falls as $F \\propto L/(4\\pi d^2)$. Magnitudes are $m = -2.5\\log_{10}F + C$; M is m at 10 pc. So $m - M = -2.5\\log_{10}(F(d)/F(10)) = -2.5\\log_{10}(10^2/d^2) = 5\\log_{10}(d/10)$.\n\n(c) Invert: $d = 10^{(\\mu+5)/5}$, so $\\partial d/\\partial\\mu = d\\,\\ln 10/5$ and $\\sigma_d \\approx |\\partial d/\\partial\\mu|\\,\\sigma_\\mu$.\n\n(d) Each Hubble-flow distance is $d_i = 10^{(m_i - M_{cal} + 5)/5}$. If $M_{cal} = M_{true} + \\delta M$, every $d_i$ is multiplied by $10^{-\\delta M/5}$ and every $cz_i/d_i$ by $10^{\\delta M/5}$; any estimator of H0 that is homogeneous of degree -1 in the distances inherits the same factor. Averaging more Hubble-flow objects reduces their scatter but not this shared calibration error. $\\blacksquare$\n\n*Consequence.* The ladder is only as good as its calibrating rungs: the parallax zero point, the P-L relation and the number of supernova hosts with Cepheids. This is why SH0ES-type work invests in dozens of calibrator hosts (the check shows one host alone moves H0 noticeably).",
+        "check": "labs/L500/24-foundations-stars/stars.py (check_distance_ladder)",
+        "checkOutput": "parallax 2.01 mas: d = 1/p = 497.5 pc (exact 1 au / tan p: rel. diff 1.1e-16); mu = 8.48\nrung 1 (40 Cepheids, sigma_parallax 0.02 mas): P-L slope -2.334, zero point -4.055 (true -2.43, -4.05)\nrung 2 (8 hosts at 10-40 Mpc, 25 Cepheids + 1 SN Ia each): M_SN = -19.338 (true -19.3); hosts span -19.424 .. -19.184\nrung 3 (60 SNe, 0.01 < z < 0.05): H0 = 68.68 km/s/Mpc (true 70.0); calibrating on host 1 alone gives 67.24\nerror propagation: sigma_mu = 0.10 mag -> sigma_d/d = (ln 10 / 5) 0.10 = 0.0461; Monte Carlo 0.0461"
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "24.1",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "A star has R = 1.711 R_sun and Teff = 9940 K (the hot star of lesson 6). Find L / L_sun using T_sun = 5772 K.",
+        "solution": "L/L_sun = (R/R_sun)^2 (T/T_sun)^4 = 1.711^2 x (9940/5772)^4 = 25.7. Note how the T^4 factor (8.8) dominates the R^2 factor (2.9)."
+      },
+      {
+        "id": "24.2",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "A cool supergiant has L = 1.0e5 L_sun and Teff = 3600 K. Find its radius in R_sun and in au (R_sun = 6.957e8 m, 1 au = 1.495978707e11 m).",
+        "solution": "R/R_sun = sqrt(L/L_sun) (T_sun/T)^2 = 316.2 x (5772/3600)^2 = 813 R_sun = 3.78 au - larger than the orbit of Mars. On the HR diagram it sits far above the main sequence on the R = 813 R_sun line of slope 4."
+      },
+      {
+        "id": "24.3",
+        "type": "derivation",
+        "difficulty": 3,
+        "marks": 8,
+        "problem": "Repeat the homology argument with Kramers' opacity kappa proportional to rho T^-3.5 instead of constant opacity. Show that L then scales as M^5.5 R^-0.5 (with mu fixed).",
+        "solution": "Keep steps 1-2: T ~ M/R, rho ~ M/R^3. Radiative diffusion: L ~ R^4 T^4 / (kappa M). Now kappa ~ rho T^-3.5 ~ (M/R^3)(M/R)^-3.5 = M^-2.5 R^0.5. So L ~ R^4 (M/R)^4 / (M x M^-2.5 R^0.5) = M^4 / (M^-1.5 R^0.5) = M^5.5 R^-0.5. The radius no longer cancels; combined with a mass-radius relation (R roughly proportional to M^0.8 on the upper main sequence) the exponent is near 5. Constant opacity (electron scattering, massive stars) gives 3; Kramers' opacity (bound-free, solar-type stars) gives about 5 - which is why the empirical exponent varies along the main sequence."
+      },
+      {
+        "id": "24.4",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "Take t_sun = 10 Gyr and L proportional to M^3.5. Estimate the main-sequence lifetimes of a 2 M_sun and a 10 M_sun star.",
+        "solution": "t = t_sun M^(1 - 3.5) = 10 Gyr x M^-2.5. 2 M_sun: 10 x 2^-2.5 = 1.77 Gyr. 10 M_sun: 10 x 10^-2.5 Gyr = 31.6 Myr. (The check's energy budget gives t_sun = 10.36 Gyr from 0.007 x 0.1 x M c^2 / L.) A cluster still containing 10 M_sun main-sequence stars is younger than about 30 Myr."
+      },
+      {
+        "id": "24.5",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "The Cepheid l Car has HST parallax 2.01 +/- 0.20 mas, mean V = 3.724 and A_V = 0.52 (Benedict et al. 2007). Find the distance, the distance modulus, the fractional parallax error, and M_V before and after their Lutz-Kelker-Hanson correction of -0.08 mag. Compare with their M_V = -5.35 +/- 0.22.",
+        "solution": "d = 1/0.00201 = 497.5 pc; mu = 5 log10(497.5) - 5 = 8.48. sigma_p/p = 0.20/2.01 = 0.100 (10 %). M_V = V - A_V - mu = 3.724 - 0.52 - 8.48 = -5.28; with the LKH correction -5.28 - 0.08 = -5.36, matching the published -5.35 +/- 0.22 within rounding. The LKH correction exists because selecting stars by parallax with 10 % errors biases the inferred distances (a prior on how stars are distributed in space matters - a Bayesian point picked up in lesson 25)."
+      },
+      {
+        "id": "24.6",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "A Cepheid with log P = 1.5 has mean V = 25.0 (no extinction). With the illustrative P-L relation M_V = -2.43 (log P - 1) - 4.05, find its absolute magnitude, distance modulus and distance in Mpc.",
+        "solution": "M_V = -2.43 x 0.5 - 4.05 = -5.265. mu = 25.0 - (-5.265) = 30.265. d = 10^(mu/5 + 1) pc = 11.30 Mpc. A 0.1 mag error in the P-L zero point shifts d by 4.6 % (theorem 3c)."
+      },
+      {
+        "id": "24.7",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "A Type Ia supernova peaks at m_B = 15.0 in a galaxy at redshift z = 0.0165. With a calibrated M_B = -19.3, find its distance and the implied H0 (use cz, valid at low z).",
+        "solution": "mu = 15.0 + 19.3 = 34.3, so d = 10^(34.3/5 + 1) pc = 72.44 Mpc. cz = 299792.458 x 0.0165 = 4946.6 km/s. H0 = cz/d = 68.3 km/s/Mpc. If the calibration were 0.1 mag too bright (M_B = -19.4), d grows by 10^0.02 = 4.7 % and H0 falls by the same factor - the shared calibration error of theorem 3d."
+      },
+      {
+        "id": "24.8",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "The check calibrates M_SN with 8 Cepheid hosts and gets H0 = 68.68; with host 1 alone it gets 67.24 (truth 70). Explain why adding more Hubble-flow supernovae would not fix either number, and what would.",
+        "solution": "The Hubble-flow supernovae only constrain the intercept m_i - 5 log(cz_i) to high precision; converting that to H0 needs M_SN, and any error in M_SN multiplies H0 by 10^(dM/5) for all of them at once (theorem 3d). Errors in M_SN come from the calibrators: the P-L zero point (rung 1 parallaxes), each host's Cepheid-based distance and each calibrator supernova's own scatter (0.10 mag here). Fewer hosts means a larger random error in M_SN; only more calibrator hosts (and a better rung 1) reduce it. The remaining 1.9 % offset at 8 hosts is consistent with sigma_M of about 0.04 mag - a statistical, not a coding, error."
+      },
+      {
+        "id": "24.9",
+        "type": "essay",
+        "difficulty": 2,
+        "marks": 10,
+        "problem": "In 400-600 words, compare the evolution of a 1 M_sun star and a 15 M_sun star from the zero-age main sequence to their end states. Use the HR diagram and the lifetime scaling; name each major phase and what powers it.",
+        "solution": "Model answer outline. 1 M_sun: core hydrogen burning via the pp chain for about 10 Gyr on the main sequence; core hydrogen exhausted -> shell burning, envelope expands: subgiant then red-giant branch (up and right on the HR diagram, L rises at roughly constant cool Teff); degenerate helium core ignites in a helium flash -> horizontal branch / red clump (core helium burning); then asymptotic giant branch with double-shell burning and strong mass loss; envelope ejected as a planetary nebula; the carbon-oxygen core cools as a white dwarf (moves down and left). 15 M_sun: CNO-cycle hydrogen burning with a convective core for of order 10 Myr (lifetime scaling M^-2.5 gives about 10 Gyr x 15^-2.5, roughly 11 Myr); moves almost horizontally across the HR diagram to become a red supergiant at nearly constant luminosity; burns helium, carbon, neon, oxygen and silicon in successively shorter stages building an onion-skin structure ending in iron; iron core collapse -> core-collapse supernova, leaving a neutron star (or black hole for higher masses). Key contrasts: the fuel cycle, degenerate vs non-degenerate cores, mass loss, and that the massive star's end is explosive. Marks: phases in order (4), energy source per phase (3), HR diagram path (2), lifetime numbers from the scaling (1)."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Derivations",
+        "excellent": "Planck integral done with the series argument; homology steps explicit with what is held fixed; limits of the sketch stated.",
+        "adequate": "Correct results with some steps asserted.",
+        "inadequate": "Formulae quoted without derivation or with dimension errors.",
+        "weight": 35
+      },
+      {
+        "criterion": "Calculations and error propagation",
+        "excellent": "Correct numbers with units; propagates uncertainty (parallax, P-L zero point, calibration) and states which errors average down.",
+        "adequate": "Correct numbers; uncertainty treated loosely.",
+        "inadequate": "Wrong numbers or magnitudes with the sign convention reversed.",
+        "weight": 35
+      },
+      {
+        "criterion": "Physical interpretation (essay 24.9)",
+        "excellent": "Phases in order with energy sources and HR-diagram path; contrasts the two masses clearly.",
+        "adequate": "Main phases present; some sources or HR path missing.",
+        "inadequate": "Confuses stages or end states.",
+        "weight": 20
+      },
+      {
+        "criterion": "Use of sources",
+        "excellent": "Constants and calibrations cited (IAU B3, Benedict et al. 2007); illustrative values labelled as such.",
+        "adequate": "Most numbers sourced.",
+        "inadequate": "Unsourced numbers presented as measurements.",
+        "weight": 10
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L500/24-foundations-stars/stars.py",
+        "purpose": "The three numerical checks (python stars.py)."
+      },
+      {
+        "path": "labs/L500/24-foundations-stars/test_stars.py",
+        "purpose": "unittest: every check passes plus scaling limits."
+      },
+      {
+        "path": "labs/L500/24-foundations-stars/README.md",
+        "purpose": "Run command and the real observed output."
+      }
+    ],
+    "sources": [
+      {
+        "title": "IAU 2015 Resolution B3 (nominal L_sun = 3.828e26 W, R_sun = 6.957e8 m, T_sun = 5772 K, GM_sun)",
+        "url": "https://www.pas.rochester.edu/~emamajek/IAU/IAUres_B3.pdf"
+      },
+      {
+        "title": "Prsa et al. 2016, Nominal values for selected solar and planetary quantities: IAU 2015 Resolution B3 (arXiv:1605.09788)",
+        "url": "https://arxiv.org/abs/1605.09788"
+      },
+      {
+        "title": "Benedict et al. 2007, HST FGS parallaxes of Galactic Cepheids: period-luminosity relations (arXiv:astro-ph/0612465)",
+        "url": "https://arxiv.org/abs/astro-ph/0612465"
+      },
+      {
+        "title": "Riess et al. 2022, A comprehensive measurement of the local value of the Hubble constant (SH0ES; arXiv:2112.04510)",
+        "url": "https://arxiv.org/abs/2112.04510"
+      },
+      {
+        "title": "NIST CODATA: Wien displacement constant (as in lesson 6)",
+        "url": "https://physics.nist.gov/cgi-bin/cuu/Value?bwien"
+      }
+    ],
+    "seeAlso": [
+      "astronomy L100 #4 Units and scales: AU, light-year, parsec, magnitudes and distance modulus: the distance modulus derived here (theorem 3b).",
+      "astronomy L100 #6 Light and spectra: blackbody, Wien's law, Doppler shift and redshift: the numerical pi * integral of B = sigma T^4 there is proved here (theorem 1).",
+      "astronomy L200 #9 Aperture photometry: background annulus and signal-to-noise: measured magnitudes and their errors are the inputs to every rung of the ladder.",
+      "astronomy L200 #10 Light curves and periods: Lomb-Scargle, transits vs variable stars: periods from light curves are what the Cepheid P-L relation consumes.",
+      "astronomy L400 #19 Big catalogues: sky indexing, cone-search performance and TAP/ADQL: Gaia parallaxes (rung 1) are queried there."
+    ],
+    "next": "L500 #25 Foundations III: cosmology and Bayesian data analysis: Hubble's law, the age of the Universe and how to infer H0 with honest uncertainty.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "python stars.py (ALL CHECKS PASS) and python -m unittest (Ran 4 tests ... OK) in labs/L500/24-foundations-stars, Linux, Python 3.12.15 + numpy 2.5.3; seeded synthetic main sequence and distance ladder; research/l500_checks.py re-verifies checkOutput and problem numbers.",
+      "pendingCi": [
+        "macOS (Apple silicon) and Windows runs of the lab scripts and tests (CI job python-labs-l500)",
+        "seeded outputs on other platforms may differ in the last printed digit; research/l500_checks.py compares numbers with a last-digit tolerance"
+      ]
+    }
+  },
+  {
+    "id": "foundations-cosmology-bayes",
+    "number": 25,
+    "level": "L500",
+    "title": "Foundations III: cosmology and Bayesian data analysis",
+    "phase": "Theory & Rigour",
+    "category": "foundations: cosmology and inference",
+    "description": "Derive Hubble's law, the Hubble time, the low-z redshift-distance relation, the critical density and the age of a flat universe; then Bayes' theorem, likelihoods, priors and why Metropolis sampling works.",
+    "outcome": "You can derive the basic expanding-universe relations, compute H0-dependent ages and densities, and prove that the Metropolis sampler you used in lesson 15 targets the posterior.",
+    "estimatedTime": "5 hours (reading and proofs 2.5 h, checks 30 min, problem set 2 h)",
+    "prerequisites": [
+      "calculus: Taylor series, definite integrals, separable ODEs",
+      "probability: conditional probability, Gaussian distribution, Markov chains (transition matrices)",
+      "linear algebra: matrix-vector products, stationary (left eigen)vectors",
+      "Lesson 6 (Light and spectra: blackbody, Wien's law, Doppler shift and redshift) and Lesson 15 (Fitting with honest uncertainty: least squares, bootstrap and MCMC for a transit)"
+    ],
+    "learningObjectives": [
+      "Derive Hubble's law v = H0 d from homogeneous, isotropic expansion and explain why every observer sees the same law.",
+      "Derive the low-z relation cz = H0 d and analyze the size of its first correction for a flat LCDM universe.",
+      "Derive the critical density and the age of a flat matter + Lambda universe, and evaluate the age numerically by two independent routes.",
+      "Prove that the Metropolis(-Hastings) rule satisfies detailed balance and hence leaves the posterior invariant; explain what the Hastings factor corrects.",
+      "Derive the closed-form posterior for H0 under a Gaussian likelihood and evaluate how the choice of prior shifts the answer."
+    ],
+    "glossary": [
+      {
+        "term": "scale factor a(t)",
+        "meaning": "Ratio of physical to comoving distance; a = 1 today. H = (da/dt)/a."
+      },
+      {
+        "term": "Hubble time",
+        "meaning": "1/H0: the age the Universe would have if it had always expanded at today's rate."
+      },
+      {
+        "term": "critical density",
+        "meaning": "rho_c = 3 H0^2 / (8 pi G): the density for which the Universe is spatially flat."
+      },
+      {
+        "term": "likelihood",
+        "meaning": "p(data | parameters), viewed as a function of the parameters; not a probability distribution over them."
+      },
+      {
+        "term": "prior / posterior",
+        "meaning": "p(theta) before seeing data / p(theta | data) = likelihood x prior / evidence."
+      },
+      {
+        "term": "detailed balance",
+        "meaning": "pi(x) K(x -> y) = pi(y) K(y -> x) for all x, y: probability flow between any two states is balanced, so pi is stationary."
+      }
+    ],
+    "conceptNote": "content/concepts/L500/25-foundations-cosmology-bayes.md",
+    "conceptSummary": "Uniform expansion makes velocity proportional to distance for every observer; its rate today, H0, sets the Hubble time and, with the matter content, the age and critical density. Measuring H0 is an inference problem: Bayes' theorem combines a likelihood with a prior, and Metropolis sampling draws from the posterior because it satisfies detailed balance.",
+    "theorems": [
+      {
+        "name": "Hubble's law from homogeneous expansion, and the low-z redshift-distance relation",
+        "statement": "If all comoving positions scale as $\\mathbf{r}_i(t) = a(t)\\mathbf{x}_i$, then for any observer i the relative velocity of j is $\\mathbf{v}_{ij} = H(t)\\,\\mathbf{r}_{ij}$ with $H = \\dot a/a$. Light emitted at $t_e$ and received today is redshifted by $1+z = 1/a(t_e)$, and to first order in z, $cz = H_0 d$. For flat LCDM the luminosity distance is $d_L = \\frac{cz}{H_0}\\left[1 + \\frac{1-q_0}{2}z + O(z^2)\\right]$ with $q_0 = \\Omega_m/2 - \\Omega_\\Lambda$.",
+        "proof": "*Hubble's law.* $\\mathbf{r}_{ij} = \\mathbf{r}_j - \\mathbf{r}_i = a(\\mathbf{x}_j - \\mathbf{x}_i)$, so $\\dot{\\mathbf{r}}_{ij} = \\dot a(\\mathbf{x}_j - \\mathbf{x}_i) = (\\dot a/a)\\,\\mathbf{r}_{ij}$. The index i is arbitrary: no observer is special, and the velocity is radial and proportional to distance. $\\blacksquare$\n\n*Redshift.* In an expanding space-time, light's wavelength is stretched with the scale factor, $\\lambda \\propto a$, so $1 + z = \\lambda_{obs}/\\lambda_{em} = a(t_0)/a(t_e) = 1/a(t_e)$. (This is the cosmological, not Doppler, interpretation; at low z both give $z \\approx v/c$ - lesson 6.)\n\n*Low z.* Expand $a(t) = 1 + H_0(t - t_0) - \\tfrac{1}{2}q_0H_0^2(t-t_0)^2 + \\dots$ (this defines the deceleration parameter $q_0 = -\\ddot a a/\\dot a^2$ at $t_0$). For a nearby source the light-travel time is $\\Delta t = t_0 - t_e \\approx d/c$, so $1/(1+z) = a(t_e) \\approx 1 - H_0\\Delta t$, i.e. $z \\approx H_0 d/c$: $cz = H_0 d$. $\\blacksquare$\n\n*Next order (statement used in the check).* Carrying the series one order further and using $d_L = (1+z)\\,c\\int_0^z dz'/H(z')$ with $H(z) = H_0\\sqrt{\\Omega_m(1+z)^3 + \\Omega_\\Lambda}$ gives $d_L = (cz/H_0)[1 + (1-q_0)z/2 + \\dots]$. For a flat matter + Lambda model the acceleration equation gives $q_0 = \\Omega_m/2 - \\Omega_\\Lambda$ (negative: accelerating). With Planck's $\\Omega_m = 0.315$ the first correction is 0.76 z - 0.8 % at z = 0.01, which is why lesson-24-style Hubble fits stay below z of about 0.05.",
+        "check": "labs/L500/25-foundations-cosmology-bayes/cosmo_bayes.py (check_hubble_law)",
+        "checkOutput": "observer at galaxy 0: v/r ranges 67.4000000000 .. 67.4000000000 km/s/Mpc, min cos(angle v, r) = 1.000000000000\nobserver at galaxy 137: v/r ranges 67.4000000000 .. 67.4000000000 km/s/Mpc, min cos(angle v, r) = 1.000000000000\nD_L / (cz/H0) - 1 at z = [0.001, 0.002, 0.005, 0.01, 0.02]: ['0.00076', '0.00153', '0.00381', '0.00761', '0.01516']\nsmall-z slope 0.7620 vs (1 - q0)/2 = 0.7638 with q0 = Om/2 - OL = -0.5275\nHubble time 1/H0: H0 = 67.4 -> 14.51 Gyr; Hubble (1929) K = 500 -> 1.96 Gyr"
+      },
+      {
+        "name": "Critical density and the age of a flat matter + Lambda universe",
+        "statement": "The Friedmann equation $H^2 = \\frac{8\\pi G}{3}\\rho - \\frac{kc^2}{a^2}$ implies flatness (k = 0) iff $\\rho = \\rho_c = 3H^2/(8\\pi G)$. For a flat universe with matter and a cosmological constant, $H(a) = H_0\\sqrt{\\Omega_m a^{-3} + \\Omega_\\Lambda}$ ($\\Omega_m + \\Omega_\\Lambda = 1$) and the age is $t_0 = \\int_0^1\\frac{da}{aH(a)} = \\frac{2}{3H_0\\sqrt{\\Omega_\\Lambda}}\\,\\mathrm{asinh}\\sqrt{\\Omega_\\Lambda/\\Omega_m}$. Einstein-de Sitter ($\\Omega_m = 1$) gives $t_0 = 2/(3H_0)$.",
+        "proof": "*Newtonian derivation of the Friedmann equation.* A test mass m on the surface of a uniform sphere of comoving radius x (physical radius $r = ax$, enclosed mass $M = \\frac{4}{3}\\pi r^3\\rho$, constant as the sphere expands) conserves energy: $\\tfrac{1}{2}m\\dot r^2 - GMm/r = \\mathrm{const}$. Divide by $\\tfrac{1}{2}mr^2$ and use $\\dot r/r = H$: $H^2 = \\frac{8\\pi G}{3}\\rho + \\frac{2E}{mx^2a^2}$. Writing $-kc^2$ for the constant $2E/(mx^2)$ gives the Friedmann form. (General relativity yields the same equation, with k the spatial curvature.) So k = 0 iff $\\rho = 3H^2/(8\\pi G)$. $\\blacksquare$\n\n*Age.* Matter dilutes as $a^{-3}$ and a cosmological constant does not, so $\\rho = \\rho_{c,0}(\\Omega_m a^{-3} + \\Omega_\\Lambda)$ and $H = H_0\\sqrt{\\Omega_m a^{-3} + \\Omega_\\Lambda}$. Since $dt = da/\\dot a = da/(aH)$, $t_0 = \\int_0^1 \\frac{da}{aH}$. Substitute $u = a^{3/2}$, $du = \\tfrac{3}{2}a^{1/2}da$: $\\frac{da}{aH} = \\frac{da}{H_0\\sqrt{\\Omega_m a^{-1} + \\Omega_\\Lambda a^2}} = \\frac{a^{1/2}da}{H_0\\sqrt{\\Omega_m + \\Omega_\\Lambda a^3}} = \\frac{2}{3H_0}\\frac{du}{\\sqrt{\\Omega_m + \\Omega_\\Lambda u^2}}$. With $\\int_0^1 du/\\sqrt{\\Omega_m + \\Omega_\\Lambda u^2} = \\Omega_\\Lambda^{-1/2}\\,\\mathrm{asinh}(\\sqrt{\\Omega_\\Lambda/\\Omega_m})$ the closed form follows. As $\\Omega_\\Lambda \\to 0$, $\\mathrm{asinh}(y) \\approx y$ and $t_0 \\to 2/(3H_0)$. $\\blacksquare$\n\nRadiation (important only at $a < 10^{-3}$) is neglected; it changes the age by well under 0.1 %.",
+        "check": "labs/L500/25-foundations-cosmology-bayes/cosmo_bayes.py (check_friedmann_age)",
+        "checkOutput": "critical density 3H0^2/(8 pi G) = 8.5331e-27 kg/m^3 = 1.2608e+11 Msun/Mpc^3\nage, flat LCDM (Om = 0.315): integral 13.7962 Gyr, closed form 13.7962 Gyr, RK4 Friedmann ODE 13.7962 Gyr\nEinstein-de Sitter (Om = 1): 2/(3 H0) = 9.67 Gyr"
+      },
+      {
+        "name": "Bayes' theorem and detailed balance for Metropolis-Hastings",
+        "statement": "(a) $p(\\theta|D) = p(D|\\theta)p(\\theta)/p(D)$. (b) The Metropolis-Hastings kernel - propose $y \\sim q(y|x)$, accept with $\\alpha(x,y) = \\min\\left(1, \\frac{\\pi(y)q(x|y)}{\\pi(x)q(y|x)}\\right)$, else stay - satisfies detailed balance $\\pi(x)K(x,y) = \\pi(y)K(y,x)$ and therefore leaves $\\pi$ invariant. For symmetric q this is the Metropolis rule of lesson 15, and $\\pi$ need only be known up to a constant.",
+        "proof": "(a) The product rule gives $p(\\theta, D) = p(D|\\theta)p(\\theta) = p(\\theta|D)p(D)$; divide by $p(D) > 0$. $\\blacksquare$\n\n(b) For $x \\ne y$, $K(x,y) = q(y|x)\\alpha(x,y)$. Then $\\pi(x)K(x,y) = \\min\\left(\\pi(x)q(y|x),\\ \\pi(y)q(x|y)\\right)$, which is symmetric in x and y, so it equals $\\pi(y)K(y,x)$. For x = y detailed balance is trivial. Summing detailed balance over x: $\\sum_x\\pi(x)K(x,y) = \\pi(y)\\sum_x K(y,x) = \\pi(y)$, because each row of K sums to 1 (rejected proposals stay put). So $\\pi K = \\pi$: $\\pi$ is a stationary distribution. If the chain is also irreducible and aperiodic it converges to $\\pi$ from any start (standard Markov-chain ergodic theorem). $\\blacksquare$\n\n*Why only ratios.* $\\alpha$ depends on $\\pi(y)/\\pi(x)$, so the evidence p(D) cancels: we can sample a posterior known only as likelihood x prior. *Why Hastings.* If q is not symmetric and the factor $q(x|y)/q(y|x)$ is dropped, $\\pi(x)K(x,y) = \\min(\\pi(x)q(y|x), \\pi(y)q(y|x))$, which is not symmetric - the chain then converges to the wrong distribution (the check shows a total-variation error of 0.175 for a biased walk). Continuous state spaces replace sums by integrals; the argument is identical.",
+        "check": "labs/L500/25-foundations-cosmology-bayes/cosmo_bayes.py (check_detailed_balance)",
+        "checkOutput": "symmetric proposal: max |pi_i K_ij - pi_j K_ji| = 0.0e+00; max |pi K - pi| = 5.6e-17\n200000-step chain: max |frequency - pi| = 0.0027\nbiased proposal 0.8/0.2: total-variation distance to pi without Hastings factor 0.175, with it 2.7e-14"
+      },
+      {
+        "name": "Closed-form posterior for H0 (Gaussian likelihood, Gaussian or flat prior)",
+        "statement": "For data $v_i = H_0 d_i + \\epsilon_i$ with independent $\\epsilon_i \\sim N(0, \\sigma^2)$ and exactly known $d_i$, and prior $H_0 \\sim N(\\mu_0, \\tau^2)$, the posterior is Gaussian with precision $1/s^2 = \\sum d_i^2/\\sigma^2 + 1/\\tau^2$ and mean $m = s^2\\left(\\sum v_i d_i/\\sigma^2 + \\mu_0/\\tau^2\\right)$. A flat prior is the limit $\\tau \\to \\infty$: $m = \\sum v_i d_i/\\sum d_i^2$, the least-squares slope through the origin, and maximising the likelihood is minimising $\\chi^2$.",
+        "proof": "$\\ln p(H_0|D) = \\ln p(D|H_0) + \\ln p(H_0) + \\mathrm{const} = -\\frac{1}{2\\sigma^2}\\sum(v_i - H_0d_i)^2 - \\frac{(H_0-\\mu_0)^2}{2\\tau^2} + \\mathrm{const}$. Expand in $H_0$: the coefficient of $H_0^2$ is $-\\tfrac{1}{2}(\\sum d_i^2/\\sigma^2 + 1/\\tau^2) = -1/(2s^2)$ and the coefficient of $H_0$ is $\\sum v_id_i/\\sigma^2 + \\mu_0/\\tau^2 = m/s^2$. Completing the square, $\\ln p = -\\frac{(H_0 - m)^2}{2s^2} + \\mathrm{const}$: a Gaussian with mean m and standard deviation s. $\\blacksquare$\n\n*Reading it.* The posterior mean is a precision-weighted average of the data estimate and the prior mean; a prior much tighter than the data dominates. The first term of $\\ln p$ is $-\\chi^2/2$, so with a flat prior the posterior peak is the least-squares fit of lesson 15. The check confirms the closed form against a brute-force grid and against the Metropolis sampler of theorem 3, and shows that priors centred on 67.4 or 73 (the two sides of the 'Hubble tension') pull the same data to different answers.",
+        "check": "labs/L500/25-foundations-cosmology-bayes/cosmo_bayes.py (check_conjugate_posterior)",
+        "checkOutput": "20 synthetic galaxies, sigma_v = 300 km/s, true H0 = 70: closed form 71.696 +/- 2.116\ngrid posterior 71.696 +/- 2.116; Metropolis (55000 kept, acceptance 0.61) 71.688 +/- 2.098\nwith Gaussian prior N(67.4, 0.5): posterior 67.627 +/- 0.487\nwith Gaussian prior N(73.0, 1.0): posterior 72.762 +/- 0.904"
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "25.1",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "Compute the Hubble time 1/H0 in Gyr for H0 = 67.4 km/s/Mpc (Planck 2018) and for H0 = 73.0 km/s/Mpc (about the SH0ES value). Use 1 Mpc = 10^6 x (648000/pi) au and a Julian year.",
+        "solution": "1/H0 = (3.0857e19 km / 67.4 km/s) = 4.578e17 s = 14.51 Gyr. For 73.0: 13.39 Gyr. The roughly 8 % difference in H0 maps directly onto an 8 % difference in every H0-based age and distance."
+      },
+      {
+        "id": "25.2",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "Hubble (1929) quotes NGC 7619 at +3910 km/s after the solar-motion correction and K = 500 km/s/Mpc. Find its distance with his K and with H0 = 67.4.",
+        "solution": "d = v/K = 3910/500 = 7.82 Mpc (Hubble: 7.8 x 10^6 pc). With H0 = 67.4: 3910/67.4 = 58.0 Mpc - 7.4 times farther. Hubble's distance scale was too short mainly because the Cepheid zero point and the 'brightest stars' criterion of the time were wrong, not because of the linear law."
+      },
+      {
+        "id": "25.3",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Compute the critical density for H0 = 67.4 km/s/Mpc in kg/m^3 and in solar masses per cubic megaparsec (G = 6.67408e-11, GM_sun = 1.3271244e20 m^3 s^-2).",
+        "solution": "H0 = 67.4e3 / 3.0857e22 s^-1 = 2.184e-18 s^-1. rho_c = 3 H0^2 / (8 pi G) = 8.53e-27 kg/m^3 - about five hydrogen atoms per cubic metre. Per Mpc^3: rho_c x (3.0857e22 m)^3 / (GM_sun/G) = 1.26e+11 M_sun/Mpc^3."
+      },
+      {
+        "id": "25.4",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Using the closed form of theorem 2, compute the age of a flat universe with H0 = 67.4 and Omega_m = 0.315, and of an Einstein-de Sitter universe (Omega_m = 1) with the same H0. Why was the EdS age a problem historically?",
+        "solution": "t0 = 2/(3 sqrt(0.685)) asinh(sqrt(0.685/0.315)) x 14.51 Gyr = 13.80 Gyr (the check's integral, closed form and RK4 ODE all give 13.796). EdS: 2/(3 H0) = 9.67 Gyr. An EdS universe would be younger than the oldest stars (globular-cluster ages above 10 Gyr), an inconsistency that the dark-energy (Lambda) model removes by letting the expansion accelerate, so that past expansion was slower and the Universe is older for the same H0."
+      },
+      {
+        "id": "25.5",
+        "type": "derivation",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Starting from the Friedmann equation for a flat universe containing only matter, solve for a(t) and show that t0 = 2/(3 H0). Then show that H(z) = H0 (1+z)^(3/2).",
+        "solution": "Flat matter-only: H^2 = H0^2 a^-3, so da/dt = H0 a^(-1/2). Separate: a^(1/2) da = H0 dt, integrate from a = 0 at t = 0: (2/3) a^(3/2) = H0 t, i.e. a(t) = (3 H0 t / 2)^(2/3). Today a = 1 gives t0 = 2/(3 H0). H = (da/dt)/a = (2/3)/t; with a = 1/(1+z): H = H0 a^(-3/2) = H0 (1+z)^(3/2)."
+      },
+      {
+        "id": "25.6",
+        "type": "proof",
+        "difficulty": 3,
+        "marks": 8,
+        "problem": "Prove that a transition matrix satisfying detailed balance with respect to pi has pi as a stationary distribution, and give a 3-state example of a chain with pi stationary that does NOT satisfy detailed balance.",
+        "solution": "Stationarity: (pi K)_y = sum_x pi_x K_xy = sum_x pi_y K_yx (detailed balance) = pi_y sum_x K_yx = pi_y. Counter-example: pi = (1/3, 1/3, 1/3) and the deterministic cycle K = [[0,1,0],[0,0,1],[1,0,0]] (1 -> 2 -> 3 -> 1). pi K = pi because every column sums to 1 (doubly stochastic), so the uniform pi is stationary; but pi_1 K_12 = 1/3 while pi_2 K_21 = 0, so detailed balance fails. Detailed balance is sufficient, not necessary - it is a convenient design rule because it is checked pair by pair. (This chain is also periodic, so it does not converge to pi from a point start; MCMC needs aperiodicity too.)"
+      },
+      {
+        "id": "25.7",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "An alert classifier flags 90 % of real transients and 5 % of bogus ones; 1 % of difference-image detections are real. What fraction of flagged alerts are real? Repeat with a 50 % real fraction.",
+        "solution": "Bayes: P(real | flag) = 0.9 x 0.01 / (0.9 x 0.01 + 0.05 x 0.99) = 0.1538. With 50 % real: 0.9 x 0.5 / (0.9 x 0.5 + 0.05 x 0.5) = 0.9474. The same classifier gives a mostly-bogus stream when real events are rare - the base-rate effect that lesson 18's broker filters fight by raising the prior (cuts before the classifier)."
+      },
+      {
+        "id": "25.8",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Three galaxies have d = 10, 20, 40 Mpc (exact) and v = 750, 1350, 2900 km/s with sigma_v = 300 km/s. With a flat prior, find the posterior mean and standard deviation of H0. Then repeat with the prior N(67.4, 0.5).",
+        "solution": "sum v d = 150500, sum d^2 = 2100. Flat prior: m = 150500/2100 = 71.667, s = 300/sqrt(2100) = 6.547 km/s/Mpc. With N(67.4, 0.5): precision 2100/300^2 + 1/0.25 = 4.0233, mean = (150500/90000 + 67.4/0.25)/4.0233 = 67.425, s = 0.499. Three galaxies carry far less information than the prior, so the posterior is essentially the prior - a reminder to report the prior and to check prior sensitivity."
+      },
+      {
+        "id": "25.9",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Explain why Metropolis can sample a posterior whose normalising constant p(D) is unknown, and what goes wrong if you use an asymmetric proposal (e.g. a log-normal step for a positive parameter) without the Hastings factor.",
+        "solution": "The acceptance probability uses only the ratio pi(y)/pi(x) = [p(D|y)p(y)] / [p(D|x)p(x)]; p(D) cancels, so likelihood x prior suffices. With an asymmetric q, detailed balance requires the factor q(x|y)/q(y|x); without it the chain is biased towards states the proposal visits more often and converges to a distribution proportional to pi weighted by proposal asymmetry - the check's biased 0.8/0.2 walk ends 0.175 (total variation) away from pi, while the corrected kernel is exact to 1e-14. For a multiplicative log-normal step the correction is y/x."
+      },
+      {
+        "id": "25.10",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "Planck 2018 infers H0 = 67.4 +/- 0.5 km/s/Mpc assuming base LCDM; SH0ES (Riess et al. 2022) measures about 73 km/s/Mpc from the distance ladder (72.5-73.3 across the variants in their abstract) and reports a 5 sigma difference. In 400-600 words, evaluate what a careful analyst should check before claiming new physics. Use theorems 1, 3 and 4 of lesson 24 and theorem 4 here.",
+        "solution": "Model answer outline: (1) The two numbers are different kinds of inference - Planck's is model-dependent (it assumes base LCDM to propagate early-Universe physics to today), the ladder's is local and empirical; a discrepancy tests the model, the ladder, or both. (2) Ladder systematics: the parallax zero point and rung-1 calibration, Cepheid crowding and metallicity, extinction law, the number of calibrator hosts (lesson 24 theorem 3d: a shared calibration error multiplies H0), supernova standardisation and selection. SH0ES's own variants are a sensitivity analysis - all stay near 73. (3) Independent rungs (TRGB, masers, other indicators) are tests of the Cepheid step. (4) Statistics: check that quoted errors are honest (coverage, lesson 15), that correlated systematics are included, and that priors are reported (theorem 4: an informative prior can dominate). (5) Only if independent methods with different systematics agree on each side does 'new physics before recombination or in late-time expansion' become the economical explanation. Marks: distinguishes model-dependent vs local (2), names at least three ladder systematics with the mechanism (3), uses error propagation correctly (2), discusses priors/statistics (2), balanced conclusion (1)."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Derivations and proofs",
+        "excellent": "Correct, complete chain; detailed-balance proof handles the x = y case and row sums; cosmology steps state assumptions (homogeneity, flatness, no radiation).",
+        "adequate": "Correct main steps with minor gaps.",
+        "inadequate": "Asserts results (e.g. 'Metropolis converges') without argument.",
+        "weight": 40
+      },
+      {
+        "criterion": "Calculations",
+        "excellent": "Correct numbers with units; Mpc and Gyr conversions shown; sanity checks (age vs Hubble time, flat-prior limit).",
+        "adequate": "Correct numbers; conversions implicit.",
+        "inadequate": "Unit errors or wrong H0 units.",
+        "weight": 25
+      },
+      {
+        "criterion": "Statistical reasoning",
+        "excellent": "Distinguishes likelihood, prior and posterior; reports prior sensitivity; explains base rates.",
+        "adequate": "Uses Bayes correctly in standard cases.",
+        "inadequate": "Treats the likelihood as a probability over parameters, or ignores the prior.",
+        "weight": 25
+      },
+      {
+        "criterion": "Critical evaluation (25.10)",
+        "excellent": "Balanced, mechanism-level discussion citing both measurements accurately.",
+        "adequate": "Names some systematics without mechanisms.",
+        "inadequate": "Takes a side without evidence.",
+        "weight": 10
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L500/25-foundations-cosmology-bayes/cosmo_bayes.py",
+        "purpose": "The four numerical checks (python cosmo_bayes.py)."
+      },
+      {
+        "path": "labs/L500/25-foundations-cosmology-bayes/test_cosmo_bayes.py",
+        "purpose": "unittest: every check passes plus limits (EdS, stationarity, prior pull)."
+      },
+      {
+        "path": "labs/L500/25-foundations-cosmology-bayes/README.md",
+        "purpose": "Run command and the real observed output."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Hubble 1929, A relation between distance and radial velocity among extra-galactic nebulae, PNAS 15, 168 (PMC full text)",
+        "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC522427/"
+      },
+      {
+        "title": "Planck Collaboration 2020, Planck 2018 results VI. Cosmological parameters (arXiv:1807.06209)",
+        "url": "https://arxiv.org/abs/1807.06209"
+      },
+      {
+        "title": "Riess et al. 2022, A comprehensive measurement of the local value of the Hubble constant (arXiv:2112.04510)",
+        "url": "https://arxiv.org/abs/2112.04510"
+      },
+      {
+        "title": "Metropolis, Rosenbluth, Rosenbluth, Teller & Teller 1953, Equation of state calculations by fast computing machines, J. Chem. Phys. 21, 1087 (doi:10.1063/1.1699114)",
+        "url": "https://doi.org/10.1063/1.1699114"
+      },
+      {
+        "title": "IAU 2015 Resolution B3 text (GM_sun; CODATA 2014 G)",
+        "url": "https://www.pas.rochester.edu/~emamajek/IAU/IAUres_B3.pdf"
+      }
+    ],
+    "seeAlso": [
+      "astronomy L100 #6 Light and spectra: blackbody, Wien's law, Doppler shift and redshift: redshift as Doppler there, as stretching of space here (theorem 1).",
+      "astronomy L300 #15 Fitting with honest uncertainty: least squares, bootstrap and MCMC for a transit: the Metropolis sampler used there is proved correct here (theorem 3); chi^2 = -2 ln L (theorem 4).",
+      "astronomy L400 #18 Time-domain alerts: difference detection, alert schema and broker filters: base rates and broker filters (problem 25.7).",
+      "astronomy L400 #20 Model comparison: a galaxy rotation curve with and without a dark-matter halo: BIC is a large-sample approximation to the Bayesian evidence p(D) that cancels in theorem 3."
+    ],
+    "next": "L500 #26 Ethics and responsibility: dark and quiet skies, observatory sites and open-data credit: who else is affected by the sky we measure.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "python cosmo_bayes.py (ALL CHECKS PASS) and python -m unittest (Ran 4 tests ... OK) in labs/L500/25-foundations-cosmology-bayes, Linux, Python 3.12.15 + numpy 2.5.3; seeded MCMC; research/l500_checks.py re-verifies checkOutput and problem numbers.",
+      "pendingCi": [
+        "macOS (Apple silicon) and Windows runs of the lab scripts and tests (CI job python-labs-l500)",
+        "seeded outputs on other platforms may differ in the last printed digit; research/l500_checks.py compares numbers with a last-digit tolerance"
+      ]
+    }
+  },
+  {
+    "id": "ethics-dark-skies",
+    "number": 26,
+    "level": "L500",
+    "title": "Ethics and responsibility: dark and quiet skies, observatory sites and open-data credit",
+    "phase": "Theory & Rigour",
+    "category": "ethics and professional responsibility",
+    "description": "Satellite constellations and the night sky, Indigenous and community perspectives on observatory sites, and equity and credit in open astronomical data - analysed with primary documents and professional codes.",
+    "outcome": "You can identify the stakeholders and trade-offs in a real astronomy-and-society conflict, cite the governing documents accurately, and write a structured, balanced case analysis with a defensible recommendation.",
+    "estimatedTime": "4 hours (reading primary documents 2 h, case analysis 2 h)",
+    "prerequisites": [
+      "reading primary sources: legal opinions, UN conference room papers, statutes, licence texts",
+      "magnitudes and flux ratios (lesson 4); twilight and solar depression (lesson 12)",
+      "Lesson 21 (Open data and science software practice: VO standards, licences, citation and validation)"
+    ],
+    "learningObjectives": [
+      "Explain the documented impacts of large satellite constellations on optical and radio astronomy and the mitigations proposed to COPUOS, distinguishing recommendations from binding law.",
+      "Analyze the stakeholders, interests and legal frameworks in observatory-siting disputes such as Maunakea, representing each perspective accurately from primary sources.",
+      "Evaluate a data-release decision against licence terms (Gaia CC BY-NC 3.0 IGO), credit norms and the ACM Code of Ethics.",
+      "Critique a proposed technical response (e.g. masking satellite streaks in an alert broker) for honesty about its limits and its effects on other users."
+    ],
+    "glossary": [
+      {
+        "term": "dark and quiet skies",
+        "meaning": "The night sky free of artificial light and radio interference, valued for science, culture and wildlife (IAU CPS mission statement)."
+      },
+      {
+        "term": "COPUOS / STSC",
+        "meaning": "UN Committee on the Peaceful Uses of Outer Space and its Scientific and Technical Subcommittee; since 2025 it has a five-year agenda item on dark and quiet skies."
+      },
+      {
+        "term": "conference room paper (CRP)",
+        "meaning": "A document submitted to a UN committee session by member states and observers; it informs discussion but is not a decision of the committee."
+      },
+      {
+        "term": "public trust doctrine",
+        "meaning": "Principle (Hawai'i Constitution art. XI s.1, applied by the Hawai'i Supreme Court in 2018) that public natural resources are held in trust by the State for the benefit of the people."
+      },
+      {
+        "term": "CC BY-NC 3.0 IGO",
+        "meaning": "Creative Commons Attribution-NonCommercial licence for intergovernmental organisations; the licence of Gaia data."
+      },
+      {
+        "term": "stakeholder",
+        "meaning": "Anyone affected by, or able to affect, a decision; ACM Code 1.1 treats all people as stakeholders in computing."
+      }
+    ],
+    "conceptNote": "content/concepts/L500/26-ethics-dark-skies.md",
+    "conceptSummary": "Astronomy shares the sky, the land and its data with others. Satellite constellations bring connectivity and also streaks and radio noise; telescopes on sacred or contested land raise questions of consent and stewardship; open data creates value that depends on licences and credit being honoured. Analyse each with primary documents, name the stakeholders, separate law from recommendation, and decide transparently.",
+    "caseStudy": {
+      "case": "You lead the software team of a wide-field time-domain survey (the pipeline and alert broker of lessons 17-18). Three decisions land in the same month. (1) Your national regulator invites comments on a licence for a new low-Earth-orbit broadband constellation of several thousand satellites at 550 km; your director asks you to quantify the impact on your survey and to propose mitigations. (2) Your broker's false-positive rate has risen; a colleague proposes silently discarding every alert within 30 arcsec of a predicted satellite track, using public two-line elements. (3) The consortium is evaluating a second site on a mountain that is a protected cultural landscape for an Indigenous community; the consortium's draft says 'community consultation completed' after two public meetings. You also plan to release a derived variable-star catalogue that cross-matches your photometry with Gaia DR3.",
+      "stakeholders": [
+        "Survey astronomers and the pipeline/broker engineers (your team)",
+        "Downstream alert consumers: other observatories, amateur astronomers, near-Earth-object follow-up programmes",
+        "Satellite operators and manufacturers, and their customers - including remote and underserved communities gaining connectivity",
+        "National licensing regulators and space agencies; COPUOS member states",
+        "IAU Centre for the Protection of the Dark and Quiet Sky (CPS) and radio-astronomy facilities (ITU-R processes)",
+        "Indigenous community members and cultural practitioners connected to the candidate mountain; local residents",
+        "Funding agencies and the consortium's member institutions",
+        "Data providers (ESA/Gaia DPAC) and future users of the derived catalogue; early-career researchers and citizen scientists whose work it contains",
+        "The public's shared night sky and nocturnal wildlife (named in the IAU CPS mission statement)"
+      ],
+      "questions": [
+        "Using the COPUOS conference room paper, list the documented impacts on optical/infrared and radio astronomy that are relevant to a survey like yours. Which parts of that document are recommendations and which describe existing national law?",
+        "Quantify two effects for your comment letter: the flux ratio between a magnitude-5 satellite and the 7th-magnitude recommendation, and how far below the horizon the Sun must be before a satellite at 550 km overhead enters Earth's shadow. What do these numbers imply for twilight observing?",
+        "Evaluate the colleague's 'silently discard alerts near predicted tracks' proposal against ACM Code principles 1.2, 1.3 and 2.5 and against the CRP's finding about the accuracy of public TLEs. Propose a better design.",
+        "For the candidate site, summarise the perspectives documented in primary sources for the Maunakea Thirty Meter Telescope case (Hawai'i Supreme Court 2018; Act 255 of 2022) without adopting either side's framing. What would a consultation have to include before 'consultation completed' is an honest statement?",
+        "Can the derived catalogue be released under CC BY 4.0? What licence and credit text are required, and what should happen if one input were CC BY-SA?",
+        "Write a recommendation to your director covering all three decisions, with the trade-offs you accept and how you will check whether the mitigations work."
+      ],
+      "frameworks": [
+        "ACM Code of Ethics and Professional Conduct (2018): 1.1, 1.2, 1.3, 1.4, 1.5, 2.5, 3.7",
+        "COPUOS A/AC.105/C.1/2026/CRP.22/Rev.1 (11 February 2026), Conference Room Paper on the Protection of Dark and Quiet Skies for science and society (STSC 63rd session, agenda item 16)",
+        "Outer Space Treaty (1967) Article VI - authorisation and continuing supervision of non-governmental space activities (as discussed in the CRP)",
+        "ITU-R Radio Regulations and Recommendation RA.769-2 (radio astronomy protection; as summarised in the CRP)",
+        "In re Contested Case Hearing re CDUA HA-3568 for the Thirty Meter Telescope, Hawai'i Supreme Court SCOT-17-0000777 (amended opinion, 30 Nov 2018), including the public trust doctrine of Hawai'i Constitution art. XI s.1",
+        "Hawai'i Act 255 (2022), HB2024 - Mauna Kea Stewardship and Oversight Authority",
+        "Gaia data licence: CC BY-NC 3.0 IGO (ESA Gaia users licence page)",
+        "ABET Criterion 3 student outcome 4 (ethical and professional responsibilities; global, economic, environmental and societal contexts)"
+      ],
+      "modelAnswer": "1. Impacts and status. The CRP documents streaks of reflected sunlight that compromise data quality, worst in twilight and at low elevation; interference with discovery and tracking of near-Earth objects; false positives for time-domain astronomy from glints and streak-induced background variability; systematic errors from unmasked faint trails; and, for radio astronomy, out-of-band and unintended electromagnetic radiation that can saturate sensitive receivers. The 7th-magnitude brightness limit, ephemeris accuracy targets, BRDF libraries and third-party validation are recommendations to member states. Existing law described in the CRP includes the French Space Operations Act's magnitude-7 objective for mega-constellation satellites, the Italian Space Law of 13 June 2025's assessment requirement, FCC licence conditions requiring coordination with NSF, and the proposed (not yet adopted) EU Space Act. The CRP notes that in 2023 no country had binding brightness legislation. Keep the categories separate in the comment letter.\n\n2. Numbers. A magnitude-5 satellite is 10^(0.4 x 2) = 6.31 times brighter than the 7th-magnitude recommendation. A satellite at 550 km at the zenith stays sunlit until the Sun is 23.0 deg below the horizon - deeper than astronomical twilight (18 deg) - while one at 350 km enters shadow at 18.6 deg. This is consistent with the CRP's note that lower orbits spend more of the night in shadow but increase impacts at dawn and dusk. Twilight programmes (near-Earth-object searches near the Sun) are the most exposed.\n\n3. Silent discarding. It reduces visible false positives, but it hides real transients near tracks (harm to downstream users, ACM 1.2). It misrepresents completeness if undocumented (1.3: 'full disclosure of all pertinent system capabilities, limitations'). It ignores that public TLEs are accurate only to a few arcminutes (CRP para 24), so a 30-arcsec mask both misses streaks and removes the wrong regions. A better design: flag rather than drop (a satellite_proximity field in the alert schema); use operator ephemerides where shared; measure and publish completeness and false-positive rates with and without the flag (2.5); and let consumers choose. This is the lesson 18 principle: code classifies, documentation discloses.\n\n4. Site. The 2018 opinion records Native Hawaiian cultural practitioners' view that Mauna Kea is a sacred manifestation of their ancestry that should be honoured in its natural state. It records the appellees' position that telescope use is an allowed and appropriate use of the summit area, that measures are being taken to reduce the TMT's impact, and that Mauna Kea can also be honoured through the advancement of scientific knowledge. It notes that earlier observatories and roads had significant cumulative adverse impacts on cultural, archaeological and historic resources. It holds that conservation-district lands in the summit area are public natural resources held in trust, and it affirms the BLNR's decision to authorise the permit; on reconsideration the court states that the BLNR took contemporary as well as customary and traditional practices into account. Act 255 (2022) finds that Mauna Kea has come to symbolise a rigid dichotomy between culture and science, and creates a stewardship authority whose voting members include Native Hawaiian practitioners and lineal descendants. An honest consultation statement requires early engagement before site selection, people chosen by the community rather than by the consortium, access to the full technical and environmental information, a documented record of concerns and responses, a real possibility that the answer is no, and continuing governance rather than a one-off event. Two public meetings do not meet that bar, and writing 'completed' would breach ACM 1.3. These lessons transfer to the new mountain without presuming its community's views.\n\n5. Data. Gaia data are CC BY-NC 3.0 IGO; a derived catalogue must keep the NC condition, so CC BY 4.0 is not allowed. Use CC BY-NC 4.0 with the Gaia acknowledgement and DR3 citation (Vallenari et al. 2023), and credit the contributors to your photometry (ACM 1.5). An additional CC BY-SA input cannot be combined automatically: SA requires the same licence and NC forbids commercial use. Either drop or replace that input, or obtain permission - a human decision, exactly as the lesson 21 gate does.\n\n6. Recommendation. Submit a comment letter with the quantified impacts, cite the CRP, and ask for brightness prediction and validation, astronomy-grade ephemerides and data sharing as licence conditions - recommendations, stated as such. Implement flag-not-drop in the broker and publish its measured effect. Pause the site statement and fund an independent, community-directed consultation with the option of not proceeding. Release the catalogue as CC BY-NC 4.0 with full credit. Review all four after one observing season against stated metrics: alert completeness, false-positive rate, the consultation record, and licence-check results."
+    },
+    "problemSet": [
+      {
+        "id": "26.1",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "The CRP cites a brightness limit of visual magnitude 7. How many times brighter is a magnitude-5 satellite than that limit? A magnitude-4 one?",
+        "solution": "Flux ratio = 10^(0.4 x (7 - m)). Magnitude 5: 10^0.8 = 6.31 times. Magnitude 4: 10^1.2 = 15.85 times. (Run python sky_numbers.py.)"
+      },
+      {
+        "id": "26.2",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "A satellite is at the observer's zenith at altitude h. Treating Earth as a sphere of radius 6378.1 km with a cylindrical shadow, show that it is sunlit while the solar depression angle s satisfies cos s > R/(R + h). Evaluate the limiting s for h = 550 km and 350 km and compare with astronomical twilight (18 deg).",
+        "solution": "The satellite is at distance R + h from Earth's centre along the observer's vertical. With the Sun s below the horizon, the anti-solar direction is s above the horizon, so the angle between the vertical and the anti-solar axis is 90 - s. The satellite's distance from the shadow axis is (R + h) sin(90 - s) = (R + h) cos s; it is outside the shadow cylinder (sunlit) iff (R + h) cos s > R. Limits: h = 550 km: arccos(6378.1/6928.1) = 23.0 deg; h = 350 km: 18.6 deg. Satellites at 550 km overhead remain sunlit well into astronomical night (Sun 18-23 deg down); at 350 km they enter shadow almost exactly when astronomical twilight ends - consistent with the CRP's note that lower orbits reduce night-time streaks but not twilight impacts."
+      },
+      {
+        "id": "26.3",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Your derived catalogue combines Gaia DR3 (CC BY-NC 3.0 IGO) with a CC BY-SA 4.0 photometric survey. Can you release it automatically under any single CC licence? What are your options?",
+        "solution": "No. BY-SA requires adaptations to be shared under the same (or a compatible) BY-SA licence, which permits commercial use; Gaia's NC term forbids commercial use. No single licence keeps both conditions, so an automatic gate must stop (sky_numbers.py prints 'needs a person'). Options: drop or replace the SA input; publish the two derived parts separately under their own terms, with instructions to join them; or seek permission from a rights holder. Record the decision and its reasons in the release notes."
+      },
+      {
+        "id": "26.4",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "A colleague wants the alert broker to silently drop alerts within 30 arcsec of predicted satellite tracks computed from public TLEs. Using ACM Code 1.2, 1.3 and 2.5 and the CRP's statement on TLE accuracy, critique the proposal and propose an alternative.",
+        "solution": "The CRP (para 24) reports that public TLE data are typically accurate to only a few arcminutes, far coarser than a 30-arcsec mask, so the filter will both miss many streak artefacts and remove genuine transients in the wrong places. Silently dropping real events harms downstream users who depend on completeness (1.2 Avoid harm). Not disclosing the filter misstates the system's capabilities and limitations (1.3 Be honest and trustworthy). Not measuring its effect fails 2.5 (comprehensive evaluations including risks). Alternative: add a documented satellite-proximity flag computed with the best ephemerides available (operator data where shared), keep the alerts, publish completeness and false-positive rates with and without the flag on injected test transients (the lesson 17/18 method), and let consumers filter."
+      },
+      {
+        "id": "26.5",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "In 500-700 words, present the main perspectives in the Maunakea / Thirty Meter Telescope dispute as they appear in two primary sources - the Hawai'i Supreme Court's amended opinion (SCOT-17-0000777, 30 November 2018) and Act 255 (2022) - without adopting either side's framing, and identify what a software or data professional working for an observatory owes to the communities involved.",
+        "solution": "Model answer outline: (1) Court record: Native Hawaiian cultural practitioners (appellants) hold that Mauna Kea is a sacred manifestation of their ancestry to be honoured in its natural state and is desecrated by astronomy development; the opinion describes the summit's cultural significance (wao akua, piko, shrines, pilgrimage) and archaeology (adze quarry). Appellees (BLNR, the University, TIO) submitted that telescope use is an allowed and appropriate use, that mitigation measures reduce the impact, and that the mountain can also be honoured through scientific knowledge. The opinion records significant cumulative adverse impacts of earlier observatories and roads. The majority held that conservation-district lands in the summit area are public natural resources held in trust (art. XI s.1) and affirmed the BLNR's permit decision; a concurrence (Pollack, J.) set out a public-trust framework and Wilson, J. dissented. (2) Legislature: Act 255 finds that Mauna Kea is important as a cultural and genealogical site, particularly to Native Hawaiians, and highly valued for astronomy; it observes a 'rigid dichotomy between culture and science' and polarisation; it creates the Mauna Kea Stewardship and Oversight Authority with voting seats including Native Hawaiian practitioners and lineal descendants, shifting governance rather than deciding the telescope question. (3) Neutrality: describe each position in its own terms, separate legal holdings from claims, avoid characterising protest or science as illegitimate. (4) Professional duties: honesty about project impacts and consultation status (ACM 1.3), respect for all stakeholders and attention to the less advantaged (1.1, 1.4), refusal to misrepresent; in data work, respect any community data-governance agreements and cultural sensitivities in public outreach. Marks: accurate use of both sources (4), balance (3), professional-duty analysis (2), clarity (1)."
+      },
+      {
+        "id": "26.6",
+        "type": "essay",
+        "difficulty": 2,
+        "marks": 8,
+        "problem": "Open survey data (Gaia, TESS, ZTF) let anyone with a laptop make discoveries. In 400-500 words, evaluate whether open data by itself delivers equity in astronomy, and what credit practices (licences, acknowledgements, citation of software and data, authorship) a project should adopt. Refer to the Gaia licence and ACM Code 1.5.",
+        "solution": "Model answer outline: Openness removes access barriers to data, but not to compute, bandwidth, training, time or publication costs; the CRP and CPS documents note that some communities are newly affected by sky changes without sharing in the decisions. Equity therefore needs documentation, tutorials, lightweight access (TAP queries rather than bulk downloads), and capacity-building partnerships. Credit: honour the provider's licence and required acknowledgement verbatim (Gaia: CC BY-NC 3.0 IGO plus the requested acknowledgement and DR3 citation); cite data releases and software versions (CITATION.cff, DOIs; lesson 21); credit pipeline and calibration work that enables discoveries; give citizen scientists and early-career contributors visible credit or authorship according to their contribution (ACM 1.5: credit the creators of ideas, inventions, work and artifacts). Conclude: open data is necessary but not sufficient; equity needs active practices and measurement (who is using the data, who is credited)."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Accuracy and use of primary sources",
+        "excellent": "Cites the CRP, court opinion, Act 255, licence and ACM Code precisely; distinguishes holdings, findings, recommendations and law.",
+        "adequate": "Sources cited; occasional blurring of recommendation vs law.",
+        "inadequate": "Relies on secondary commentary or misstates what a document says.",
+        "weight": 30
+      },
+      {
+        "criterion": "Stakeholder analysis and balance",
+        "excellent": "All affected parties identified, including those without a seat at the table; each perspective stated in its own terms.",
+        "adequate": "Main stakeholders identified; some perspectives thin.",
+        "inadequate": "One-sided or dismissive of a stakeholder group.",
+        "weight": 25
+      },
+      {
+        "criterion": "Ethical reasoning",
+        "excellent": "Applies named principles to specific actions; weighs trade-offs explicitly; considers who bears the risk.",
+        "adequate": "Applies principles generically.",
+        "inadequate": "Lists principles without applying them.",
+        "weight": 25
+      },
+      {
+        "criterion": "Quantitative support and recommendation",
+        "excellent": "Uses the brightness and shadow numbers correctly; recommendation is specific, checkable and honest about limits.",
+        "adequate": "Some numbers; recommendation general.",
+        "inadequate": "No numbers or an unworkable recommendation.",
+        "weight": 20
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L500/26-ethics-dark-skies/sky_numbers.py",
+        "purpose": "Magnitude flux ratio, satellite shadow geometry and the licence-compatibility rule used in the case."
+      },
+      {
+        "path": "labs/L500/26-ethics-dark-skies/test_sky_numbers.py",
+        "purpose": "unittest for the three helpers."
+      },
+      {
+        "path": "labs/L500/26-ethics-dark-skies/README.md",
+        "purpose": "Run command and the real observed output."
+      }
+    ],
+    "sources": [
+      {
+        "title": "UNOOSA COPUOS A/AC.105/C.1/2026/CRP.22/Rev.1: Conference Room Paper on the Protection of Dark and Quiet Skies for science and society (11 Feb 2026)",
+        "url": "https://www.unoosa.org/res/oosadoc/data/documents/2026/aac_105c_12026crp/aac_105c_12026crp_22rev_1_0_html/AC105_C1_2026_CRP22Rev01E.pdf"
+      },
+      {
+        "title": "IAU Centre for the Protection of the Dark and Quiet Sky from Satellite Constellation Interference (CPS) - home and mission",
+        "url": "https://cps.iau.org/"
+      },
+      {
+        "title": "IAU CPS - About (history: SATCON, Dark & Quiet Skies workshops; launched 1 April 2022)",
+        "url": "https://cps.iau.noirlab.edu/about/"
+      },
+      {
+        "title": "Hawai'i Supreme Court, SCOT-17-0000777, amended opinion of the court (30 Nov 2018)",
+        "url": "https://www.courts.state.hi.us/wp-content/uploads/2018/12/SCOT-17-0000777am.pdf"
+      },
+      {
+        "title": "Hawai'i Supreme Court, SCOT-17-0000777, amended concurring opinion (Pollack, J.) on the public trust doctrine",
+        "url": "https://www.courts.state.hi.us/wp-content/uploads/2018/12/SCOT-17-0000777conam.pdf"
+      },
+      {
+        "title": "Hawai'i Session Laws 2022, Act 255 (HB2024) - Mauna Kea Stewardship and Oversight Authority",
+        "url": "https://data.capitol.hawaii.gov/sessions/sessionlaws/Years/SLH2022/SLH2022_Act255.pdf"
+      },
+      {
+        "title": "ESA Gaia users - Gaia data licence (CC BY-NC 3.0 IGO)",
+        "url": "https://www.cosmos.esa.int/web/gaia-users/license"
+      },
+      {
+        "title": "ACM Code of Ethics and Professional Conduct (2018)",
+        "url": "https://www.acm.org/code-of-ethics"
+      },
+      {
+        "title": "ABET Criteria for Accrediting Engineering Programs 2025-2026 (Criterion 3 student outcomes)",
+        "url": "https://www.abet.org/accreditation/accreditation-criteria/criteria-for-accrediting-engineering-programs-2025-2026/"
+      }
+    ],
+    "seeAlso": [
+      "astronomy L300 #12 Observation planning: airmass, twilight, Moon distance and a scheduler under constraints: twilight and solar depression, reused for the satellite-shadow calculation.",
+      "astronomy L400 #17 Survey pipeline architecture: ingest, calibrate, detect, catalogue - throughput measured: completeness and purity - the metrics a streak mitigation must report.",
+      "astronomy L400 #18 Time-domain alerts: difference detection, alert schema and broker filters: the alert broker whose satellite filter is critiqued in problem 26.4.",
+      "astronomy L400 #21 Open data and science software practice: VO standards, licences, citation and validation: the licence gate (NC must be kept; NC + SA needs a person) applied in the case study."
+    ],
+    "next": "L500 #27 Reading seminar: Hubble (1929) and the Gaia DR3 summary: read two foundational papers critically.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "python sky_numbers.py and python -m unittest (Ran 3 tests ... OK) in labs/L500/26-ethics-dark-skies; the two calculation problems are recomputed by research/l500_checks.py. The case analysis is a written exercise (no code verdict); every cited document was retrieved on 2026-10-30 (research/L500-evidence.md).",
+      "pendingCi": [
+        "macOS (Apple silicon) and Windows runs of the lab scripts and tests (CI job python-labs-l500)",
+        "seeded outputs on other platforms may differ in the last printed digit; research/l500_checks.py compares numbers with a last-digit tolerance"
+      ]
+    }
+  },
+  {
+    "id": "reading-seminar",
+    "number": 27,
+    "level": "L500",
+    "title": "Reading seminar: Hubble (1929) and the Gaia DR3 summary",
+    "phase": "Theory & Rigour",
+    "category": "primary literature",
+    "description": "Read two foundational papers - the six-page paper that founded observational cosmology and the summary of the largest astrometric data release - with guiding questions, then write a critical response.",
+    "outcome": "You can read a primary research paper for its claim, evidence, method and limits, check its arithmetic, place it in what came later, and write a critical response that a scientist would find fair.",
+    "estimatedTime": "4-5 hours (reading 2.5 h, checks 15 min, response 2 h)",
+    "prerequisites": [
+      "statistics: least squares, residuals, systematic vs random error",
+      "lessons 24-25 (distance ladder, Hubble's law) and lesson 21 (licences and citation)",
+      "academic reading: abstract, method, results, discussion; how to cite"
+    ],
+    "learningObjectives": [
+      "Explain the claim, evidence and method of Hubble (1929) and evaluate how its data support a linear velocity-distance relation.",
+      "Analyze the Gaia DR3 summary for what was released, how it was validated and which limitations users must respect.",
+      "Critique each paper's assumptions in the light of later work (the corrected distance scale; data-release caveats) without anachronism.",
+      "Evaluate licence and citation obligations for reusing each paper and the Gaia data, and summarise without reproducing."
+    ],
+    "glossary": [
+      {
+        "term": "K term",
+        "meaning": "Hubble's name for the velocity per unit distance in his solar-motion solution: K = +500 km/s per million parsecs."
+      },
+      {
+        "term": "equations of condition",
+        "meaning": "One linear equation per object (here rK + X cos a cos d + Y sin a cos d + Z sin d = v) solved jointly by least squares."
+      },
+      {
+        "term": "solar motion",
+        "meaning": "The Sun's own velocity relative to the nebulae (X, Y, Z), which must be removed before velocities can be compared with distances."
+      },
+      {
+        "term": "data release (DR)",
+        "meaning": "A versioned, documented snapshot of a survey's processed data; Gaia DR3 used 34 months of observations."
+      },
+      {
+        "term": "critical response",
+        "meaning": "A written evaluation of a paper's claim, evidence and reasoning, separating what the authors could know then from what we know now."
+      }
+    ],
+    "conceptNote": "content/concepts/L500/27-reading-seminar.md",
+    "conceptSummary": "Read papers as arguments: what is claimed, on what evidence, by what method, with what stated limits. Hubble (1929) shows a strong claim resting on 24 distances and a candid caveat; the Gaia DR3 summary shows how a modern collaboration documents a release so that others can use it responsibly. Check the arithmetic, respect the licence, summarise in your own words.",
+    "readings": [
+      {
+        "citation": "Hubble, E. (1929). A relation between distance and radial velocity among extra-galactic nebulae. Proceedings of the National Academy of Sciences 15(3), 168-173. doi:10.1073/pnas.15.3.168",
+        "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC522427/",
+        "why": "The founding observational paper for the expanding Universe and the source of the K = 500 km/s/Mpc that lesson 25 converts to a 1.96-Gyr Hubble time. It is short, its method (a least-squares solution for solar motion with a distance term) is transparent, and its closing caveat - that the linear relation is a first approximation over a restricted range - is a model of scientific candour. Licence: free to read via PubMed Central (and a NASA transcription); no open licence was shown on the pages retrieved, so summarise and quote only briefly with citation.",
+        "guidingQuestions": [
+          "What problem was Hubble trying to solve when he introduced distances as coefficients of the K term? Write his equation of condition and say what each unknown represents.",
+          "How were the 24 distances obtained (which criteria for which objects), and which are most reliable according to the paper? How would errors in the faint-galaxy distances affect K?",
+          "Hubble gives two solutions (individual nebulae and 9 groups) and adopts round numbers 'intermediate between the two'. Is that defensible? What would you do today (lesson 25 theorem 4)?",
+          "Check the paper's own numbers: does K = 500 reproduce the NGC 7619 distance and absolute magnitude he quotes? Does 745 km/s at 1.4 Mpc give 'K of 530'? (Run reading_checks.py.)",
+          "What does the final paragraph claim about the de Sitter effect and the range of validity of the linear relation? How does that caveat read in the light of cz = H0 d being a first-order law (lesson 25 theorem 1)?"
+        ],
+        "responsePrompt": "Write 800-1000 words evaluating whether the data in Hubble (1929) justified the conclusion of a linear velocity-distance relation. Separate (a) what the paper's evidence and method support, (b) what Hubble explicitly hedged, and (c) what later work changed (the distance scale; K vs today's H0 of about 67-73 km/s/Mpc) and why that does not invalidate the linear law. Use at least two of your own numerical checks."
+      },
+      {
+        "citation": "Gaia Collaboration, Vallenari, A., Brown, A. G. A., Prusti, T., et al. (2023). Gaia Data Release 3: Summary of the content and survey properties. Astronomy & Astrophysics 674, A1. doi:10.1051/0004-6361/202243940 (arXiv:2208.00211)",
+        "url": "https://arxiv.org/abs/2208.00211",
+        "why": "The reference you must cite when you use Gaia DR3 (lesson 19's cone searches, lesson 24's parallax rung). It shows how a large collaboration describes a data release: what is new relative to EDR3, which products exist (radial velocities for more than 33 million objects, about 220 million BP/RP spectra, variability for about 10 million sources, astrophysical parameters, Solar System objects), and where validation and caveats are documented. Licence: the article is open access under CC BY 4.0 (stated on the A&A version); the Gaia data themselves are CC BY-NC 3.0 IGO - two different licences for two different things.",
+        "guidingQuestions": [
+          "What period of observations does DR3 cover, and which products were already in EDR3 versus new in DR3?",
+          "List the main new data products with their approximate sizes. Which would you need for (a) a distance-ladder rung, (b) a variable-star search, (c) an asteroid study?",
+          "How does the paper direct users to validation and known limitations? Find two caveats a pipeline engineer must encode as checks before using the data.",
+          "The article is CC BY 4.0 but the data are CC BY-NC 3.0 IGO. What may you do with each, and what must a derived catalogue's licence and acknowledgement say (lesson 21)?",
+          "Compare how DR3 documents its data with how Hubble (1929) documented his table. What has changed in what a reader can verify independently?"
+        ],
+        "responsePrompt": "Write 600-800 words as a 'data-release review' for your team: what Gaia DR3 provides for your pipeline, which documented limitations you will enforce in code, how you will cite and license derived products, and one question you could not answer from the summary paper alone (and where you would look)."
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "27.1",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 2,
+        "problem": "Convert Hubble's K = 500 km/s per million parsecs into a Hubble time 1/K in Gyr.",
+        "solution": "1/K = 3.0857e19 km / 500 km/s = 6.17e16 s = 1.96 Gyr - shorter than radiometric age estimates for the Earth (several Gyr), a tension that the later recalibration of the distance scale removed."
+      },
+      {
+        "id": "27.2",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "Hubble writes that NGC 7619 (corrected velocity +3910 km/s) lies at 7.8 x 10^6 pc for K = 500 and, with apparent magnitude 11.8, has absolute magnitude -17.65. Verify both numbers.",
+        "solution": "d = 3910/500 = 7.82 Mpc. M = m - 5 log10(d / 10 pc) = 11.8 - 5 log10(7.8e5) = -17.66, agreeing with -17.65 to rounding. The paper is internally consistent."
+      },
+      {
+        "id": "27.3",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 2,
+        "problem": "For the 22 nebulae without individual distances, Hubble finds a mean corrected velocity of 745 km/s at a mean distance of 1.4 x 10^6 pc and says this indicates K of 530. Verify.",
+        "solution": "745/1.4 = 532 km/s/Mpc, i.e. 'K of 530', close to the adopted 500 - an independent consistency check that Hubble used to support the relation."
+      },
+      {
+        "id": "27.4",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Hubble's equations of condition were rK + X cos a cos d + Y sin a cos d + Z sin d = v. Explain why the X, Y, Z terms are needed, and why the four Virgo-cluster nebulae 'unduly influence' K.",
+        "solution": "Measured radial velocities include the projection of the Sun's own motion onto each line of sight; X, Y, Z are the solar-motion components, and the trigonometric factors project them onto the direction (a, d). Solving jointly separates the reflex solar motion from the distance-proportional term. The Virgo nebulae are the most distant objects, so they have the largest lever arm in a fit of v against r, and they share a common peculiar motion; a correlated error in high-leverage points biases the slope - the same leverage issue that motivates robust or hierarchical fits today."
+      },
+      {
+        "id": "27.5",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 2,
+        "problem": "The DR3 abstract reports new mean radial velocities for more than 33 million objects and source-class probabilities for about 1500 million sources. What fraction of the classified sources have radial velocities, and how long was the observation period of 34 months in years?",
+        "solution": "33/1500 = 2.2 %. 34 months = 2.83 years. Radial velocities exist only for a small, bright subset (Grvs < 14), so any analysis needing full 3D velocities is restricted to it - a selection effect to record."
+      },
+      {
+        "id": "27.6",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "You will publish a table of 5000 variable stars whose distances come from Gaia DR3 parallaxes. State what you must cite, the licence of your table, and why quoting the DR3 abstract at length in your README would be inappropriate even though the article is CC BY 4.0.",
+        "solution": "Cite the DR3 summary (Gaia Collaboration, Vallenari et al. 2023, A&A 674, A1) and any DR3 product papers you rely on, plus the Gaia acknowledgement requested by ESA; release the table under a licence that keeps the NC term of the data (e.g. CC BY-NC 4.0, as in lesson 21). CC BY 4.0 would legally permit reuse of the article text with attribution, but a README should summarise what matters for users in your own words: long quotation adds nothing, can drift from the source version, and this course's rule is to summarise and cite rather than reproduce."
+      },
+      {
+        "id": "27.7",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 20,
+        "problem": "Critical response: submit the response for one of the two readings (prompts above), 800-1000 words for Hubble (1929) or 600-800 words for Gaia DR3.",
+        "solution": "Assessed with the rubric below. A strong Hubble response: summarises the method (24 distances from Cepheids, novae, brightest stars and cluster luminosities; least-squares solution with solar motion); reports two numerical checks; notes the hedges (scanty, poorly distributed material; 'first approximation representing a restricted range'); explains that the factor of about 7 error in K came from the distance calibration, not the linear form; and avoids anachronism. A strong DR3 response: maps products to pipeline needs, names concrete validation checks, gets the article vs data licences right, and identifies a real gap with where to look (the product-specific DR3 papers and online documentation)."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Comprehension and summary",
+        "excellent": "Accurate, concise summary of claim, method and evidence in own words; no long quotation.",
+        "adequate": "Mostly accurate; some paraphrase too close to the source.",
+        "inadequate": "Misstates the claim or reproduces large passages.",
+        "weight": 25
+      },
+      {
+        "criterion": "Critical evaluation",
+        "excellent": "Separates the authors' evidence, their hedges and later developments; evaluates assumptions without anachronism.",
+        "adequate": "Some evaluation, partly anachronistic or one-sided.",
+        "inadequate": "Only summarises, or judges 1929 work by 2026 standards without context.",
+        "weight": 30
+      },
+      {
+        "criterion": "Quantitative checks",
+        "excellent": "At least two correct, relevant checks (reading_checks.py or own), interpreted.",
+        "adequate": "One check or checks without interpretation.",
+        "inadequate": "No checks or incorrect arithmetic.",
+        "weight": 20
+      },
+      {
+        "criterion": "Citation and licence practice",
+        "excellent": "Correct full citations with DOIs; correctly distinguishes article vs data licences.",
+        "adequate": "Citations present; licence point vague.",
+        "inadequate": "Missing citations or wrong licence claims.",
+        "weight": 15
+      },
+      {
+        "criterion": "Writing",
+        "excellent": "Clear structure, precise language, within length.",
+        "adequate": "Readable; minor structure or length issues.",
+        "inadequate": "Disorganised or far outside length.",
+        "weight": 10
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L500/27-reading-seminar/reading_checks.py",
+        "purpose": "Recomputes the papers' own numbers (K, NGC 7619, 'K of 530', DR3 fractions)."
+      },
+      {
+        "path": "labs/L500/27-reading-seminar/test_reading_checks.py",
+        "purpose": "unittest for the two key consistency checks."
+      },
+      {
+        "path": "labs/L500/27-reading-seminar/README.md",
+        "purpose": "Run command and the real observed output."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Hubble 1929, PNAS 15, 168 - PubMed Central full text (PMC522427)",
+        "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC522427/"
+      },
+      {
+        "title": "Hubble 1929 - NASA transcription of the PNAS paper (used for the numbers checked)",
+        "url": "https://science.nasa.gov/apod/a-relation-between-distance-and-radial-velocity-among-extra-galactic-nebulae/"
+      },
+      {
+        "title": "Gaia Collaboration, Vallenari et al. 2023, Gaia DR3: Summary of the content and survey properties (arXiv:2208.00211)",
+        "url": "https://arxiv.org/abs/2208.00211"
+      },
+      {
+        "title": "Gaia DR3 summary, A&A 674, A1 - published version with the CC BY 4.0 statement (HAL open archive copy)",
+        "url": "https://hal.science/hal-03857259/document"
+      },
+      {
+        "title": "ESA Gaia users - Gaia data licence (CC BY-NC 3.0 IGO)",
+        "url": "https://www.cosmos.esa.int/web/gaia-users/license"
+      }
+    ],
+    "seeAlso": [
+      "astronomy L300 #15 Fitting with honest uncertainty: least squares, bootstrap and MCMC for a transit: the least-squares and uncertainty ideas used to judge Hubble's solution.",
+      "astronomy L400 #19 Big catalogues: sky indexing, cone-search performance and TAP/ADQL: querying Gaia DR3 - the data this summary paper documents.",
+      "astronomy L400 #21 Open data and science software practice: VO standards, licences, citation and validation: article vs data licences, CITATION.cff and acknowledgements."
+    ],
+    "next": "Course assessment: content/assessment/syllabus.md (14-week plan), midterm.md, final.md and the capstone oral defence.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "python reading_checks.py and python -m unittest (Ran 2 tests ... OK) in labs/L500/27-reading-seminar; the calculation problems are recomputed by research/l500_checks.py. Reading URLs and licences were retrieved on 2026-10-30 (A&A PNAS/DOI landing pages could not be fetched; PMC, NASA transcription, arXiv and HAL copies were).",
+      "pendingCi": [
+        "macOS (Apple silicon) and Windows runs of the lab scripts and tests (CI job python-labs-l500)",
+        "seeded outputs on other platforms may differ in the last printed digit; research/l500_checks.py compares numbers with a last-digit tolerance"
+      ]
+    }
+  }
+]

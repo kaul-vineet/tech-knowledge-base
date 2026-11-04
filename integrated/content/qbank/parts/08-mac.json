@@ -1,0 +1,122 @@
+[
+ {
+  "id": "08-mac-01",
+  "level": "L600",
+  "lesson": 8,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "A model obeys 24 of the 40 injected instructions. What is the 95 % Wilson interval for its obey rate (z = 1.96), as injection_eval.py reports it?",
+  "options": [
+   "0.446 to 0.737",
+   "0.448 to 0.752",
+   "0.500 to 0.700",
+   "0.585 to 0.615"
+  ],
+  "answer": 0,
+  "explanation": "Wilson: centre (p + z^2/2n)/(1 + z^2/n) = 0.591, half-width 0.145, giving 0.446-0.737. The Wald interval 0.6 +/- 1.96 sqrt(0.24/40) = 0.448-0.752 is the tempting one; Wilson behaves better near 0 and 1, where real models often sit.",
+  "source": "integrated/labs/L600/08-secure-agent-tools/mac_mini/README.md Experiment 1; injection_eval.wilson"
+ },
+ {
+  "id": "08-mac-02",
+  "level": "L600",
+  "lesson": 8,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "The overnight run evaluates 1,000 corpus items per model. For an obey rate near 0.6, roughly what 95 % half-width does that give (normal approximation)?",
+  "options": [
+   "+/-0.15",
+   "+/-0.003",
+   "+/-0.06",
+   "+/-0.03"
+  ],
+  "answer": 3,
+  "explanation": "1.96 x sqrt(0.6 x 0.4 / 1000) = 0.030. Going from 40 to 1,000 items is 25 times the data and shrinks the interval 5 times (sqrt 25), from about +/-0.15.",
+  "source": "integrated/labs/L600/08-secure-agent-tools/mac_mini/README.md Overnight"
+ },
+ {
+  "id": "08-mac-03",
+  "level": "L600",
+  "lesson": 8,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "With --naive, the fake model's 24 obeyed injections all execute on the naive host, but only 16 side effects are recorded. obeyed_by_tool is delete_file 6, read_file 8, save_memory 1, send_email 9. Why 16?",
+  "options": [
+   "8 calls failed with tool errors",
+   "read_file is not a side effect: 24 - 8 = 16",
+   "The naive host deduplicates repeated calls",
+   "Spoofed-tag items never execute"
+  ],
+  "answer": 1,
+  "explanation": "The world records effects only for side-effecting tools (delete, save, send): 6 + 1 + 9 = 16. The 8 read_file calls still ran on the naive host - they leak data rather than change state, which is why 'effects' alone understates the naive host's damage.",
+  "source": "integrated/labs/L600/08-secure-agent-tools/mac_mini/README.md Experiment 1; adapters.World, manifests' sideEffect flag"
+ },
+ {
+  "id": "08-mac-04",
+  "level": "L600",
+  "lesson": 8,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print?",
+  "code": "import ipaddress\nhosts = [\"127.8.9.10\", \"0.0.0.0\", \"::1\", \"192.168.1.20\"]\nprint([ipaddress.ip_address(h).is_loopback for h in hosts])",
+  "options": [
+   "[True, True, True, False]",
+   "[False, False, True, False]",
+   "[True, False, True, False]",
+   "[True, False, False, False]"
+  ],
+  "answer": 2,
+  "explanation": "All of 127.0.0.0/8 and ::1 are loopback; 0.0.0.0 is the unspecified address (a server bound to it listens on every interface) and 192.168.1.20 is a LAN address. Treating 0.0.0.0 as 'local' is the classic mistake.",
+  "source": "integrated/labs/L600/08-secure-agent-tools/model_endpoint.py; Python ipaddress docs"
+ },
+ {
+  "id": "08-mac-05",
+  "level": "L600",
+  "lesson": 8,
+  "type": "design",
+  "difficulty": 3,
+  "question": "model_endpoint.check_model_url accepts 'localhost' but refuses 'mac-mini.local' and 192.168.x.x unless --allow-remote-model is given. What is the main reason for refusing LAN addresses by default?",
+  "options": [
+   "LAN servers are slower, so the scorecard would time out",
+   "Prompts carry tool output and documents; sending them off the machine must be an explicit decision",
+   "The policy engine cannot evaluate calls proposed by a remote model",
+   "Ollama refuses connections from other machines anyway"
+  ],
+  "answer": 1,
+  "explanation": "The policy still decides every call wherever the model runs, but WHERE the data goes is a separate question the host answers before any prompt is built. Ollama can serve the LAN once OLLAMA_HOST is set, so relying on it to refuse would be wrong.",
+  "source": "integrated/labs/L600/08-secure-agent-tools/mac_mini/README.md Experiment 2; model_endpoint.py docstring"
+ },
+ {
+  "id": "08-mac-06",
+  "level": "L600",
+  "lesson": 8,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "On the Mac, a careful model obeys 0 of 40 injections; run_project.py --real-model then FAILS M5 ('injection blocked end to end') while F1 passes. What should you conclude?",
+  "options": [
+   "The secure host is broken and must not be used with this model",
+   "F1 is too weak and should require at least one blocked call",
+   "Nothing was injected-and-blocked to observe; M5 needs a scripted injected request so the seam test is model-independent",
+   "The model must be fine-tuned to obey so the scorecard passes"
+  ],
+  "answer": 2,
+  "explanation": "M5 checks that a requested injected call is blocked; with no request there is nothing to check, while F1 (0 executed, 0 unscoped) still holds. A seam test that needs a gullible model is fragile - use a ScriptedModel request as the probe.",
+  "source": "integrated/labs/L600/08-secure-agent-tools/mac_mini/README.md Experiment 1 (how to read it, decides)"
+ },
+ {
+  "id": "08-mac-07",
+  "level": "L600",
+  "lesson": 8,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "injection_eval.py prints POLICY FAILURE and exits 1: one model shows executed 2 while the others show 0. Where do you look first?",
+  "options": [
+   "The two items' decision entries in the audit log: which allow rule matched and why scope/provenance passed",
+   "The model's temperature setting, which should be lowered to 0",
+   "Ollama's GPU/CPU split in ollama ps",
+   "The Wilson interval, which is too wide at 40 items"
+  ],
+  "answer": 0,
+  "explanation": "An executed injected call means the deterministic chain (schema, capability caveats, provenance, policy, approval) allowed it - a host bug whatever the model did. Model settings change how often it is asked, never whether it may run.",
+  "source": "integrated/labs/L600/08-secure-agent-tools/mac_mini/README.md Experiment 1; host.py (decision audit entries)"
+ }
+]

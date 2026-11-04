@@ -1,0 +1,567 @@
+[
+ {
+  "id": "int07-L600-001",
+  "level": "L600",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Why is a duplicated chunk execution a correctness bug for this service and not just wasted backend time?",
+  "options": [
+   "The second attempt measures a different quantum state, so the distribution becomes wrong",
+   "Merged counts inflate N: more shots than requested and error bars that are too narrow",
+   "The backend bills twice, which the result contract reports as a shot-count violation",
+   "A duplicate changes the canonical hash, so the result is cached under the wrong key"
+  ],
+  "answer": 1,
+  "explanation": "Shots are the statistical sample size: merged counts inflate N (4000 of 2000) and shrink the standard error. The state is the same; the harm is in the accounting, not the physics.",
+  "source": "Lesson 7 (L600) seams[0]"
+ },
+ {
+  "id": "int07-L600-002",
+  "level": "L600",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "With the fenced ledger, a chunk's stale attempt can still be accepted if it reports before the redelivery does. Why is the result still correct?",
+  "options": [
+   "The ledger subtracts the stale attempt's counts again when the newer token arrives",
+   "FencedStorage rejects every write whose token is not the newest grant ever issued",
+   "The scheduler cancels the stale attempt on the backend before that attempt can report",
+   "Both attempts share one seed, so counts are identical, and the slot replaces, never adds"
+  ],
+  "answer": 3,
+  "explanation": "Seeding by (seed, chunk, version, circuit, backend) makes attempts interchangeable and replace semantics keeps one copy. FencedStorage only compares with tokens it has seen written, so it does not know about ungranted-but-unwritten tokens.",
+  "source": "Lesson 7 (L600) failureLab.fix"
+ },
+ {
+  "id": "int07-L600-003",
+  "level": "L600",
+  "lesson": 7,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "Which rewrite must the canonicaliser NEVER apply when computing the cache key?",
+  "options": [
+   "Swapping qubit labels so 'h q[1]; cx q[1], q[0]' becomes 'h q[0]; cx q[0], q[1]'",
+   "Cancelling the pair 'x q[1]; x q[1];' when no other gate touches q[1] in between them",
+   "Reordering 'h q[2]; h q[0];' because the gates act on disjoint qubits",
+   "Replacing register name r with q and qreg with qubit[2]"
+  ],
+  "answer": 0,
+  "explanation": "Relabelling qubits changes which bitstrings come out (the OpenQASM spec notes equivalence does not hold over permutations of physical qubit labels); the test requires different hashes. The other three keep the unitary.",
+  "source": "Lesson 7 (L600) seams[1]"
+ },
+ {
+  "id": "int07-L600-004",
+  "level": "L600",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Why does every chunk commit carry the calibration version, not only the cache key?",
+  "options": [
+   "So the fencing token can be derived from the version number and save a separate counter",
+   "So the cache can evict old entries as soon as a commit arrives",
+   "Then a job straddling a recalibration restarts on one version instead of mixing two",
+   "So the scheduler can bill each chunk at the price of its calibration"
+  ],
+  "answer": 2,
+  "explanation": "drift_mid_job: chunks 0-1 ran on v1, chunks 2-3 on v2; the ledger restarts the job (1 restart) and returns 4000 shots all on v2. Without it one result would describe two device states.",
+  "source": "Lesson 7 (L600) seams[3]"
+ },
+ {
+  "id": "int07-L600-005",
+  "level": "L600",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Readout mitigation lowered the TVD to the pre-readout distribution from 0.0653 to 0.0098. What must the contract still report about P(00)?",
+  "options": [
+   "No standard error, because mitigation removed the readout error",
+   "The same standard error as raw, because N did not change",
+   "A larger standard error (0.008486 vs 0.007898), because A^-1 amplifies shot noise",
+   "A smaller standard error, because the mitigated estimate moved closer to the truth"
+  ],
+  "answer": 2,
+  "explanation": "Cov_m = A^-1 Cov_raw A^-T: correcting bias costs variance. Bias and variance are different things; a closer estimate can still be noisier.",
+  "source": "Lesson 7 (L600) seams[2]"
+ },
+ {
+  "id": "int07-L600-006",
+  "level": "L600",
+  "lesson": 7,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "Why does submit() look up the cache on every backend that meets the floor, before pick() runs?",
+  "options": [
+   "pick() depends on queue state; a hit on any backend that meets the floor is valid",
+   "pick() needs the cached result to estimate the fidelity of the backend",
+   "The cache key leaves out the backend, so a single lookup covers every backend at once",
+   "Looking up after pick() would let the breaker reject the cached result"
+  ],
+  "answer": 0,
+  "explanation": "A result keyed by (hash, backend, version, shots, seed) is valid for any backend that meets the client's floor; checking after pick() would miss hits made on another backend while queues differ.",
+  "source": "Lesson 7 (L600) codeWalkthrough[1]"
+ },
+ {
+  "id": "int07-L600-007",
+  "level": "L600",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Why is the token checked where results are written, instead of having the worker check its lease just before committing?",
+  "options": [
+   "Lease checks need a wall clock, and the service only has a simulated fake clock available",
+   "The worker does not know its own token, only the ledger does",
+   "Checking at the worker would double the number of backend calls",
+   "The worker can pause between its check and the write; only the store sees writes in order"
+  ],
+  "answer": 3,
+  "explanation": "A check-then-act at the worker has a gap a pause or network delay can fall into; the store comparing tokens closes it. The worker does know its token - it carries it.",
+  "source": "https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html"
+ },
+ {
+  "id": "int07-L600-008",
+  "level": "L600",
+  "lesson": 7,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "A client resubmits job_id j000 with shots changed from its first request. What should intake do?",
+  "options": [
+   "Replay the original job's result as if the request were identical",
+   "Reject it as a conflict (422 in the IETF draft) and keep the original job",
+   "Start a second job under the same id and merge the counts",
+   "Replace the original request and restart the job with the new shot count instead"
+  ],
+  "answer": 1,
+  "explanation": "Same key, different fingerprint is a client error; the lab raises Conflict and stores one job. Replay is only for the same payload.",
+  "source": "https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/"
+ },
+ {
+  "id": "int07-L600-009",
+  "level": "L600",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "A 3000-shot job (three 1000-shot chunks) has one chunk merged twice by the unfixed ledger. By what factor is each reported Wald standard error smaller than it should be (same p)?",
+  "options": [
+   "0.87",
+   "0.75",
+   "1.155",
+   "0.50"
+  ],
+  "answer": 0,
+  "explanation": "stderr scales as 1/sqrt(N): sqrt(3000/4000) = 0.866. 0.75 is the ratio of N itself, not of its square root.",
+  "source": "Lesson 7 (L600) failureLab"
+ },
+ {
+  "id": "int07-L600-010",
+  "level": "L600",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A 4000-shot Bell job returns P(00) = 0.5. What is the Wald standard error sqrt(p(1-p)/N)?",
+  "options": [
+   "0.0063",
+   "0.0125",
+   "0.0079",
+   "0.0158"
+  ],
+  "answer": 2,
+  "explanation": "sqrt(0.25 / 4000) = 0.0079. 0.0158 is twice that (the half-width of a ~2-sigma interval would be 0.0155).",
+  "source": "Lesson 7 (L600) glossary (standard error)"
+ },
+ {
+  "id": "int07-L600-011",
+  "level": "L600",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "slow-clean: 3.0 s per chunk, 15% of chunks run 5x longer, 2% of starts rejected. Using expected_latency() = latency x (1 + slow_rate x (factor - 1)) / (1 - fail_rate), what is it?",
+  "options": [
+   "4.80 s",
+   "4.90 s",
+   "3.06 s",
+   "15.00 s"
+  ],
+  "answer": 1,
+  "explanation": "3.0 x (1 + 0.15 x 4) / 0.98 = 4.898 s. 4.80 s forgets the rejected starts; 3.06 s ignores the slow tail.",
+  "source": "Lesson 7 (L600) backends.expected_latency"
+ },
+ {
+  "id": "int07-L600-012",
+  "level": "L600",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "slow-clean (2 slots, expected latency 4.898 s) has 4 queued chunks, 2 running and 1 waiting out a backoff. What is the wait estimate, and is it under the 15 s target?",
+  "options": [
+   "14.69 s - under the target, so it is eligible",
+   "12.24 s - under the target, so it is eligible",
+   "9.80 s - under the target, so it is eligible",
+   "17.14 s - above the target, so it is skipped"
+  ],
+  "answer": 3,
+  "explanation": "(4 + 2 + 1) / 2 x 4.898 = 17.14 s. Forgetting the backing-off chunk gives 14.69 s - exactly the optimistic estimate the retrying counter fixes.",
+  "source": "Lesson 7 (L600) codeWalkthrough[2]"
+ },
+ {
+  "id": "int07-L600-013",
+  "level": "L600",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "fast-noisy: p1 = 0.004, p2 = 0.04, damp = 0.01, p01 = 0.03, p10 = 0.05. Bell circuit (1 H, 1 CX, 2 qubits). estimated_fidelity = (1-p1)^n1 (1-p2)^n2 (1-damp)^(n1+2 n2) (1-(p01+p10)/2)^n. Which value results?",
+  "options": [
+   "0.890",
+   "0.922",
+   "0.810",
+   "0.855"
+  ],
+  "answer": 3,
+  "explanation": "0.996 x 0.96 x 0.99^3 x 0.96^2 = 0.855 - above a 0.75 floor, below 0.85 only by a hair. 0.890 omits the readout term.",
+  "source": "Lesson 7 (L600) backends.estimated_fidelity"
+ },
+ {
+  "id": "int07-L600-014",
+  "level": "L600",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "With CHUNK = 1000, how is a 2500-shot job split?",
+  "options": [
+   "2 chunks: 1000 and 1500 shots",
+   "3 chunks: 1000, 1000 and 500 shots",
+   "3 equal chunks of 834, 833 and 833 shots",
+   "2 chunks: 1250 and 1250 shots"
+  ],
+  "answer": 1,
+  "explanation": "chunks = ceil(2500/1000) = 3 and finish() runs min(CHUNK, shots - c x CHUNK) for chunk c, so the last chunk has 500.",
+  "source": "Lesson 7 (L600) jobservice.CHUNK"
+ },
+ {
+  "id": "int07-L600-015",
+  "level": "L600",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Jobs arrive at 0.8 per second and wait 5 s on average before their first chunk starts. By Little's law, how many jobs are waiting on average?",
+  "options": [
+   "0.16",
+   "6.25",
+   "4",
+   "5.8"
+  ],
+  "answer": 2,
+  "explanation": "L = lambda x W = 0.8 x 5 = 4. 6.25 divides W by lambda.",
+  "source": "application-architecture L400 #21 (Little's law)"
+ },
+ {
+  "id": "int07-L600-016",
+  "level": "L600",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Uniform readout flips p01 = 0.03 on two qubits. What is P(record 00 | true 00)?",
+  "options": [
+   "0.9409",
+   "0.9700",
+   "0.9400",
+   "0.8836"
+  ],
+  "answer": 0,
+  "explanation": "Independent flips: (1 - 0.03)^2 = 0.9409. 0.94 adds the errors linearly.",
+  "source": "Lesson 7 (L600) results / qsim.density.readout_matrix"
+ },
+ {
+  "id": "int07-L600-017",
+  "level": "L600",
+  "lesson": 7,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "What does this canonicalisation step print?",
+  "code": "from canon import cancel_pairs\nops = [(\"h\", (0,)), (\"x\", (1,)), (\"h\", (0,)), (\"cx\", (0, 1))]\nprint(cancel_pairs(ops))",
+  "options": [
+   "[('cx', (0, 1))]",
+   "[('h', (0,)), ('x', (1,)), ('h', (0,)), ('cx', (0, 1))]",
+   "[('x', (1,)), ('cx', (0, 1))]",
+   "[('x', (1,))]"
+  ],
+  "answer": 2,
+  "explanation": "The x on qubit 1 does not touch qubit 0, so the two H gates on qubit 0 are adjacent for that qubit and cancel; x and cx stay.",
+  "source": "Lesson 7 (L600) canon.cancel_pairs"
+ },
+ {
+  "id": "int07-L600-018",
+  "level": "L600",
+  "lesson": 7,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "Which value does the fenced slot hold at the end (last line printed)?",
+  "code": "from _kb import election\ns = election.FencedStorage(fencing=True)\nfor token, value in [(3, \"a\"), (1, \"b\"), (5, \"c\"), (4, \"d\")]:\n    print(token, s.write(token, value))\nprint(s.value)",
+  "options": [
+   "c",
+   "d",
+   "b",
+   "a"
+  ],
+  "answer": 0,
+  "explanation": "Token 1 < 3 and token 4 < 5 are rejected; 5 replaced 3. The last accepted write wins, not the last write.",
+  "source": "distributed-systems L200 #7 FencedStorage"
+ },
+ {
+  "id": "int07-L600-019",
+  "level": "L600",
+  "lesson": 7,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "Two attempts of one 1000-shot chunk report through the shipped ledger. What is printed?",
+  "code": "from ledger import Ledger\nled = Ledger()\nled.open(\"j\", 1)\nt1, t2 = led.grant(\"j\", 0), led.grant(\"j\", 0)\nled.commit(\"j\", 0, t2, 1, {\"00\": 600, \"11\": 400})\nled.commit(\"j\", 0, t1, 1, {\"00\": 600, \"11\": 400})\nprint(sum(led.counts(\"j\").values()))",
+  "options": [
+   "1000",
+   "1200",
+   "600",
+   "2000"
+  ],
+  "answer": 3,
+  "explanation": "The shipped write() appends every report and read() merges them: 2000 shots for a 1000-shot chunk - the failure lab in four lines.",
+  "source": "Lesson 7 (L600) ledger.py (shipped)"
+ },
+ {
+  "id": "int07-L600-020",
+  "level": "L600",
+  "lesson": 7,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "What canonical text is printed?",
+  "code": "from canon import canonicalise\ntext = \"OPENQASM 3.0; qubit[3] q; h q[2]; h q[0]; cx q[0], q[1];\"\nprint(canonicalise(text)[2])",
+  "options": [
+   "n=3;h 2;h 0;cx 0,1;measure all",
+   "n=3;h 0;h 2;cx 0,1;measure all",
+   "n=3;cx 0,1;h 0;h 2;measure all",
+   "n=2;h 0;cx 0,1;measure all"
+  ],
+  "answer": 1,
+  "explanation": "Both H gates sit in moment 0 and are sorted by qubit; the CX depends on q0 so it is moment 1. The idle-for-CX qubit 2 keeps n = 3.",
+  "source": "Lesson 7 (L600) canon.canonicalise"
+ },
+ {
+  "id": "int07-L600-021",
+  "level": "L600",
+  "lesson": 7,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "14 of 240 jobs return 1000 extra shots. The log shows chunk 0 of one job committed as accepted with token 3 and again as accepted with token 1. What is the root cause?",
+  "options": [
+   "The backend executed the chunk with 2000 shots instead of 1000",
+   "The ledger merges every report, so a lease-expired attempt is counted twice",
+   "The cache returned a result from a job with more shots",
+   "The client resubmitted the job, and intake created a second job under the same id"
+  ],
+  "answer": 1,
+  "explanation": "Two accepted commits for one chunk with different tokens is the signature of at-least-once redelivery without fencing. A client replay would reuse the job, not add commits.",
+  "source": "Lesson 7 (L600) failureLab"
+ },
+ {
+  "id": "int07-L600-022",
+  "level": "L600",
+  "lesson": 7,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "After slow-clean recalibrates at t = 150 s, some cache hits return calibration_version 1 while the backend is at version 2. What is wrong?",
+  "options": [
+   "The ledger accepted a stale fencing token",
+   "The scheduler picked a backend below the floor",
+   "The canonicaliser merged two different circuits",
+   "The cache key omits the calibration version"
+  ],
+  "answer": 3,
+  "explanation": "With a versionless key the stale entry still matches: 28 of 128 hits crossed versions in the lab. Fencing protects chunk writes, not cache reads.",
+  "source": "Lesson 7 (L600) seams[3] / --inject stale-cache"
+ },
+ {
+  "id": "int07-L600-023",
+  "level": "L600",
+  "lesson": 7,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "The same Bell circuit arrives as OpenQASM 2 (qreg r) and OpenQASM 3 (qubit[2] q) and never hits the cache; total hits fall from 108 to 70. Most likely cause?",
+  "options": [
+   "The key hashes the raw QASM text instead of the canonical form",
+   "The calibration version changed between the two submissions",
+   "The seeds differ, so the keys differ",
+   "The fidelity floor excluded the backend that holds the cached entry"
+  ],
+  "answer": 0,
+  "explanation": "variant_hits drops to 0 only for a text key; seeds or versions would also break identical-text hits, which still happen (70).",
+  "source": "Lesson 7 (L600) --inject text-key"
+ },
+ {
+  "id": "int07-L600-024",
+  "level": "L600",
+  "lesson": 7,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "With the fenced ledger, re-running the same request sometimes gives different counts, and a test comparing two runs is flaky. What should you look for first?",
+  "options": [
+   "A cache key that includes the calibration version",
+   "A lease that is longer than the chunk run time",
+   "A chunk seed that depends on the attempt number or wall-clock time",
+   "A bulkhead that allows fewer slots than there are chunks in the queue"
+  ],
+  "answer": 2,
+  "explanation": "Attempt-dependent seeds make whichever duplicate wins change the answer. A versioned key or a long lease does not change counts.",
+  "source": "Lesson 7 (L600) troubleshooting[1]"
+ },
+ {
+  "id": "int07-L600-025",
+  "level": "L600",
+  "lesson": 7,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "In a load test p95 queue time is 1163.38 s and per_backend shows all 240 jobs on slow-clean. Which scheduler property is missing?",
+  "options": [
+   "A queue-time target: it always picks the best estimated fidelity",
+   "A fidelity floor: it ignores what the client asked for",
+   "A circuit breaker: slow-clean keeps failing and is retried forever",
+   "Idempotent intake: replays are scheduled again"
+  ],
+  "answer": 0,
+  "explanation": "best-fidelity has no wait term, so the cleanest backend's queue grows without bound. It met every floor (0 below floor).",
+  "source": "Lesson 7 (L600) tryIt[1]"
+ },
+ {
+  "id": "int07-L600-026",
+  "level": "L600",
+  "lesson": 7,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "A backend's breaker opened during an outage and the backend never received work again, although the outage ended. The scheduler skips backends whose breaker state is 'open'. Why does it never recover?",
+  "options": [
+   "The breaker's sliding window is too short to ever forget the failures",
+   "Only a call moves it to half-open, and the scheduler never sends one",
+   "The outage list was never cleared on the backend",
+   "The fencing token counter overflowed during the outage"
+  ],
+  "answer": 1,
+  "explanation": "CircuitBreaker moves open -> half_open inside call(); excluding open backends forever starves it. healthy() admits a backend again once open_s has passed.",
+  "source": "Lesson 7 (L600) jobservice.healthy"
+ },
+ {
+  "id": "int07-L600-027",
+  "level": "L600",
+  "lesson": 7,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "Counting every outcome of executed jobs, 95% Wald intervals cover only 82.16% of outcomes whose exact probability is below 0.01. Why?",
+  "options": [
+   "The noise model used for the backends is wrong for rare outcomes",
+   "Readout mitigation was applied to the raw intervals",
+   "Few or zero counts make the Wald interval zero-width or too narrow",
+   "The fencing ledger dropped rare outcomes while merging chunk results"
+  ],
+  "answer": 2,
+  "explanation": "p-hat = 0 gives sqrt(0) = 0 width; Wilson intervals stay honest there (95.61% in the lab), as Brown, Cai and DasGupta recommend.",
+  "source": "https://projecteuclid.org/journals/statistical-science/volume-16/issue-2/Interval-Estimation-for-a-Binomial-Proportion/10.1214/ss/1009213286.pdf"
+ },
+ {
+  "id": "int07-L600-028",
+  "level": "L600",
+  "lesson": 7,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Raising the lease from 10 s to 20 s removed all 15 lease expiries. What is the main cost?",
+  "options": [
+   "Shot totals are no longer exact",
+   "The fencing tokens must be twice as wide",
+   "Cache hits start to cross calibration versions after the change",
+   "A crashed worker's chunk waits up to 20 s before redelivery"
+  ],
+  "answer": 3,
+  "explanation": "Lease length trades duplicate work against failure-detection time; correctness comes from fencing either way (240 exact in both runs).",
+  "source": "Lesson 7 (L600) tryIt[0]"
+ },
+ {
+  "id": "int07-L600-029",
+  "level": "L600",
+  "lesson": 7,
+  "type": "design",
+  "difficulty": 3,
+  "question": "The p95 budget is 30 s, but the scheduler's wait target is 15 s. Why half?",
+  "options": [
+   "The p95 budget is per chunk, and the average job in the load test has two chunks",
+   "Fencing doubles the run time of every chunk",
+   "The breaker's open_s is 20 s, so 15 s keeps it closed",
+   "Headroom: the wait estimate is optimistic under slow tails (max observed 38.5 s)"
+  ],
+  "answer": 3,
+  "explanation": "Planning to a fraction of the limit absorbs estimate error (application-architecture L400 #21 headroom); observed p95 18.38 s stayed under 30 s.",
+  "source": "Lesson 7 (L600) ADR 0002"
+ },
+ {
+  "id": "int07-L600-030",
+  "level": "L600",
+  "lesson": 7,
+  "type": "design",
+  "difficulty": 3,
+  "question": "What do 1000-shot chunks buy compared with running each job's shots as one attempt?",
+  "options": [
+   "Fewer total backend starts for the same number of shots",
+   "Smaller error bars for the same number of shots, because each chunk is averaged",
+   "A transient failure re-runs only the failed chunk, at the cost of more commits",
+   "No need for fencing, since chunks cannot be duplicated"
+  ],
+  "answer": 2,
+  "explanation": "partial_retry returned exactly 4000 shots while retrying only failed chunks. Chunks still need fencing, and N - not chunking - sets the error bar.",
+  "source": "Lesson 7 (L600) ADR 0001"
+ },
+ {
+  "id": "int07-L600-031",
+  "level": "L600",
+  "lesson": 7,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Why invalidate cached results by calibration version rather than by a TTL?",
+  "options": [
+   "A TTL cannot be implemented on a fake clock",
+   "The version changes exactly when the device does; a TTL only guesses",
+   "A version needs no extra memory at all, while every TTL entry stores a timestamp",
+   "Versions make cache hits cross backends safely"
+  ],
+  "answer": 1,
+  "explanation": "Drift is an event with a known moment (a new calibration). Old-version entries still use memory, which is a scaling limit of this choice.",
+  "source": "Lesson 7 (L600) ADR 0003"
+ },
+ {
+  "id": "int07-L600-032",
+  "level": "L600",
+  "lesson": 7,
+  "type": "design",
+  "difficulty": 2,
+  "question": "What does the per-backend slot limit (bulkhead) protect against here?",
+  "options": [
+   "A slow backend holding every worker, stalling jobs for healthy backends",
+   "Duplicate chunk executions that follow every lease expiry on a slow backend",
+   "Cache entries crossing calibration versions",
+   "Clients reusing a job id with a different payload"
+  ],
+  "answer": 0,
+  "explanation": "Each backend has its own slots (max in flight 4/2/3 in the lab), so slow-clean's 15 s chunks cannot starve fast-noisy. Duplicates are the ledger's job.",
+  "source": "https://learn.microsoft.com/en-us/azure/architecture/patterns/bulkhead"
+ },
+ {
+  "id": "int07-L600-033",
+  "level": "L600",
+  "lesson": 7,
+  "type": "design",
+  "difficulty": 3,
+  "question": "You scale the service to three coordinator processes, each with its own token counter. What breaks first?",
+  "options": [
+   "Tokens are not ordered across coordinators; a stale attempt can carry a higher one",
+   "The canonical hash differs between coordinators because each parses the text itself",
+   "Cache keys lose the calibration version",
+   "The circuit breaker opens on every backend"
+  ],
+  "answer": 0,
+  "explanation": "Fencing assumes one monotonic source (Kleppmann notes it may need consensus). Signal: two accepted commits for one chunk.",
+  "source": "Lesson 7 (L600) scalingLimits[0]"
+ }
+]

@@ -1,0 +1,16 @@
+flowchart LR
+    client([Client]) -->|POST /solve JSON| api[service.py<br/>HTTP API on 127.0.0.1<br/>validate -> 400]
+    api --> gate{Feasibility gate<br/>lesson 19 estimate<br/>+ device size}
+    gate -->|quantum path| orch[Orchestrator<br/>lesson 17: batched jobs,<br/>transpile cache, retries]
+    gate -->|classical only| bench
+    orch --> adapter[NoisyBackend adapter<br/>lesson 20 compile + ESP<br/>white-noise + readout model]
+    adapter --> sim[(numpy QAOA simulator<br/>labs/_shared/qopt)]
+    orch --> mit[Readout mitigation<br/>lesson 13 constrained]
+    orch --> bench[Fair benchmark<br/>lesson 18: same budget,<br/>same seeds, medians]
+    classical[Greedy / annealing / exact<br/>lesson 18 solvers] --> bench
+    bench --> decide{{Code decides winner<br/>ratio > success > samples;<br/>ties -> classical}}
+    decide --> report[Report JSON]
+    mit --> report
+    report --> api
+    report -.-> agent[Local model explains<br/>agent_assist.py]
+    agent -.->|checked by code| check[Explanation check:<br/>winner, numbers, no hype]

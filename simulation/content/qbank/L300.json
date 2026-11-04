@@ -1,0 +1,727 @@
+[
+  {
+    "id": "sim-L300-001",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the lab compare variance-reduction methods by variance PER EVALUATION rather than by the standard error each method prints?",
+    "options": [
+      "Standard errors are biased for antithetic and control-variate estimators",
+      "Per-evaluation variance is always smaller, so differences are clearer",
+      "A method using more model runs would look better just by spending more",
+      "The printed standard error ignores the random seed that was used"
+    ],
+    "answer": 2,
+    "explanation": "Methods must be judged at equal cost: se^2 x evaluations puts them on the same footing. An antithetic pair costs two evaluations, so its per-pair standard error alone would flatter it.",
+    "source": "Lesson 12 codeWalkthrough (summary)"
+  },
+  {
+    "id": "sim-L300-002",
+    "level": "L300",
+    "lesson": 12,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A pilot measures correlation rho = -0.6 between f(u) and f(1 - u). What variance reduction per evaluation do antithetic pairs give, 1 / (1 + rho)?",
+    "options": [
+      "2.50x",
+      "1.67x",
+      "1.56x",
+      "0.63x"
+    ],
+    "answer": 0,
+    "explanation": "1 / (1 - 0.6) = 2.5x. 1.67x would come from 1/(1 - rho) with the sign flipped; a negative rho is what makes pairs cancel errors.",
+    "source": "Lesson 12 checkYourself"
+  },
+  {
+    "id": "sim-L300-003",
+    "level": "L300",
+    "lesson": 12,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A control variate C (known mean) has correlation r = 0.95 with the output. What is the ideal variance reduction factor, 1 / (1 - r^2)?",
+    "options": [
+      "20.00x",
+      "1.90x",
+      "10.26x",
+      "3.20x"
+    ],
+    "answer": 2,
+    "explanation": "1 / (1 - 0.9025) = 10.26x. 20x would be 1/(1 - r), forgetting to square r; the gain depends on how much variance C explains (r^2).",
+    "source": "Lesson 12 concepts"
+  },
+  {
+    "id": "sim-L300-004",
+    "level": "L300",
+    "lesson": 12,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A shift has 10 tasks, each exponential with mean 0.6 h, and overtime is max(0, total - 6.5 h). Using the lab's Erlang formula, what is the exact expected overtime?",
+    "options": [
+      "0.0000 h",
+      "0.5469 h",
+      "0.9196 h",
+      "0.2688 h"
+    ],
+    "answer": 1,
+    "explanation": "E[(T - s)+] = k*mean*P(Erlang(k+1) > s) - s*P(Erlang(k) > s) gives 0.5469 h for k = 10, s = 6.5. Zero would follow from plugging in the mean total (6.0 h < 6.5 h), ignoring the spread.",
+    "source": "Lesson 12 code (exact_overtime)"
+  },
+  {
+    "id": "sim-L300-005",
+    "level": "L300",
+    "lesson": 12,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "This antithetic loop gives an unbiased estimate but rho = -0.00 and a variance ratio of 1.01x. What is the fix?",
+    "code": "for i in range(n // 2):\n    u = np.random.default_rng([2 * i, seed]).random((1, 12))\n    v = np.random.default_rng([2 * i + 1, seed]).random((1, 12))\n    a[i] = overtime(u)[0][0]\n    b[i] = overtime(1.0 - v)[0][0]",
+    "options": [
+      "Use 1 + u instead of 1 - u so the mirror stays inside (0, 1)",
+      "Average all 2n evaluations instead of the n pair averages",
+      "Reseed with the same integer for every pair to align streams",
+      "One stream per pair: draw u once, evaluate f(u) and f(1 - u)"
+    ],
+    "answer": 3,
+    "explanation": "The two halves of each pair come from different streams, so u and the mirrored u' are independent and nothing cancels. Drawing u once per pair restores rho = -0.33 and 1.50x.",
+    "source": "Lesson 12 failureLab"
+  },
+  {
+    "id": "sim-L300-006",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the antithetic estimator analyse the n/2 pair averages instead of all n values?",
+    "options": [
+      "The two halves of a pair are dependent on each other",
+      "Pair averages remove the bias that antithetic sampling introduces",
+      "Using all n values would double count the cost of each evaluation",
+      "Pair averages are always normally distributed, all values are not"
+    ],
+    "answer": 0,
+    "explanation": "Treating dependent values as independent misstates the standard error. The pair averages are independent of each other, so the usual formula applies to them.",
+    "source": "Lesson 12 checkYourself"
+  },
+  {
+    "id": "sim-L300-007",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "A control-variate estimate comes out biased. The code estimates E[C] as the mean of C over the same runs. Why is that the problem?",
+    "options": [
+      "beta must be fixed at 1, so estimating it makes the result biased",
+      "C must be independent of the output for the method to be unbiased",
+      "E[C] must be known exactly; estimating it cancels the correction",
+      "The mean of C needs a separate seed, not the same run's numbers"
+    ],
+    "answer": 2,
+    "explanation": "Y - beta(C - E[C]) is unbiased only with the true E[C] (7.2 h for total task time). Using the sample mean makes the correction zero on average and adds error; C must be correlated with Y, not independent.",
+    "source": "Lesson 12 troubleshooting"
+  },
+  {
+    "id": "sim-L300-008",
+    "level": "L300",
+    "lesson": 12,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Your new model's output is roughly symmetric in its inputs (high and low draws both raise it). Runs are expensive. How do you choose a variance-reduction method?",
+    "options": [
+      "Always use antithetic pairs, since they are free to add",
+      "Always use common random numbers, since they never hurt",
+      "Use plain Monte Carlo, since symmetry rules out every method",
+      "Run a short pilot, measure the gains, pick by evidence"
+    ],
+    "answer": 3,
+    "explanation": "For symmetric responses antithetic pairs can have rho > 0 and double the variance (0.49x in tryIt 1). A short pilot measures the gains and refuses methods that would hurt.",
+    "source": "Lesson 12 buildTask (stretch)"
+  },
+  {
+    "id": "sim-L300-009",
+    "level": "L300",
+    "lesson": 12,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "u is a fixed grid of uniforms. What does this print for a monotone and a symmetric response?",
+    "code": "import numpy as np\n\nu = np.linspace(0.05, 0.95, 10)\nfor f in (lambda x: -np.log(1 - x), lambda x: (x - 0.5) ** 2):\n    r = np.corrcoef(f(u), f(1 - u))[0, 1]\n    print('negative' if r < 0 else 'positive', end=' ')",
+    "options": [
+      "negative positive",
+      "negative negative",
+      "positive positive",
+      "positive negative"
+    ],
+    "answer": 0,
+    "explanation": "-log(1 - u) increases with u, so f(u) and f(1 - u) move oppositely: negative correlation and antithetic gain. (u - 0.5)^2 gives identical values for u and 1 - u: correlation +1, so pairing would double the variance.",
+    "source": "Lesson 12 codeWalkthrough (overtime)"
+  },
+  {
+    "id": "sim-L300-010",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the 7-parameter polynomial have the lowest RMSE on the calibration window?",
+    "options": [
+      "Extra parameters let it bend to the noise as well",
+      "Polynomials are the true physical model of a cooling room",
+      "Gauss-Newton converges better for polynomial models",
+      "The calibration window was chosen to suit the polynomial"
+    ],
+    "answer": 0,
+    "explanation": "In-sample error never gets worse when you add parameters, so it always favours the most flexible model. Its 12-hour forecast is -19.60 C where the sensor read 13.33 C.",
+    "source": "Lesson 13 checkYourself"
+  },
+  {
+    "id": "sim-L300-011",
+    "level": "L300",
+    "lesson": 13,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A 5-parameter fit to 20 readings leaves a residual sum of squares of 2.4. What is the residual variance estimate s^2 = RSS / (n - k)?",
+    "options": [
+      "0.120",
+      "0.160",
+      "0.480",
+      "0.141"
+    ],
+    "answer": 1,
+    "explanation": "2.4 / (20 - 5) = 0.160. Dividing by n (0.120) ignores the degrees of freedom used by the fitted parameters and understates the noise.",
+    "source": "Lesson 13 buildTask (stretch)"
+  },
+  {
+    "id": "sim-L300-012",
+    "level": "L300",
+    "lesson": 13,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "select() picks the 7-parameter polynomial, whose 12-hour forecast is absurd. What is the fix?",
+    "code": "def select(models, y):\n    rmse = scores(models, y, CAL)  # CAL = readings from 0-8 h\n    return min(rmse, key=rmse.get)",
+    "options": [
+      "Score on CAL with RMSE squared to punish large errors more",
+      "Score on the time-ordered holdout ~CAL (8-12 h), not on CAL",
+      "Score on a random 30% of the readings across the whole log",
+      "Score on CAL but subtract one point per fitted parameter"
+    ],
+    "answer": 1,
+    "explanation": "The models were fitted on CAL, so scoring there rewards overfitting. A random split still picks poly-6 because it only tests interpolation; the holdout must be the end of the log.",
+    "source": "Lesson 13 failureLab"
+  },
+  {
+    "id": "sim-L300-013",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does a random (or k-fold) split still pick the polynomial on this time series, while a time-ordered holdout picks two-exp?",
+    "options": [
+      "Random splits leave far too little data to fit the 5-parameter model",
+      "Random points sit between fitted ones: only interpolation is tested",
+      "k-fold scoring averages the errors, which hides large residuals",
+      "Random splits change the noise level of the held-out readings"
+    ],
+    "answer": 1,
+    "explanation": "A forecast is extrapolation; held-out points scattered inside the fitted range can be matched by any flexible curve. Only data after the fitted window exposes failed extrapolation.",
+    "source": "Lesson 13 tradeOffs"
+  },
+  {
+    "id": "sim-L300-014",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Two-exp forecasts well, but corr(T_inf, tau_wall) = -0.994. What does that mean?",
+    "options": [
+      "The model is wrong and should be replaced by the polynomial",
+      "Both parameters are measured precisely and agree with each other",
+      "The data cannot separate them; many pairs fit equally well",
+      "The optimiser failed and must be restarted from new values"
+    ],
+    "answer": 2,
+    "explanation": "A strong correlation means changing one parameter can be compensated by the other, so neither is pinned down even though predictions are good. Fix one from a sensor or log longer.",
+    "source": "Lesson 13 checkYourself"
+  },
+  {
+    "id": "sim-L300-015",
+    "level": "L300",
+    "lesson": 13,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A calibration returns a wall time constant of 400 h with an excellent RMSE. What should you do before reporting it?",
+    "options": [
+      "Check its standard error: it may not be identifiable",
+      "Report it, because a low RMSE shows the parameter is right",
+      "Restart from zero values until the time constant gets smaller",
+      "Add more parameters until the time constant looks physical"
+    ],
+    "answer": 0,
+    "explanation": "A good fit with absurd parameters is the classic sign of non-identifiability. Report fitted parameters only with standard errors, and fix one parameter or collect longer data.",
+    "source": "Lesson 13 troubleshooting"
+  },
+  {
+    "id": "sim-L300-016",
+    "level": "L300",
+    "lesson": 13,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Polynomials of degree 1, 3 and 6 are fitted to the same 12 smooth-but-noisy points. What does this print?",
+    "code": "import numpy as np\n\nt = np.linspace(0, 1, 12)\ny = np.exp(-t) + 0.01 * np.sin(37 * t)\nrmse = []\nfor deg in (1, 3, 6):\n    fit = np.polyval(np.polyfit(t, y, deg), t)\n    rmse.append(np.sqrt(np.mean((fit - y) ** 2)))\nprint(rmse[0] > rmse[1] > rmse[2])",
+    "options": [
+      "False",
+      "ValueError",
+      "True",
+      "None"
+    ],
+    "answer": 2,
+    "explanation": "In-sample RMSE can only fall as the degree rises, because a higher-degree polynomial contains the lower ones. That says nothing about forecasts beyond the data.",
+    "source": "Lesson 13 expectedResults"
+  },
+  {
+    "id": "sim-L300-017",
+    "level": "L300",
+    "lesson": 13,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Gauss-Newton gives different parameters from different starting values. What is the sensible next step?",
+    "options": [
+      "Pick the run with the largest parameters, as it moved furthest",
+      "Start from physical values and compare the final costs",
+      "Average the parameters found from all the starting values",
+      "Increase the damping until all starts give the same answer"
+    ],
+    "answer": 1,
+    "explanation": "Different starts can end in different local minima; physically motivated starts and comparing costs find the best one. Averaging parameters from different minima can give a poor fit.",
+    "source": "Lesson 13 troubleshooting"
+  },
+  {
+    "id": "sim-L300-018",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In the office energy model, why does one-at-a-time (OAT) give exactly 0 for window_open?",
+    "options": [
+      "The window input range is too narrow for OAT to detect it",
+      "At nominal, outdoor = indoor, so 24 w dT is 0",
+      "OAT only varies continuous inputs, and the window is binary",
+      "The window effect cancels between the low and high runs"
+    ],
+    "answer": 1,
+    "explanation": "OAT moves each input with the others at nominal; there dT = 0, so the window has no effect at all. Away from 22 C it matters a lot, through the interaction with temperature.",
+    "source": "Lesson 14 checkYourself"
+  },
+  {
+    "id": "sim-L300-019",
+    "level": "L300",
+    "lesson": 14,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "y = x1 + 2 x2 with x1, x2 independent Uniform(0, 1). What is the first-order Sobol' index of x2?",
+    "options": [
+      "0.67",
+      "0.50",
+      "0.80",
+      "0.89"
+    ],
+    "answer": 2,
+    "explanation": "Variance contributions scale with the coefficient squared: 4 / (1 + 4) = 0.80. 0.67 uses the coefficients (2/3) instead of their squares.",
+    "source": "Lesson 14 concepts"
+  },
+  {
+    "id": "sim-L300-020",
+    "level": "L300",
+    "lesson": 14,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "y = x1 + x1 x2 with x1, x2 independent Uniform(-1, 1). What is the total-order index ST of x2?",
+    "options": [
+      "0.00",
+      "0.25",
+      "0.50",
+      "0.75"
+    ],
+    "answer": 1,
+    "explanation": "Var(x1) = 1/3 and Var(x1 x2) = 1/9, so V = 4/9 and x2 acts only through the interaction: ST = (1/9)/(4/9) = 0.25 while its S1 is 0. 0.00 is its first-order index.",
+    "source": "Lesson 14 concepts"
+  },
+  {
+    "id": "sim-L300-021",
+    "level": "L300",
+    "lesson": 14,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A Saltelli/Jansen Sobol' design needs N(d + 2) runs. How many runs for N = 1,024 and d = 6 inputs?",
+    "options": [
+      "6,144 runs",
+      "8,192 runs",
+      "7,168 runs",
+      "14,336 runs"
+    ],
+    "answer": 1,
+    "explanation": "1,024 x (6 + 2) = 8,192: matrices A and B plus one AB_i per input. 6,144 forgets A and B; 14,336 is the larger design that also builds BA_i matrices.",
+    "source": "Lesson 14 tradeOffs"
+  },
+  {
+    "id": "sim-L300-022",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "An input has S1 = 0.005 and ST = 0.155. What does the gap tell you?",
+    "options": [
+      "Nearly all of its effect comes through interactions",
+      "It has almost no effect and can be fixed at its nominal value",
+      "The estimator failed, because S1 should be larger than ST",
+      "Its effect is nonlinear but does not depend on other inputs"
+    ],
+    "answer": 0,
+    "explanation": "ST - S1 is the interaction share; here window_open matters through outdoor temperature. Freezing it would lose 15% of the output variance.",
+    "source": "Lesson 14 checkYourself"
+  },
+  {
+    "id": "sim-L300-023",
+    "level": "L300",
+    "lesson": 14,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "OAT on the lesson's energy model: swing each input over its range with the others at nominal. What does this print?",
+    "code": "import numpy as np\n\nLOW, HIGH = np.array([16.0, 20, 0, 6]), np.array([28.0, 60, 1, 10])\nNOM = (LOW + HIGH) / 2\ndef energy(x):\n    dT = x[0] - 22.0\n    return 150 + 4 * dT + (x[1] - 40) + 24 * x[2] * dT + 3 * (x[3] - 8)\nswings = []\nfor i in range(4):\n    lo, hi = NOM.copy(), NOM.copy()\n    lo[i], hi[i] = LOW[i], HIGH[i]\n    swings.append(round(float(abs(energy(hi) - energy(lo))), 1))\nprint(swings)",
+    "options": [
+      "[48.0, 40.0, 0.0, 12.0]",
+      "[192.0, 40.0, 72.0, 12.0]",
+      "[96.0, 20.0, 0.0, 6.0]",
+      "[192.0, 40.0, 0.0, 12.0]"
+    ],
+    "answer": 3,
+    "explanation": "With window = 0.5 the temperature term is (4 + 12) x dT, swinging 192 over 16-28 C, while the window swing is 0 because dT = 0 at nominal. 48 would ignore the interaction term.",
+    "source": "Lesson 14 code (oat)"
+  },
+  {
+    "id": "sim-L300-024",
+    "level": "L300",
+    "lesson": 14,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "screen() keeps the top two inputs and freezes the rest; the reduced model keeps only 84.1% of the output variance. What is the fix?",
+    "code": "def screen(rows, k=2):\n    keep = sorted(rows, key=lambda r: -r['oat_swing'])[:k]\n    return [r['input'] for r in keep]",
+    "options": [
+      "Rank by the first-order index S1, which is more precise than OAT",
+      "Keep the top three by OAT swing so the window is included",
+      "Rank by Morris mu* and drop inputs whose sigma is large",
+      "Rank by the total-order index ST and verify with variance_kept()"
+    ],
+    "answer": 3,
+    "explanation": "OAT and S1 both miss window_open's interaction effect; ST counts it (0.155), giving 96.1% kept. Raising k to 3 by OAT would keep occupants, not the window.",
+    "source": "Lesson 14 failureLab"
+  },
+  {
+    "id": "sim-L300-025",
+    "level": "L300",
+    "lesson": 14,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A building model has 60 uncertain inputs and each run takes 2 minutes. Which sensitivity plan is sensible?",
+    "options": [
+      "Run Sobol' on all 60 inputs with N = 8,192 from the start",
+      "Screen with Morris, then run Sobol' on the few inputs that matter",
+      "Use OAT on all 60 inputs, then simplify the model accordingly",
+      "Skip sensitivity analysis and fix every input at its nominal value"
+    ],
+    "answer": 1,
+    "explanation": "Morris costs r(d + 1) runs and flags interactions through sigma, so it screens many inputs cheaply. Sobol' on 60 inputs would need about 500,000 runs; OAT misses interactions.",
+    "source": "Lesson 14 tradeOffs"
+  },
+  {
+    "id": "sim-L300-026",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "A Sobol' run reports S1 > ST for one input, and a negative S1 for another. What is the most likely explanation?",
+    "options": [
+      "Sampling noise: centre outputs, raise N, add bootstrap CIs",
+      "The inputs are correlated, which makes negative indices meaningful",
+      "Those two inputs interact negatively, which is a real effect",
+      "The model is nonlinear, which makes S1 larger than ST by design"
+    ],
+    "answer": 0,
+    "explanation": "In exact arithmetic S1 <= ST and both are non-negative; violations come from estimator noise at small N. Centring, more runs and intervals show whether the ranking is supported.",
+    "source": "Lesson 14 troubleshooting"
+  },
+  {
+    "id": "sim-L300-027",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What distinguishes a Gauss-Seidel master from a Jacobi master?",
+    "options": [
+      "Units step in sequence, each using the outputs just computed",
+      "All units step in parallel using values from the last exchange",
+      "The master uses a variable communication step size",
+      "Each unit is rolled back and repeated until the outputs agree"
+    ],
+    "answer": 0,
+    "explanation": "In Jacobi every unit reads values from time t, so feedback is delayed a full step; Gauss-Seidel lets the second unit see the first unit's new output (bound 313 -> 601 s). Repeating until agreement is an iterative master.",
+    "source": "Lesson 15 concepts"
+  },
+  {
+    "id": "sim-L300-028",
+    "level": "L300",
+    "lesson": 15,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A Jacobi-coupled heating loop has gain K = 6 and room time constant tau = 1,800 s. What is the stability bound on the communication step, tau ln(K / (K - 1))?",
+    "options": [
+      "313 s",
+      "300 s",
+      "328 s",
+      "1,800 s"
+    ],
+    "answer": 2,
+    "explanation": "1,800 x ln(6/5) = 328 s. 313 s is the lab's bound for K = 12 and tau = 3,600 s; the bound must be recomputed for each loop.",
+    "source": "Lesson 15 buildTask"
+  },
+  {
+    "id": "sim-L300-029",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The room and the thermostat are each stable alone. Why does the coupled run oscillate at a 900 s communication step?",
+    "options": [
+      "The room's RK4 substeps become unstable with a 900 s step",
+      "The thermostat's anti-windup turns off at long steps",
+      "The JSON log rounds the temperature at long steps",
+      "The controller acts on 15-minute-old data, then holds"
+    ],
+    "answer": 3,
+    "explanation": "Zero-order hold plus a one-step delay turns a stable high-gain loop into an oscillating one (6.78 C swing). The room's internal solver substeps remain accurate.",
+    "source": "Lesson 15 checkYourself"
+  },
+  {
+    "id": "sim-L300-030",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does an FMU contain?",
+    "options": [
+      "modelDescription.xml plus binaries or C sources, zipped",
+      "A Python class with set_real and get_real methods",
+      "A CSV table of precomputed outputs for each input value",
+      "A Modelica source file and its compiled solver log"
+    ],
+    "answer": 0,
+    "explanation": "The XML declares variables, value references and capabilities; the binaries or sources implement them. The lab's Python units only mimic that interface.",
+    "source": "Lesson 15 checkYourself"
+  },
+  {
+    "id": "sim-L300-031",
+    "level": "L300",
+    "lesson": 15,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A toy room (T) and controller (u) are coupled for two exchanges. What does this print?",
+    "code": "def run(order):\n    T, u = 15.0, 0.0\n    for _ in range(2):\n        T_old = T\n        T = T + 2.0 * u\n        seen = T_old if order == 'jacobi' else T\n        u = 0.5 * (21.0 - seen)\n    return round(T, 2), round(u, 2)\n\nprint(run('jacobi'), run('gauss-seidel'))",
+    "options": [
+      "(21.0, 0.0) (21.0, 0.0)",
+      "(21.0, 3.0) (21.0, 0.0)",
+      "(21.0, 3.0) (21.0, 3.0)",
+      "(15.0, 3.0) (21.0, 0.0)"
+    ],
+    "answer": 1,
+    "explanation": "In both orders T reaches 21 after two steps, but under Jacobi the controller still uses the old T = 15 and keeps u = 3, overshooting next step; Gauss-Seidel sees T = 21 and sets u = 0.",
+    "source": "Lesson 15 codeWalkthrough (Jacobi exchange)"
+  },
+  {
+    "id": "sim-L300-032",
+    "level": "L300",
+    "lesson": 15,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "The co-simulation log shows the heater flipping between 0 and 1 every exchange and a 6.78 C swing. The controller code looks correct. What is the fix?",
+    "code": "COMM_STEP_S = 900  # 15-minute exchanges: 15x fewer than 1-minute ones, so the run is faster",
+    "options": [
+      "Lower the setpoint so the heater saturates less often",
+      "Raise COMM_STEP_S to 1,800 s to average out the swings",
+      "Add a derivative term to the thermostat to damp the swing",
+      "Set COMM_STEP_S below the 313 s bound, e.g. 60 s"
+    ],
+    "answer": 3,
+    "explanation": "The oscillation is a coupling artefact from the 900 s step, not a controller bug: at 60 s the loop settles at 21.0 C. Retuning the controller would hide the cause.",
+    "source": "Lesson 15 failureLab"
+  },
+  {
+    "id": "sim-L300-033",
+    "level": "L300",
+    "lesson": 15,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A week-long co-simulation has quiet nights and fast-changing working hours. Units are costly to step. Which master design fits best?",
+    "options": [
+      "A fixed 900 s step, since most of the week is quiet",
+      "A fixed 1 s step everywhere, to be safe in every phase",
+      "Jacobi with a larger gain to make the loop respond faster",
+      "A guarded master that halves h when oscillation appears"
+    ],
+    "answer": 3,
+    "explanation": "Cost grows as 1/h, so a guarded master keeps h large when safe and shrinks it when metrics show trouble (900 -> 450 -> 225 s). A tiny fixed step wastes the quiet hours; 900 s oscillates.",
+    "source": "Lesson 15 tradeOffs"
+  },
+  {
+    "id": "sim-L300-034",
+    "level": "L300",
+    "lesson": 15,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Your exported FMU gives different temperatures from the Python room unit with the same parameters. What should you check first?",
+    "options": [
+      "Whether the master is using value references or variable names",
+      "Whether the JSON log is written in the same decimal format",
+      "The FMU's internal solver and its parameter values",
+      "Whether the FMU was zipped with the same compression level"
+    ],
+    "answer": 2,
+    "explanation": "Tools can export co-simulation FMUs with a simple fixed-step internal solver, which differs from the Python unit's RK4 substeps. Logging and packaging do not change results.",
+    "source": "Lesson 15 troubleshooting"
+  },
+  {
+    "id": "sim-L300-035",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Before timing a vectorised version of a simulation, what must you show?",
+    "options": [
+      "It runs at least ten times faster than the reference loop",
+      "It uses less memory than the reference loop on large inputs",
+      "It gives the same results on every operating system tested",
+      "It produces the same results as the reference loop, to rounding"
+    ],
+    "answer": 3,
+    "explanation": "A fast wrong answer is worthless; the lab checks loop and numpy agree to 1e-13 before measuring speed. Speed and memory come after correctness.",
+    "source": "Lesson 16 concepts"
+  },
+  {
+    "id": "sim-L300-036",
+    "level": "L300",
+    "lesson": 16,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "Vectorised Lindley's recursion: cumulative sum of (service - gap) minus its running minimum. What does this print?",
+    "code": "import numpy as np\n\nx = np.array([2, -1, -3, 2])  # service - gap for successive customers\nc = np.concatenate([[0], np.cumsum(x)])\nw = c - np.minimum.accumulate(np.minimum(c, 0))\nprint(w.tolist())",
+    "options": [
+      "[0, 2, 1, -2, 0]",
+      "[0, 2, 1, 0, 2]",
+      "[0, 2, 3, 3, 5]",
+      "[0, 0, 0, 2, 2]"
+    ],
+    "answer": 1,
+    "explanation": "c = [0, 2, 1, -2, 0] and its running minimum is [0, 0, 0, -2, -2], so the waits are [0, 2, 1, 0, 2], the same as max(0, w + s - g) step by step. Forgetting the running minimum gives negative waits.",
+    "source": "Lesson 16 codeWalkthrough (mean_wait_vectorised)"
+  },
+  {
+    "id": "sim-L300-037",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A parallel study reports a mean wait of '4.240 +/- 0.000 min' from 40 replications. Why is that a bug and not great precision?",
+    "options": [
+      "40 replications are too many for a t-interval to be valid",
+      "The interval was rounded to three decimal places",
+      "Parallel runs always give narrower intervals than serial ones",
+      "Forty identical replications are just one replication"
+    ],
+    "answer": 3,
+    "explanation": "Every task got the same seed, so all 40 results are equal and the sample standard deviation is 0. The CI formula assumes independent runs; spawned streams give 4.042 +/- 0.118.",
+    "source": "Lesson 16 checkYourself"
+  },
+  {
+    "id": "sim-L300-038",
+    "level": "L300",
+    "lesson": 16,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "import numpy as np\n\nchildren = np.random.SeedSequence(16).spawn(4)\nspawned = [np.random.default_rng(c).random() for c in children]\nshared = [np.random.default_rng(16).random() for _ in range(4)]\nprint(len(set(spawned)), len(set(shared)))",
+    "options": [
+      "1 1",
+      "4 4",
+      "1 4",
+      "4 1"
+    ],
+    "answer": 3,
+    "explanation": "Spawned SeedSequence children give four independent streams (4 distinct values), while reusing the integer seed 16 gives four copies of one stream (1 distinct value).",
+    "source": "Lesson 16 failureLab"
+  },
+  {
+    "id": "sim-L300-039",
+    "level": "L300",
+    "lesson": 16,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "On macOS and Windows this script fails with a RuntimeError about bootstrapping a new process. What is the fix?",
+    "code": "from multiprocessing import Pool\n\ndef one_replication(task):\n    return simulate(task)\n\nwith Pool(4) as pool:\n    results = pool.map(one_replication, tasks)",
+    "options": [
+      "Create the pool under if __name__ == '__main__':",
+      "Switch the pool to threads so no process is spawned",
+      "Move the worker function inside the with block",
+      "Pass the seeds as strings so they can be pickled"
+    ],
+    "answer": 0,
+    "explanation": "Spawned children re-import the module; without the guard each child tries to start its own pool. The worker must stay a top-level function so it can be pickled by reference.",
+    "source": "Lesson 16 troubleshooting"
+  },
+  {
+    "id": "sim-L300-040",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why must the worker function passed to Pool.map be defined at module top level?",
+    "options": [
+      "Spawn pickles it by name; children re-import the module",
+      "Top-level functions run faster because they are compiled",
+      "Nested functions cannot use numpy inside worker processes",
+      "Pool.map only accepts functions with no default arguments"
+    ],
+    "answer": 0,
+    "explanation": "Functions are pickled by reference (module and name), so a lambda or nested function cannot be found in the child. Speed and numpy use are unrelated.",
+    "source": "Lesson 16 checkYourself"
+  },
+  {
+    "id": "sim-L300-041",
+    "level": "L300",
+    "lesson": 16,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "On a 1-CPU machine the 4-worker pool is slower than the serial numpy version. What should you conclude?",
+    "options": [
+      "The pool is broken and must be replaced by a thread pool",
+      "The seeds are shared, which forces the workers to wait",
+      "Too little work per task: vectorise or chunk, then re-measure",
+      "Parallel code is always slower on Linux than serial code"
+    ],
+    "answer": 2,
+    "explanation": "Process start-up and pickling dominate when tasks are small or cores are few. Chunking amortises overhead; and report speed-ups only with the machine they were measured on.",
+    "source": "Lesson 16 troubleshooting"
+  },
+  {
+    "id": "sim-L300-042",
+    "level": "L300",
+    "lesson": 16,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A teammate proposes seeding each worker process with its worker id so streams never collide. What is the problem?",
+    "options": [
+      "Worker ids are too small to be used as seeds for PCG64",
+      "Two workers could receive the same id on a busy machine",
+      "Results would then depend on the worker count",
+      "Seeding by worker makes each replication run more slowly"
+    ],
+    "answer": 2,
+    "explanation": "Which replications a worker handles depends on scheduling, so changing the worker count would change results. Tie child stream i to replication i, spawned once in the parent.",
+    "source": "Lesson 16 buildTask"
+  }
+]

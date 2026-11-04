@@ -1,0 +1,875 @@
+[
+  {
+    "id": "as-L400-001",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The shipped survey pipeline reports purity 1.0 but completeness 0.1745. How can purity be perfect while the pipeline is broken?",
+    "options": [
+      "Purity and completeness are measured on different nights",
+      "A too-high threshold finds only bright, certain stars: no false detections, most stars missed",
+      "Perfect purity proves the background estimate is right, so the loss must come from the detector itself",
+      "Completeness is low because the catalogue hash changed"
+    ],
+    "answer": 1,
+    "explanation": "The single-level background inflated the robust rms, raising the 5-sigma threshold; only the brightest stars passed. Purity alone can never show missing detections.",
+    "source": "Lesson 17 checkYourself and failureLab"
+  },
+  {
+    "id": "as-L400-002",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "On the 1-CPU sandbox, design B (a spawn process pool, one frame per task) is the slowest. Why?",
+    "options": [
+      "Starting workers and pickling frames costs more than the tiny per-frame compute",
+      "Process pools return frames out of order, so the catalogue must be re-sorted and recomputed at the end",
+      "numpy cannot run inside child processes",
+      "The pool runs the frames twice for safety"
+    ],
+    "answer": 0,
+    "explanation": "Throughput is decided by the unit of work: with one core there is no parallel gain, only start-up and transfer overhead. All three options give the identical catalogue.",
+    "source": "Lesson 17 checkYourself and tradeOffs"
+  },
+  {
+    "id": "as-L400-003",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "At 4096 x 4096 pixels, how large is one 16-frame float64 batch array?",
+    "options": [
+      "1.07 GB",
+      "0.13 GB",
+      "2.15 GB",
+      "17.18 GB"
+    ],
+    "answer": 2,
+    "explanation": "4096^2 x 16 frames x 8 bytes = 2.15 GB per array, the lesson's scaling signal. Half that is float32, and 0.13 GB is a single frame.",
+    "source": "Lesson 17 scalingLimits"
+  },
+  {
+    "id": "as-L400-004",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "You give the calibrate+detect stage a 512 MiB budget for its stack array. How many 4096 x 4096 float64 frames fit in one batch?",
+    "options": [
+      "8",
+      "4",
+      "16",
+      "32"
+    ],
+    "answer": 1,
+    "explanation": "One float64 frame is 128 MiB, so 4 frames fit. Using 4 bytes per pixel (float32) would double that, and 16 is the fixed BATCH that the scaling limits warn about.",
+    "source": "Lesson 17 scalingLimits"
+  },
+  {
+    "id": "as-L400-005",
+    "level": "L400",
+    "lesson": 17,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A frame has a 300 -> 900 e- moonlight gradient and no stars. What robust rms does a single-median background leave?",
+    "code": "import numpy as np\nimg = np.tile(np.linspace(300, 900, 64), (64, 1))\nresid = img - np.median(img)\nrms = 1.4826 * np.median(np.abs(resid - np.median(resid)))\nprint(round(float(rms), 1))",
+    "options": [
+      "0.0",
+      "24.5",
+      "600.0",
+      "225.9"
+    ],
+    "answer": 3,
+    "explanation": "Subtracting one median leaves the whole gradient in the residual, so the robust rms is ~226 e- instead of the photon noise ~sqrt(600) = 24.5 e-; a 5-sigma threshold then misses faint stars.",
+    "source": "Lesson 17 failureLab"
+  },
+  {
+    "id": "as-L400-006",
+    "level": "L400",
+    "lesson": 17,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "The catalogue's SHA-256 differs between two runs of design B on the same night. What is the likely cause?",
+    "options": [
+      "Rows (or IDs) are assigned in completion order; sort rows before hashing",
+      "SHA-256 is not deterministic across processes",
+      "The pool's workers use float32 arithmetic while design A uses float64, so values differ slightly",
+      "The background mesh is random"
+    ],
+    "answer": 0,
+    "explanation": "Workers finish in varying order; pure stages plus sorted output make every split give the same catalogue. Hashes are deterministic for identical bytes.",
+    "source": "Lesson 17 troubleshooting and concepts"
+  },
+  {
+    "id": "as-L400-007",
+    "level": "L400",
+    "lesson": 17,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Design B crashes with a RuntimeError about bootstrapping a new process. What is missing?",
+    "options": [
+      "A larger pool of workers",
+      "pickle protocol 5 must be passed to the pool constructor so frames can be sent to the workers",
+      "A call to np.random.seed() in each worker",
+      "The if __name__ == '__main__': guard; spawn re-imports the main module"
+    ],
+    "answer": 3,
+    "explanation": "With the spawn start method each child imports the main module; without the guard it tries to start the pool again. Seeds and protocols are unrelated.",
+    "source": "Lesson 17 troubleshooting"
+  },
+  {
+    "id": "as-L400-008",
+    "level": "L400",
+    "lesson": 17,
+    "type": "design",
+    "difficulty": 3,
+    "question": "You move the pipeline to an 8-core machine and detect_s per frame stays flat while wall time per night grows. What should you re-measure?",
+    "options": [
+      "Design A, since sequential frames scale best",
+      "A smaller NSIGMA, so that detection finishes sooner and the per-frame time drops",
+      "The same design C with BATCH = 1",
+      "A process pool of batches (B with batch tasks) against design C"
+    ],
+    "answer": 3,
+    "explanation": "On multi-core hosts a pool of batches can beat single-process vectorisation, but only measurement decides. Lowering the threshold changes science results, not throughput.",
+    "source": "Lesson 17 scalingLimits and tradeOffs"
+  },
+  {
+    "id": "as-L400-009",
+    "level": "L400",
+    "lesson": 17,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "After the mesh-background fix, completeness falls near a bright galaxy whose halo varies on ~10-px scales. What does the lesson suggest?",
+    "options": [
+      "Raise NSIGMA so the halo is ignored",
+      "Go back to one median per frame",
+      "Smaller background boxes or masking sources before estimating the sky",
+      "Increase the box size to 128 px so each box contains more sky pixels for the median"
+    ],
+    "answer": 2,
+    "explanation": "Structure finer than the 32-px mesh is not captured, so detection degrades near it; smaller boxes or masks fix that. A larger box or a single level makes it worse.",
+    "source": "Lesson 17 scalingLimits"
+  },
+  {
+    "id": "as-L400-010",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Before subtracting, why does the fixed difference() blur the reference rather than tonight's image?",
+    "options": [
+      "The reference is sharper; blurring it keeps tonight's resolution and noise",
+      "Tonight's image is always sharper than the reference",
+      "Blurring the new image would smear every transient below the detection threshold of the survey",
+      "The reference has no noise, so blurring it is free"
+    ],
+    "answer": 0,
+    "explanation": "You can only degrade a PSF, not sharpen one; matching the deep, sharp reference to tonight's seeing leaves tonight's data untouched. The reference has less noise, not none.",
+    "source": "Lesson 18 checkYourself"
+  },
+  {
+    "id": "as-L400-011",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "In this broker design, what is a language model allowed to do?",
+    "options": [
+      "Change a class when it is confident",
+      "Decide which alerts are bogus",
+      "Explain facts in words; code classifies and a gate blocks unverified numbers",
+      "Fill in missing fields of the alert packet before the schema validation step runs on it"
+    ],
+    "answer": 2,
+    "explanation": "Code classifies; a model may only explain, and explanations with invented numbers or overclaims are blocked. It never sees credentials or images.",
+    "source": "Lesson 18 concepts and caution"
+  },
+  {
+    "id": "as-L400-012",
+    "level": "L400",
+    "lesson": 18,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "Using the broker's rules (sharp > 3 or negative -> bogus; within 1.5 px of a known variable; shifted 2-8 px in the other exposure -> moving), what does this print?",
+    "code": "import math\ndef classify(det, other, known):\n    if det[\"sharp\"] > 3.0 or det[\"pos\"] == \"f\":\n        return \"bogus\"\n    if any(math.dist((det[\"x\"], det[\"y\"]), k) < 1.5 for k in known):\n        return \"known_variable\"\n    gaps = [math.dist((det[\"x\"], det[\"y\"]), o) for o in other]\n    if not any(g < 1.5 for g in gaps) and any(2 <= g <= 8 for g in gaps):\n        return \"moving\"\n    return \"transient\"\ndets = [dict(x=10, y=10, sharp=4.2, pos=\"t\"), dict(x=40, y=40.5, sharp=1.2, pos=\"t\"),\n        dict(x=70, y=20, sharp=1.1, pos=\"t\")]\nprint(*[classify(d, [(70, 25)], [(40, 40)]) for d in dets])",
+    "options": [
+      "bogus known_variable moving",
+      "transient known_variable moving",
+      "bogus known_variable transient",
+      "bogus transient moving"
+    ],
+    "answer": 0,
+    "explanation": "The first detection is too sharp (a cosmic ray), the second sits 0.5 px from a known variable, and the third has no counterpart within 1.5 px but one 5 px away in the other exposure.",
+    "source": "Lesson 18 code (classify)"
+  },
+  {
+    "id": "as-L400-013",
+    "level": "L400",
+    "lesson": 18,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Every star in the difference image leaves a +/- dipole. What is the fix?",
+    "options": [
+      "Raise NSIG from 5 to 50",
+      "Register the images to sub-pixel accuracy first, then match the PSF",
+      "Classify all negative detections as transients",
+      "Subtract the new image from the reference instead, so that the residuals change sign"
+    ],
+    "answer": 1,
+    "explanation": "Dipoles come from misalignment or unmatched PSFs; registration then PSF matching removes them. Raising the threshold would also hide real transients.",
+    "source": "Lesson 18 troubleshooting"
+  },
+  {
+    "id": "as-L400-014",
+    "level": "L400",
+    "lesson": 18,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Shipped design C publishes 58.2 alerts/night with 4.5 % real; fixed design C publishes 3.5/night with 85.7 % real. How many real alerts per night does each deliver?",
+    "options": [
+      "58.2 vs 3.5",
+      "49.9 vs 0.2",
+      "2.6 vs 3.0",
+      "4.5 vs 85.7"
+    ],
+    "answer": 2,
+    "explanation": "Real per night = volume x real fraction: 2.6 vs 3.0. The fix keeps (slightly more) real alerts while cutting volume ~17x, so each alert is far more useful.",
+    "source": "Lesson 18 expectedResults"
+  },
+  {
+    "id": "as-L400-015",
+    "level": "L400",
+    "lesson": 18,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A wide-field production survey has a PSF that varies across the field. Which subtraction approach fits?",
+    "options": [
+      "A spatially varying kernel (Alard-Lupton) or ZOGY with good PSF models",
+      "The lab's single Gaussian kernel with a flux fit",
+      "Plain subtraction with a higher threshold",
+      "Blur both images to a fixed 5-arcsec PSF so the kernel is identical everywhere in the field"
+    ],
+    "answer": 0,
+    "explanation": "A single Gaussian assumes round, constant PSFs and leaves edge residuals clustered by position. Alard-Lupton and ZOGY handle variation; ZTF uses ZOGY.",
+    "source": "Lesson 18 tradeOffs and scalingLimits"
+  },
+  {
+    "id": "as-L400-016",
+    "level": "L400",
+    "lesson": 18,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A fast asteroid produces many single-detection 'moving' objects, each with a new objectId. What stage is missing?",
+    "options": [
+      "A larger KNOWN_R radius for known variables",
+      "A moving-object linking stage across exposures",
+      "A stricter sharpness threshold",
+      "A schema field for the asteroid's magnitude"
+    ],
+    "answer": 1,
+    "explanation": "The 2-px objectId grid assigns a new ID every time the asteroid moves; linking detections into tracks fixes that. Known-variable and sharpness rules are unrelated.",
+    "source": "Lesson 18 scalingLimits"
+  },
+  {
+    "id": "as-L400-017",
+    "level": "L400",
+    "lesson": 18,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Your broker must handle millions of alerts per night. What does the lesson point to?",
+    "options": [
+      "More JSON files per night, one per alert",
+      "A language model to summarise alerts in bulk",
+      "Dropping schema validation to save time",
+      "Avro with a schema registry over Kafka, not JSON lists"
+    ],
+    "answer": 3,
+    "explanation": "Serialisation time per alert is the signal; Rubin's DMTN-093 design uses Avro, a schema registry and Kafka. Schema validation stays essential.",
+    "source": "Lesson 18 scalingLimits"
+  },
+  {
+    "id": "as-L400-018",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Design C (one alert per object per night with history) loses a little purity compared with B. Why is it still preferred?",
+    "options": [
+      "C has more alerts per night, so more science",
+      "One alert per object with prv_candidates is far more useful than duplicates",
+      "C skips schema validation and is faster",
+      "C lets the local model choose which alerts to keep, which removes the duplicates for you"
+    ],
+    "answer": 1,
+    "explanation": "Association removes duplicates of the same event and adds history for classification. Validation still runs, and code still decides.",
+    "source": "Lesson 18 checkYourself"
+  },
+  {
+    "id": "as-L400-019",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What makes a catalogue index correct, according to the lesson?",
+    "options": [
+      "It narrows to candidates, then every candidate is tested exactly",
+      "It returns roughly the right number of rows quickly, within a few percent of brute force",
+      "It never tests a source twice",
+      "It uses HEALPix rather than zones"
+    ],
+    "answer": 0,
+    "explanation": "An index that misses rows is a correctness bug; it may over-select, but the exact test decides. Brute force is the oracle for that.",
+    "source": "Lesson 19 overview and concepts"
+  },
+  {
+    "id": "as-L400-020",
+    "level": "L400",
+    "lesson": 19,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "For a 5-deg cone at Dec +80, the exact RA half-width is atan(sin r / sqrt|cos(d - r) cos(d + r)|). What is it?",
+    "options": [
+      "28.79 deg",
+      "5.00 deg",
+      "30.13 deg",
+      "0.87 deg"
+    ],
+    "answer": 2,
+    "explanation": "Near the pole lines of constant RA converge so fast that even r/cos(Dec) (28.79) is too small; the exact half-width is 30.13 deg. The shipped ra +/- r misses most of the cone.",
+    "source": "Lesson 19 failureLab and codeWalkthrough"
+  },
+  {
+    "id": "as-L400-021",
+    "level": "L400",
+    "lesson": 19,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A zone's RA values are sorted. The shipped window for a 0.5-deg cone at RA 359.8 is [359.3, 360.3]. What does the search return?",
+    "code": "import numpy as np\nra = np.array([0.1, 0.2, 359.5, 359.9])\nlo, hi = 359.8 - 0.5, 359.8 + 0.5\ni, j = np.searchsorted(ra, [lo, hi])\nprint(ra[i:j].tolist())",
+    "options": [
+      "[0.1, 0.2, 359.5, 359.9]",
+      "[0.1, 0.2]",
+      "[359.5, 359.9]",
+      "[]"
+    ],
+    "answer": 2,
+    "explanation": "The window above 360 never wraps to 0, so sources at RA 0.1 and 0.2 are missed. The fix splits it into two windows across 0/360.",
+    "source": "Lesson 19 failureLab"
+  },
+  {
+    "id": "as-L400-022",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "In Python, why can 1-deg 'coarse' zones beat 0.1-deg zones even though they test more candidates?",
+    "options": [
+      "Coarse zones need no exact test",
+      "Fine zones give wrong answers near the poles, so the coarse zones are the only exact option",
+      "The per-zone Python loop costs more than testing a few dozen extra rows in numpy",
+      "Coarse zones use HEALPix internally"
+    ],
+    "answer": 2,
+    "explanation": "Zone height trades loop overhead against candidates; vectorised numpy tests are cheap, Python iterations are not. Both zone options are exact once fixed.",
+    "source": "Lesson 19 checkYourself"
+  },
+  {
+    "id": "as-L400-023",
+    "level": "L400",
+    "lesson": 19,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Your TAP query to an archive is rejected. What does the lesson recommend checking?",
+    "options": [
+      "Add REQUEST=doQuery and LANG=ADQL to the URL, which every TAP 1.1 service requires",
+      "Replace ADQL with plain SQLite syntax",
+      "Send the query from a unit test to see the error",
+      "Use ADQL 2.1 CONTAINS(POINT(...), CIRCLE(...)) = 1 and the service's table names"
+    ],
+    "answer": 3,
+    "explanation": "TAP 1.1 has no REQUEST parameter, and cone searches are written with CONTAINS/POINT/CIRCLE. Network calls belong outside unit tests.",
+    "source": "Lesson 19 troubleshooting and concepts"
+  },
+  {
+    "id": "as-L400-024",
+    "level": "L400",
+    "lesson": 19,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "You need cone searches over Gaia DR3 (~1.8 billion rows). What does the lesson recommend?",
+    "options": [
+      "Query a TAP service or a database with HEALPix/Q3C indexes",
+      "Load it into numpy arrays and use 0.1-deg zones",
+      "Use brute force, since it is exact",
+      "Download it once and sort it by RA only"
+    ],
+    "answer": 0,
+    "explanation": "Billions of rows no longer fit in memory; archives are already indexed. Brute force is the test oracle, not a production path at that scale.",
+    "source": "Lesson 19 scalingLimits and tradeOffs"
+  },
+  {
+    "id": "as-L400-025",
+    "level": "L400",
+    "lesson": 19,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "You plan to release a derived table built from Gaia rows you downloaded. Which condition applies?",
+    "options": [
+      "Gaia data are public domain, so no credit is needed",
+      "Gaia data are CC BY-SA, so your release must be BY-SA",
+      "Gaia data are CC BY-NC 3.0 IGO: credit ESA/Gaia/DPAC and respect NonCommercial",
+      "Only the original Gaia files carry a licence; tables derived from them are yours to license freely"
+    ],
+    "answer": 2,
+    "explanation": "Derived data keep their inputs' conditions; lesson 21 builds a release gate for exactly this. Public archives are not automatically public domain.",
+    "source": "Lesson 19 caution"
+  },
+  {
+    "id": "as-L400-026",
+    "level": "L400",
+    "lesson": 19,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Cone searches for bright, nearby stars from a new image keep coming back empty, though other stars match. What is the likely cause?",
+    "options": [
+      "Mismatched epochs: propagate high-proper-motion positions to the observation epoch",
+      "The zone height is too small for bright stars, whose catalogue rows sit in the neighbouring zone",
+      "The exact test rejects stars brighter than mag 6",
+      "Brute force and zones disagree for bright stars"
+    ],
+    "answer": 0,
+    "explanation": "High-proper-motion stars move out of small cones between catalogue epoch and observation. The index treats every star alike regardless of brightness.",
+    "source": "Lesson 19 scalingLimits"
+  },
+  {
+    "id": "as-L400-027",
+    "level": "L400",
+    "lesson": 20,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "With n = 40 points, disk + cored halo has chi^2 = 43.24 (k = 3) and the wiggles model has chi^2 = 40.63 (k = 6). What are their BIC values?",
+    "options": [
+      "49.24 vs 52.63",
+      "54.31 vs 62.76",
+      "163.24 vs 280.63",
+      "43.24 vs 40.63"
+    ],
+    "answer": 1,
+    "explanation": "BIC = chi^2 + k ln n with ln 40 = 3.69, so the cored halo wins (54.31 vs 62.76; the lab prints 54.3 from the unrounded chi^2). The 49.24 vs 52.63 pair is AIC (chi^2 + 2k), a weaker penalty of 2 per parameter.",
+    "source": "Lesson 20 lab README expected output"
+  },
+  {
+    "id": "as-L400-028",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does selecting by lowest chi^2 crown the wiggles model on all 50 galaxies?",
+    "options": [
+      "Extra parameters can bend to the noise, and chi^2 never increases when you add them",
+      "The wiggles model is the true model of the synthetic data, so it should win every time",
+      "chi^2 is biased against halo models",
+      "The fit for the other models did not converge"
+    ],
+    "answer": 0,
+    "explanation": "A nested model with more freedom always fits at least as well, so chi^2 alone rewards flexibility; the wiggle 'halo' is unphysical. BIC makes each parameter pay ln(n).",
+    "source": "Lesson 20 checkYourself and failureLab"
+  },
+  {
+    "id": "as-L400-029",
+    "level": "L400",
+    "lesson": 20,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "What does this Wald-Wolfowitz runs test print for alternating signs, then for one long block of each sign?",
+    "code": "import numpy as np\ndef runs_z(resid):\n    s = resid > 0\n    n1, n2 = int(s.sum()), int((~s).sum())\n    runs = 1 + int(np.sum(s[1:] != s[:-1]))\n    mean = 2 * n1 * n2 / (n1 + n2) + 1\n    var = 2 * n1 * n2 * (2 * n1 * n2 - n1 - n2) / ((n1 + n2) ** 2 * (n1 + n2 - 1))\n    return round(float((runs - mean) / np.sqrt(var)), 2)\nprint(runs_z(np.array([1, -1] * 10)), runs_z(np.array([1] * 10 + [-1] * 10)))",
+    "options": [
+      "0.0 0.0",
+      "1.96 -1.96",
+      "20.0 2.0",
+      "4.14 -4.14"
+    ],
+    "answer": 3,
+    "explanation": "Too many runs (alternating) gives Z = +4.14 and too few (two blocks) gives -4.14; both mean |Z| > 1.96, i.e. structure left in the residuals. 20 and 2 are the raw run counts, not Z.",
+    "source": "Lesson 20 code (runs_z)"
+  },
+  {
+    "id": "as-L400-030",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "BIC has chosen the cored halo. What does the runs test add?",
+    "options": [
+      "It replaces BIC when the models have equal k",
+      "It checks that the chosen model leaves no systematic pattern in the residuals",
+      "It measures the halo's mass",
+      "It tells you whether the error bars are too small, which BIC simply assumes are correct"
+    ],
+    "answer": 1,
+    "explanation": "BIC compares models; the runs test checks the winner's residual signs for structure (|Z| < 1.96). It says nothing about mass or error scale directly.",
+    "source": "Lesson 20 checkYourself"
+  },
+  {
+    "id": "as-L400-031",
+    "level": "L400",
+    "lesson": 20,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Your rotation-curve fit wanders to the parameter bounds (disk M/L at its floor, a tiny halo core). What does the lesson recommend?",
+    "options": [
+      "Recognise degenerate parameters; start from physical values and report uncertainties",
+      "Remove the lower bounds so the fit can go negative",
+      "Add the cubic wiggle terms so the extra freedom absorbs the degeneracy between disk and halo",
+      "Select the model with the lowest chi^2 instead"
+    ],
+    "answer": 0,
+    "explanation": "Disk M/L and halo core trade off against each other; physical starting values and honest uncertainties expose that. Removing bounds allows unphysical answers.",
+    "source": "Lesson 20 troubleshooting"
+  },
+  {
+    "id": "as-L400-032",
+    "level": "L400",
+    "lesson": 20,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A new data set has chi^2_red >> 1 for every model and the wiggles model wins again under BIC. What should you fix first?",
+    "options": [
+      "The penalty: switch from BIC to AIC, which is designed for large n and noisy data",
+      "Add more parameters to the halo model",
+      "The error bars (lesson 15); underestimated errors inflate chi^2 differences",
+      "Drop the runs test, which is failing"
+    ],
+    "answer": 2,
+    "explanation": "Too-small errors make every chi^2 difference look significant, so complex models win; fix the errors before selecting. AIC's weaker penalty would make it worse.",
+    "source": "Lesson 20 scalingLimits"
+  },
+  {
+    "id": "as-L400-033",
+    "level": "L400",
+    "lesson": 20,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Which selection criterion fits which goal, according to the lesson's trade-offs?",
+    "options": [
+      "AIC to choose a physical explanation; BIC for prediction",
+      "Lowest chi^2 for physics; hold-out for prediction",
+      "BIC always, since it never under-fits",
+      "BIC to choose a physical explanation; AIC when prediction is the goal"
+    ],
+    "answer": 3,
+    "explanation": "BIC is consistent and strict, AIC's lighter penalty (2 per parameter) favours predictive accuracy. BIC can under-fit when the truth is complex.",
+    "source": "Lesson 20 tradeOffs"
+  },
+  {
+    "id": "as-L400-034",
+    "level": "L400",
+    "lesson": 20,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Every model, including the BIC winner, shows |runs Z| > 1.96 on a galaxy with a known warp. What does the lesson conclude?",
+    "options": [
+      "Pick the model with the smallest |Z| and publish it",
+      "Switch to the wiggles model, whose cubic terms are flexible enough to absorb a warp and bends",
+      "Increase n by interpolating the curve",
+      "Revise the data model (non-circular motions, warps, distance), not the selection rule"
+    ],
+    "answer": 3,
+    "explanation": "Residual structure that no halo removes is a sign that the assumptions behind all models are broken. Interpolating points fakes data.",
+    "source": "Lesson 20 scalingLimits"
+  },
+  {
+    "id": "as-L400-035",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Your catalogue combines Gaia DR3 (CC BY-NC 3.0 IGO) with your own CC-BY-4.0 measurements. Why is releasing it as CC-BY-4.0 wrong?",
+    "options": [
+      "CC-BY-4.0 is not a valid SPDX identifier",
+      "Derived data keep their inputs' restrictions, so NonCommercial must carry over",
+      "Own measurements cannot be licensed at all",
+      "CC-BY-4.0 forbids combining data from two sources that were released under different licences"
+    ],
+    "answer": 1,
+    "explanation": "The gate flags 'release CC-BY-4.0 drops the NC condition'; the fix releases as CC-BY-NC-4.0. CC-BY-4.0 is a valid SPDX id, the problem is propagation.",
+    "source": "Lesson 21 concepts and failureLab"
+  },
+  {
+    "id": "as-L400-036",
+    "level": "L400",
+    "lesson": 21,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "What does this simplified release_licence() print?",
+    "code": "def release_licence(licences):\n    flags = {f for lic in licences for f in (\"NC\", \"SA\") if f\"-{f}\" in lic}\n    if flags == {\"NC\", \"SA\"}:\n        raise ValueError(\"NC + SA conflict: human review\")\n    return \"CC-BY-\" + \"\".join(f + \"-\" for f in (\"NC\", \"SA\") if f in flags) + \"4.0\"\nprint(release_licence([\"LicenseRef-CC-BY-NC-3.0-IGO\", \"CC-BY-4.0\"]))",
+    "options": [
+      "CC-BY-NC-4.0",
+      "CC-BY-4.0",
+      "CC-BY-NC-SA-4.0",
+      "LicenseRef-CC-BY-NC-3.0-IGO"
+    ],
+    "answer": 0,
+    "explanation": "The NC flag from the Gaia input is kept and nothing is ShareAlike, so the release is CC-BY-NC-4.0. An NC + SA mix would raise for human review.",
+    "source": "Lesson 21 codeWalkthrough (release_licence fix)"
+  },
+  {
+    "id": "as-L400-037",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Inputs are CC-BY-NC and CC-BY-SA. Why does the gate refuse to pick CC-BY-NC-SA-4.0 automatically?",
+    "options": [
+      "CC-BY-NC-SA-4.0 is not in the SPDX list",
+      "SA licences cannot be used for data",
+      "NC always overrides SA, so CC-BY-NC-4.0 is the correct automatic choice for any such mix of inputs",
+      "BY-SA requires adaptations to stay BY-SA, which allows commercial use; a person must decide"
+    ],
+    "answer": 3,
+    "explanation": "Adding NC would violate ShareAlike, and dropping it would violate NonCommercial, so the conflict goes to human review. The rules are conservative defaults, not legal advice.",
+    "source": "Lesson 21 checkYourself and caution"
+  },
+  {
+    "id": "as-L400-038",
+    "level": "L400",
+    "lesson": 21,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "TOPCAT opens your catalogue.vot but shows no units for any column. What does check() report, and where is the fix?",
+    "options": [
+      "'manifest changed': re-hash MANIFEST.json",
+      "'has no unit': the FIELD elements are missing unit attributes",
+      "'licence': the SPDX id is unknown",
+      "'credit not verbatim': edit ACKNOWLEDGEMENTS.md"
+    ],
+    "answer": 1,
+    "explanation": "Units and UCDs travel with the data as FIELD attributes in VOTable; the checker flags missing ones. Manifest and licence checks are unrelated.",
+    "source": "Lesson 21 troubleshooting"
+  },
+  {
+    "id": "as-L400-039",
+    "level": "L400",
+    "lesson": 21,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "You polished the wording in ACKNOWLEDGEMENTS.md and now the credit check fails. What is the right fix?",
+    "options": [
+      "Disable the credit check for this release",
+      "Credits must be verbatim: edit inputs.py (the single source) and rebuild",
+      "Re-hash MANIFEST.json so the improved acknowledgement text is accepted by the gate",
+      "Paraphrase the credit in CITATION.cff instead"
+    ],
+    "answer": 1,
+    "explanation": "Providers' credit texts are quoted exactly; the build writes them from inputs.py. Re-hashing only hides the change from the manifest.",
+    "source": "Lesson 21 troubleshooting"
+  },
+  {
+    "id": "as-L400-040",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "When seeding defects to test the gate, why re-hash the manifest after each change?",
+    "options": [
+      "Hashes expire after each build",
+      "VOTable requires a fresh hash per file",
+      "The licence check reads the hashes in MANIFEST.json rather than the files, so they must be fresh",
+      "Otherwise the manifest check catches every defect and the other checks go untested"
+    ],
+    "answer": 3,
+    "explanation": "A changed file always breaks the manifest, which would mask whether the licence, credit or VOTable checks work. Re-hashing isolates each check.",
+    "source": "Lesson 21 checkYourself"
+  },
+  {
+    "id": "as-L400-041",
+    "level": "L400",
+    "lesson": 21,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Your release will be cited in papers. Which option from the lesson's trade-offs fits?",
+    "options": [
+      "A manual checklist review only",
+      "The automated gate alone, with no human step",
+      "The automated gate plus external validators and a DOI",
+      "Publishing the folder and fixing issues after citation"
+    ],
+    "answer": 2,
+    "explanation": "Public, cited releases add schema-level validators (astropy, votlint, cffconvert) and a persistent identifier. The checklist caught 0/6 seeded defects on its own.",
+    "source": "Lesson 21 tradeOffs"
+  },
+  {
+    "id": "as-L400-042",
+    "level": "L400",
+    "lesson": 21,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Your release table grows to tens of millions of rows and TABLEDATA XML is huge and slow to parse. What does the lesson suggest?",
+    "options": [
+      "Drop the units and UCDs to shrink the XML",
+      "Split it into one VOTable per row",
+      "VOTable BINARY2 or FITS/Parquet with the same metadata",
+      "Zip the XML and skip the manifest"
+    ],
+    "answer": 2,
+    "explanation": "TABLEDATA grows ~10x versus binary; binary serialisations keep the metadata. Dropping units or the manifest loses exactly what the release must prove.",
+    "source": "Lesson 21 scalingLimits"
+  },
+  {
+    "id": "as-L400-043",
+    "level": "L400",
+    "lesson": 22,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "The capstone fits S01's depth as 8169 ppm. If the host is Sun-sized (R_sun / R_earth = 109.08), what planet radius does depth = (Rp/R*)^2 give?",
+    "options": [
+      "0.89 Earth radii",
+      "9.04 Earth radii",
+      "9.86 Earth radii",
+      "19.72 Earth radii"
+    ],
+    "answer": 2,
+    "explanation": "Rp/R* = sqrt(0.008169) = 0.0904, so Rp = 9.86 Earth radii (Jupiter-like). Using the depth itself as the radius ratio forgets the square.",
+    "source": "Lesson 22 expected output (M4) and lesson 15 model"
+  },
+  {
+    "id": "as-L400-044",
+    "level": "L400",
+    "lesson": 22,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "The vetting rule rejects durations above 1.5 x 13.0 h x (P / 1 yr)^(1/3). What is the limit for P = 12.35 d?",
+    "options": [
+      "4.20 h",
+      "2.04 h",
+      "6.31 h",
+      "0.66 h"
+    ],
+    "answer": 2,
+    "explanation": "(12.35/365.25)^(1/3) = 0.323, times 13.0 h and the 1.5 margin gives 6.31 h. The exponent comes from T14 ~ (P/pi)(R*/a) with a ~ P^(2/3).",
+    "source": "Lesson 22 lab README (derived duration bound)"
+  },
+  {
+    "id": "as-L400-045",
+    "level": "L400",
+    "lesson": 22,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "What transit depth should a 2.0 Earth-radius planet produce on a Sun-sized star (R_sun / R_earth = 109.08)?",
+    "options": [
+      "18336 ppm",
+      "6.2 ppm",
+      "84 ppm",
+      "336 ppm"
+    ],
+    "answer": 3,
+    "explanation": "Depth = (Rp/R*)^2 = (2/109.08)^2 = 336 ppm, well below the 400-1000 ppm noise per point, so it needs many transits. Without the square you get 18336 ppm.",
+    "source": "Lesson 22 code (depth_ppm) and lesson 15 model"
+  },
+  {
+    "id": "as-L400-046",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does the pipeline re-detrend each star with the candidate's in-transit points masked?",
+    "options": [
+      "Otherwise the running median includes the dip, lifts the baseline and biases the depth low",
+      "Masking makes BLS run faster on the second pass",
+      "The first detrend removes the transit completely, so the depth must be re-measured from scratch",
+      "Masked points are needed for the odd/even test"
+    ],
+    "answer": 0,
+    "explanation": "An unmasked median biased S02 by -2.8 sigma; the masked second pass restores the baseline. The search itself already ran before masking.",
+    "source": "Lesson 22 checkYourself"
+  },
+  {
+    "id": "as-L400-047",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does eclipsing binary S05 fool the BLS search, and which rule catches it?",
+    "options": [
+      "Its eclipses are too shallow; the SNR threshold",
+      "It has only one eclipse; the >= 2 transits rule",
+      "Its eclipses last too long for its period, so the derived duration bound rejects it",
+      "Two unequal eclipses fold onto half the true period; the odd/even depth comparison"
+    ],
+    "answer": 3,
+    "explanation": "Folding at half the period stacks primary and secondary eclipses; their depths differ (5937 vs 11603 ppm), so odd/even rejects it. S04 is the one caught by its secondary eclipse.",
+    "source": "Lesson 22 checkYourself and expected output (M3)"
+  },
+  {
+    "id": "as-L400-048",
+    "level": "L400",
+    "lesson": 22,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "What does this simplified vetting step print for a P = 3.12 d candidate with a 6.0 h duration?",
+    "code": "def vet(p, d):\n    reasons = []\n    t_max_h = 1.5 * 13.0 * (p / 365.25) ** (1 / 3)\n    if d > t_max_h:\n        reasons.append(f\"duration {d} h too long for P = {p:.2f} d (limit {t_max_h:.2f} h)\")\n    return (\"planet_candidate\" if not reasons else \"rejected\"), reasons\nprint(*vet(3.12, 6.0))",
+    "options": [
+      "planet_candidate []",
+      "rejected ['duration 6.0 h too long for P = 3.12 d (limit 3.99 h)']",
+      "rejected ['duration 6.0 h too long for P = 3.12 d (limit 13.00 h)']",
+      "rejected ['duration 6.0 h too long for P = 3.12 d (limit 2.66 h)']"
+    ],
+    "answer": 1,
+    "explanation": "(3.12/365.25)^(1/3) = 0.205, so the limit is 1.5 x 13.0 x 0.205 = 3.99 h and a 6-h event is rejected as too long for a planet at that period.",
+    "source": "Lesson 22 code (pipeline.vet duration rule)"
+  },
+  {
+    "id": "as-L400-049",
+    "level": "L400",
+    "lesson": 22,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "The capstone scorecard fails M4 (depth within 3 sigma of the injection). What do you check first?",
+    "options": [
+      "The masked re-detrend: an unmasked median biases S02 by -2.8 sigma",
+      "The FREQ grid, which should be reduced so the search runs faster per star",
+      "The fake model server's explanations",
+      "The SHA-256 of the input files"
+    ],
+    "answer": 0,
+    "explanation": "M4 compares fitted depths with truth; the classic cause is in-transit points lifting the baseline. FREQ affects period accuracy, and M5/M6 cover hashes and explanations.",
+    "source": "Lesson 22 troubleshooting"
+  },
+  {
+    "id": "as-L400-050",
+    "level": "L400",
+    "lesson": 22,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "In try_it, shrinking the detrending window from 0.75 d to 0.25 d drops S03's depth from 4834 ppm (SNR 44) to 726 ppm (SNR 6.7). Why?",
+    "options": [
+      "A shorter window adds noise to every point equally",
+      "A window comparable to the ~4-h transit lets the running median follow the dip and eat it",
+      "BLS cannot search windows shorter than 0.5 d",
+      "The period changed with the window, so the depth was measured at the wrong phase of the orbit"
+    ],
+    "answer": 1,
+    "explanation": "The detrender must be much longer than the transit; otherwise it treats the dip as a trend. The period stayed 12.3454 d in both runs.",
+    "source": "Lesson 22 try_it and concepts"
+  },
+  {
+    "id": "as-L400-051",
+    "level": "L400",
+    "lesson": 22,
+    "type": "design",
+    "difficulty": 3,
+    "question": "In M6 the fake local model calls every candidate 'a planet' and invents '1.8 Earth radii'. What does the capstone's agent boundary guarantee?",
+    "options": [
+      "The model's text is published if it mentions the star's name",
+      "Verdicts are fixed by code first; explanations with unverified numbers or overclaims are blocked",
+      "The model re-runs the vetting with its own rules and publishes only when they agree with the code",
+      "A model explanation counts as evidence for the verdict"
+    ],
+    "answer": 1,
+    "explanation": "Code decides before the call and a gate checks numbers and claims, so S04, S05 and S06 were blocked and nothing was published. A model's explanation is never evidence.",
+    "source": "Lesson 22 expected output (M6) and caution"
+  }
+]

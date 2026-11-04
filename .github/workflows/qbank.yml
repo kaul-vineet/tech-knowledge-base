@@ -1,0 +1,24 @@
+# Validate every topic's practice question bank: structure (tools/check_qbank.py) and answers
+# (each topic's research/qbank_checks.py recomputes calculations and runs code-reading snippets).
+name: question banks
+on:
+  push:
+    paths: ['*/content/qbank/**', '*/content/L500.json', '*/research/*l500*.py', '*/research/qbank_checks.py', 'tools/check_qbank.py', '.github/workflows/qbank.yml']
+  pull_request:
+    paths: ['*/content/qbank/**', '*/content/L500.json', '*/research/*l500*.py', '*/research/qbank_checks.py', 'tools/check_qbank.py', '.github/workflows/qbank.yml']
+  workflow_dispatch:
+jobs:
+  qbank:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install numpy==2.5.3 cryptography==50.0.2
+      - run: python tools/check_qbank.py quantum-computing cryptography ai-agents distributed-systems application-architecture microbit simulation astronomy
+      - name: Recompute answers and run code-reading snippets
+        run: |
+          for t in quantum-computing cryptography ai-agents distributed-systems application-architecture microbit simulation astronomy; do
+            (cd "$t" && python research/qbank_checks.py && python research/check_l500_qbank.py && python research/l500_checks.py) || exit 1
+          done

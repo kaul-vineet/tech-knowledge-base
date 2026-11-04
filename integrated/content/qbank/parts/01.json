@@ -1,0 +1,552 @@
+[
+ {
+  "id": "int-L600-01-001",
+  "level": "L600",
+  "lesson": 1,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "In the default design (random 96-bit nonces), what does the sealer need from Raft to keep nonces unique after a leader failover?",
+  "options": [
+   "The current Raft term, copied into the first 4 bytes of the nonce",
+   "Nothing: random nonces keep no state that a failover could lose",
+   "The commit index of the last envelope the old leader sealed",
+   "A replicated counter that is read back before every seal"
+  ],
+  "answer": 1,
+  "explanation": "Random nonces carry no state, so a new leader has nothing to recover; only the per-key message cap matters. The term is needed only by the term-plus-counter alternative.",
+  "source": "Project 01 seams (nonce vs failover), ADR-01-1"
+ },
+ {
+  "id": "int-L600-01-002",
+  "level": "L600",
+  "lesson": 1,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "Why do the epoch secrets travel in the Raft log as hybrid welcomes instead of being fetched from a separate key service on replay?",
+  "options": [
+   "Raft needs the epoch secrets to decide which entries are committed",
+   "Replicas must decrypt each message before they are allowed to apply it",
+   "Replaying devices and new leaders rebuild every epoch key from the log",
+   "A welcome in the log is smaller than one request to a key service"
+  ],
+  "answer": 2,
+  "explanation": "Replay from index 1 is self-contained: each epoch entry carries a welcome per member and for the sealer. Replicas never decrypt; they hold no keys.",
+  "source": "Project 01 seams (rotation vs replay), ADR-01-3"
+ },
+ {
+  "id": "int-L600-01-003",
+  "level": "L600",
+  "lesson": 1,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "An envelope sealed under epoch 1 is committed at a log index AFTER the epoch-2 entry that removed carol. What does the state machine do, and why?",
+  "options": [
+   "Accepts it, because the sender sealed it before the removal happened",
+   "Re-encrypts it under the epoch-2 key on every replica before applying",
+   "Accepts it, but marks it so that carol's device hides it from her",
+   "Rejects it (stale_epoch): log order decides who may read it"
+  ],
+  "answer": 3,
+  "explanation": "Membership is defined by log order. Accepting the late epoch-1 envelope lets the removed member read a message the group sees as after her removal (the accept-stale-epoch fault). Replicas cannot re-encrypt; they have no keys.",
+  "source": "Project 01 seams, M4"
+ },
+ {
+  "id": "int-L600-01-004",
+  "level": "L600",
+  "lesson": 1,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Which component reads the envelope header and is therefore a consumer of the envelope contract, even though it never decrypts?",
+  "options": [
+   "The state machine on every replica (reads v, epoch, sender, ikey)",
+   "Only the member devices, because only they hold any epoch keys at all",
+   "Only the outbox relay, which copies the envelope into the log",
+   "Only the Raft election code, which compares log terms"
+  ],
+  "answer": 0,
+  "explanation": "State.apply reads v, epoch, sender and ikey to gate versions, check epochs and dedupe. Changing those fields can break replicas, not just readers.",
+  "source": "Project 01 seams (contract vs replicas), ADR-01-4"
+ },
+ {
+  "id": "int-L600-01-005",
+  "level": "L600",
+  "lesson": 1,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "Why does the outbox store the sealed envelope and not the plaintext message?",
+  "options": [
+   "Sealed envelopes are smaller than the plaintext they protect",
+   "No plaintext on disk; a rejected envelope then cannot be re-sealed",
+   "Raft only accepts base64 text, so raw message bodies are not allowed",
+   "So the relay can pick a fresh nonce just before publishing"
+  ],
+  "answer": 1,
+  "explanation": "The outbox is on-disk state on a node that holds no long-term need for plaintext. A stale-epoch rejection therefore comes back to the client (409) to resend.",
+  "source": "Project 01 ADR-01-2, ADR-01-3"
+ },
+ {
+  "id": "int-L600-01-006",
+  "level": "L600",
+  "lesson": 1,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "The term-plus-counter nonce (4-byte term || 8-byte counter) is unique only under which extra condition?",
+  "options": [
+   "The term is also copied into every envelope header field",
+   "Every node in the cluster seals with its own local counter",
+   "Only the leader seals, and Raft elects one leader per term",
+   "The counter itself is replicated through the Raft log first"
+  ],
+  "answer": 2,
+  "explanation": "Election Safety gives one leader per term. If followers also sealed in the same term, two sealers would share the term prefix and restart counters, so nonces would collide.",
+  "source": "Project 01 ADR-01-1; Raft paper Figure 3"
+ },
+ {
+  "id": "int-L600-01-007",
+  "level": "L600",
+  "lesson": 1,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why is the idempotency fingerprint an HMAC under an epoch-derived key rather than a plain SHA-256 of sender and text?",
+  "options": [
+   "An unkeyed hash lets log readers test guesses of short plaintexts",
+   "HMAC-SHA256 is much faster to compute than a plain SHA-256 hash is",
+   "A SHA-256 digest is too long to fit into a JSON field safely",
+   "Raft requires keyed hashes for any deduplication it performs"
+  ],
+  "answer": 0,
+  "explanation": "The log is ciphertext-only storage. An unkeyed hash of a low-entropy message such as 'yes' leaks it to a dictionary attack; a keyed fingerprint does not.",
+  "source": "Project 01 ADR-01-2"
+ },
+ {
+  "id": "int-L600-01-008",
+  "level": "L600",
+  "lesson": 1,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "Each seam line in the scorecard also runs the matching seeded fault and requires it to FAIL. What does that prove?",
+  "options": [
+   "That such faults are rare enough to ignore in production",
+   "That the check can fail, so it really guards the seam",
+   "That the scorecard prints the same numbers on every run",
+   "That the injected fault has already been fixed in the code"
+  ],
+  "answer": 1,
+  "explanation": "'Guard proven' means mutation-style evidence: the fault breaks the property and the test sees it. Without it a weak test could pass on broken code.",
+  "source": "Project 01 run_project.py seams"
+ },
+ {
+  "id": "int-L600-01-009",
+  "level": "L600",
+  "lesson": 1,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A welcome carries a 1,088-byte ML-KEM-768 ciphertext, a 32-byte X25519 share, a 12-byte nonce and the 32-byte epoch secret wrapped with AES-GCM (16-byte tag). How many raw bytes is one welcome?",
+  "options": [
+   "1,120 B",
+   "1,168 B",
+   "1,180 B",
+   "1,216 B"
+  ],
+  "answer": 2,
+  "explanation": "1,088 + 32 + 12 + (32 + 16) = 1,180 B. 1,120 B is the KEM part only (RFC 10024 server share).",
+  "source": "Project 01 M1 / F3"
+ },
+ {
+  "id": "int-L600-01-010",
+  "level": "L600",
+  "lesson": 1,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "F3's budget is key package + welcome <= 2,400 B. With a 1,216-byte key package and a 1,180-byte welcome, how much headroom is left?",
+  "options": [
+   "4 B",
+   "64 B",
+   "36 B",
+   "184 B"
+  ],
+  "answer": 0,
+  "explanation": "1,216 + 1,180 = 2,396 B, which is 4 B under 2,400 B. Any added field in the welcome would break the budget.",
+  "source": "Project 01 F3"
+ },
+ {
+  "id": "int-L600-01-011",
+  "level": "L600",
+  "lesson": 1,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "Random 96-bit nonces: about how many messages per epoch key until the collision probability reaches 2^-32? (q ~ sqrt(2 * 2^96 * ln(1/(1-p))))",
+  "options": [
+   "about 2^16 (65,536)",
+   "about 2^48 (2.8e14)",
+   "about 2^64 (1.8e19)",
+   "about 2^32.5 (6.1e9)"
+  ],
+  "answer": 3,
+  "explanation": "sqrt(2 * 2^96 * 2^-32) = 2^32.5, about 6.07e9 messages. 2^48 is the square root of the whole nonce space, which is a far higher risk level.",
+  "source": "Project 01 tryIt 2; cryptography L500 #24 prob_tools.q_for_probability"
+ },
+ {
+  "id": "int-L600-01-012",
+  "level": "L600",
+  "lesson": 1,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "The sealer caps each epoch key at 2^32 messages. At a steady 10,000 messages per second, how long until a rotation is forced?",
+  "options": [
+   "about 7.2 minutes",
+   "about 11.9 hours",
+   "about 1.4 years",
+   "about 5.0 days"
+  ],
+  "answer": 3,
+  "explanation": "2^32 / 10,000 = 429,497 s, which is 4.97 days. Rotation then becomes volume-driven, not only membership-driven.",
+  "source": "Project 01 scalingLimits"
+ },
+ {
+  "id": "int-L600-01-013",
+  "level": "L600",
+  "lesson": 1,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A rotation sends one 1,180-byte welcome to each of 100 members plus one to the sealer identity. How many raw welcome bytes does the epoch entry carry?",
+  "options": [
+   "118,000 B",
+   "119,180 B",
+   "120,360 B",
+   "1,180,000 B"
+  ],
+  "answer": 1,
+  "explanation": "101 x 1,180 = 119,180 B (tryIt 2 measured the same). 118,000 B forgets the sealer's own welcome.",
+  "source": "Project 01 tryIt 2"
+ },
+ {
+  "id": "int-L600-01-014",
+  "level": "L600",
+  "lesson": 1,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "Union bound q(q-1)/2^97 for 10,000 random 96-bit nonces under ONE key: which is closest?",
+  "options": [
+   "1.3e-21",
+   "4.0e-23",
+   "6.3e-18",
+   "6.3e-22"
+  ],
+  "answer": 3,
+  "explanation": "10,000 x 9,999 / 2^97 = 6.3e-22. 4.0e-23 is the bound per epoch in F1, where rotation every 2,500 messages leaves about 2,526 per key.",
+  "source": "Project 01 F1; cryptography L500 #24 collision_upper"
+ },
+ {
+  "id": "int-L600-01-015",
+  "level": "L600",
+  "lesson": 1,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "Two leaders each create the shipped sealer nonce source. What does this print?",
+  "code": "class DerivedNonce:\n    def __init__(self):\n        self.counter = 0\n    def next(self, term):\n        self.counter += 1\n        return self.counter.to_bytes(12, \"big\")\n\nold, new = DerivedNonce(), DerivedNonce()\nprint(old.next(3) == new.next(4))",
+  "options": [
+   "False",
+   "True",
+   "ValueError",
+   "b'\\x00'"
+  ],
+  "answer": 1,
+  "explanation": "The shipped DerivedNonce ignores the term and starts every instance at 1, so the first nonce of the old leader (term 3) equals the first nonce of the new leader (term 4).",
+  "source": "Project 01 nonce_derived.py (failure lab)"
+ },
+ {
+  "id": "int-L600-01-016",
+  "level": "L600",
+  "lesson": 1,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "What does this print (the build-task solution's nonce for term 7)?",
+  "code": "def nonce(term, counter):\n    return term.to_bytes(4, \"big\") + counter.to_bytes(8, \"big\")\n\nprint(nonce(7, 1).hex())",
+  "options": [
+   "000000000000000000000007",
+   "070000000000000000000001",
+   "000000070000000000000001",
+   "000000000000000700000001"
+  ],
+  "answer": 2,
+  "explanation": "4-byte big-endian term (00000007) followed by an 8-byte big-endian counter starting at 1 (0000000000000001).",
+  "source": "Project 01 solution/nonce_derived.py"
+ },
+ {
+  "id": "int-L600-01-017",
+  "level": "L600",
+  "lesson": 1,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "A cut-down State.apply dedupe. What does this print?",
+  "code": "seen, out = {}, []\nfor ikey, epoch, fp in [(\"k1\", 1, \"a\"), (\"k1\", 1, \"a\"), (\"k1\", 1, \"b\"), (\"k2\", 1, \"c\")]:\n    old = seen.get(ikey)\n    if old:\n        out.append(\"conflict\" if old[0] == epoch and old[1] != fp else \"duplicate\")\n        continue\n    seen[ikey] = (epoch, fp)\n    out.append(\"accepted\")\nprint(out)",
+  "options": [
+   "['accepted', 'duplicate', 'conflict', 'accepted']",
+   "['accepted', 'accepted', 'accepted', 'accepted']",
+   "['accepted', 'duplicate', 'duplicate', 'accepted']",
+   "['accepted', 'conflict', 'conflict', 'accepted']"
+  ],
+  "answer": 0,
+  "explanation": "Same key and fingerprint is a duplicate; same key, same epoch, different fingerprint is a conflict (the API answers 422); a new key is accepted.",
+  "source": "Project 01 replicated_state.py"
+ },
+ {
+  "id": "int-L600-01-018",
+  "level": "L600",
+  "lesson": 1,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "Same key, same nonce, two messages. What does this print?",
+  "code": "import os\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\n\naead, n = AESGCM(os.urandom(32)), (1).to_bytes(12, \"big\")\nm1, m2 = b\"msg 00000 from alice\", b\"msg 00010 from bob!!\"\nc1, c2 = aead.encrypt(n, m1, None), aead.encrypt(n, m2, None)\nprint(bytes(a ^ b ^ k for a, b, k in zip(c1, c2, m1)) == m2)",
+  "options": [
+   "False",
+   "InvalidTag",
+   "True",
+   "b''"
+  ],
+  "answer": 2,
+  "explanation": "AES-GCM is counter mode: c1 XOR c2 = m1 XOR m2, so XOR with the known m1 gives m2. This is the failure lab's keystream reuse.",
+  "source": "Project 01 failure lab; tryIt 1"
+ },
+ {
+  "id": "int-L600-01-019",
+  "level": "L600",
+  "lesson": 1,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "The API validates the header with lesson 5's pattern. What does this print?",
+  "code": "import re\nKEY_RE = re.compile(r'^\"([0-9a-f-]{36})\"$')\nk = \"6f1c2a5e-0d4b-4c8e-9a71-3b2f8e5d4c10\"\nstatus = lambda h: 201 if KEY_RE.match(h or \"\") else 400\nprint(status(k), status(f'\"{k}\"'))",
+  "options": [
+   "201 201",
+   "400 400",
+   "201 400",
+   "400 201"
+  ],
+  "answer": 3,
+  "explanation": "The published key format is a quoted UUID (a structured-field string). The unquoted value does not match, so 400; the quoted one passes.",
+  "source": "Project 01 M3; distributed-systems L100 #5 KEY_RE"
+ },
+ {
+  "id": "int-L600-01-020",
+  "level": "L600",
+  "lesson": 1,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "Version gate with replicated vs node-local settings. What does this print?",
+  "code": "replicated = [1, 2, 3]  # set by a contract log entry\nlocal = {\"n1\": [1, 2, 3], \"n2\": [1, 2], \"n3\": [1, 2]}\nprint([3 in replicated for _ in local], [3 in local[n] for n in local])",
+  "options": [
+   "[True, True, True] [True, True, True]",
+   "[True, True, True] [True, False, False]",
+   "[False, False, False] [True, False, False]",
+   "[True, False, False] [True, True, True]"
+  ],
+  "answer": 1,
+  "explanation": "With the gate in the log every replica accepts v3 at the same index. With a node-local setting only n1 accepts it, so the replicas diverge (the local-contract-config fault).",
+  "source": "Project 01 M5; seam contract"
+ },
+ {
+  "id": "int-L600-01-021",
+  "level": "L600",
+  "lesson": 1,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "The offline scan of stored envelopes reports reused nonces whose values are 1, 2, 3, 4, 5 under the same epoch, but only after failovers. What is the most likely cause?",
+  "options": [
+   "The operating system's random number generator is broken",
+   "Two epochs were accidentally given one key",
+   "The counter lives in leader memory and restarts at 1",
+   "The Raft log silently lost committed entries"
+  ],
+  "answer": 2,
+  "explanation": "Small integer nonces that repeat only after failovers point at a per-process counter. A broken CSPRNG would not produce 1, 2, 3; lost entries would show as safety violations, not reuse.",
+  "source": "Project 01 failure lab (diagnose)"
+ },
+ {
+  "id": "int-L600-01-022",
+  "level": "L600",
+  "lesson": 1,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "After a leader crash, readers see one message twice. The log holds two DIFFERENT ciphertexts with the same Idempotency-Key. Where is the bug?",
+  "options": [
+   "Dedupe ran in the old leader's memory, not in replicated state",
+   "AES-GCM produced a different tag for the same message bytes",
+   "The client generated a brand-new key for each retry attempt",
+   "The Raft election restriction is missing from the cluster code"
+  ],
+  "answer": 0,
+  "explanation": "Same key in both entries rules out a client bug. Different ciphertexts are expected with random nonces. Only apply-time dedupe on replicated state removes the second copy (no-apply-dedupe fault).",
+  "source": "Project 01 seam idempotency; ADR-01-2"
+ },
+ {
+  "id": "int-L600-01-023",
+  "level": "L600",
+  "lesson": 1,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "After the first rotation, replaying the log from index 1 on a new device fails with InvalidTag on every message before the rotation. What is wrong?",
+  "options": [
+   "The welcome was built with the wrong KEM group identifier",
+   "Log entries were reordered while the follower caught up",
+   "The same nonce was reused across the two epoch keys",
+   "Old envelopes are opened with the newest epoch key"
+  ],
+  "answer": 3,
+  "explanation": "Envelopes name their epoch; readers must keep one key per epoch they were welcomed to. Using the current key for old ciphertexts fails authentication.",
+  "source": "Project 01 seam rotation vs replay"
+ },
+ {
+  "id": "int-L600-01-024",
+  "level": "L600",
+  "lesson": 1,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "Alice's device shows 5 messages when reading from n1 but 3 from n2 and n3. No safety violations are reported. What do you check first?",
+  "options": [
+   "The randomized election timeouts of each node",
+   "The AES key length configured on each node",
+   "A node-local setting that accepts an ungated version",
+   "The order in which each outbox relay publishes its rows"
+  ],
+  "answer": 2,
+  "explanation": "Identical committed logs but different visible messages means the APPLY step differs per node: a local version setting (local-contract-config fault gave 3/5/3).",
+  "source": "Project 01 seam contract; M5"
+ },
+ {
+  "id": "int-L600-01-025",
+  "level": "L600",
+  "lesson": 1,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "Carol was removed in epoch 2, yet her device reads one message that appears after the removal in the log. What allowed it?",
+  "options": [
+   "An epoch-1 envelope accepted after the rotation",
+   "Carol still has a welcome inside the epoch-2 entry",
+   "AES-GCM-SIV leaked the plaintext under nonce reuse",
+   "The relay published the same outbox row twice"
+  ],
+  "answer": 0,
+  "explanation": "The only epoch-1 key she holds opened it, so the message was sealed under epoch 1 and accepted after the rotation (accept-stale-epoch fault).",
+  "source": "Project 01 M4 / seam rotation"
+ },
+ {
+  "id": "int-L600-01-026",
+  "level": "L600",
+  "lesson": 1,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "A client's retry after a 503 gets 422 instead of 200. The app adds the send time to the text just before each attempt. Why?",
+  "options": [
+   "The leader changed between the first try and the retry",
+   "The Idempotency-Key header was missing on the retry",
+   "The epoch key was rotated between the two attempts",
+   "Same key, different body: the fingerprints differ"
+  ],
+  "answer": 3,
+  "explanation": "A retry must resend the identical request. Changing the body under the same key is exactly the 422 case of the Idempotency-Key draft. A missing key would give 400.",
+  "source": "Project 01 M3; draft-ietf-httpapi-idempotency-key-header"
+ },
+ {
+  "id": "int-L600-01-027",
+  "level": "L600",
+  "lesson": 1,
+  "type": "design",
+  "difficulty": 3,
+  "question": "A broadcast channel will seal about 10^10 messages under one epoch key between membership changes. Which nonce strategy fits best?",
+  "options": [
+   "Leader-only term || counter, or rotate keys by volume",
+   "Random 96-bit nonces, exactly as in the default design",
+   "A per-process counter that starts again at zero",
+   "A millisecond timestamp used as the nonce prefix"
+  ],
+  "answer": 0,
+  "explanation": "10^10 exceeds the 2^32 random-nonce limit per key. A deterministic term || counter has no birthday bound (or rotate by volume). Timestamps and per-process counters repeat.",
+  "source": "Project 01 ADR-01-1; NIST SP 800-38D 8.2.1 / 8.3"
+ },
+ {
+  "id": "int-L600-01-028",
+  "level": "L600",
+  "lesson": 1,
+  "type": "design",
+  "difficulty": 3,
+  "question": "You add AES-GCM-SIV as defence in depth. What does a nonce reuse still reveal?",
+  "options": [
+   "Nothing at all, the scheme is fully nonce-proof",
+   "Only whether the two messages are identical",
+   "The XOR of the two plaintexts, like AES-GCM",
+   "The GHASH authentication key, like AES-GCM"
+  ],
+  "answer": 1,
+  "explanation": "RFC 8452: with a misuse-resistant AEAD a repeated nonce discloses only message equality. tryIt 1 showed recovery fails with GCM-SIV but works with GCM.",
+  "source": "Project 01 tryIt 1; RFC 8452"
+ },
+ {
+  "id": "int-L600-01-029",
+  "level": "L600",
+  "lesson": 1,
+  "type": "design",
+  "difficulty": 3,
+  "question": "A 1,000-member group rotates on every membership change. What is the main scaling problem of pairwise hybrid welcomes, and the usual fix?",
+  "options": [
+   "CPU time for AES; switch the cipher to ChaCha20",
+   "Raft cannot store binary data, so base64 it all",
+   "Nonce reuse across members; switch to counters",
+   "O(n) welcome bytes (~1.18 MB at 1,000); use MLS"
+  ],
+  "answer": 3,
+  "explanation": "Each welcome is 1,180 B, so 1,000 welcomes is about 1.18 MB per epoch entry, replicated to every node. MLS needs about log2(n) encryptions per commit.",
+  "source": "Project 01 scalingLimits; cryptography L400 #20"
+ },
+ {
+  "id": "int-L600-01-030",
+  "level": "L600",
+  "lesson": 1,
+  "type": "design",
+  "difficulty": 2,
+  "question": "What is the safe rollout order for envelope v3?",
+  "options": [
+   "Readers and state machine, then the gate entry, then writers",
+   "Writers first, then the readers once errors appear in the logs",
+   "A config flag flipped on each node during a rolling restart",
+   "Readers fall back to v2 parsing whenever they meet a v3"
+  ],
+  "answer": 0,
+  "explanation": "Expand, then contract: readers first, one replicated switch, writers last. Per-node flags make replicas diverge; fallback is never allowed.",
+  "source": "Project 01 ADR-01-4"
+ },
+ {
+  "id": "int-L600-01-031",
+  "level": "L600",
+  "lesson": 1,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Welcomes stay in the log for years and an attacker can record them now. Why hybrid X25519 + ML-KEM-768 rather than X25519 alone or ML-KEM alone?",
+  "options": [
+   "Hybrid key shares are smaller than X25519 shares alone",
+   "X25519 alone is no longer allowed in TLS 1.3",
+   "Secret if either part holds; X25519 falls to quantum",
+   "ML-KEM cannot work without an X25519 share"
+  ],
+  "answer": 2,
+  "explanation": "Harvest-now-decrypt-later targets X25519. The classical part is a safety net for a new lattice scheme. Size is the cost, not a benefit (1,120 B vs 32 B).",
+  "source": "Project 01 M1; RFC 10024; cryptography L400 #18"
+ },
+ {
+  "id": "int-L600-01-032",
+  "level": "L600",
+  "lesson": 1,
+  "type": "design",
+  "difficulty": 2,
+  "question": "The replicated dedupe table grows forever. Which mitigation keeps retries safe?",
+  "options": [
+   "Delete each key as soon as its message commits",
+   "Publish a retry window for key expiry, plus snapshots",
+   "Move the table into the leader's memory instead",
+   "Deduplicate by comparing the stored ciphertext bytes instead"
+  ],
+  "answer": 1,
+  "explanation": "The idempotency draft lets a resource publish key expiry. Snapshots bound replay. Deleting at commit breaks late retries; leader memory dies on failover.",
+  "source": "Project 01 ADR-01-2; scalingLimits"
+ }
+]

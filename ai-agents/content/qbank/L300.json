@@ -1,0 +1,812 @@
+[
+  {
+    "id": "ag-L300-001",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A ticket classifier must return JSON with a category from a fixed list. Which kind of check is 'the output parses as JSON and has exactly the agreed keys'?",
+    "options": [
+      "An exact check",
+      "A structural check",
+      "A rubric check",
+      "A judge-model check"
+    ],
+    "answer": 1,
+    "explanation": "Structural checks ask whether output is parseable and shaped right; exact checks compare a field with its label. A structural failure is a contract break even when the content looks right.",
+    "source": "Lesson 12 Glossary; Code walkthrough"
+  },
+  {
+    "id": "ag-L300-002",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the lesson's gate also block on regressions vs the baseline, not only on the average pass rate?",
+    "options": [
+      "Because CI systems only understand per-case results",
+      "Because averages cannot be computed for fewer than 100 cases",
+      "An average can stay high while a case that used to pass now fails",
+      "Because the baseline run is always more accurate than any new run of the prompt"
+    ],
+    "answer": 2,
+    "explanation": "A regression on one known case hurts real users even when the overall rate looks fine. The per-case rule kept v2 blocked even with an 85 % bar.",
+    "source": "Lesson 12 Concepts; Check yourself"
+  },
+  {
+    "id": "ag-L300-003",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "When is a judge model (llm-rubric) the right tool in this lesson's terms?",
+    "options": [
+      "For classification labels, where it is cheaper than exact checks",
+      "For every check, since a judge model is more accurate than code-based assertions",
+      "For JSON shape checks, where parsing is unreliable",
+      "For open-ended text that code checks cannot grade, pinned and calibrated"
+    ],
+    "answer": 3,
+    "explanation": "Judges cost money and latency and have position, verbosity and self-enhancement biases, so use them only where code cannot express quality. Classification and shape have exact, free checks.",
+    "source": "Lesson 12 Trade-offs; Check yourself"
+  },
+  {
+    "id": "ag-L300-004",
+    "level": "L300",
+    "lesson": 12,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A golden set has 20 cases and the gate requires a pass rate of at least 95 %. What is the minimum number of passing cases?",
+    "options": [
+      "19",
+      "17",
+      "20",
+      "18"
+    ],
+    "answer": 0,
+    "explanation": "0.95 x 20 = 19 cases; 18 passing is 90 %, which is below the bar. In the lab v2 scored 18/20 and was blocked.",
+    "source": "Lesson 12 Expected results"
+  },
+  {
+    "id": "ag-L300-005",
+    "level": "L300",
+    "lesson": 12,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "This is the lesson's gate() logic. What does the snippet print?",
+    "code": "def gate(report, baseline, min_pass_rate):\n    regressions = [cid for cid, r in report[\"results\"].items()\n                   if baseline[\"results\"].get(cid, {}).get(\"pass\") and not r[\"pass\"]]\n    reasons = [f\"pass rate {report['pass_rate']:.0%} < {min_pass_rate:.0%}\"] \\\n        if report[\"pass_rate\"] < min_pass_rate else []\n    return reasons + ([f\"regressions vs baseline: {regressions}\"] if regressions else [])\n\nbase = {\"results\": {\"t01\": {\"pass\": True}, \"t07\": {\"pass\": True}}}\nnew = {\"pass_rate\": 0.90, \"results\": {\"t01\": {\"pass\": True}, \"t07\": {\"pass\": False}}}\nprint(gate(new, base, min_pass_rate=0.85))",
+    "options": [
+      "['pass rate 90% < 85%']",
+      "[]",
+      "[\"regressions vs baseline: ['t07']\"]",
+      "['pass rate 90% < 85%', \"regressions vs baseline: ['t07']\"]"
+    ],
+    "answer": 2,
+    "explanation": "90 % clears the 85 % bar, so only the regression rule fires: t07 passed in the baseline and fails now. The tempting [] assumes a lower bar unblocks everything.",
+    "source": "Lesson 12 Code (gate); Try it 1"
+  },
+  {
+    "id": "ag-L300-006",
+    "level": "L300",
+    "lesson": 12,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The lesson's rubric gives a summary up to 3 points and needs 2 of 3. What does this print?",
+    "code": "summary = \"Customer asks for a refund because the parcel arrived two weeks late and damaged\"\npoints = [len(summary.split()) <= 12, \"refund\" in summary.lower(), \"sorry\" not in summary.lower()]\nprint(f\"{sum(points)}/{len(points)}\", \"pass\" if sum(points) / len(points) >= 2 / 3 else \"fail\")",
+    "options": [
+      "2/3 fail",
+      "1/3 fail",
+      "2/3 pass",
+      "3/3 pass"
+    ],
+    "answer": 2,
+    "explanation": "The summary has 14 words (over 12), but it mentions 'refund' and has no 'sorry': 2 of 3 points meets the 2/3 threshold. Rubrics give partial credit instead of all-or-nothing.",
+    "source": "Lesson 12 Code walkthrough (rubric)"
+  },
+  {
+    "id": "ag-L300-007",
+    "level": "L300",
+    "lesson": 12,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A prompt 'cleanup' passes a three-example spot check (3/3). The golden set has 20 cases, two of them account tickets. What should decide whether it merges?",
+    "options": [
+      "The developer's judgement, since the spot check passed",
+      "A judge model rating the new prompt's style",
+      "The full golden set in CI with the pass-rate and regression gate",
+      "A larger spot check of ten random cases, reviewed by the prompt's author"
+    ],
+    "answer": 2,
+    "explanation": "The spot check missed the bug because none of its cases was an account ticket; covering every category in a gated run catches it. Ten random cases can still miss a 2-case category.",
+    "source": "Lesson 12 Failure lab; Check yourself"
+  },
+  {
+    "id": "ag-L300-008",
+    "level": "L300",
+    "lesson": 12,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "To get CI green, a developer deletes the two failing account cases from golden.jsonl. What is the problem?",
+    "options": [
+      "The gate is only as good as the set: deleting cases hides the bug",
+      "The baseline file must be regenerated by the model",
+      "Nothing, as long as the pass rate is now 100 %",
+      "The gate will crash, because the case count no longer matches the baseline file"
+    ],
+    "answer": 0,
+    "explanation": "18/18 is green but the account category is now untested; golden-set changes need review like code. The gate itself runs fine on fewer cases, which is what makes this dangerous.",
+    "source": "Lesson 12 Try it 2"
+  },
+  {
+    "id": "ag-L300-009",
+    "level": "L300",
+    "lesson": 12,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "The gate fails on every run after you switch from the fake server to a real model, even for the unchanged prompt. What is the likely fix?",
+    "options": [
+      "Write a new baseline with the real model and review it once",
+      "Remove the regression rule for real models",
+      "Raise the temperature so answers vary more",
+      "Lower the pass-rate bar until the gate passes with the real model"
+    ],
+    "answer": 0,
+    "explanation": "The stored baseline came from the fake server, so many cases 'regress' only because the model differs. Lowering the bar would also hide real regressions.",
+    "source": "Lesson 12 Troubleshooting"
+  },
+  {
+    "id": "ag-L300-010",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is a span named 'chat qwen2.5:1.5b' and not 'chat for user 42'?",
+    "options": [
+      "Because user ids are not allowed anywhere in a trace",
+      "Because backends sort spans by name alphabetically",
+      "Span names must be low-cardinality; per-user detail goes in attributes",
+      "Because the model name is required to be unique for every span in a trace"
+    ],
+    "answer": 2,
+    "explanation": "Low-cardinality names let backends group and chart operations; ids go in attributes, if at all. Personal data on spans needs extra care, but the naming rule is about grouping.",
+    "source": "Lesson 13 Check yourself"
+  },
+  {
+    "id": "ag-L300-011",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why must a span be recorded in a finally block (or equivalent) even when the operation raises?",
+    "options": [
+      "Because spans without a duration crash the exporter",
+      "Because only successful spans are sampled",
+      "Because Python silently discards exceptions that are raised inside a with-block",
+      "Failed operations matter most: status ERROR and error.type must be kept"
+    ],
+    "answer": 3,
+    "explanation": "Without finally, a failing call leaves no span, so the trace hides exactly what you need to debug. The lab's span records ERROR and the exception class on exit.",
+    "source": "Lesson 13 Check yourself; Code walkthrough"
+  },
+  {
+    "id": "ag-L300-012",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In the OpenTelemetry GenAI conventions used here, what is gen_ai.operation.name?",
+    "options": [
+      "The model's name, such as qwen2.5:1.5b",
+      "A free-text description of the operation, chosen by each team for its own spans",
+      "chat, execute_tool, invoke_agent ... - the first word of the span name",
+      "The id of the tool call that created the span"
+    ],
+    "answer": 2,
+    "explanation": "Standard operation names make spans from any agent comparable in any backend. The model name is a separate attribute and the second part of the span name.",
+    "source": "Lesson 13 Glossary"
+  },
+  {
+    "id": "ag-L300-013",
+    "level": "L300",
+    "lesson": 13,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "An agent run's root span lasts 640 ms and the execute_tool search_docs span inside it lasts 597 ms. What share of the run is that tool span, to the nearest percent?",
+    "options": [
+      "7%",
+      "100%",
+      "48%",
+      "93%"
+    ],
+    "answer": 3,
+    "explanation": "597 / 640 = 93 %. Dividing by the sum of both spans double-counts the child, which is already inside the root.",
+    "source": "Lesson 13 Expected results; Code walkthrough (summarize)"
+  },
+  {
+    "id": "ag-L300-014",
+    "level": "L300",
+    "lesson": 13,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A trace shows 4 chat spans of 250 ms each and one 600 ms execute_tool span. Which costs more time in total, and by how much?",
+    "options": [
+      "The tool, by 350 ms (600 vs 250 ms)",
+      "Neither: both total the same time",
+      "The tool, by 100 ms (600 vs 500 ms)",
+      "Model calls, by 400 ms (1000 vs 600 ms)"
+    ],
+    "answer": 3,
+    "explanation": "4 x 250 = 1,000 ms of model time beats one 600 ms tool, so fewer model steps would help most. Comparing one chat span with the tool reverses the conclusion.",
+    "source": "Lesson 13 Try it 2; Check yourself"
+  },
+  {
+    "id": "ag-L300-015",
+    "level": "L300",
+    "lesson": 13,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A span helper in the style of the lesson. What does the snippet print?",
+    "code": "from contextlib import contextmanager, suppress\nspans = []\n@contextmanager\ndef span(name):\n    status = \"OK\"\n    try:\n        yield\n    except Exception as exc:\n        status = f\"ERROR {type(exc).__name__}\"\n        raise\n    finally:\n        spans.append(status)\nwith span(\"chat\"): pass\nwith suppress(TimeoutError), span(\"execute_tool\"): raise TimeoutError()\nprint(spans)",
+    "options": [
+      "['OK']",
+      "['OK', 'ERROR TimeoutError']",
+      "['ERROR TimeoutError']",
+      "['OK', 'OK']"
+    ],
+    "answer": 1,
+    "explanation": "The finally block writes a span even when the block raises, with the exception's class name. Without it only the successful span would be recorded.",
+    "source": "Lesson 13 Code walkthrough (span context manager)"
+  },
+  {
+    "id": "ag-L300-016",
+    "level": "L300",
+    "lesson": 13,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Grouping spans by name, as the lesson's summarize() does. What does this print?",
+    "code": "from collections import defaultdict\nspans = [(\"invoke_agent support-agent\", 1450)] + [(\"chat fake-model\", 200)] * 4 \\\n        + [(\"execute_tool search_docs\", 600)]\ntotal, count = defaultdict(int), defaultdict(int)\nfor name, ms in spans:\n    total[name] += ms\n    count[name] += 1\nbelow_root = {n: t for n, t in total.items() if not n.startswith(\"invoke_agent\")}\nslowest = max(below_root, key=below_root.get)\nprint(slowest, count[slowest], total[slowest])",
+    "options": [
+      "invoke_agent support-agent 1 1450",
+      "chat fake-model 4 800",
+      "chat fake-model 1 200",
+      "execute_tool search_docs 1 600"
+    ],
+    "answer": 1,
+    "explanation": "Below the root, the four chat spans total 800 ms and the single tool span 600 ms, so chat is the slowest operation. Including the root would always 'win', which is why diagnose() skips it.",
+    "source": "Lesson 13 Code walkthrough (summarize / diagnose)"
+  },
+  {
+    "id": "ag-L300-017",
+    "level": "L300",
+    "lesson": 13,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Users say 'the agent is slow'. Your only log is one line per run: duration_ms 611. What gives you a cause?",
+    "options": [
+      "A second log line with the user's question",
+      "Measuring the average duration over a week",
+      "Raising the log level to DEBUG for the whole service and reading every line",
+      "A span per run, model call and tool call, grouped by span name"
+    ],
+    "answer": 3,
+    "explanation": "Totals hide causes; spans show which operation took the time (here the cold-index tool). More totals, however many, still cannot name the slow part.",
+    "source": "Lesson 13 Failure lab"
+  },
+  {
+    "id": "ag-L300-018",
+    "level": "L300",
+    "lesson": 13,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A teammate wants prompts and model outputs recorded on every span to debug wrong answers. What does the lesson recommend?",
+    "options": [
+      "Always on, since traces are internal and safe",
+      "Always on, but only for traces that end in errors, since those need debugging",
+      "Never, because content can't help with debugging",
+      "Off by default; opt in with short retention, access control and redaction"
+    ],
+    "answer": 3,
+    "explanation": "Captured content helps debug wrong answers but puts personal data and secrets in the trace store. Keeping all error traces is a sampling rule, not a privacy control.",
+    "source": "Lesson 13 Trade-offs; Caution"
+  },
+  {
+    "id": "ag-L300-019",
+    "level": "L300",
+    "lesson": 13,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Spans appear in the output but never nest under the invoke_agent span. What is the usual cause?",
+    "options": [
+      "Each span needs its own trace_id",
+      "Token counts are missing on tool-call turns",
+      "Child spans are opened outside the parent's with-block",
+      "The exporter sorts spans by start time, which flattens the tree"
+    ],
+    "answer": 2,
+    "explanation": "Nesting comes from the active parent when a span starts, so children must open inside the parent's block (or receive context explicitly across threads). Separate trace ids would break the tree even more.",
+    "source": "Lesson 13 Troubleshooting"
+  },
+  {
+    "id": "ag-L300-020",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is an HTTP 400 from the model server never retried?",
+    "options": [
+      "Because only the fallback model can handle a 400",
+      "The request itself is wrong, so a resend gets the same answer",
+      "Because 400 responses always include Retry-After",
+      "Because a 400 means the server is overloaded and needs time to recover"
+    ],
+    "answer": 1,
+    "explanation": "Only transient failures (5xx, timeouts) are worth retrying; a 4xx is a bug in our request. Overload is reported as 503 or 429, not 400.",
+    "source": "Lesson 14 Concepts; Check yourself"
+  },
+  {
+    "id": "ag-L300-021",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does jitter add to exponential backoff?",
+    "options": [
+      "Random spread so many clients do not retry at the same moments",
+      "A cap so the delay never exceeds a maximum",
+      "A guarantee that the retry will succeed",
+      "A doubling of the delay on every attempt, up to the configured limit"
+    ],
+    "answer": 0,
+    "explanation": "Without jitter, clients retry in lock-step and hit a recovering server in waves. The cap and the doubling are separate parts of the formula.",
+    "source": "Lesson 14 Glossary; Check yourself"
+  },
+  {
+    "id": "ag-L300-022",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the per-question budget count retries, not just agent steps?",
+    "options": [
+      "Because the server bills retries at double the price",
+      "Every attempt costs time and tokens; uncounted retries multiply spend",
+      "Because retries are more expensive than first attempts",
+      "Because agent steps are already limited by the context window, retries are not"
+    ],
+    "answer": 1,
+    "explanation": "A flaky server would otherwise multiply cost behind your back; the lab's naive loop spent 161 tokens on one runaway question. Retries cost the same per call, which is exactly why they must be counted.",
+    "source": "Lesson 14 Check yourself; Failure lab"
+  },
+  {
+    "id": "ag-L300-023",
+    "level": "L300",
+    "lesson": 14,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "The lesson's delay is min(cap, base x 2^attempt) x a random factor in [0.5, 1.0]. With base 0.05 s and cap 0.4 s, what is the possible delay range for attempt = 2?",
+    "options": [
+      "0.20-0.40 s",
+      "0.10-0.20 s",
+      "0.00-0.20 s",
+      "0.025-0.05 s"
+    ],
+    "answer": 1,
+    "explanation": "min(0.4, 0.05 x 4) = 0.2 s, scaled by 0.5-1.0, gives 0.10-0.20 s. Doubling instead of shrinking (0.20-0.40 s) misreads how the jitter factor works.",
+    "source": "Lesson 14 Code walkthrough (backoff)"
+  },
+  {
+    "id": "ag-L300-024",
+    "level": "L300",
+    "lesson": 14,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "The budget allows 1,500 tokens and $0.01 per question, and the primary model is priced at $0.002 per 1k tokens. Which limit trips first?",
+    "options": [
+      "Both: they trip together at 1,500 tokens",
+      "Neither: 1,500 tokens cost $0.03, above the cap",
+      "Cost: $0.01 is reached at 1,500 tokens, before the token cap",
+      "Tokens: the cap trips at 1,500 tokens, while $0.01 would need 5,000"
+    ],
+    "answer": 3,
+    "explanation": "1,500 tokens cost only $0.003; reaching $0.01 would take 5,000 tokens. So the token cap binds first for this model.",
+    "source": "Lesson 14 Code (Budget, PRICE_PER_1K); Failure lab"
+  },
+  {
+    "id": "ag-L300-025",
+    "level": "L300",
+    "lesson": 14,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Each call has a 0.5 s timeout and gets retries=2 (3 attempts). There is a primary and one fallback endpoint. Ignoring backoff, what is the most time a question can spend waiting on timeouts?",
+    "options": [
+      "1.5 s",
+      "2.0 s",
+      "12.0 s",
+      "3.0 s"
+    ],
+    "answer": 3,
+    "explanation": "2 endpoints x 3 attempts x 0.5 s = 3.0 s, a hard bound. Without timeouts the naive loop waited 2 s per stall, which is how one question took 6.1 s.",
+    "source": "Lesson 14 Code walkthrough; Expected results"
+  },
+  {
+    "id": "ag-L300-026",
+    "level": "L300",
+    "lesson": 14,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The lesson's retry rule, written as a function. What does it print?",
+    "code": "def should_retry(status):\n    return status >= 500\n\nprint([should_retry(s) for s in (500, 503, 400, 404)])",
+    "options": [
+      "[True, True, True, True]",
+      "[True, True, False, False]",
+      "[False, False, True, True]",
+      "[True, False, False, False]"
+    ],
+    "answer": 1,
+    "explanation": "5xx errors are transient and retried; 4xx means our request is wrong and is raised immediately. Retrying 400s would just resend the same bad request.",
+    "source": "Lesson 14 Code walkthrough (retry policy)"
+  },
+  {
+    "id": "ag-L300-027",
+    "level": "L300",
+    "lesson": 14,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The response cache keys on the full request. What does this snippet print?",
+    "code": "import hashlib, json\n\ndef key(messages):\n    return hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()\n\na = [{\"role\": \"user\", \"content\": \"2+2?\"}]\nb = [{\"content\": \"2+2?\", \"role\": \"user\"}]\nc = [{\"role\": \"user\", \"content\": \"3+3?\"}]\nprint(key(a) == key(b), key(a) == key(c))",
+    "options": [
+      "True True",
+      "False True",
+      "False False",
+      "True False"
+    ],
+    "answer": 3,
+    "explanation": "sort_keys=True makes key order irrelevant, so the same request maps to the same key; changing the question changes the key. Without sort_keys, a reordered dict could miss the cache.",
+    "source": "Lesson 14 Code walkthrough (cache key)"
+  },
+  {
+    "id": "ag-L300-028",
+    "level": "L300",
+    "lesson": 14,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "After a product price change, the agent keeps giving the old price from its response cache. What does the lesson recommend?",
+    "options": [
+      "Key the cache on everything that affects the answer and give entries a lifetime",
+      "Turn off the response cache permanently, since cached answers can never be trusted",
+      "Lower the model's temperature to 0",
+      "Retry the request until the price changes"
+    ],
+    "answer": 0,
+    "explanation": "The cache key must include prompt version and tool data, and entries need a TTL. Disabling the cache throws away the savings; retries just hit the same cache entry.",
+    "source": "Lesson 14 Troubleshooting"
+  },
+  {
+    "id": "ag-L300-029",
+    "level": "L300",
+    "lesson": 14,
+    "type": "design",
+    "difficulty": 3,
+    "question": "During outages you can fall back to a smaller model or return a canned answer early. When is the fallback model the right choice?",
+    "options": [
+      "When the fallback passes the golden set for this task",
+      "Always, since any answer beats a canned reply",
+      "Only when the primary returns HTTP 400",
+      "When the budget has already been exceeded"
+    ],
+    "answer": 0,
+    "explanation": "A fallback trades quality for availability, so it must be evaluated like any model (lesson 12). Without that evidence a canned, honest reply is safer.",
+    "source": "Lesson 14 Trade-offs"
+  },
+  {
+    "id": "ag-L300-030",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A refund call timed out on the client. Did the refund happen?",
+    "options": [
+      "No: the server rolls back when the client disconnects",
+      "Unknown: the server may have committed and answered late",
+      "No: a timeout means the server never received the request at all",
+      "Yes: timeouts only happen after a commit"
+    ],
+    "answer": 1,
+    "explanation": "A timeout only means the client stopped waiting; the server may still finish the work. Only an idempotency key makes a retry safe in that state.",
+    "source": "Lesson 15 Check yourself; Lesson 14 Glossary (timeout)"
+  },
+  {
+    "id": "ag-L300-031",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What must the human approver see for a queued send_refund?",
+    "options": [
+      "A short, friendly description of the action written by the model for the reviewer",
+      "The exact tool and arguments that will run, and the run they came from",
+      "The model's confidence score for the action",
+      "Only the customer's name, to protect privacy"
+    ],
+    "answer": 1,
+    "explanation": "Approvers approve the exact arguments, not a description; a model-written summary can differ from what will run. The audit log ties the approval to the run.",
+    "source": "Lesson 15 Concepts; Check yourself"
+  },
+  {
+    "id": "ag-L300-032",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "An MCP server marks its delete tool with readOnlyHint: true. How does the lesson treat that hint?",
+    "options": [
+      "As untrusted unless the server is trusted; our own risk table decides",
+      "As a request to run the tool in dry-run mode",
+      "As a binding guarantee from the server that the tool cannot change any data",
+      "As a reason to skip the approval queue"
+    ],
+    "answer": 0,
+    "explanation": "Tool annotations are hints; the lab keeps its own TOOLS risk table and queues anything not read-only. Trusting a hint lets a server talk its way past your gate.",
+    "source": "Lesson 15 In real systems; Code walkthrough"
+  },
+  {
+    "id": "ag-L300-033",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does the queue set status 'executing' and commit before calling the payments API?",
+    "options": [
+      "Because the API rejects requests for pending approvals",
+      "To let the model see that the refund has started",
+      "A crash then leaves 'executing' plus the key, so recovery can resend safely",
+      "To lock the order row so that no other process can touch it during the call"
+    ],
+    "answer": 2,
+    "explanation": "Recording state before the side effect means recovery knows the call may have happened and resends with the same key. The model should never see approval state at all.",
+    "source": "Lesson 15 Code walkthrough; Caution"
+  },
+  {
+    "id": "ag-L300-034",
+    "level": "L300",
+    "lesson": 15,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A tiny payments stand-in that stores key -> response. The first answer is lost to a timeout and the client retries. What does this print?",
+    "code": "def make_server():\n    refunds, seen = [], {}\n    def refund(key, amount):\n        if key not in seen:\n            refunds.append(amount)\n            seen[key] = {\"refund_id\": len(refunds)}\n        return seen[key]\n    return refund, refunds\n\nsame, r1 = make_server()\nfor attempt in range(2): same(\"run1:call7:send_refund\", 25.0)\nfresh, r2 = make_server()\nfor attempt in range(2): fresh(f\"key-{attempt}\", 25.0)\nprint(len(r1), len(r2))",
+    "options": [
+      "1 2",
+      "2 2",
+      "1 1",
+      "2 1"
+    ],
+    "answer": 0,
+    "explanation": "With the same key the server replays the stored response, so one refund; with a new key per attempt it creates a second refund. A key only helps if retries reuse it.",
+    "source": "Lesson 15 Try it 1; Failure lab"
+  },
+  {
+    "id": "ag-L300-035",
+    "level": "L300",
+    "lesson": 15,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The lesson derives the idempotency key from run, tool-call id and tool. What does this print?",
+    "code": "import hashlib\n\ndef key(run_id, call_id, tool):\n    return hashlib.sha256(f\"{run_id}:{call_id}:{tool}\".encode()).hexdigest()[:16]\n\nfirst = key(\"run-1\", \"call-7\", \"send_refund\")\nretry = key(\"run-1\", \"call-7\", \"send_refund\")\nother = key(\"run-1\", \"call-8\", \"send_refund\")\nprint(first == retry, first == other)",
+    "options": [
+      "False False",
+      "True False",
+      "True True",
+      "False True"
+    ],
+    "answer": 1,
+    "explanation": "Retries of the same call get the same key; a different tool-call id is a different logical call with its own key. A random key per attempt would break the first comparison.",
+    "source": "Lesson 15 Code walkthrough (key)"
+  },
+  {
+    "id": "ag-L300-036",
+    "level": "L300",
+    "lesson": 15,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Duplicate refunds still happen although every request carries an Idempotency-Key. Which line is the bug?",
+    "code": "def send_refund(run_id, call_id, args):\n    for attempt in range(3):\n        key = f\"{run_id}:{call_id}:{attempt}\"\n        try:\n            return post(url, json=args, headers={\"Idempotency-Key\": key}, timeout=0.3)\n        except Timeout:\n            continue",
+    "options": [
+      "headers={\"Idempotency-Key\": key}  - keys belong in the body",
+      "timeout=0.3  - the timeout is too short for the payments API to answer",
+      "for attempt in range(3):  - three attempts are too many",
+      "key = f\"{run_id}:{call_id}:{attempt}\"  - the key changes per attempt"
+    ],
+    "answer": 3,
+    "explanation": "Including the attempt number makes each retry a new logical request, so the server refunds again. A short timeout causes the retry, but the same key would make it harmless.",
+    "source": "Lesson 15 Troubleshooting; Try it 1"
+  },
+  {
+    "id": "ag-L300-037",
+    "level": "L300",
+    "lesson": 15,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "The payments API returns 422 for a request whose Idempotency-Key was already used. What happened, and what should the agent do?",
+    "options": [
+      "The arguments changed since approval; re-queue the call for approval",
+      "The API is overloaded; retry with backoff",
+      "The key expired on the server; generate a random new key and resend the call",
+      "The refund succeeded; report success to the user"
+    ],
+    "answer": 0,
+    "explanation": "422 signals the same key reused with a different payload, so what runs no longer matches what was approved. A random new key would bypass both the approval and the duplicate protection.",
+    "source": "Lesson 15 Troubleshooting; In real systems"
+  },
+  {
+    "id": "ag-L300-038",
+    "level": "L300",
+    "lesson": 15,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Refund approvals pile up and reviewers are slow. A product manager proposes auto-approving refunds up to 20.00. What does the lesson say about this option?",
+    "options": [
+      "Possible, but the policy becomes the control and needs its own tests and limits",
+      "Safe to do at once, since small refunds cannot cause harm",
+      "Better done by letting the model decide which refunds are small",
+      "Never allowed: every side effect must be approved by a person"
+    ],
+    "answer": 0,
+    "explanation": "Auto-approval suits high-volume, low-value cases once golden-set and audit data justify it, and the policy must be tested like code. Letting the model decide removes the control.",
+    "source": "Lesson 15 Trade-offs; Troubleshooting"
+  },
+  {
+    "id": "ag-L300-039",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the red-team suite check world.refunds instead of the agent's answer text?",
+    "options": [
+      "Because answer text is always empty in attack cases",
+      "Because refunds are the only effect an attacker wants",
+      "Because the suite cannot read the model's reply text, only the recorded tool calls",
+      "A polite refusal after the tool already ran is not safe; effects prove it"
+    ],
+    "answer": 3,
+    "explanation": "Safety is judged by recorded effects: tools run, hosts contacted, secrets out. The answer can say 'I can't do that' after the damage is done.",
+    "source": "Lesson 16 Check yourself; Concepts"
+  },
+  {
+    "id": "ag-L300-040",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is a Markdown image in the agent's answer an exfiltration risk?",
+    "options": [
+      "Images make the answer too large for the context window",
+      "Rendering it requests the attacker's URL, with data in the query",
+      "Images can run scripts inside the chat window",
+      "The model leaks its system prompt into the image file"
+    ],
+    "answer": 1,
+    "explanation": "The client fetches the image URL when rendering, so data placed in the URL leaves the process. The output filter removes links to unknown hosts for that reason.",
+    "source": "Lesson 16 Check yourself; Code walkthrough"
+  },
+  {
+    "id": "ag-L300-041",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does a red-team suite include benign control cases?",
+    "options": [
+      "To make the pass rate look higher in reports",
+      "To give the model a few easy practice cases before the real attacks start",
+      "To catch over-blocking: refusing everything would pass every attack",
+      "To check the attacks reached the model"
+    ],
+    "answer": 2,
+    "explanation": "Without benign cases, an agent that does nothing would score perfectly. Checking that payloads arrive in the intended channel is a separate troubleshooting step.",
+    "source": "Lesson 16 Check yourself; Concepts"
+  },
+  {
+    "id": "ag-L300-042",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What does argument provenance mean in this lesson?",
+    "options": [
+      "Each retrieved document must name its author",
+      "Each argument must be signed by the model",
+      "Tool arguments must come from the trusted user request, not retrieved data",
+      "Each tool must declare which server it came from before it is allowed to run"
+    ],
+    "answer": 2,
+    "explanation": "Provenance is a small form of CaMeL-style data-flow control: a URL built from retrieved text fails even before the host check. Signing by the model would prove nothing, since the model is the fooled party.",
+    "source": "Lesson 16 Glossary; Code walkthrough"
+  },
+  {
+    "id": "ag-L300-043",
+    "level": "L300",
+    "lesson": 16,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "With the output filter switched off but the policy kept, 3 of the 8 red-team cases behave safely. What is the safe rate?",
+    "options": [
+      "100.0%",
+      "37.5%",
+      "12.5%",
+      "62.5%"
+    ],
+    "answer": 1,
+    "explanation": "3 / 8 = 37.5 %. The tool calls are still blocked, but answers that retrieved the runbook leak the key; 62.5 % is the unsafe share.",
+    "source": "Lesson 16 Try it 1"
+  },
+  {
+    "id": "ag-L300-044",
+    "level": "L300",
+    "lesson": 16,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A URL check for fetch_url. What does this snippet print?",
+    "code": "from urllib.parse import urlparse\nALLOWED_HOSTS = {\"docs.example.com\"}\nurl = \"https://docs.example.com.attacker.test/p?d=sk-test-123\"\nprint(urlparse(url).hostname in ALLOWED_HOSTS, url.startswith(\"https://docs.example.com\"))",
+    "options": [
+      "True False",
+      "True True",
+      "False True",
+      "False False"
+    ],
+    "answer": 2,
+    "explanation": "urlparse gives the real hostname, which ends in attacker.test, so the allow-list rejects it; a naive prefix check accepts it. Host checks must compare parsed hostnames, not string prefixes.",
+    "source": "Lesson 16 Code walkthrough (URL allow-list)"
+  },
+  {
+    "id": "ag-L300-045",
+    "level": "L300",
+    "lesson": 16,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The lesson's provenance rule, simplified. What does this print?",
+    "code": "task = \"what is the status of order a-1001?\"\n\ndef check(value):\n    return \"ok\" if str(value).lower() in task else \"blocked\"\n\nprint(check(\"A-1001\"), check(\"https://attacker.test/collect\"))",
+    "options": [
+      "ok blocked",
+      "blocked blocked",
+      "ok ok",
+      "blocked ok"
+    ],
+    "answer": 0,
+    "explanation": "The order id appears in the user's request, so it is allowed; the URL came from a retrieved document and is not in the request. Provenance stops the exfiltration even before any host check.",
+    "source": "Lesson 16 Code walkthrough (argument provenance)"
+  },
+  {
+    "id": "ag-L300-046",
+    "level": "L300",
+    "lesson": 16,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Someone allow-lists a whole CDN that includes attacker.test and drops the provenance rule. Which attacks are still stopped?",
+    "options": [
+      "None of them, because the policy layer is now off",
+      "Only the Markdown image attack, which the URL allow-list still blocks on its own",
+      "The refund attacks, by least privilege; the exfiltration paths open",
+      "All of them, because the output filter still runs"
+    ],
+    "answer": 2,
+    "explanation": "The session never had send_refund, so those cases stay safe; with provenance gone and the host allowed, fetch_url can carry data out (5/8 safe). Layers fail independently.",
+    "source": "Lesson 16 Try it 2"
+  },
+  {
+    "id": "ag-L300-047",
+    "level": "L300",
+    "lesson": 16,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A benign request ('fetch our status page') is blocked by the provenance rule. What does the lesson recommend?",
+    "options": [
+      "Widen the session (a different allow-list) rather than weaken provenance",
+      "Ask the model whether the URL is safe before fetching",
+      "Add the request's URL to a regex screen instead",
+      "Remove the provenance rule, since it causes false positives on benign requests"
+    ],
+    "answer": 0,
+    "explanation": "Track benign controls next to attacks and grant the needed capability through session design. Asking the model reintroduces the fooled party as the judge.",
+    "source": "Lesson 16 Troubleshooting; Trade-offs"
+  }
+]

@@ -1,0 +1,139 @@
+[
+ {
+  "id": "07-mac-01",
+  "level": "L600",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "The memory budget on a 16 GB Mac mini is 10.06 GB. What is the largest Aer statevector (complex128, 16 B per amplitude) that fits?",
+  "options": [
+   "30 qubits",
+   "29 qubits",
+   "33 qubits",
+   "14 qubits"
+  ],
+  "answer": 1,
+  "explanation": "16 x 2^29 = 8.6 GB fits, 16 x 2^30 = 17.2 GB does not. 14 qubits is the density-matrix wall (4^n entries).",
+  "source": "07 mac_mini/qubit_sweep.py walls(); Aer docs (16 bytes per amplitude)"
+ },
+ {
+  "id": "07-mac-02",
+  "level": "L600",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Same 10.06 GB budget, density-matrix method (4^n entries of 16 B). Largest n?",
+  "options": [
+   "29",
+   "7",
+   "15",
+   "14"
+  ],
+  "answer": 3,
+  "explanation": "16 x 4^14 = 4.3 GB fits; 16 x 4^15 = 17.2 GB does not. A density matrix needs the memory of a statevector with twice the qubits.",
+  "source": "07 mac_mini/qubit_sweep.py walls()"
+ },
+ {
+  "id": "07-mac-03",
+  "level": "L600",
+  "lesson": 7,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "On the Mac, AerBackend passes every conformance check except agreement: exact_tvd_vs_numpy = 0.04 for all three backends. What is the most likely cause?",
+  "options": [
+   "The noise model mapping differs from L300 #12 (channel order, readout matrix orientation or qubit order), since both sides compute exact probabilities",
+   "Shot noise from 4,000 samples",
+   "Aer uses single precision by default",
+   "The calibration version was bumped by recalibrate() before the comparison"
+  ],
+  "answer": 0,
+  "explanation": "exact_probs involves no sampling, so only a model difference explains 0.04; Aer's default precision is double. The comparison uses the old version's probabilities captured before recalibration.",
+  "source": "07 mac_mini/aer_backend.py noise_model(), conformance()"
+ },
+ {
+  "id": "07-mac-04",
+  "level": "L600",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Why must AerBackend.execute derive seed_simulator from (seed, chunk, version, circuit, backend) instead of letting Aer pick a random seed?",
+  "options": [
+   "Aer rejects runs without an explicit seed",
+   "Random seeds make Aer slower",
+   "A chunk attempt re-executed after a lease expiry must reproduce its counts, so a fenced late commit and its retry cannot disagree",
+   "The cache key includes the seed of every run"
+  ],
+  "answer": 2,
+  "explanation": "The lease/fencing design assumes a re-executed attempt reproduces its samples; conformance() checks 'same_attempt_same_counts' and the test with an unseeded backend shows it failing.",
+  "source": "backends.Backend.execute; 07 mac_mini/aer_backend.py; test_contract_catches_a_backend_that_resamples_on_retry"
+ },
+ {
+  "id": "07-mac-05",
+  "level": "L600",
+  "lesson": 7,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "overnight_load.py --here: with 3 backends, seed 7 gives p95 queue 18.4 s (pass) and seed 8 gives 170.5 s (fail); every contract invariant holds in both. What should change?",
+  "options": [
+   "Nothing: the scorecard passes with seed 7",
+   "Raise the budget to 200 s so both seeds pass",
+   "Drop seed 8 as an outlier",
+   "Judge the p95 fitness function over many seeds and record the capacity that meets it; one seed is a sample, not a guarantee"
+  ],
+  "answer": 3,
+  "explanation": "A capacity claim must hold across the workload distribution. The overnight run measures the pass rate per fleet size (the 6-backend fleet passed both seeds); moving the budget or dropping seeds hides the finding.",
+  "source": "07 mac_mini/README.md real output; overnight_load.py summary"
+ },
+ {
+  "id": "07-mac-06",
+  "level": "L600",
+  "lesson": 7,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print?",
+  "code": "import numpy as np\nseed = lambda *k: int(np.random.SeedSequence(list(k)).generate_state(1)[0])\na = seed(5, 0, 1, 99, 7)\nb = seed(5, 0, 1, 99, 7)\nc = seed(5, 1, 1, 99, 7)\nprint(a == b, a == c)",
+  "options": [
+   "False False",
+   "True False",
+   "True True",
+   "False True"
+  ],
+  "answer": 1,
+  "explanation": "A SeedSequence is a pure function of its entropy list: the same tuple gives the same seed, a different chunk number gives a different one. That is what makes retries reproducible and chunks independent.",
+  "source": "07 mac_mini/aer_backend.py execute (executed in research/checks_07_mac.py)"
+ },
+ {
+  "id": "07-mac-07",
+  "level": "L600",
+  "lesson": 7,
+  "type": "design",
+  "difficulty": 2,
+  "question": "Why should the job service refuse a job wider than the backend's qubit wall at submit time, rather than queue it?",
+  "options": [
+   "Because a queued job that can only fail or swap still takes slots, leases and retries, and the client learns about the problem much later",
+   "Because Aer cannot report an error for oversized circuits",
+   "Because the cache key cannot represent more than 30 qubits",
+   "Because admission control is required by OpenQASM 3"
+  ],
+  "answer": 0,
+  "explanation": "Rejecting early is cheap and honest (a 422-style error with the limit); queueing burns capacity and makes p95 worse for everyone. Aer does report an error above max_memory_mb, which the sweep records.",
+  "source": "07 mac_mini/qubit_sweep.py decision line; jobservice.submit"
+ },
+ {
+  "id": "07-mac-08",
+  "level": "L600",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "overnight_load.py sets the arrival rate to 0.8 x copies jobs/s when it runs fleets of 3 x copies backends. Why scale the rate?",
+  "options": [
+   "loadtest.run rejects rates below 1 job/s",
+   "To make the runs finish in the same wall time",
+   "So every fleet size sees the same offered load per backend, and differences in pass rate come from fleet size, not from a lighter load",
+   "Because the copies have different calibrations"
+  ],
+  "answer": 2,
+  "explanation": "With a fixed rate a bigger fleet would be idle most of the time and trivially pass. Copies keep the same calibrations, latency and slots; only their names and random streams differ.",
+  "source": "07 mac_mini/overnight_load.py docstring and one()"
+ }
+]

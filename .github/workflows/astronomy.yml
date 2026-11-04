@@ -1,0 +1,315 @@
+# Root-level CI for the astronomy topic (GENERATED from astronomy/.github/workflows/labs.yml by tools/sync_root_ci.py).
+# kb/ is the repository root; every job runs inside astronomy/. Edit the topic file, then re-run the script.
+# Runs every astronomy lab demo, tryIt script, buildTask solution, library equivalent and unittest suite (L100-L400
+# and the capstone) with pinned versions on Linux, macOS (Apple silicon, arm64) and Windows (x64). Locally (Linux
+# sandbox) only the stdlib/numpy parts ran; Astropy, Skyfield, SciPy, photutils, REBOUND and the L300/L400 library
+# equivalents and the macOS/Windows runs happen here for the first time (pending-ci). Some equivalents download data
+# on first use (Astropy IERS tables, Skyfield de421.bsp).
+# L200 adds REBOUND 5.2.2 (labs/L200/requirements.txt = L100 pins + rebound).
+# L300 adds astroplan, ccdproc, astroscrappy, emcee, joblib (labs/L300/requirements.txt, which includes the L200 pins).
+# L400 adds fastavro, pyvo, healpy (not Windows) and lightkurve (labs/L400/requirements.txt, which includes the L300
+# pins). pyvo_query.py and fetch_tess.py call external services, so they are continue-on-error.
+# astroplan 0.10.1 ships only an sdist and REBOUND wheels were not checked for every runner, so the L300/L400 jobs
+# install with --prefer-binary (wheels where they exist, source otherwise) instead of --only-binary=:all:.
+name: astronomy labs
+
+on:
+  push:
+    paths: ['astronomy/**', 'shared/**', '.github/workflows/astronomy.yml']
+  pull_request:
+    paths: ['astronomy/**', 'shared/**', '.github/workflows/astronomy.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-labs:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - 01-setup-workbench
+          - 02-coordinates
+          - 03-time-systems
+          - 04-units-magnitudes
+          - 05-orbits-kepler
+          - 06-light-spectra
+        include:
+          - { lab: 01-setup-workbench,  demo: "check_env.py",  equivalent: "",                   agent: "" }
+          - { lab: 02-coordinates,      demo: "sky.py",        equivalent: "sky_astropy.py",     agent: "agent_assist.py --fake" }
+          - { lab: 03-time-systems,     demo: "timescales.py", equivalent: "time_astropy.py",    agent: "" }
+          - { lab: 04-units-magnitudes, demo: "units.py",      equivalent: "units_astropy.py",   agent: "" }
+          - { lab: 05-orbits-kepler,    demo: "kepler.py",     equivalent: "kepler_skyfield.py", agent: "" }
+          - { lab: 06-light-spectra,    demo: "light.py",      equivalent: "light_astropy.py",   agent: "" }
+    defaults:
+      run:
+        shell: bash  # Git Bash on Windows: the same commands run on all three runners
+        working-directory: astronomy/labs/L100/${{ matrix.lab }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies (wheels only - fails if a platform wheel is missing)
+        run: "python -m pip install --only-binary=:all: -r ../01-setup-workbench/requirements.txt"
+      - name: Run demo
+        run: python ${{ matrix.demo }}
+      - name: Run tryIt
+        run: python try_it.py
+      - name: Run library equivalent (Astropy / Skyfield; may download IERS data or de421.bsp)
+        if: matrix.equivalent != ''
+        run: python ${{ matrix.equivalent }}
+      - name: Run agent assist with the fake model
+        if: matrix.agent != ''
+        run: python ${{ matrix.agent }}
+      - name: Run tests (no skips expected in CI)
+        run: python -m unittest -v
+
+  python-labs-l200:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - 07-crossmatch
+          - 08-fits-wcs
+          - 09-aperture-photometry
+          - 10-light-curves
+          - 11-nbody
+        include:
+          - { lab: 07-crossmatch,          demo: "crossmatch.py", equivalent: "crossmatch_astropy.py",   solution: "solution/crossmatch.py", agent: "" }
+          - { lab: 08-fits-wcs,            demo: "fitslite.py",   equivalent: "fits_astropy.py",         solution: "solution/fitslite.py",   agent: "" }
+          - { lab: 09-aperture-photometry, demo: "photometry.py", equivalent: "photometry_photutils.py", solution: "solution/photometry.py", agent: "" }
+          - { lab: 10-light-curves,        demo: "periods.py",    equivalent: "periods_astropy.py",      solution: "solution/periods.py",    agent: "agent_assist.py --fake" }
+          - { lab: 11-nbody,               demo: "nbody.py",      equivalent: "nbody_rebound.py",        solution: "solution/nbody.py",      agent: "" }
+    defaults:
+      run:
+        shell: bash
+        working-directory: astronomy/labs/L200/${{ matrix.lab }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install L100 pins (wheels only)
+        run: "python -m pip install --only-binary=:all: -r ../../L100/01-setup-workbench/requirements.txt"
+      - name: Install REBOUND 5.2.2 (lesson 11; may build from source if no wheel exists for this runner)
+        if: matrix.lab == '11-nbody'
+        run: python -m pip install -r ../requirements.txt
+      - name: Run demo
+        run: python ${{ matrix.demo }}
+      - name: Run tryIt
+        run: python try_it.py
+      - name: Run buildTask reference solution
+        run: python ${{ matrix.solution }}
+      - name: buildTask test must FAIL on the shipped (unfinished) lab file
+        run: "! BUILD_TARGET=mine python -m unittest test_build_task"
+      - name: Run library equivalent (Astropy / SciPy / photutils / REBOUND)
+        run: python ${{ matrix.equivalent }}
+      - name: Run agent assist with the fake model
+        if: matrix.agent != ''
+        run: python ${{ matrix.agent }}
+      - name: Run tests incl. test_build_task on the solution (no skips expected in CI)
+        run: python -m unittest -v
+
+  cross-platform:
+    # same inputs and seeds -> same printed results on every OS (golden.json written on Linux x86_64); numpy only
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: astronomy
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install numpy pin
+        run: python -m pip install numpy==2.5.3
+      - name: L100 fingerprints match golden.json
+        working-directory: astronomy/labs/L100/cross_platform
+        run: python -m unittest -v
+      - name: L200 fingerprints match golden.json
+        working-directory: astronomy/labs/L200/cross_platform
+        run: python -m unittest -v
+      - name: Shared local-agent helper tests (fake server only)
+        working-directory: astronomy/labs/_shared/local_agent
+        run: python -m unittest -v
+      - name: L300 seeded fingerprints match golden.json
+        working-directory: astronomy/labs/L300/cross_platform
+        run: python -m unittest -v
+      - name: L400 + capstone seeded fingerprints match golden.json
+        working-directory: astronomy/labs/L400/cross_platform
+        run: python -m unittest -v
+      - name: L400 local-agent helper (astronomy copy, fake server only)
+        working-directory: astronomy/labs/L400/_agent
+        run: python -m unittest -v
+
+  python-labs-l300:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - 12-observation-planning
+          - 13-ccd-calibration
+          - 14-plate-solving
+          - 15-honest-uncertainty
+          - 16-reproducible-pipelines
+        include:
+          - { lab: 12-observation-planning,   demo: "plan.py --check",  equivalent: "plan_astroplan.py",     solution: "solution/plan.py",        stretch: "solution/urgent.py" }
+          - { lab: 13-ccd-calibration,        demo: "calibrate.py",     equivalent: "calibrate_ccdproc.py",  solution: "solution/calibrate.py",   stretch: "solution/gain.py" }
+          - { lab: 14-plate-solving,          demo: "platesolve.py",    equivalent: "platesolve_astropy.py", solution: "solution/platesolve.py",  stretch: "solution/search.py" }
+          - { lab: 15-honest-uncertainty,     demo: "transit_fit.py",   equivalent: "fit_emcee.py",          solution: "solution/transit_fit.py", stretch: "solution/report.py" }
+          - { lab: 16-reproducible-pipelines, demo: "pipeline.py",      equivalent: "cache_joblib.py",       solution: "solution/pipeline.py",    stretch: "solution/lineage.py" }
+    defaults:
+      run:
+        shell: bash  # Git Bash on Windows: the same commands run on all three runners
+        working-directory: astronomy/labs/L300/${{ matrix.lab }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies (L200 pins + astroplan, ccdproc, astroscrappy, emcee, joblib)
+        run: python -m pip install --prefer-binary -r ../requirements.txt
+      - name: Run demo (shipped, unfixed)
+        run: python ${{ matrix.demo }}
+      - name: Run tryIt
+        run: python try_it.py
+      - name: Run buildTask reference solution (the fix) and the stretch solution
+        run: |
+          python ${{ matrix.solution }}
+          python ${{ matrix.stretch }}
+      - name: buildTask test must FAIL on the shipped (unfixed) lab file
+        run: "! BUILD_TARGET=mine python -m unittest test_build_task"
+      - name: Run library equivalent (astroplan / ccdproc / astropy / emcee / joblib)
+        run: python ${{ matrix.equivalent }}
+      - name: Run tests incl. fault reproductions, test_build_task and test_stretch (no skips expected in CI)
+        run: python -m unittest -v
+
+  python-labs-l400:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - 17-survey-pipeline
+          - 18-alert-broker
+          - 19-big-catalogues
+          - 20-model-comparison
+          - 21-open-data-practice
+        include:
+          - { lab: 17-survey-pipeline,     demo: "survey.py",   extra: "",            solution: "solution/survey.py",  equivalent: "",                     agent: "" }
+          - { lab: 18-alert-broker,        demo: "alerts.py",   extra: "",            solution: "solution/alerts.py",  equivalent: "alert_avro.py",        agent: "agent_assist.py" }
+          - { lab: 19-big-catalogues,      demo: "catalog.py",  extra: "",            solution: "solution/catalog.py", equivalent: "healpix_check.py",     agent: "" }
+          - { lab: 20-model-comparison,    demo: "compare.py",  extra: "",            solution: "solution/compare.py", equivalent: "bessel_scipy.py",      agent: "" }
+          - { lab: 21-open-data-practice,  demo: "release.py",  extra: "defects.py",  solution: "solution/release.py", equivalent: "validate_external.py", agent: "" }
+    defaults:
+      run:
+        shell: bash
+        working-directory: astronomy/labs/L400/${{ matrix.lab }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies (L300 pins + fastavro, pyvo, healpy (not on Windows), lightkurve)
+        run: python -m pip install --prefer-binary -r ../requirements.txt
+      - name: Optional cffconvert 2.0.0 (lesson 21; old package, may not install on 3.12)
+        if: matrix.lab == '21-open-data-practice'
+        run: python -m pip install cffconvert==2.0.0 || echo "cffconvert not installable - validate_external.py skips it"
+      - name: Run demo (shipped design)
+        run: python ${{ matrix.demo }}
+      - name: Run extra evidence script
+        if: matrix.extra != ''
+        run: python ${{ matrix.extra }}
+      - name: Run buildTask reference solution (the fix)
+        run: python ${{ matrix.solution }}
+      - name: Run tryIt
+        run: python try_it.py
+      - name: buildTask + fitness tests must FAIL on the shipped (unfixed) lab file
+        run: "! BUILD_TARGET=mine python -m unittest test_build_task test_fitness"
+      - name: Run library equivalent (healpy has no Windows wheels)
+        if: matrix.equivalent != '' && !(matrix.lab == '19-big-catalogues' && runner.os == 'Windows')
+        run: python ${{ matrix.equivalent }}
+      - name: TAP query against the Gaia archive (lesson 19; external service)
+        if: matrix.lab == '19-big-catalogues'
+        continue-on-error: true
+        run: python pyvo_query.py
+      - name: Run agent assist with the fake model
+        if: matrix.agent != ''
+        run: python ${{ matrix.agent }}
+      - name: Fitness function 3x (wall-clock bounds are generous)
+        run: for i in 1 2 3; do python -m unittest test_fitness || exit 1; done
+      - name: Run tests incl. fault reproductions, test_build_task and test_fitness (healpy/pyvo may skip on Windows / offline)
+        run: python -m unittest -v
+
+  python-capstone-l400:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: astronomy/labs/L400/22-capstone
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies
+        run: python -m pip install --prefer-binary -r ../requirements.txt
+      - name: Run the capstone (fake model) - scorecard must be PASS
+        run: |
+          python run_capstone.py
+          python -c "import json; l = [json.loads(x) for x in open('scorecard.jsonl', encoding='utf-8')]; assert l[-1]['scorecard'] == 'PASS', l[-1]"
+      - name: Run tryIt
+        run: python try_it.py
+      - name: Milestone tests and fitness functions
+        run: python -m unittest -v
+      - name: Real TESS data for pi Men (lightkurve; external service; expect ~6.27 d)
+        continue-on-error: true
+        run: python fetch_tess.py
+
+  python-labs-l500:
+    # L500 Theory & Rigour (lessons 23-27): numerical checks of every theorem, problem-set recomputation, L500 qbank.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: astronomy
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install numpy pin
+        run: python -m pip install numpy==2.5.3
+      - name: Run each L500 lab script and its tests
+        run: |
+          for d in 23-foundations-mechanics:mechanics.py 24-foundations-stars:stars.py 25-foundations-cosmology-bayes:cosmo_bayes.py 26-ethics-dark-skies:sky_numbers.py 27-reading-seminar:reading_checks.py; do
+            (cd "labs/L500/${d%%:*}" && python "${d##*:}" && python -m unittest -v) || exit 1
+          done
+      - name: Theorem checks + problem-set numbers (research/l500_checks.py)
+        run: python research/l500_checks.py
+      - name: L500 question bank and concept inventory (structure + recomputed answers)
+        run: |
+          python research/check_l500_qbank.py
+          python research/qbank_checks.py

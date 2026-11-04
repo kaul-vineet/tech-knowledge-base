@@ -1,0 +1,12 @@
+{
+  "base": ["L400/19-radio-auth/frame_auth.py", "L400/17-edge-to-cloud/solution.py"],
+  "patches": [
+    ["LENGTH = 64 ", "LENGTH = 96 "],
+    ["\"frame\": encode(\"D\", state[\"dev\"], state[\"seq\"], state[\"queue\"].pop(0))}",
+     "\"frame\": encode(\"D\", state[\"dev\"], state[\"seq\"], sealed(state, state[\"seq\"], state[\"queue\"].pop(0)))}"],
+    ["        if seq <= state[\"last\"].get(dev, 0):\n            st[\"dup\"] += 1\n            return\n        state[\"last\"][dev] = seq\n",
+     "        if state[\"last\"].get(dev) == (seq, payload):   # capstone: an unauthenticated seq must not\n            st[\"dup\"] += 1                              # make the relay drop a genuine frame\n            return\n        state[\"last\"][dev] = (seq, payload)\n"],
+    ["def first_timeout(state):",
+     "def sealed(state, seq, payload):\n    # capstone: SipHash-2-4 tag (lab 19) over dev:seq:payload with this board's own key\n    return payload + \":\" + \"%016x\" % siphash24(state[\"key\"], body(state[\"dev\"], seq, payload).encode())\n\n\ndef first_timeout(state):"]
+  ]
+}

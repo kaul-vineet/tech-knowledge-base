@@ -1,0 +1,42 @@
+== 01 setup: one request on the wire ==
+request body bytes: 103
+finish_reason: stop | usage: {'prompt_tokens': 6, 'completion_tokens': 11, 'total_tokens': 17}
+
+== 02 temperature: softmax(logits / T) ==
+T=1.0: 0.659, 0.242, 0.099
+T=0.5: 0.864, 0.117, 0.019
+T=0.2: 0.993, 0.007, 0.000
+2nd-turn request carries 3 messages
+
+== 03 chat template (ChatML-style, illustrative) ==
+<|im_start|>system
+You are a sentiment classifier. Reply with one word: positive, negative or neutral.<|im_end|>
+<|im_start|>user
+The battery died after two days.<|im_end|>
+<|im_start|>assistant
+
+rendered characters: 195 | messages: 2
+fake reply: negative
+lab 3 words per layout: {'A user-only': 23, 'B system+user': 1, 'C few-shot+delimiters': 1}
+
+== 04 parsing and validating ==
+json.loads(fenced) -> Expecting value: line 1 column 1 (char 0)
+validate(age '34')  -> ['age must be an integer 0-150']
+validate(age 34.0)  -> ['age must be an integer 0-150']
+isinstance(True, int) -> True
+validate(age True)  -> ['age must be an integer 0-150']
+validate(ok)        -> []
+
+== 05 one tool round trip (fake server) ==
+finish_reason: tool_calls
+assistant message: {"role": "assistant", "content": null, "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "get_time", "arguments": "{}"}}]}
+type(arguments): str -> {}
+messages sent on call 2: 3 | final: Final answer: get_time() = 2026-10-28T06:00:00+00:00
+wrong tool_call_id -> HTTP 400
+
+== 06 agent loop: message growth per step ==
+before step 1: 2 messages
+after step 1: 4 messages, tool_calls=1
+after step 2: 6 messages, tool_calls=1
+after step 3: 7 messages, tool_calls=0
+final: Final answer: 17*23 = 391; (120-20)/4 = 25.0

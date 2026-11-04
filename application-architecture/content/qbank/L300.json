@@ -1,0 +1,893 @@
+[
+  {
+    "id": "aa-L300-001",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Saving the checkpoint after apply(), but in a second transaction, is still not enough. Why?",
+    "options": [
+      "The projector then skips every event after the crash point",
+      "The checkpoint table lives in another database, so it is never written at all",
+      "SQLite does not allow two transactions on one connection",
+      "A crash in between replays the event; `active + 1` counts it twice"
+    ],
+    "answer": 3,
+    "explanation": "Only the order of the two writes changed; a crash between them replays the event, and a non-idempotent handler double-counts. Skipping events is the failure of the original order (checkpoint first).",
+    "source": "Lesson 12 checkYourself"
+  },
+  {
+    "id": "aa-L300-002",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why may you delete the read model's tables at any time?",
+    "options": [
+      "Drift checks restore deleted rows from the checkpoint table",
+      "Commands write to both models, so the write side has a copy",
+      "The read model is only a cache that the next query refills lazily from the aggregate",
+      "They are derived: rebuild() replays the log into the same rows"
+    ],
+    "answer": 3,
+    "explanation": "The log is the truth and the view is disposable; rebuild replays from seq 0. The write side holds the aggregate's state, not the query-shaped tables.",
+    "source": "Lesson 12 checkYourself"
+  },
+  {
+    "id": "aa-L300-003",
+    "level": "L300",
+    "lesson": 12,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A projector that saves its checkpoint before applying each event crashes once. What does this print (view, checkpoint)?",
+    "code": "view, checkpoint = 0, 0\n\ndef run(crash_at=None):\n    global view, checkpoint\n    for seq in [s for s in range(1, 6) if s > checkpoint]:\n        checkpoint = seq   # position moves first\n        if seq == crash_at:\n            return\n        view += 1          # then the view changes\n\nrun(crash_at=3)\nrun()\nprint(view, checkpoint)",
+    "options": [
+      "6 5",
+      "4 3",
+      "5 5",
+      "4 5"
+    ],
+    "answer": 3,
+    "explanation": "Checkpoint 3 is saved, then the crash skips applying event 3; the restart resumes after 3. The view lost one event: no error anywhere, just a wrong count.",
+    "source": "Lesson 12 failureLab"
+  },
+  {
+    "id": "aa-L300-004",
+    "level": "L300",
+    "lesson": 12,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The 'half fix': apply first, then save the checkpoint, still in two steps. What does this print (view, checkpoint)?",
+    "code": "view, checkpoint = 0, 0\n\ndef run(crash_at=None):\n    global view, checkpoint\n    for seq in [s for s in range(1, 6) if s > checkpoint]:\n        view += 1          # apply first\n        if seq == crash_at:\n            return\n        checkpoint = seq   # then move the position\n\nrun(crash_at=3)\nrun()\nprint(view, checkpoint)",
+    "options": [
+      "6 6",
+      "6 5",
+      "4 5",
+      "5 5"
+    ],
+    "answer": 1,
+    "explanation": "The crash happens after event 3 changed the view but before checkpoint 3 was saved, so event 3 is applied again on restart. Moving the checkpoint into the same transaction and recounting fixes it.",
+    "source": "Lesson 12 tryIt"
+  },
+  {
+    "id": "aa-L300-005",
+    "level": "L300",
+    "lesson": 12,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A projector logged these lag_ms values: 4, 9, 11, 12, 15, 18, 22, 35, 53, 58. Using nearest-rank percentiles, what are p50 and p90 of the consistency window?",
+    "options": [
+      "p50 18 ms, p90 58 ms",
+      "p50 16.5 ms, p90 55.5 ms",
+      "p50 15 ms, p90 53 ms",
+      "p50 23.7 ms, p90 53 ms"
+    ],
+    "answer": 2,
+    "explanation": "Nearest rank takes the value at position ceil(n x p / 100): the 5th (15) and 9th (53) of 10. 16.5 is an interpolated median and 23.7 is the mean, neither of which the lab uses.",
+    "source": "Lesson 12 steps (Read the projector log)"
+  },
+  {
+    "id": "aa-L300-006",
+    "level": "L300",
+    "lesson": 12,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "You raise the projector's poll interval from 20 ms to 200 ms. Roughly what happens to the consistency window?",
+    "options": [
+      "p50 grows to roughly 100-150 ms and max approaches 200 ms",
+      "p50 drops, because fewer polls means less contention",
+      "Every read becomes stale for exactly 200 ms",
+      "It stays the same, because lag depends only on the write side"
+    ],
+    "answer": 0,
+    "explanation": "An event waits on average about half a poll interval: observed p50 111-154 ms, max about 198 ms. The wait is spread over the interval, not a fixed 200 ms.",
+    "source": "Lesson 12 tryIt"
+  },
+  {
+    "id": "aa-L300-007",
+    "level": "L300",
+    "lesson": 12,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "The projector's lag_ms keeps growing during the day. What do you check first?",
+    "options": [
+      "Delete the checkpoint so the projector restarts from zero",
+      "Rebuild the view immediately, because growing lag always means drift",
+      "Its checkpoint vs the last event seq: it is behind or stopped",
+      "Raise the write side's transaction timeout"
+    ],
+    "answer": 2,
+    "explanation": "Growing lag means the projector is behind or stopped; checkpoint vs last seq shows how far. Drift is a different symptom (wrong rows), found by a rebuild comparison.",
+    "source": "Lesson 12 troubleshooting"
+  },
+  {
+    "id": "aa-L300-008",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Right after a borrow, a query on the read model shows the book's holder as None. Is that a bug?",
+    "options": [
+      "Yes: the command must always update the read model in the same transaction",
+      "Yes: it means the event was lost and the view needs a rebuild",
+      "No: holder is always None until the loan is returned",
+      "No: the view is eventually consistent and catches up shortly"
+    ],
+    "answer": 3,
+    "explanation": "Commands change the aggregate; the read model lags by the consistency window. A lost event would stay wrong after the projector catches up, which is what drift checks detect.",
+    "source": "Lesson 12 testCases"
+  },
+  {
+    "id": "aa-L300-009",
+    "level": "L300",
+    "lesson": 12,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Reads outnumber writes 50 to 1 and need full-text search, so the team wants the read model in a search index. What must the projector then provide?",
+    "options": [
+      "Idempotent handlers and replays: no shared transaction",
+      "A two-phase commit between SQLite and the search index on every event",
+      "Nothing new: the checkpoint still commits with the view",
+      "A lock on the write side until the index confirms"
+    ],
+    "answer": 0,
+    "explanation": "In another store the view and checkpoint cannot share a transaction, so replays must be harmless. Locking the write side would throw away the scaling benefit.",
+    "source": "Lesson 12 tradeOffs"
+  },
+  {
+    "id": "aa-L300-010",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does a 0.1 s timeout around a call to the slow catalogue actually free?",
+    "options": [
+      "Nothing, because future.cancel() blocks until the call ends",
+      "Both the caller and the catalogue's own server thread",
+      "The caller stops waiting; the worker thread stays busy until the call ends",
+      "The worker thread, which is interrupted at once and returned to the shared pool"
+    ],
+    "answer": 2,
+    "explanation": "future.cancel() only works if the call has not started, so a running call keeps its thread. That is why timeouts alone do not prevent thread starvation.",
+    "source": "Lesson 13 concepts"
+  },
+  {
+    "id": "aa-L300-011",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The breaker opened after wave 1, yet waves 2-3 still failed in the base lab. Why?",
+    "options": [
+      "The fallback title raised an error when the breaker was open",
+      "Opening the breaker also blocks the healthy members check",
+      "The 8 running calls held all 8 shared threads until the hang ended",
+      "The breaker reopened for every new wave and called the catalogue again each time"
+    ],
+    "answer": 2,
+    "explanation": "A breaker stops new calls but gives no threads back; the members checks queued behind stuck catalogue calls. Only a separate pool or bulkhead isolates them.",
+    "source": "Lesson 13 checkYourself"
+  },
+  {
+    "id": "aa-L300-012",
+    "level": "L300",
+    "lesson": 13,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The breaker's count-based window (window 10, min_calls 5, failure_rate 0.5). What does this print?",
+    "code": "from collections import deque\n\nresults, state = deque(maxlen=10), \"closed\"\nfor ok in [True, False, True, False, True, False, False]:\n    results.append(ok)\n    rate = results.count(False) / len(results)\n    if state == \"closed\" and len(results) >= 5 and rate >= 0.5:\n        state = f\"open after call {len(results)}\"\n        break\nprint(state)",
+    "options": [
+      "open after call 5",
+      "open after call 6",
+      "closed",
+      "open after call 7"
+    ],
+    "answer": 1,
+    "explanation": "After 5 calls 2 failed (0.4 < 0.5); call 6 fails, making 3/6 = 0.5, which meets the threshold. Opening at call 5 assumes the rate is checked against failures alone.",
+    "source": "Lesson 13 codeWalkthrough"
+  },
+  {
+    "id": "aa-L300-013",
+    "level": "L300",
+    "lesson": 13,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Waves of 8 borrows arrive every 0.25 s, and each catalogue call holds a thread for 1 s. By Little's law, how many threads are busy on average with catalogue calls?",
+    "options": [
+      "32",
+      "2",
+      "4",
+      "8"
+    ],
+    "answer": 0,
+    "explanation": "L = arrival rate x time held = (8 / 0.25 s) x 1 s = 32. A shared pool of 8 is therefore always full, so healthy work starves.",
+    "source": "Lesson 13 failureLab"
+  },
+  {
+    "id": "aa-L300-014",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The catalogue gets a Bulkhead(4) and hangs 1 s per call. 8 borrows arrive at once. How many catalogue calls are rejected at once with BulkheadFull (and get the fallback title)?",
+    "options": [
+      "2",
+      "4",
+      "0",
+      "8"
+    ],
+    "answer": 1,
+    "explanation": "Four slots are acquired; calls 5-8 find no free slot and are rejected without queueing. Queueing them would recreate the starvation the bulkhead prevents.",
+    "source": "Lesson 13 buildTask"
+  },
+  {
+    "id": "aa-L300-015",
+    "level": "L300",
+    "lesson": 13,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "with_fallback only turns expected dependency errors into a degraded answer. What does this print?",
+    "code": "def with_fallback(fn, fallback):\n    try:\n        return fn()\n    except (TimeoutError, ConnectionError):\n        return fallback\n\ndef slow():\n    raise TimeoutError(\"no answer within 0.1 s\")\n\nout = [with_fallback(slow, \"(title unavailable)\")]\ntry:\n    out.append(with_fallback(lambda: 1 / 0, \"(title unavailable)\"))\nexcept ZeroDivisionError:\n    out.append(\"bug raised\")\nprint(out)",
+    "options": [
+      "['bug raised', 'bug raised']",
+      "['(title unavailable)', 'bug raised']",
+      "['(title unavailable)']",
+      "['(title unavailable)', '(title unavailable)']"
+    ],
+    "answer": 1,
+    "explanation": "TimeoutError is an expected dependency failure, so it falls back; ZeroDivisionError is a bug and must propagate. Swallowing every exception would hide bugs behind fallbacks.",
+    "source": "Lesson 13 testCases"
+  },
+  {
+    "id": "aa-L300-016",
+    "level": "L300",
+    "lesson": 13,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Why does the lab give the members check no fallback, while the catalogue title has one?",
+    "options": [
+      "Members is faster, so it never needs a fallback",
+      "A fallback would hide the members service from the breaker",
+      "Fallbacks only work for HTTP calls, and the members check is a local function",
+      "It is required: a made-up 'yes' would lend books to blocked members"
+    ],
+    "answer": 3,
+    "explanation": "Fall back only for nice-to-have data. A fabricated answer to a required check silently makes wrong decisions.",
+    "source": "Lesson 13 checkYourself"
+  },
+  {
+    "id": "aa-L300-017",
+    "level": "L300",
+    "lesson": 13,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A breaker flips between open and closed every few seconds. What does the lesson suggest?",
+    "options": [
+      "Raise min_calls or the window; compare open_s with recovery time",
+      "Remove the half-open state so it stays closed",
+      "Add a fallback, which stops the flipping",
+      "Lower failure_rate so that the breaker opens less often and stays closed longer"
+    ],
+    "answer": 0,
+    "explanation": "Few calls in a small window make the rate noisy; open_s shorter than recovery causes repeated trial failures. Lowering failure_rate would make it open more often, not less.",
+    "source": "Lesson 13 troubleshooting"
+  },
+  {
+    "id": "aa-L300-018",
+    "level": "L300",
+    "lesson": 13,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "In a copy, TIMEOUT_S becomes 2.0 s, longer than the catalogue's 1 s hang. What happens?",
+    "options": [
+      "Borrows get faster, because fewer calls time out and fewer threads are stuck",
+      "The breaker opens faster and saves the threads",
+      "All 24 succeed, but every borrow takes over a second",
+      "Waves 2 and 3 still fail with TimeoutError"
+    ],
+    "answer": 2,
+    "explanation": "Observed: 24/24 ok, fastest about 1,003 ms. No errors, but the user waits on optional data: a long timeout trades errors for latency.",
+    "source": "Lesson 13 tryIt"
+  },
+  {
+    "id": "aa-L300-019",
+    "level": "L300",
+    "lesson": 13,
+    "type": "design",
+    "difficulty": 3,
+    "question": "One process calls three remote dependencies with very different speeds. Which combination does the lesson recommend for each?",
+    "options": [
+      "A breaker alone, because it gives the stuck threads back as soon as it opens",
+      "Retries until each call succeeds, without timeouts",
+      "One shared pool with a long timeout for all three",
+      "Timeout, breaker and bulkhead per dependency; fallback for optional data"
+    ],
+    "answer": 3,
+    "explanation": "Timeouts protect the caller, breakers the dependency, bulkheads everyone else. A breaker does not return threads held by running calls.",
+    "source": "Lesson 13 tradeOffs"
+  },
+  {
+    "id": "aa-L300-020",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The catalogue team renamed `title` to `name`; both teams' unit tests passed, and production failed. Why did no test catch it?",
+    "options": [
+      "Each side tested only itself; the consumer's stub still returns title",
+      "The rename was invisible because JSON object keys are compared case-insensitively",
+      "Unit tests never run in CI, so the rename was not tested",
+      "The contract file had the field marked as optional"
+    ],
+    "answer": 0,
+    "explanation": "Neither test exercises the other side. A consumer-driven contract replayed in the provider's build closes that gap.",
+    "source": "Lesson 14 checkYourself"
+  },
+  {
+    "id": "aa-L300-021",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the verifier allow extra fields in the provider's response?",
+    "options": [
+      "Extra fields only matter for XML APIs",
+      "So the provider can add fields without breaking consumers",
+      "Consumers must read every field the provider sends",
+      "Extra fields are stripped by the HTTP client library before the consumer sees them"
+    ],
+    "answer": 1,
+    "explanation": "Consumers check only what they read. Requiring exact bodies would turn every harmless addition into a broken contract.",
+    "source": "Lesson 14 checkYourself"
+  },
+  {
+    "id": "aa-L300-022",
+    "level": "L300",
+    "lesson": 14,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A body check with type matchers. What does it print?",
+    "code": "def body_problems(expected, actual, rules, path=\"$\"):\n    problems = []\n    for key, value in expected.items():\n        p = f\"{path}.{key}\"\n        if key not in actual:\n            problems.append(f\"{p}: missing\")\n        elif rules.get(p) == \"type\" and type(actual[key]) is not type(value):\n            problems.append(f\"{p}: expected {type(value).__name__}, got {type(actual[key]).__name__}\")\n        elif rules.get(p) != \"type\" and actual[key] != value:\n            problems.append(f\"{p}: expected {value!r}\")\n    return problems\n\nrules = {\"$.title\": \"type\", \"$.available\": \"type\"}\nprint(body_problems({\"title\": \"Dune\", \"available\": True, \"id\": \"b1\"},\n                    {\"name\": \"Dune\", \"available\": \"yes\", \"id\": \"b1\", \"isbn\": \"x\"}, rules))",
+    "options": [
+      "['$.title: missing', '$.isbn: unexpected']",
+      "['$.title: missing', '$.available: expected bool, got str']",
+      "['$.available: expected bool, got str']",
+      "['$.title: missing', '$.available: expected bool, got str', '$.isbn: unexpected']"
+    ],
+    "answer": 1,
+    "explanation": "`title` is missing (renamed to name) and `available` changed type. The extra `isbn` is allowed because only expected keys are checked.",
+    "source": "Lesson 14 buildTask"
+  },
+  {
+    "id": "aa-L300-023",
+    "level": "L300",
+    "lesson": 14,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "The provider adds an `isbn` field and returns a different title value than the contract's example (`like(\"Dune\")`). Does verification fail?",
+    "options": [
+      "Yes: isbn is not part of the contract",
+      "No: extra fields and same-type values are accepted",
+      "Only if the consumer has not deployed yet",
+      "Yes: the title value differs from the example the consumer recorded"
+    ],
+    "answer": 1,
+    "explanation": "`like` matches on type, not value, and extra keys are allowed. Matching example values exactly makes contracts brittle.",
+    "source": "Lesson 14 tryIt"
+  },
+  {
+    "id": "aa-L300-024",
+    "level": "L300",
+    "lesson": 14,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "The consumer starts reading `isbn`, adds it to its expectations, and publishes a new contract. The provider has no isbn yet. Who notices first?",
+    "options": [
+      "Nobody, until the consumer fails in production",
+      "The consumer's unit tests against its mock provider",
+      "The API gateway, which validates every response",
+      "The provider's build, verifying the new contract"
+    ],
+    "answer": 3,
+    "explanation": "The provider replays every consumer contract in its own build and reports `$.isbn: missing`. The consumer's mock serves the example, so its own tests pass.",
+    "source": "Lesson 14 tryIt"
+  },
+  {
+    "id": "aa-L300-025",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What is a provider state such as 'book b1 exists'?",
+    "options": [
+      "Named test data the provider sets up before a replay",
+      "A database snapshot that consumers download before testing",
+      "A flag that tells the consumer which provider version is deployed",
+      "The HTTP status the provider must return for that request"
+    ],
+    "answer": 0,
+    "explanation": "Before each replayed request the verifier calls POST /_contract/state so the provider can create the data. It is not a status code or a version flag.",
+    "source": "Lesson 14 glossary"
+  },
+  {
+    "id": "aa-L300-026",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does the Pact Broker's can-i-deploy answer?",
+    "options": [
+      "Whether the OpenAPI document is valid for this version",
+      "Whether the deployment pipeline has free capacity to run the release right now",
+      "Whether this version was verified against what is deployed",
+      "Whether the provider's unit tests passed on the main branch"
+    ],
+    "answer": 2,
+    "explanation": "can-i-deploy checks the verification matrix for the target environment. It does not look at unit tests or OpenAPI validity.",
+    "source": "Lesson 14 glossary"
+  },
+  {
+    "id": "aa-L300-027",
+    "level": "L300",
+    "lesson": 14,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Every harmless provider change (new title text, new id value) breaks the contract. What should the consumer change?",
+    "options": [
+      "Stop generating the contract and write it by hand",
+      "Turn off body verification and compare status codes",
+      "Ask the provider to freeze all example values",
+      "Use like() for values it does not branch on"
+    ],
+    "answer": 3,
+    "explanation": "Exact values make contracts brittle; type matchers express what the consumer relies on. Going back to status-only checks reopens the rename hole.",
+    "source": "Lesson 14 troubleshooting"
+  },
+  {
+    "id": "aa-L300-028",
+    "level": "L300",
+    "lesson": 14,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A public API has hundreds of unknown consumers. Which contract approach fits best?",
+    "options": [
+      "End-to-end tests with each consumer's application",
+      "No contract; consumers adapt when they break",
+      "Provider schema checks against an OpenAPI document",
+      "Consumer-driven contracts collected from every consumer"
+    ],
+    "answer": 2,
+    "explanation": "Consumer-driven contracts need known consumers who publish contracts. For unknown consumers, one published spec checked in the provider's build is the practical option.",
+    "source": "Lesson 14 tradeOffs"
+  },
+  {
+    "id": "aa-L300-029",
+    "level": "L300",
+    "lesson": 15,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "In the last hour there were 1,000 requests and 2 server errors. The availability SLO is 99.9 %. What is the burn rate?",
+    "options": [
+      "0.2",
+      "2.0",
+      "20.0",
+      "0.5"
+    ],
+    "answer": 1,
+    "explanation": "Burn rate = bad ratio / (1 - SLO) = 0.002 / 0.001 = 2.0. Using a 99 % SLO by mistake gives 0.2.",
+    "source": "Lesson 15 testCases"
+  },
+  {
+    "id": "aa-L300-030",
+    "level": "L300",
+    "lesson": 15,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A 1-hour window burns at rate 14.4 against a 30-day SLO. What share of the month's error budget did that hour spend?",
+    "options": [
+      "5%",
+      "2%",
+      "14.4%",
+      "0.2%"
+    ],
+    "answer": 1,
+    "explanation": "Budget consumed = burn x window / period = 14.4 x 1 h / 720 h = 2 %. 14.4 % confuses the burn rate with the share of budget.",
+    "source": "Lesson 15 checkYourself"
+  },
+  {
+    "id": "aa-L300-031",
+    "level": "L300",
+    "lesson": 15,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "The second page rule fires at burn rate 6 over 6 hours. If it burns exactly that for 6 hours, what share of the 30-day budget is spent?",
+    "options": [
+      "6%",
+      "5%",
+      "36%",
+      "2%"
+    ],
+    "answer": 1,
+    "explanation": "6 x 6 h / 720 h = 5 %. Multiplying 6 x 6 without dividing by the period gives the meaningless 36.",
+    "source": "Lesson 15 code (ALERTS)"
+  },
+  {
+    "id": "aa-L300-032",
+    "level": "L300",
+    "lesson": 15,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "19.7 % of POST /loans in the window took longer than 300 ms; the latency SLO is 99 %. What is the latency burn rate?",
+    "options": [
+      "19.7",
+      "0.197",
+      "197",
+      "1.97"
+    ],
+    "answer": 0,
+    "explanation": "0.197 / (1 - 0.99) = 19.7. 1.97 is the number the model's draft invented in the agent-assist check: a decimal slip.",
+    "source": "Lesson 15 codeWalkthrough"
+  },
+  {
+    "id": "aa-L300-033",
+    "level": "L300",
+    "lesson": 15,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Per the SRE Workbook formula, how long after the slowdown starts should a 1h page at threshold 14.4 fire when 19.7 % of requests are bad against a 99 % SLO?",
+    "options": [
+      "43.9 minutes",
+      "57.0 minutes",
+      "14.4 minutes",
+      "60.0 minutes"
+    ],
+    "answer": 0,
+    "explanation": "(1 - 0.99) / 0.197 x 60 min x 14.4 = 43.9 min. The lab actually paged after 57 min because the 5-minute window holds only about 6 POST /loans and is noisy.",
+    "source": "Lesson 15 tryIt"
+  },
+  {
+    "id": "aa-L300-034",
+    "level": "L300",
+    "lesson": 15,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "An hour has 100 requests: 96 take 80 ms and 4 take 2,800 ms. What are the mean, p95 and p99 (nearest rank)?",
+    "options": [
+      "mean 188.8, p95 2800, p99 2800 ms",
+      "mean 188.8, p95 80, p99 80 ms",
+      "mean 188.8, p95 80, p99 2800 ms",
+      "mean 1440.0, p95 80, p99 2800 ms"
+    ],
+    "answer": 2,
+    "explanation": "The mean is (96 x 80 + 4 x 2,800) / 100 = 188.8 ms, under a 200 ms limit; the 95th value is still 80 ms and only p99 reaches the slow 4 %. Averages and p95 both hide this tail.",
+    "source": "Lesson 15 failureLab"
+  },
+  {
+    "id": "aa-L300-035",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Service-wide p95 was 94.3 ms during the incident. Why did it miss the slowdown?",
+    "options": [
+      "p95 is computed only over GET requests in the lab",
+      "p95 is always lower than the mean, so by definition it hides every outlier",
+      "The slow requests returned 500 and were excluded",
+      "Only about 4% of all requests were slow (20 % of 20 %)"
+    ],
+    "answer": 3,
+    "explanation": "A tail smaller than 5 % sits above the 95th percentile. A per-route threshold SLI counts each slow request instead.",
+    "source": "Lesson 15 checkYourself"
+  },
+  {
+    "id": "aa-L300-036",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does each burn-rate alert require both a long and a short window above the threshold?",
+    "options": [
+      "Two windows halve the number of requests that must be parsed",
+      "The short window catches problems that the long window would always average away",
+      "The long window is for availability, the short one for latency",
+      "Long window: evidence; short window: still happening, so alerts reset fast"
+    ],
+    "answer": 3,
+    "explanation": "Long = enough evidence, short = the problem is current; after recovery the short window clears quickly. Both windows apply to every SLI.",
+    "source": "Lesson 15 codeWalkthrough"
+  },
+  {
+    "id": "aa-L300-037",
+    "level": "L300",
+    "lesson": 15,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The page rule 1h/5m at threshold 14.4. What does this print?",
+    "code": "THRESHOLD = 14.4\n\ndef pages(burn_long, burn_short):\n    return burn_long >= THRESHOLD and burn_short >= THRESHOLD\n\nprint([pages(16.0, 3.0), pages(16.0, 20.0), pages(13.0, 30.0)])",
+    "options": [
+      "[False, True, True]",
+      "[True, True, True]",
+      "[False, True, False]",
+      "[True, True, False]"
+    ],
+    "answer": 2,
+    "explanation": "Both windows must reach the threshold: (16.0, 3.0) has a clean recent 5 minutes, and (13.0, 30.0) lacks long-window evidence. Only (16.0, 20.0) pages.",
+    "source": "Lesson 15 code (alerts)"
+  },
+  {
+    "id": "aa-L300-038",
+    "level": "L300",
+    "lesson": 15,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Only 5 % of POST /loans become slow (instead of 20 %). Latency burn rates come out as 5m 0.0, 1h 1.4, 6h 0.2. What should happen?",
+    "options": [
+      "No page and no ticket fire; review the SLO trend",
+      "A page fires, because any slow request burns budget",
+      "A ticket fires, because the 1h burn exceeds 1",
+      "The SLO should be tightened until it pages"
+    ],
+    "answer": 0,
+    "explanation": "No rule has both windows above its threshold, so a small tail never pages. The ticket rule uses 3d/6h windows, not 1h.",
+    "source": "Lesson 15 tryIt"
+  },
+  {
+    "id": "aa-L300-039",
+    "level": "L300",
+    "lesson": 15,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Burn-rate alerts flap on a route with a few requests per minute. What helps?",
+    "options": [
+      "Lower the burn-rate thresholds",
+      "Switch the quiet route to a mean-latency alert instead",
+      "Page on every single failed request",
+      "Group quiet routes or lengthen the short window"
+    ],
+    "answer": 3,
+    "explanation": "Short windows on quiet routes hold too few requests, so one failure swings the ratio. A mean would bring back the blind spot the lesson removes.",
+    "source": "Lesson 15 troubleshooting"
+  },
+  {
+    "id": "aa-L300-040",
+    "level": "L300",
+    "lesson": 15,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "The local model's incident summary says 'p99 147.9 ms, burn rate 1.97'. What does the check do with it?",
+    "options": [
+      "Accepts it: both numbers appear somewhere in the brief",
+      "Asks a second model to correct the numbers",
+      "Accepts it and posts it to the on-call channel",
+      "Rejects it: 147.9 is the mean; 1.97 is not a fact"
+    ],
+    "answer": 3,
+    "explanation": "Every number must be a computed fact, and a labelled number must equal that fact: p99 is 2846.3 and burn 19.7. Nothing is ever posted automatically.",
+    "source": "Lesson 15 agentAssist"
+  },
+  {
+    "id": "aa-L300-041",
+    "level": "L300",
+    "lesson": 16,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "fitness.py measured {10: 11, 500: 337} statements for the N+1 report (1 + 2 per overdue loan). How many loans are overdue in the 10-loan and the 500-loan data sets?",
+    "options": [
+      "10 and 500",
+      "11 and 337",
+      "5 and 168",
+      "5 and 336"
+    ],
+    "answer": 2,
+    "explanation": "Solve 1 + 2n: (11 - 1) / 2 = 5 and (337 - 1) / 2 = 168. The count grows with the data, which is the N+1 signature.",
+    "source": "Lesson 16 testCases"
+  },
+  {
+    "id": "aa-L300-042",
+    "level": "L300",
+    "lesson": 16,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "Counting statements with sqlite3's trace callback. What does this print?",
+    "code": "import sqlite3\n\ndb = sqlite3.connect(\":memory:\")\ndb.executescript(\"CREATE TABLE loans (id, member); CREATE TABLE members (id, name);\"\n                 \"INSERT INTO members VALUES (1, 'Ada'), (2, 'Bo');\"\n                 \"INSERT INTO loans VALUES (10, 1), (11, 2), (12, 1);\")\nseen = []\ndb.set_trace_callback(seen.append)\nfor loan_id, member in db.execute(\"SELECT id, member FROM loans\").fetchall():\n    db.execute(\"SELECT name FROM members WHERE id = ?\", (member,)).fetchone()\nn_plus_1 = len(seen)\nseen.clear()\ndb.execute(\"SELECT l.id, m.name FROM loans l JOIN members m ON m.id = l.member\").fetchall()\nprint(n_plus_1, len(seen))",
+    "options": [
+      "1 1",
+      "4 4",
+      "4 1",
+      "3 1"
+    ],
+    "answer": 2,
+    "explanation": "The N+1 version runs one SELECT for loans plus one per loan (3 loans): 4. The JOIN runs once. Counts like these are deterministic on every machine.",
+    "source": "Lesson 16 code (QueryCounter)"
+  },
+  {
+    "id": "aa-L300-043",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Both versions of the report pass the p95 budget. Why is the query count the better gate here?",
+    "options": [
+      "It is deterministic and grows with the data; local timing hides it",
+      "p95 budgets are not allowed in CI pipelines",
+      "It runs faster than a load test on CI runners",
+      "Query counts also measure the database's CPU usage, which p95 cannot see at all"
+    ],
+    "answer": 0,
+    "explanation": "Counts never flake and point straight at the cause. Timing gates remain useful, but on a stable runner and with generous budgets.",
+    "source": "Lesson 16 checkYourself"
+  },
+  {
+    "id": "aa-L300-044",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the micro-benchmark gate keep the minimum of timeit repeats rather than the mean?",
+    "options": [
+      "timeit returns only one value per repeat, the minimum",
+      "The minimum is always closer to the latency real users see in production",
+      "Other processes only add time; the minimum is least disturbed",
+      "The mean would make the budget too strict to pass"
+    ],
+    "answer": 2,
+    "explanation": "Noise is one-sided: interference never makes code faster. The timeit docs recommend the minimum for this reason.",
+    "source": "Lesson 16 checkYourself"
+  },
+  {
+    "id": "aa-L300-045",
+    "level": "L300",
+    "lesson": 16,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A timing gate passes locally but fails now and then on shared CI runners. What does the lesson advise?",
+    "options": [
+      "Delete the gate; timing cannot be tested in CI",
+      "Retry the gate until it passes, then merge",
+      "Tighten the budget so that real regressions stand out more clearly from the noise",
+      "min() of repeats, generous budgets, and counts for hard limits"
+    ],
+    "answer": 3,
+    "explanation": "Shared runners are noisy; counts give hard limits and timing gates need slack, or a dedicated runner. Retrying until green hides real regressions.",
+    "source": "Lesson 16 troubleshooting"
+  },
+  {
+    "id": "aa-L300-046",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In k6, what does the threshold `http_req_duration: ['p(95)<200']` do?",
+    "options": [
+      "Drops requests slower than 200 ms from the results",
+      "Fails the run (non-zero exit) when p95 reaches 200 ms",
+      "Slows the virtual users down until the measured p95 drops under 200 ms",
+      "Logs a warning but always exits with code 0"
+    ],
+    "answer": 1,
+    "explanation": "Thresholds are pass/fail criteria on metrics, which is what makes k6 usable as a CI gate. They do not change the load or filter samples.",
+    "source": "Lesson 16 glossary"
+  },
+  {
+    "id": "aa-L300-047",
+    "level": "L300",
+    "lesson": 16,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Which gates belong on every commit, and which on a nightly or dedicated runner?",
+    "options": [
+      "Counts and import rules per commit; timing and load gates nightly",
+      "Load tests on every commit; import rules nightly",
+      "Only production SLOs; CI gates add noise",
+      "Everything on every commit, with strict budgets so that nothing slips through"
+    ],
+    "answer": 0,
+    "explanation": "Deterministic gates never flake and suit every commit; timing gates need a stable environment. Production SLOs are the backstop, not a replacement.",
+    "source": "Lesson 16 tradeOffs"
+  },
+  {
+    "id": "aa-L300-048",
+    "level": "L300",
+    "lesson": 16,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "The stdlib load test shows rare outliers of about 1 s on an otherwise fast API. What does the lesson point to?",
+    "options": [
+      "Python's garbage collector pausing every worker thread for about one second",
+      "A small listen backlog: raise request_queue_size and warm up",
+      "The N+1 query, which only shows up under load",
+      "The k6 threshold, which adds a delay on failure"
+    ],
+    "answer": 1,
+    "explanation": "Connection retries after a full backlog cost about a second; http_api.py sets request_queue_size = 64 and load_test.py warms up. The N+1 adds steady per-request time, not rare 1 s spikes.",
+    "source": "Lesson 16 troubleshooting"
+  },
+  {
+    "id": "aa-L300-049",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does the lab's drift() check do?",
+    "options": [
+      "Counts how many events the projector applied in the last hour and compares it with the log",
+      "Rebuilds the view in a scratch database and diffs it with the live one",
+      "Checks that every lag_ms value is below the poll interval",
+      "Compares the projector's checkpoint with the last event seq"
+    ],
+    "answer": 1,
+    "explanation": "Drift means rows where the live view differs from a fresh rebuild; you run it after an incident or nightly. Checkpoint vs last seq measures lag, not wrong rows.",
+    "source": "Lesson 12 codeWalkthrough"
+  },
+  {
+    "id": "aa-L300-050",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is the contract generated by running the consumer's real client against a mock provider, instead of written by hand?",
+    "options": [
+      "It records what the client really uses; unused or unexpected calls fail",
+      "The provider team is not allowed to read contract files that were written by hand",
+      "A mock provider is faster than parsing JSON by hand",
+      "Hand-written contracts cannot be stored in Git"
+    ],
+    "answer": 0,
+    "explanation": "The mock fails when the client skips a declared interaction or sends an undeclared one, so the contract cannot drift from the code. Storage in Git works either way.",
+    "source": "Lesson 14 concepts"
+  },
+  {
+    "id": "aa-L300-051",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "How does the lab define an SLI?",
+    "options": [
+      "Good events / valid events, e.g. fast POST /loans / all POST /loans",
+      "The number of alerts fired per 30-day period",
+      "The average latency of all requests measured over the whole 30-day SLO period",
+      "The share of CPU time the service spends serving requests"
+    ],
+    "answer": 0,
+    "explanation": "An SLI counts events: `valid` picks the denominator and `good` the numerator. Averages are exactly what the failure lab shows hiding a slow tail.",
+    "source": "Lesson 15 glossary"
+  },
+  {
+    "id": "aa-L300-052",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which statement describes an architecture fitness function as used in fitness.py?",
+    "options": [
+      "A dashboard of architecture metrics that architects review once per quarter",
+      "A load test that must run against production traffic",
+      "An automated, objective check of one quality that can fail the build",
+      "A profiler that rewrites slow queries automatically"
+    ],
+    "answer": 2,
+    "explanation": "Each gate prints one JSON line and the exit code fails the pipeline. Fitness functions check; they do not fix code, and they run in CI, not only in production.",
+    "source": "Lesson 16 glossary"
+  }
+]

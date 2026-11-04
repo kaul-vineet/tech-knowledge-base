@@ -1,0 +1,29 @@
+%% Capstone: encrypted document service (all on 127.0.0.1). Rendered by any Mermaid viewer.
+flowchart LR
+  subgraph internet["untrusted network"]
+    user([user])
+    recipient([external recipient])
+  end
+  subgraph app["document-service host"]
+    svc["doc_service.py<br/>lesson 17 envelope · ACL · rewrap job"]
+    store[("doc store<br/>env + kek id + wrapped DEK")]
+    log[("audit log<br/>hash chain + signatures")]
+    applog[("JSON app log<br/>redacted (lesson 16)")]
+    rules["audit.py rules<br/>(decide)"]
+    agent["agent_explain.py<br/>(explains only)"]
+  end
+  subgraph token["key-storage boundary (lesson 19)"]
+    tok["soft token<br/>doc-signing + audit-log keys<br/>non-exportable handles"]
+  end
+  subgraph kmszone["KMS (lesson 12 keyring)"]
+    kms["kms.py<br/>wrap · unwrap · rewrap · rotate · retire"]
+  end
+  user -->|put / get / share| svc
+  svc -->|"mTLS (lessons 9-10), client cert = identity"| kms
+  svc -->|C_Sign via handle| tok
+  svc --> store
+  svc --> log
+  kms --> log
+  svc --> applog
+  log --> rules --> agent
+  svc -->|"HPKE ML-KEM-768+X25519 (lesson 18)"| recipient

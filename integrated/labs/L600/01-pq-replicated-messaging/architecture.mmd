@@ -1,0 +1,23 @@
+%% L600 #01 architecture (Mermaid). Render: any Mermaid viewer (GitHub markdown, mermaid.live).
+flowchart LR
+    subgraph Devices[Member devices - hold epoch keys]
+        A[alice\nkey package 1,216 B]
+        B[bob]
+        C[carol]
+    end
+    CL[Client SDK\nIdempotency-Key per message\nretry on 503] -->|POST /groups/g/messages| API
+    subgraph Leader[Raft leader node]
+        API[API\n400 / 201 / 200 / 409 / 422 / 503] --> S[Sealer svc identity\nepoch key from its welcome\nRandomNonce 96-bit]
+        S -->|sealed envelope v2\nheader = AAD| OB[(outbox\nciphertext only)]
+        OB --> R[Relay\nat-least-once]
+    end
+    R -->|propose until committed| LOG
+    subgraph LOG[3-node Raft log - lesson 12, election restriction]
+        N1((n1)) --- N2((n2)) --- N3((n3))
+    end
+    LOG --> SM[Replicated state machine on every node\ndedupe by ikey + keyed fp\nepoch check, version gate\nno keys, no plaintext]
+    ROT[rotate members] -->|epoch entry: hybrid X25519MLKEM768 welcomes| LOG
+    GATE[contract entry accept 1,2,3] --> LOG
+    SM -->|replay from index 1| Devices
+    SM -->|replay| S
+    F[[run_project.py scorecard\nseeded crashes + faults\ncode decides]] -.-> API & LOG & SM

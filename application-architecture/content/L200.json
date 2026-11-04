@@ -1,0 +1,1204 @@
+[
+ {
+  "id": "hexagonal-architecture",
+  "number": 7,
+  "level": "L200",
+  "title": "Hexagonal architecture: ports and adapters",
+  "phase": "Structure",
+  "category": "ports-adapters",
+  "description": "Refactor Library Loans so the domain depends only on ports; drive it from HTTP and a CLI, store it in memory or SQLite.",
+  "outcome": "You can add or swap an adapter (driving or driven) without touching the domain, and prove the dependency direction with a test.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux); SQLite via sqlite3; unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100.",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "Lesson 2's layers become a hexagon: `domain.py` owns the ports, adapters plug in from outside, `app.py` is the one place that wires them.",
+   "You add a third driven adapter; the same contract tests prove it fits."
+  ],
+  "prerequisites": [
+   "Lessons 2 and 4 done",
+   "Python classes and `typing.Protocol` basics"
+  ],
+  "glossary": [
+   {
+    "term": "Port",
+    "meaning": "An interface owned by the application, named for a purpose (`ForStoringLoans`)."
+   },
+   {
+    "term": "Driving / driven adapter",
+    "meaning": "Driving adapters call the app (HTTP, CLI, tests); driven adapters are called by it (SQLite, memory)."
+   },
+   {
+    "term": "Composition root",
+    "meaning": "The single place that picks adapters and builds the app (`app.py`)."
+   }
+  ],
+  "concepts": [
+   "Dependencies point into the hexagon; the domain imports no technology.",
+   "One contract test suite runs against every adapter of a port.",
+   "Each driving adapter translates domain errors into its own language (status code, exit code)."
+  ],
+  "steps": [
+   {
+    "title": "Read the ports",
+    "detail": "Open `ports.py` and `domain.py`. Note what `domain.py` imports.",
+    "expected": "Only `dataclasses` and `ports`; `LoanService` receives a `ForStoringLoans`.",
+    "ifNot": "Search for `import` in domain.py."
+   },
+   {
+    "title": "Run one hexagon on two stores",
+    "detail": "cd labs/L200/07-hexagonal-architecture && python app.py --storage memory, then --storage sqlite",
+    "expected": "Identical output for both stores.",
+    "ifNot": "Run from the lab folder so `ports` imports."
+   },
+   {
+    "title": "Use the CLI adapter alone",
+    "detail": "python driving_cli.py --db demo.db borrow b1 m1 (again with m2), then return 1; delete demo.db.",
+    "expected": "JSON loan, then `error: book b1 is already on loan` with exit code 2, then status returned.",
+    "ifNot": "Exit codes: 1 bad input, 2 rule violation, 3 not found.",
+    "mac": "python driving_cli.py --db demo.db borrow b1 m2; echo $?\nrm demo.db",
+    "windows": "python driving_cli.py --db demo.db borrow b1 m2; $LASTEXITCODE\nRemove-Item demo.db"
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 19 tests ... OK.",
+    "ifNot": "A dependency-rule failure names the offending import."
+   },
+   {
+    "title": "Build task",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "OK with CHECK_MINE=1 (contract tests pass on your JSON adapter); without it the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   }
+  ],
+  "code": "\"\"\"The hexagon: Library Loans rules. It knows ports only - no HTTP, no SQL, no argparse.\"\"\"\nfrom dataclasses import dataclass\n\nfrom ports import ForStoringLoans\n\n\n@dataclass\nclass Loan:\n    id: int\n    book_id: str\n    member_id: str\n    returned: bool = False\n\n\nclass LoanError(Exception):\n    \"\"\"Rule violations; each driving adapter translates them (HTTP status, CLI exit code).\"\"\"\n\n\nclass BookAlreadyOnLoan(LoanError):\n    pass\n\n\nclass LoanLimitReached(LoanError):\n    pass\n\n\nclass LoanNotFound(LoanError):\n    pass\n\n\n# implements the driving port ForManagingLoans; depends only on the driven port ForStoringLoans\nclass LoanService:\n    def __init__(self, store: ForStoringLoans, max_active_per_member=3):\n        self._store = store  # configurable dependency: the composition root picks the adapter\n        self._max = max_active_per_member\n\n    def borrow(self, book_id, member_id):\n        if not book_id or not member_id:\n            raise ValueError(\"bookId and memberId are required\")\n        active = self._store.active()\n        if any(loan.book_id == book_id for loan in active):\n            raise BookAlreadyOnLoan(f\"book {book_id} is already on loan\")\n        if sum(loan.member_id == member_id for loan in active) >= self._max:\n            raise LoanLimitReached(f\"member {member_id} already has {self._max} loans\")\n        return self._store.add(book_id, member_id)\n\n    def get(self, loan_id):\n        loan = self._store.get(loan_id)\n        if loan is None:\n            raise LoanNotFound(f\"loan {loan_id} not found\")\n        return loan\n\n    def give_back(self, loan_id):\n        self._store.mark_returned(self.get(loan_id).id)\n        return self.get(loan_id)\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`from ports import ForStoringLoans`",
+    "detail": "The domain's only project import is its own port."
+   },
+   {
+    "title": "`def __init__(self, store: ForStoringLoans, ...)`",
+    "detail": "Configurable dependency: app.py chooses the adapter."
+   },
+   {
+    "title": "`raise BookAlreadyOnLoan(...)`",
+    "detail": "Domain errors; HTTP maps them to 409, the CLI to exit 2."
+   },
+   {
+    "title": "`DRIVEN = {...}` in app.py",
+    "detail": "Swapping storage is one dictionary entry in the composition root."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L200/07-hexagonal-architecture/ports.py",
+    "purpose": "Ports as Protocols"
+   },
+   {
+    "path": "labs/L200/07-hexagonal-architecture/domain.py",
+    "purpose": "The hexagon"
+   },
+   {
+    "path": "labs/L200/07-hexagonal-architecture/driven_memory.py",
+    "purpose": "Driven adapter"
+   },
+   {
+    "path": "labs/L200/07-hexagonal-architecture/driven_sqlite.py",
+    "purpose": "Driven adapter"
+   },
+   {
+    "path": "labs/L200/07-hexagonal-architecture/driving_http.py",
+    "purpose": "Driving adapter"
+   },
+   {
+    "path": "labs/L200/07-hexagonal-architecture/driving_cli.py",
+    "purpose": "Driving adapter"
+   },
+   {
+    "path": "labs/L200/07-hexagonal-architecture/app.py",
+    "purpose": "Composition root + demo"
+   },
+   {
+    "path": "labs/L200/07-hexagonal-architecture/test_hexagon.py",
+    "purpose": "Contract, adapter and dependency tests"
+   }
+  ],
+  "expectedResults": [
+   "Both storage modes print identical output",
+   "Ran 19 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "StoreContract on memory and SQLite",
+    "expected": "4 identical passing tests each"
+   },
+   {
+    "action": "Add `import sqlite3` to domain.py",
+    "expected": "dependency-rule test fails naming 'sqlite3'"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "`ModuleNotFoundError: No module named 'ports'`",
+    "action": "Run from the lab folder."
+   },
+   {
+    "symptom": "Dependency-rule test fails",
+    "action": "Move the named import into an adapter."
+   }
+  ],
+  "equivalents": [
+   "Java/Spring: interfaces in the domain module, adapters in separate modules; ArchUnit checks the direction.",
+   ".NET: ports as interfaces, adapters registered in Program.cs (composition root).",
+   "NestJS: provider tokens for ports.",
+   "Cloud vendor write-up of the same pattern: AWS Prescriptive Guidance – Hexagonal architecture pattern (vendor page)."
+  ],
+  "checkpoint": "PASS if all tests pass, both storage modes match, and your JSON adapter passes the contract with domain.py unchanged.",
+  "checkYourself": [
+   {
+    "q": "Who owns a port: the domain or the adapter?",
+    "a": "The domain (the hexagon); adapters depend on it."
+   },
+   {
+    "q": "Why does the CLI return exit code 2 and HTTP 409 for the same rule?",
+    "a": "Each driving adapter translates the same domain error into its own technology."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "In a copy, add `import sqlite3` to domain.py and run the dependency-rule test.",
+    "predict": "Does anything fail, and what does it say?",
+    "expected": "`FAILED (failures=1): domain.py must depend on ports only, but imports ['sqlite3']`."
+   },
+   {
+    "task": "Pass a store without `mark_returned` to LoanService, then borrow and give back.",
+    "predict": "When does Python complain?",
+    "expected": "`isinstance(..., ForStoringLoans)` is False, borrow still works, give_back raises `AttributeError: 'HalfStore' object has no attribute 'mark_returned'`."
+   }
+  ],
+  "buildTask": {
+   "task": "Add a third driven adapter `driven_jsonfile.py` (`JsonFileLoanStore(path)`) that keeps loans in a JSON file, and register it in `app.py`'s DRIVEN map.",
+   "hints": [
+    "Copy the four methods of `InMemoryLoanStore`; read and write the whole file with `encoding='utf-8'`.",
+    "Import only `domain` (for `Loan`) and the standard library."
+   ],
+   "solution": "labs/L200/07-hexagonal-architecture/solution/driven_jsonfile.py",
+   "check": "labs/L200/07-hexagonal-architecture/test_build_task.py (6 tests)"
+  },
+  "inRealSystems": [
+   "Services keep adapters in separate modules and check the direction with ArchUnit or import-linter.",
+   "Teams add a gRPC or queue adapter next to REST without touching the domain."
+  ],
+  "useWhen": "Use it when a service has several entry points or stores; skip it for a small CRUD app with one UI and one database.",
+  "next": "L300 #14 Consumer-driven contract testing – once an adapter calls another service, a contract test pins the port's shape",
+  "sources": [
+   {
+    "title": "A. Cockburn – Hexagonal (Ports & Adapters) Architecture, the original 2005 article",
+    "url": "https://alistair.cockburn.us/hexagonal-architecture"
+   },
+   {
+    "title": "J. M. Garrido de Paz – Ports and Adapters Pattern",
+    "url": "https://jmgarridopaz.github.io/content/hexagonalarchitecture.html"
+   },
+   {
+    "title": "typing — Support for type hints (Protocol)",
+    "url": "https://docs.python.org/3/library/typing.html"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py (memory, sqlite), the CLI against a file, `python -m unittest -v` (19 tests OK incl. build task against the solution) and try_it.py on Python 3.12.15, 2026-10-28. macOS/Windows expected until the CI matrix runs.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)"
+   ]
+  },
+  "conceptNote": "content/concepts/L200/07-hexagonal-architecture.md",
+  "conceptSummary": "The domain owns its ports; driving adapters (HTTP, CLI) call them and driven adapters (memory, SQLite) implement them. The composition root wires one choice, and a fitness test keeps technology imports out of the domain.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "import-linter",
+    "role": "CHECK",
+    "exercise": "Add a `forbidden` contract: source_modules = domain, forbidden_modules = driven_memory, driven_sqlite, driving_cli, driving_http, app (list the lab's top-level modules under root_packages). Run `lint-imports`; then add `import sqlite3` to domain.py in a copy and add sqlite3 to the forbidden list.",
+    "expected": "Pending a manual run. Should agree with test_hexagon.DependencyRuleTest: KEPT on the real code (domain.py imports only ports and dataclasses); the sqlite3 copy breaks it, like tryIt 1 (`domain.py must depend on ports only, but imports ['sqlite3']`). Whether import-linter accepts single-file root modules was not checked; if not, move the files into a package folder first.",
+    "licence": "BSD-2-Clause (OSI: yes)",
+    "url": "https://github.com/seddonym/import-linter",
+    "mac": "pip install import-linter   # inside the lesson-1 venv; then: lint-imports",
+    "windows": "pip install import-linter   # inside the lesson-1 venv; then: lint-imports"
+   }
+  ],
+  "seeAlso": [
+   "application-architecture L400 #17 Strangler-fig decomposition: facade, branch by abstraction, parallel run, cut-over: the port is the seam that lets two fines implementations coexist while traffic moves."
+  ]
+ },
+ {
+  "id": "aggregates-invariants",
+  "number": 8,
+  "level": "L200",
+  "title": "Aggregates and invariants (DDD)",
+  "phase": "Domain",
+  "category": "ddd-aggregate",
+  "description": "A Member aggregate enforces the loan limit and no double loan in one consistency boundary; one repository saves it whole.",
+  "outcome": "You can put a business rule inside an aggregate root, persist the aggregate atomically, and reject stale concurrent updates.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux); SQLite via sqlite3; unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100.",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "The rules move from a service into `Member`: every change goes through the root, so invariants hold after every call.",
+   "`SqliteMemberRepository` saves the whole member in one transaction with a version check; a partial unique index guards the rule that spans members."
+  ],
+  "prerequisites": [
+   "Lesson 7 done",
+   "SQL transactions basics"
+  ],
+  "glossary": [
+   {
+    "term": "Aggregate root",
+    "meaning": "The one object outside code may reference; it guards the cluster's rules."
+   },
+   {
+    "term": "Invariant",
+    "meaning": "A rule that must be true after every change (here: ≤ max loans, no book twice)."
+   },
+   {
+    "term": "Optimistic concurrency",
+    "meaning": "Save only if the stored version still equals the loaded one."
+   }
+  ],
+  "concepts": [
+   "Load and save whole aggregates; one repository per aggregate.",
+   "Transactions do not cross aggregate boundaries; cross-aggregate rules use constraints or events.",
+   "A version number turns a lost update into a visible conflict."
+  ],
+  "steps": [
+   {
+    "title": "Read the root",
+    "detail": "Open member.py: `borrow` checks both invariants first; `loans` is a tuple of frozen `Loan`s.",
+    "expected": "You can point at the two `raise` lines and the read-only view.",
+    "ifNot": "Search for `def borrow`."
+   },
+   {
+    "title": "Run the demo",
+    "detail": "cd labs/L200/08-aggregates-invariants && python app.py",
+    "expected": "Each rule fires once: AlreadyBorrowed, LoanLimitReached, BookAlreadyOnLoan (UNIQUE constraint).",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 13 tests ... OK (unit, repository, build task).",
+    "ifNot": "Read the failing test's name: it states the rule."
+   },
+   {
+    "title": "See the version check",
+    "detail": "python -m unittest -v test_aggregate.MemberRepositoryTest.test_stale_copy_is_rejected",
+    "expected": "ok: the second save raises ConcurrencyConflict; only b1 is stored.",
+    "ifNot": "Check `_claim_version` uses `WHERE ... AND version = ?`."
+   },
+   {
+    "title": "Build task",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "OK with CHECK_MINE=1 (4 tests on the overdue rule); without it the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   }
+  ],
+  "code": "\"\"\"Member aggregate: a member and their loans form ONE consistency boundary.\n\nEvery change goes through the root (Member), so the invariants below hold after every method call:\n  1. at most max_loans active loans per member\n  2. a member never has the same book on loan twice\n\"\"\"\nfrom dataclasses import dataclass, replace\nfrom datetime import date\n\n\nclass LoanRuleViolation(Exception):\n    pass\n\n\nclass LoanLimitReached(LoanRuleViolation):\n    pass\n\n\nclass AlreadyBorrowed(LoanRuleViolation):\n    pass\n\n\nclass NotBorrowed(LoanRuleViolation):\n    pass\n\n\n@dataclass(frozen=True)\nclass Loan:  # entity INSIDE the aggregate; frozen, so outside code cannot edit it behind the root's back\n    book_id: str\n    borrowed_on: date\n    returned_on: date | None = None\n\n\nclass Member:  # aggregate root: the only object outside code may hold a reference to\n    def __init__(self, member_id, max_loans=3, loans=(), version=0):\n        self.member_id = member_id\n        self.max_loans = max_loans\n        self._loans = list(loans)\n        self.version = version  # optimistic concurrency: the repository compares it on save\n\n    @property\n    def loans(self):\n        return tuple(self._loans)  # read-only view: no member.loans.append(...) bypassing the rules\n\n    @property\n    def active_loans(self):\n        return tuple(loan for loan in self._loans if loan.returned_on is None)\n\n    def borrow(self, book_id, today: date):\n        # invariants are checked here, in one place, before any state changes\n        if any(loan.book_id == book_id for loan in self.active_loans):\n            raise AlreadyBorrowed(f\"member {self.member_id} already has {book_id}\")\n        if len(self.active_loans) >= self.max_loans:\n            raise LoanLimitReached(f\"member {self.member_id} already has {self.max_loans} loans\")\n        loan = Loan(book_id, today)\n        self._loans.append(loan)\n        return loan\n\n    def give_back(self, book_id, today: date):\n        for i, loan in enumerate(self._loans):\n            if loan.book_id == book_id and loan.returned_on is None:\n                self._loans[i] = replace(loan, returned_on=today)\n                return self._loans[i]\n        raise NotBorrowed(f\"member {self.member_id} has no active loan of {book_id}\")\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`@dataclass(frozen=True) class Loan`",
+    "detail": "Loans cannot be edited from outside; changes go through `Member`."
+   },
+   {
+    "title": "`return tuple(self._loans)`",
+    "detail": "Read-only view: no `member.loans.append` around the limit."
+   },
+   {
+    "title": "`if len(self.active_loans) >= self.max_loans: raise`",
+    "detail": "Checked before any change; a failed call changes nothing."
+   },
+   {
+    "title": "`WHERE member_id = ? AND version = ?` (repository)",
+    "detail": "Zero rows updated → someone saved first → ConcurrencyConflict, rollback."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L200/08-aggregates-invariants/member.py",
+    "purpose": "Aggregate"
+   },
+   {
+    "path": "labs/L200/08-aggregates-invariants/member_repository.py",
+    "purpose": "Repository + schema"
+   },
+   {
+    "path": "labs/L200/08-aggregates-invariants/app.py",
+    "purpose": "Application service + demo"
+   },
+   {
+    "path": "labs/L200/08-aggregates-invariants/test_aggregate.py",
+    "purpose": "Unit + repository tests"
+   }
+  ],
+  "expectedResults": [
+   "Demo shows each rule firing once",
+   "Ran 13 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "Two stale copies saved",
+    "expected": "second save → ConcurrencyConflict"
+   },
+   {
+    "action": "Two members borrow b1",
+    "expected": "BookAlreadyOnLoan from the unique index, member m2 unchanged (version 0)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "ConcurrencyConflict in your own code",
+    "action": "Reload the member and retry the command once."
+   },
+   {
+    "symptom": "`FrozenInstanceError` when editing a loan",
+    "action": "By design: use `borrow` / `give_back`."
+   }
+  ],
+  "equivalents": [
+   "Java/JPA: `@Version` field for optimistic locking; aggregate = entity + owned collection.",
+   ".NET EF Core: concurrency tokens (`[ConcurrencyCheck]`, rowversion) and owned entities."
+  ],
+  "checkpoint": "PASS if all tests pass and the overdue rule lives only in member.py.",
+  "checkYourself": [
+   {
+    "q": "Why is 'one active loan per book' not checked inside Member?",
+    "a": "It spans two members (two aggregates); a unique index enforces it."
+   },
+   {
+    "q": "What happens to a save that lost the version race?",
+    "a": "ConcurrencyConflict; its transaction rolls back and nothing is overwritten."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Load m1 (2 of 3 loans) twice, borrow b3 in copy A and b4 in copy B, save both; then repeat with the version check off.",
+    "predict": "With the check? Without it: 4 loans?",
+    "expected": "With: `ConcurrencyConflict: member m1 changed since version 1`. Without: saved, stored loans `['b1', 'b2', 'b4']` – b3 is silently lost (lost update)."
+   },
+   {
+    "task": "Drop the index `one_active_loan_per_book`, let m1 and m2 borrow b1.",
+    "predict": "Which code stops the second loan now?",
+    "expected": "Nothing: `b1 is on loan to ['m1', 'm2'] at the same time`."
+   }
+  ],
+  "buildTask": {
+   "task": "Add invariant 3 to member.py: no new loan while any loan is overdue (older than 14 days); raise `HasOverdueLoans` naming the books.",
+   "hints": [
+    "Add `LOAN_DAYS = 14` and `Loan.is_overdue(today)`: `(today - borrowed_on).days > LOAN_DAYS`.",
+    "Check it first in `borrow`, before the other rules."
+   ],
+   "solution": "labs/L200/08-aggregates-invariants/solution/member.py",
+   "check": "labs/L200/08-aggregates-invariants/test_build_task.py (4 tests)"
+  },
+  "inRealSystems": [
+   "Order + order lines, cart + items and account + ledger entries are classic aggregates saved in one transaction.",
+   "JPA `@Version` / EF Core rowversion give the same optimistic check."
+  ],
+  "useWhen": "Use an aggregate when rules link several objects or concurrent edits are likely; avoid huge aggregates that lock unrelated changes.",
+  "next": "L300 #12 CQRS and read models: projections that survive crashes – the aggregate's events feed a read model",
+  "sources": [
+   {
+    "title": "Martin Fowler – DDD Aggregate (background)",
+    "url": "https://martinfowler.com/bliki/DDD_Aggregate.html"
+   },
+   {
+    "title": "Vaughn Vernon – Effective Aggregate Design (DDD Community)",
+    "url": "https://www.dddcommunity.org/library/vernon_2011/"
+   },
+   {
+    "title": "SQLite – Partial Indexes (unique partial index)",
+    "url": "https://sqlite.org/partialindex.html"
+   },
+   {
+    "title": "sqlite3 — DB-API 2.0 interface (3.12)",
+    "url": "https://docs.python.org/3.12/library/sqlite3.html"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py, `python -m unittest -v` (13 tests OK incl. build task against the solution) and try_it.py on Python 3.12.15, 2026-10-28.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)"
+   ]
+  },
+  "conceptNote": "content/concepts/L200/08-aggregates-invariants.md",
+  "conceptSummary": "An aggregate is loaded and saved whole; its root checks every invariant before changing state. A version number rejects stale saves, and rules that span aggregates live in a constraint or an event, not in one root.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  }
+ },
+ {
+  "id": "event-driven-integration",
+  "number": 9,
+  "level": "L200",
+  "title": "Event-driven integration: outbox, bus and AsyncAPI",
+  "phase": "Integration",
+  "category": "events",
+  "description": "Write LoanCreated/LoanReturned to an outbox in the same SQLite transaction, relay them to idempotent consumers, and validate them against an AsyncAPI 3.1.0 document.",
+  "outcome": "You can publish domain events without losing or inventing them, make consumers safe for redelivery, and keep an event contract that tests enforce.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux); SQLite via sqlite3; unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100. CI: @asyncapi/cli 6.2.1 (npx, Node.js 24). Optional: Ollama for the agent assist.",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "A loan change and its event commit together; a relay publishes pending rows in order; consumers skip event ids they have seen.",
+   "asyncapi.json (AsyncAPI 3.1.0, the current version) is the event contract."
+  ],
+  "prerequisites": [
+   "Lessons 4 and 8 done"
+  ],
+  "glossary": [
+   {
+    "term": "Domain event",
+    "meaning": "A fact in the past tense (`LoanCreated`) published after a change."
+   },
+   {
+    "term": "Transactional outbox",
+    "meaning": "Events stored in the same transaction as the change, sent later by a relay."
+   },
+   {
+    "term": "Idempotent consumer",
+    "meaning": "Processing the same event twice has the effect of processing it once."
+   }
+  ],
+  "concepts": [
+   "Never send to a broker inside or after a DB transaction without an outbox.",
+   "Delivery is at least once: design consumers for duplicates.",
+   "AsyncAPI 3 separates channels from operations (`send`/`receive`)."
+  ],
+  "steps": [
+   {
+    "title": "Read the outbox",
+    "detail": "Open outbox.py: loan and outbox row share one `with self.db:`.",
+    "expected": "Both INSERTs sit in the same block; `Relay` marks rows after publishing.",
+    "ifNot": "Search for `_record`."
+   },
+   {
+    "title": "Run the flow",
+    "detail": "cd labs/L200/09-event-driven-integration && python app.py",
+    "expected": "Pending 1 → 1 → 2; relay publishes 2, then 0; problems [].",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Check the contract",
+    "detail": "python asyncapi_check.py; the official CLI validator runs in CI.",
+    "expected": "`asyncapi.json: AsyncAPI 3.1.0, 2 channels, 2 operations: OK`.",
+    "ifNot": "A PROBLEM line names the field.",
+    "mac": "brew install node@24   # keg-only: add $(brew --prefix node@24)/bin to PATH\nnpx --yes @asyncapi/cli@6.2.1 validate asyncapi.json",
+    "windows": "winget install -e --id OpenJS.NodeJS.LTS --version 24.19.0   # once\nnpx --yes @asyncapi/cli@6.2.1 validate asyncapi.json"
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 20 tests ... OK (atomicity, order, redelivery, contract, agent assist, build task).",
+    "ifNot": "test_failed_event_rolls_back_the_change failing means a commit happened between the two INSERTs."
+   },
+   {
+    "title": "Agent assist",
+    "detail": "python agent_assist.py (fake model).",
+    "expected": "attempt 1: REJECTED (4 problems), attempt 2: OK; asyncapi.json unchanged: True.",
+    "ifNot": "See agentAssist below."
+   },
+   {
+    "title": "Build task",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "OK with CHECK_MINE=1 (3 tests on retries and dead letters); without it the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   }
+  ],
+  "code": "\"\"\"Transactional outbox: a loan change and its event are written in ONE SQLite transaction.\n\nA relay (polling publisher) later reads unpublished rows in order and hands them to the bus.\n\"\"\"\nimport json\nimport sqlite3\n\nfrom events import CHANNEL, new_event\n\nSCHEMA = \"\"\"\nCREATE TABLE IF NOT EXISTS loans (id INTEGER PRIMARY KEY, book_id TEXT NOT NULL, member_id TEXT NOT NULL,\n                                  returned INTEGER NOT NULL DEFAULT 0);\nCREATE TABLE IF NOT EXISTS outbox (seq INTEGER PRIMARY KEY AUTOINCREMENT, channel TEXT NOT NULL,\n                                   payload TEXT NOT NULL, published_at TEXT);\n\"\"\"\n\n\nclass BookAlreadyOnLoan(Exception):\n    pass\n\n\nclass LoansWithOutbox:\n    def __init__(self, path=\":memory:\"):\n        self.db = sqlite3.connect(path, check_same_thread=False)\n        self.db.executescript(SCHEMA)\n\n    def borrow(self, book_id, member_id):\n        with self.db:  # one transaction: loan row + outbox row, or neither\n            if self.db.execute(\"SELECT 1 FROM loans WHERE book_id = ? AND returned = 0\", (book_id,)).fetchone():\n                raise BookAlreadyOnLoan(f\"book {book_id} is already on loan\")\n            loan_id = self.db.execute(\"INSERT INTO loans (book_id, member_id) VALUES (?, ?)\",\n                                      (book_id, member_id)).lastrowid\n            self._record(\"LoanCreated\", loan_id, book_id, member_id)\n        return loan_id\n\n    def give_back(self, loan_id):\n        with self.db:\n            book_id, member_id = self.db.execute(\"SELECT book_id, member_id FROM loans WHERE id = ? AND returned = 0\",\n                                                 (loan_id,)).fetchone()\n            self.db.execute(\"UPDATE loans SET returned = 1 WHERE id = ?\", (loan_id,))\n            self._record(\"LoanReturned\", loan_id, book_id, member_id)\n\n    def _record(self, event_type, loan_id, book_id, member_id):\n        event = new_event(event_type, {\"loanId\": loan_id, \"bookId\": book_id, \"memberId\": member_id})\n        # outbox: the event is stored, not sent - sending inside the transaction could not be rolled back\n        self.db.execute(\"INSERT INTO outbox (channel, payload) VALUES (?, ?)\",\n                        (CHANNEL[event_type], json.dumps(event)))\n\n    def pending(self):\n        return self.db.execute(\"SELECT COUNT(*) FROM outbox WHERE published_at IS NULL\").fetchone()[0]\n\n\nclass Relay:\n    def __init__(self, db, bus):\n        self.db, self.bus = db, bus\n\n    def publish_pending(self):\n        rows = self.db.execute(\"SELECT seq, channel, payload FROM outbox WHERE published_at IS NULL \"\n                               \"ORDER BY seq\").fetchall()  # order: E1 before E2, as committed\n        for seq, channel, payload in rows:\n            self.bus.publish(channel, json.loads(payload))\n            self._mark_published(seq)  # a crash before this line => the event is sent again (at least once)\n        return len(rows)\n\n    def _mark_published(self, seq):\n        with self.db:\n            self.db.execute(\"UPDATE outbox SET published_at = datetime('now') WHERE seq = ?\", (seq,))\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`with self.db:` around INSERT loan + `_record(...)`",
+    "detail": "One transaction: if the event fails, the loan rolls back too."
+   },
+   {
+    "title": "`INSERT INTO outbox (channel, payload)`",
+    "detail": "The event is stored, not sent; sending cannot be rolled back."
+   },
+   {
+    "title": "`ORDER BY seq` in the relay",
+    "detail": "Events leave in commit order (E1 before E2)."
+   },
+   {
+    "title": "`self._mark_published(seq)` after `publish`",
+    "detail": "A crash in between re-sends the event: at least once."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L200/09-event-driven-integration/outbox.py",
+    "purpose": "Outbox + relay"
+   },
+   {
+    "path": "labs/L200/09-event-driven-integration/events.py",
+    "purpose": "Event factory"
+   },
+   {
+    "path": "labs/L200/09-event-driven-integration/bus.py",
+    "purpose": "In-process bus"
+   },
+   {
+    "path": "labs/L200/09-event-driven-integration/consumers.py",
+    "purpose": "Idempotent consumers"
+   },
+   {
+    "path": "labs/L200/09-event-driven-integration/asyncapi.json",
+    "purpose": "AsyncAPI 3.1.0 contract"
+   },
+   {
+    "path": "labs/L200/09-event-driven-integration/asyncapi_check.py",
+    "purpose": "Structure + payload checks"
+   },
+   {
+    "path": "labs/L200/09-event-driven-integration/app.py",
+    "purpose": "Demo"
+   },
+   {
+    "path": "labs/L200/09-event-driven-integration/agent_assist.py",
+    "purpose": "Agent assist"
+   },
+   {
+    "path": "labs/L200/09-event-driven-integration/test_events.py",
+    "purpose": "Tests"
+   },
+   {
+    "path": "labs/L200/09-event-driven-integration/test_agent_assist.py",
+    "purpose": "Agent tests (fake server)"
+   }
+  ],
+  "expectedResults": [
+   "Every published event validates against asyncapi.json",
+   "Ran 20 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "Event creation fails inside borrow",
+    "expected": "0 loans, 0 outbox rows"
+   },
+   {
+    "action": "Operation action 'publish'",
+    "expected": "check_document reports AsyncAPI 3 send/receive"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Relay stops at the first failing consumer",
+    "action": "Expected before the build task."
+   },
+   {
+    "symptom": "`asyncapi must be a 3.x.y version`",
+    "action": "An AsyncAPI 2 file: v3 moved operations out of channels."
+   }
+  ],
+  "equivalents": [
+   "Debezium (Apache-2.0) tails the database log instead of polling the outbox.",
+   "Spring Modulith event publication registry, MassTransit/NServiceBus outbox (.NET), Eventuate Tram."
+  ],
+  "checkpoint": "PASS if all tests pass and a consumer failure can no longer block later events (build task).",
+  "checkYourself": [
+   {
+    "q": "Why not publish to the broker inside the transaction?",
+    "a": "The broker send cannot be rolled back if the transaction fails."
+   },
+   {
+    "q": "What makes a duplicate harmless?",
+    "a": "Consumers remember processed eventIds and skip repeats."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Let the relay crash after publishing but before marking; run it again with a naive and an idempotent consumer.",
+    "predict": "How many mails does each send?",
+    "expected": "`naive consumer sent 2 mails, idempotent consumer sent 1 (ignored 1 duplicate)`."
+   },
+   {
+    "task": "Rename `bookId` to `book` in an event and validate it.",
+    "predict": "Which checks fire?",
+    "expected": "`[\"payload: missing required field 'bookId'\", \"payload: unexpected field 'book'\"]`."
+   }
+  ],
+  "buildTask": {
+   "task": "Make the relay survive failing consumers: count `attempts`, store `last_error`, continue with the next row, and set `dead_at` after 3 failures (dead letter, skipped later).",
+   "hints": [
+    "Add columns `attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, dead_at TEXT`.",
+    "Wrap `bus.publish` in try/except; in SQLite `attempts + 1 >= ?` inside one UPDATE uses the old value."
+   ],
+   "solution": "labs/L200/09-event-driven-integration/solution/outbox.py",
+   "check": "labs/L200/09-event-driven-integration/test_build_task.py (3 tests)"
+  },
+  "agentAssist": {
+   "task": "A local model proposes the AsyncAPI entry (channel, send operation, message, payload schema) for a new LoanOverdue event.",
+   "prompt": "[[EVENT-SCHEMA]] Propose the AsyncAPI 3.1.0 additions for ONE new event (channel, send operation, message, payload schema). Reply with one object: channels, operations, components. <brief>Event, Channel, Address, Fields</brief>",
+   "check": "validate_proposal(): one object that only ADDS keys; check_document() on a merged copy; the LoanOverdue event the code emits must validate. One retry with the findings; asyncapi.json is never written.",
+   "expected": "attempt 1: REJECTED (no required list; action 'publish', an AsyncAPI 2 verb; loanId/daysOverdue typed string). attempt 2: OK. asyncapi.json unchanged: True.",
+   "realModelNote": "Not run here. `python agent_assist.py --real` with Ollama (qwen2.5:1.5b) on the Mac mini or Windows PC; wording varies, the checks do not."
+  },
+  "inRealSystems": [
+   "Debezium or a polling relay moves outbox rows to Kafka; consumers keep an inbox table of processed ids.",
+   "AsyncAPI documents feed docs, code generation and contract checks in CI."
+  ],
+  "useWhen": "Use events when other parts react to changes and may be slow or down; use a request when the caller needs the answer now.",
+  "next": "L300 #12 CQRS and read models: projections that survive crashes – consume these events into a read model that survives crashes and redelivery",
+  "sources": [
+   {
+    "title": "microservices.io – Transactional outbox",
+    "url": "https://microservices.io/patterns/data/transactional-outbox.html"
+   },
+   {
+    "title": "microservices.io – Domain event",
+    "url": "https://microservices.io/patterns/data/domain-event.html"
+   },
+   {
+    "title": "AsyncAPI Specification 3.1.0",
+    "url": "https://www.asyncapi.com/docs/reference/specification/v3.1.0"
+   },
+   {
+    "title": "AsyncAPI 3.1.0 release notes (background)",
+    "url": "https://www.asyncapi.com/blog/release-notes-3.1.0"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py, asyncapi_check.py, agent_assist.py (fake model), `python -m unittest -v` (20 tests OK) and try_it.py on Python 3.12.15, 2026-10-28. pending-ci: official `@asyncapi/cli@6.2.1 validate` (needs npm) and the real-model path.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "npx @asyncapi/cli@6.2.1 validate asyncapi.json",
+    "agent_assist.py --real (real local model)"
+   ]
+  },
+  "conceptNote": "content/concepts/L200/09-event-driven-integration.md",
+  "conceptSummary": "A change and its event commit together in an outbox table; a relay publishes pending events in order, at least once, so consumers must be idempotent. An AsyncAPI 3.1.0 document is the event contract, and tests validate real events against it.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "caution": "The agent only proposes; never let it edit asyncapi.json or publish events, and never send secrets or member data to a model.",
+  "learningTools": [
+   {
+    "name": "AsyncAPI Studio",
+    "role": "SEE",
+    "exercise": "Paste asyncapi.json into AsyncAPI Studio and read the rendered docs: channels, send operations and the LoanCreated / LoanReturned payloads; compare them with one event printed by app.py.",
+    "expected": "Pending a manual run. Should match asyncapi_check.py: `AsyncAPI 3.1.0, 2 channels, 2 operations: OK` - channels library.loans.created and library.loans.returned, operations sendLoanCreated and sendLoanReturned. If Studio does not yet accept 3.1.0, Swagger Editor v5 (5.10.0 added AsyncAPI 3.1.0) is a second check.",
+    "mac": "Browser (local-folder editing needs Chromium); or a self-built Docker image",
+    "windows": "Browser (same); or a self-built Docker image",
+    "licence": "Apache-2.0 (OSI: yes)",
+    "url": "https://github.com/asyncapi/studio"
+   }
+  ],
+  "seeAlso": [
+   "distributed-systems L100 #5 Idempotency keys: exactly-once effect over at-least-once delivery: the request-side twin of this lesson's idempotent consumer (same key or event id => one effect).",
+   "distributed-systems L200 #8 At-least-once messaging: ack, visibility timeout, redelivery, dead letters: why the relay's at-least-once delivery forces every idempotent consumer here to skip seen eventIds."
+  ]
+ },
+ {
+  "id": "oidc-authentication",
+  "number": 10,
+  "level": "L200",
+  "title": "Authentication with OpenID Connect (code flow + PKCE)",
+  "phase": "Security",
+  "category": "oidc",
+  "description": "Log in to Library Loans through a learning-only mock OpenID Provider with the authorization code flow + PKCE, and validate the ID token's iss, aud, exp and nonce.",
+  "outcome": "You can implement and test the Relying Party side of an OIDC login, and explain which attack each parameter and check stops.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux); SQLite via sqlite3; unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100. Real equivalent (pending-ci): Keycloak 26.8.1 container (quay.io/keycloak/keycloak:26.8.1) via Podman or Docker.",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "mock_idp.py is LEARNING-ONLY (no login page, HTTP on 127.0.0.1, HS256 tokens) – never deploy it.",
+   "rp_client.py is the part you own: state, nonce, PKCE, code exchange, claim checks."
+  ],
+  "prerequisites": [
+   "Lesson 4 done",
+   "HTTP redirects and JSON"
+  ],
+  "glossary": [
+   {
+    "term": "Relying Party (RP)",
+    "meaning": "The app that relies on the provider's ID token (Library Loans)."
+   },
+   {
+    "term": "PKCE",
+    "meaning": "Proof Key for Code Exchange: a secret verifier proves the code redeemer started the login."
+   },
+   {
+    "term": "nonce / state",
+    "meaning": "nonce ties the ID token to this login; state ties the callback to this browser session."
+   }
+  ],
+  "concepts": [
+   "Code flow + PKCE (S256) for every client; no implicit flow.",
+   "Check signature with your own algorithm list, then iss, aud, exp/iat, nonce.",
+   "Codes are single-use and bound to client, redirect URI and verifier."
+  ],
+  "steps": [
+   {
+    "title": "Read both sides",
+    "detail": "Open mock_idp.py (banner: LEARNING-ONLY) and rp_client.py `start_login` / `finish_login`.",
+    "expected": "You can name where state, nonce and code_challenge are created and checked.",
+    "ifNot": "Search for `S256`."
+   },
+   {
+    "title": "Run one login",
+    "detail": "cd labs/L200/10-oidc-authentication && python app.py",
+    "expected": "ID token accepted (300 s); the replay gets invalid_grant.",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Run the attack tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 19 tests ... OK (PKCE vector, alg none, forgery, aud, exp, stolen code, redirect).",
+    "ifNot": "A failing test name says which check is missing."
+   },
+   {
+    "title": "Optional: real provider",
+    "detail": "Start Keycloak 26.8.1 in start-dev mode and run keycloak_check.py (pending-ci).",
+    "expected": "`.../realms/master: OK (code flow, PKCE S256, RS256 ID tokens)`.",
+    "ifNot": "Wait 20-60 s for startup; check `podman logs kc`.",
+    "mac": "podman run -d --name kc -p 127.0.0.1:8080:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \\\n  -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:26.8.1 start-dev\npython keycloak_check.py",
+    "windows": "podman run -d --name kc -p 127.0.0.1:8080:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=admin `\n  -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:26.8.1 start-dev\npython keycloak_check.py"
+   },
+   {
+    "title": "Build task",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "OK with CHECK_MINE=1 (5 tests on max_age / auth_time); without it the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   }
+  ],
+  "code": "\"\"\"Relying Party (the Library Loans web app): authorization code flow + PKCE, then ID token validation.\"\"\"\nimport base64\nimport hashlib\nimport hmac\nimport http.client\nimport json\nimport secrets\nimport time\nimport urllib.error\nimport urllib.parse\nimport urllib.request\nfrom dataclasses import dataclass\n\nfrom id_token_rules import validate_claims\nfrom jwt_hs256 import InvalidToken, verify\n\n\nclass LoginFailed(Exception):\n    pass\n\n\n@dataclass\nclass PendingLogin:  # kept server-side in the user's session between redirect and callback\n    state: str\n    nonce: str\n    code_verifier: str\n\n\nclass RelyingParty:\n    def __init__(self, issuer, client_id, client_secret, redirect_uri, clock=time.time):\n        self.client_id, self.secret, self.redirect_uri, self.clock = client_id, client_secret, redirect_uri, clock\n        with urllib.request.urlopen(f\"{issuer}/.well-known/openid-configuration\") as resp:\n            self.config = json.loads(resp.read())  # discovery: endpoints come from the provider\n        if self.config[\"issuer\"] != issuer:\n            raise LoginFailed(f\"discovery issuer {self.config['issuer']!r} != {issuer!r}\")\n\n    def start_login(self):\n        login = PendingLogin(secrets.token_urlsafe(16), secrets.token_urlsafe(16), secrets.token_urlsafe(32))\n        challenge = base64.urlsafe_b64encode(hashlib.sha256(login.code_verifier.encode(\"ascii\")).digest())\n        query = {\"response_type\": \"code\", \"scope\": \"openid\", \"client_id\": self.client_id,\n                 \"redirect_uri\": self.redirect_uri, \"state\": login.state, \"nonce\": login.nonce,\n                 \"code_challenge\": challenge.rstrip(b\"=\").decode(), \"code_challenge_method\": \"S256\"}  # PKCE\n        return f\"{self.config['authorization_endpoint']}?{urllib.parse.urlencode(query)}\", login\n\n    def finish_login(self, callback_url, login):\n        params = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(callback_url).query))\n        if not hmac.compare_digest(params.get(\"state\", \"\"), login.state):  # CSRF: callback must answer OUR request\n            raise LoginFailed(\"state does not match this login attempt\")\n        if \"error\" in params:\n            raise LoginFailed(f\"provider returned error {params['error']}\")\n        status, tokens = self._post_token({\"grant_type\": \"authorization_code\", \"code\": params[\"code\"],\n                                           \"redirect_uri\": self.redirect_uri, \"client_id\": self.client_id,\n                                           \"client_secret\": self.secret, \"code_verifier\": login.code_verifier})\n        if status != 200:\n            raise LoginFailed(f\"token endpoint {status}: {tokens.get('error')}: {tokens.get('error_description', '')}\")\n        try:\n            _, claims = verify(tokens[\"id_token\"], self.secret)  # 1. signature + allowed alg\n        except InvalidToken as exc:\n            raise LoginFailed(str(exc)) from exc\n        problems = validate_claims(claims, issuer=self.config[\"issuer\"], client_id=self.client_id,\n                                   nonce=login.nonce, now=self.clock())  # 2. iss, aud, exp, iat, nonce\n        if problems:\n            raise LoginFailed(\"; \".join(problems))\n        return claims\n\n    def _post_token(self, form):\n        req = urllib.request.Request(self.config[\"token_endpoint\"], data=urllib.parse.urlencode(form).encode(),\n                                     headers={\"Content-Type\": \"application/x-www-form-urlencoded\"})\n        try:\n            with urllib.request.urlopen(req) as resp:\n                return resp.status, json.loads(resp.read())\n        except urllib.error.HTTPError as err:\n            return err.code, json.loads(err.read())\n\n\ndef browser_follow(url):\n    \"\"\"Stand-in for the user's browser: GET the authorize URL and return the redirect Location (not followed).\"\"\"\n    parts = urllib.parse.urlsplit(url)\n    conn = http.client.HTTPConnection(parts.hostname, parts.port, timeout=10)\n    conn.request(\"GET\", f\"{parts.path}?{parts.query}\")\n    resp = conn.getresponse()\n    location, body = resp.getheader(\"Location\"), resp.read()\n    conn.close()\n    return location or f\"(no redirect: {resp.status} {body.decode('utf-8')})\"\n\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`PendingLogin(token_urlsafe(16), token_urlsafe(16), token_urlsafe(32))`",
+    "detail": "state, nonce and a 43-character verifier, kept server-side."
+   },
+   {
+    "title": "`\"code_challenge_method\": \"S256\"`",
+    "detail": "Only the SHA-256 of the verifier travels through the browser."
+   },
+   {
+    "title": "`hmac.compare_digest(params.get(\"state\", \"\"), login.state)`",
+    "detail": "Checked first: a forged callback never reaches the IdP."
+   },
+   {
+    "title": "`verify(...)` then `validate_claims(...)`",
+    "detail": "Signature (our alg list), then iss, aud, exp, iat, nonce."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L200/10-oidc-authentication/rp_client.py",
+    "purpose": "Relying Party"
+   },
+   {
+    "path": "labs/L200/10-oidc-authentication/id_token_rules.py",
+    "purpose": "Claim checks"
+   },
+   {
+    "path": "labs/L200/10-oidc-authentication/jwt_hs256.py",
+    "purpose": "HS256 JWS"
+   },
+   {
+    "path": "labs/L200/10-oidc-authentication/mock_idp.py",
+    "purpose": "LEARNING-ONLY provider"
+   },
+   {
+    "path": "labs/L200/10-oidc-authentication/app.py",
+    "purpose": "Demo"
+   },
+   {
+    "path": "labs/L200/10-oidc-authentication/keycloak_check.py",
+    "purpose": "Discovery check (Keycloak)"
+   },
+   {
+    "path": "labs/L200/10-oidc-authentication/test_oidc.py",
+    "purpose": "Tests"
+   }
+  ],
+  "expectedResults": [
+   "One login accepted, the replay refused",
+   "Ran 19 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "S256 of RFC 7636's verifier",
+    "expected": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+   },
+   {
+    "action": "Token with alg 'none'",
+    "expected": "InvalidToken: alg 'none' not allowed"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "`state does not match this login attempt`",
+    "action": "The callback belongs to another login; start again."
+   },
+   {
+    "symptom": "`token expired` right after login",
+    "action": "Clock skew; sync time (NTP). Leeway is 60 s."
+   }
+  ],
+  "equivalents": [
+   "Keycloak, Authentik, Zitadel (open source providers); Entra ID, Okta, Auth0 as hosted options.",
+   "Client libraries: Authlib (Python), Spring Security OAuth2 Client, Microsoft.Identity.Web, openid-client (Node)."
+  ],
+  "checkpoint": "PASS if `python -m unittest -v` reports all tests OK (19, including the max_age build task).",
+  "checkYourself": [
+   {
+    "q": "An attacker copies the callback URL with the code. Why can't they log in?",
+    "a": "Redeeming needs the code_verifier, which never left the RP (and the client secret)."
+   },
+   {
+    "q": "Why check aud?",
+    "a": "A validly signed token minted for another client must not log users into this one."
+   },
+   {
+    "q": "Which attack does each of state, nonce, PKCE and aud stop?",
+    "a": "state: a forged callback (CSRF); nonce: an ID token replayed into another login; PKCE: a stolen code redeemed without the verifier; aud: a token minted for another client."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Redeem a real code with a guessed verifier (`'a' * 43`).",
+    "predict": "Error? Can the real client still use the code?",
+    "expected": "`token endpoint 400: invalid_grant: PKCE verification failed`; codes left at the IdP: 0 (the attempt burned it)."
+   },
+   {
+    "task": "Make the IdP mint the token for `aud=quiz-app` and log in.",
+    "predict": "Accepted – the signature is valid?",
+    "expected": "Rejected: `aud ['quiz-app'] does not contain 'library-web'`."
+   }
+  ],
+  "buildTask": {
+   "task": "Support `max_age` in `validate_claims(..., max_age=None)`: with max_age, `auth_time` is required and the login may not be older than max_age (+ leeway).",
+   "hints": [
+    "Message format: `auth_time is required when max_age is used` / `login is N s old, max_age is M s`.",
+    "The mock's `overrides` knob can fake an old `auth_time`."
+   ],
+   "solution": "labs/L200/10-oidc-authentication/solution/id_token_rules.py",
+   "check": "labs/L200/10-oidc-authentication/test_build_task.py (5 tests)"
+  },
+  "inRealSystems": [
+   "Web apps use a certified OIDC library and a provider such as Keycloak; RS256 keys are fetched from jwks_uri and cached.",
+   "RFC 9700 recommends PKCE for confidential clients too and drops the implicit and password grants."
+  ],
+  "useWhen": "Use OIDC code flow + PKCE for user login in browsers and native apps; use client credentials for service-to-service calls.",
+  "next": "L400 #19 Policy as code: RBAC vs ABAC, policy tests and decision logs - the verified token's claims become the input of the authorization policy",
+  "sources": [
+   {
+    "title": "OpenID Connect Core 1.0 (errata set 2)",
+    "url": "https://openid.net/specs/openid-connect-core-1_0.html"
+   },
+   {
+    "title": "RFC 7636 – Proof Key for Code Exchange",
+    "url": "https://www.rfc-editor.org/rfc/rfc7636"
+   },
+   {
+    "title": "RFC 9700 – Best Current Practice for OAuth 2.0 Security",
+    "url": "https://www.rfc-editor.org/rfc/rfc9700.html"
+   },
+   {
+    "title": "Keycloak – Securing apps with OIDC (endpoints)",
+    "url": "https://www.keycloak.org/securing-apps/oidc-layers"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py, `python -m unittest -v` (19 tests OK incl. build task against the solution) and try_it.py on Python 3.12.15, 2026-10-28 against the stdlib mock IdP. pending-ci: Keycloak 26.8.1 container + keycloak_check.py (no container engine in the sandbox).",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "keycloak_check.py against Keycloak 26.8.1"
+   ]
+  },
+  "conceptNote": "content/concepts/L200/10-oidc-authentication.md",
+  "conceptSummary": "The RP sends state, nonce and a PKCE S256 challenge, exchanges the single-use code with the verifier, and accepts the ID token only after checking signature (own alg list), iss, aud, exp/iat and nonce. Keycloak is the real provider; the stdlib mock is for learning only.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "caution": "mock_idp.py is learning-only: never deploy it or reuse its code. Real logins need TLS, a maintained OIDC library and a real provider; never log tokens or client secrets.",
+  "learningTools": [
+   {
+    "name": "Keycloak",
+    "role": "BUILD WITHOUT CODE",
+    "exercise": "Start Keycloak, sign in to the admin console (admin/admin, local only), create realm 'learn' and a public client with Standard flow, then run `KEYCLOAK_REALM=learn python keycloak_check.py` (PowerShell: `$env:KEYCLOAK_REALM=\"learn\"; python keycloak_check.py`) and compare the discovery fields with the mock IdP's.",
+    "expected": "Pending a manual run (no container engine here; CI checks realm master only). Should print `http://127.0.0.1:8080/realms/learn: OK (code flow, PKCE S256, RS256 ID tokens)`; an ID token from Keycloak carries the same claims the lab checks in step 3 (sub, aud, nonce, exp, iat) but is signed with RS256 keys from jwks_uri, not the mock's HS256.",
+    "mac": "docker run -p 127.0.0.1:8080:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:26.8.1 start-dev   # or zip + OpenJDK 25",
+    "windows": "same container, or zip: bin\\kc.bat start-dev",
+    "licence": "Apache-2.0 (OSI: yes)",
+    "url": "https://www.keycloak.org/getting-started/getting-started-docker"
+   }
+  ],
+  "seeAlso": [
+   "cryptography L200 #11 Tokens done right: signed JWT-style tokens: the signature, alg allow-list, aud and exp checks behind this lesson's ID-token validation.",
+   "application-architecture L400 #19 Policy as code: RBAC vs ABAC, policy tests and decision logs: authentication says who the subject is; the policy decides what it may do."
+  ]
+ },
+ {
+  "id": "testing-pyramid",
+  "number": 11,
+  "level": "L200",
+  "title": "Testing pyramid: unit, integration, end-to-end – measured",
+  "phase": "Quality",
+  "category": "testing",
+  "description": "Test Library Loans at three layers, measure each layer's speed, and run the same store contract against PostgreSQL with Testcontainers in CI.",
+  "outcome": "You can place a test at the right layer, measure the suite's shape and speed, and add a speed budget that fails CI.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux); SQLite via sqlite3; unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100. CI only: testcontainers[postgres]==4.15.0, psycopg[binary]==3.3.6, image postgres:16-alpine (requirements-ci.txt).",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "Many unit tests with a fake store, a few integration tests against a real SQLite file, one HTTP journey end to end.",
+   "pyramid.py times every test with perf_counter and checks unit ≥ integration ≥ e2e ≥ 1."
+  ],
+  "prerequisites": [
+   "Lesson 7 done"
+  ],
+  "glossary": [
+   {
+    "term": "Unit test",
+    "meaning": "Tests the domain in memory; no files, sockets or threads."
+   },
+   {
+    "term": "Narrow integration test",
+    "meaning": "Tests one adapter against the real dependency (database file, container)."
+   },
+   {
+    "term": "Testcontainers",
+    "meaning": "Library that starts throw-away containers (PostgreSQL) for tests."
+   }
+  ],
+  "concepts": [
+   "Many fast tests at the bottom, very few slow ones on top.",
+   "Each layer catches different bugs; test each rule once, at the lowest layer that sees it.",
+   "Measure layer speed; budgets turn it into a fitness function."
+  ],
+  "steps": [
+   {
+    "title": "Look at the layers",
+    "detail": "List test_unit_*, test_integration_* and test_e2e_* files in labs/L200/11-testing-pyramid.",
+    "expected": "8 unit, 4 SQLite integration (+3 PostgreSQL, skipped), 1 e2e test.",
+    "ifNot": "pyramid.py counts them for you."
+   },
+   {
+    "title": "Measure",
+    "detail": "python pyramid.py, then python try_it.py (plants two bugs)",
+    "expected": "A table per layer and `pyramid OK`; try_it shows which layer catches each bug.",
+    "ifNot": "Absolute times vary per machine; compare layers."
+   },
+   {
+    "title": "Run all tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 20 tests ... OK (skipped=3).",
+    "ifNot": "Skips are the Testcontainers tests (step 4)."
+   },
+   {
+    "title": "Real PostgreSQL (CI)",
+    "detail": "pip install -r requirements-ci.txt, then run the PostgreSQL test with LOANS_TESTCONTAINERS=1 and a container engine.",
+    "expected": "3 contract tests pass against postgres:16-alpine (pending-ci).",
+    "ifNot": "Unset LOANS_TESTCONTAINERS if no engine is running.",
+    "mac": "pip install -r requirements-ci.txt\nLOANS_TESTCONTAINERS=1 python -m unittest -v test_integration_postgres",
+    "windows": "pip install -r requirements-ci.txt\n$env:LOANS_TESTCONTAINERS = \"1\"; python -m unittest -v test_integration_postgres"
+   },
+   {
+    "title": "Build task",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "OK with CHECK_MINE=1 (4 tests on speed budgets); without it the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   }
+  ],
+  "code": "\"\"\"Run the test suite layer by layer, measure speed, and check the pyramid shape. Run: python pyramid.py\"\"\"\nimport math\nimport pathlib\nimport sys\nimport time\nimport unittest\n\nHERE = pathlib.Path(__file__).resolve().parent\n# layer = file-name convention; the pyramid is many fast tests at the bottom, very few slow ones on top\nLAYERS = [(\"unit\", \"test_unit*.py\"), (\"integration\", \"test_integration*.py\"), (\"e2e\", \"test_e2e*.py\")]\n\n\nclass TimedResult(unittest.TestResult):\n    def __init__(self):\n        super().__init__()\n        self.durations = []\n\n    def startTest(self, test):\n        self._started = time.perf_counter()  # perf_counter: monotonic, highest available resolution\n        super().startTest(test)\n\n    def stopTest(self, test):\n        self.durations.append(time.perf_counter() - self._started)\n        super().stopTest(test)\n\n\ndef run_layer(pattern, start_dir=HERE):\n    suite = unittest.TestLoader().discover(str(start_dir), pattern=pattern, top_level_dir=str(start_dir))\n    result = TimedResult()\n    started = time.perf_counter()\n    suite.run(result)\n    ran = result.testsRun - len(result.skipped)\n    return {\"tests\": ran, \"skipped\": len(result.skipped), \"failed\": len(result.failures) + len(result.errors),\n            \"total_ms\": (time.perf_counter() - started) * 1000,\n            \"mean_ms\": sum(result.durations) * 1000 / max(ran, 1),\n            \"problems\": [str(test) for test, _ in result.failures + result.errors]}\n\n\ndef shape_problems(rows):\n    counts = [rows[name][\"tests\"] for name, _ in LAYERS]\n    if not counts[0] >= counts[1] >= counts[2] >= 1:  # an \"ice-cream cone\" fails the check\n        return [f\"not a pyramid: unit {counts[0]}, integration {counts[1]}, e2e {counts[2]}\"]\n    return []\n\n\ndef report(rows):\n    print(f\"{'layer':<12}{'tests':>6}{'skipped':>9}{'failed':>8}{'total ms':>10}{'mean ms':>9}\")\n    for name, _ in LAYERS:\n        r = rows[name]\n        print(f\"{name:<12}{r['tests']:>6}{r['skipped']:>9}{r['failed']:>8}{r['total_ms']:>10.1f}{r['mean_ms']:>9.2f}\")\n    unit, e2e = rows[\"unit\"][\"mean_ms\"], rows[\"e2e\"][\"mean_ms\"]\n    ratio = e2e / max(unit, 1e-6)\n    print(f\"one e2e test costs about as much as {ratio:,.0f} unit tests (about 10^{round(math.log10(ratio))})\")\n\n\ndef main(start_dir=HERE):\n    rows = {name: run_layer(pattern, start_dir) for name, pattern in LAYERS}\n    report(rows)\n    problems = [p for r in rows.values() for p in r[\"problems\"]] + shape_problems(rows)\n    for problem in problems:\n        print(\"PROBLEM\", problem)\n    print(\"pyramid OK\" if not problems else \"pyramid FAILED\")\n    return 1 if problems else 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`LAYERS = [(\"unit\", \"test_unit*.py\"), ...]`",
+    "detail": "Layers by file name; discovery runs one layer at a time."
+   },
+   {
+    "title": "`time.perf_counter()` in `startTest` / `stopTest`",
+    "detail": "Monotonic high-resolution clock, per test."
+   },
+   {
+    "title": "`counts[0] >= counts[1] >= counts[2] >= 1`",
+    "detail": "Shape check: an ice-cream cone fails."
+   },
+   {
+    "title": "`return 1 if problems else 0`",
+    "detail": "Exit code is the contract with CI."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L200/11-testing-pyramid/pyramid.py",
+    "purpose": "Layer runner"
+   },
+   {
+    "path": "labs/L200/11-testing-pyramid/loans.py",
+    "purpose": "Domain"
+   },
+   {
+    "path": "labs/L200/11-testing-pyramid/sqlite_store.py",
+    "purpose": "SQLite adapter"
+   },
+   {
+    "path": "labs/L200/11-testing-pyramid/http_api.py",
+    "purpose": "HTTP adapter"
+   },
+   {
+    "path": "labs/L200/11-testing-pyramid/test_unit_loans.py",
+    "purpose": "Unit"
+   },
+   {
+    "path": "labs/L200/11-testing-pyramid/test_integration_sqlite.py",
+    "purpose": "Integration"
+   },
+   {
+    "path": "labs/L200/11-testing-pyramid/test_integration_postgres.py",
+    "purpose": "Testcontainers (CI)"
+   },
+   {
+    "path": "labs/L200/11-testing-pyramid/postgres_store.py",
+    "purpose": "PostgreSQL adapter"
+   },
+   {
+    "path": "labs/L200/11-testing-pyramid/requirements-ci.txt",
+    "purpose": "CI-only packages"
+   },
+   {
+    "path": "labs/L200/11-testing-pyramid/test_e2e_http.py",
+    "purpose": "E2E"
+   }
+  ],
+  "expectedResults": [
+   "pyramid OK",
+   "Ran 20 tests ... OK (skipped=3)"
+  ],
+  "testCases": [
+   {
+    "action": "SQLite adapter returns 1 instead of True",
+    "expected": "only the integration layer fails"
+   },
+   {
+    "action": "409 mapped to 422",
+    "expected": "only the e2e layer fails"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "`not a pyramid: ...`",
+    "action": "Move rule checks down to unit tests; keep one journey per feature."
+   },
+   {
+    "symptom": "PostgreSQL test errors instead of skipping",
+    "action": "LOANS_TESTCONTAINERS is set but no engine runs; unset it or start Podman/Docker."
+   }
+  ],
+  "equivalents": [
+   "Java: JUnit + Testcontainers (PostgreSQLContainer) + REST-assured for e2e.",
+   ".NET: xUnit + Testcontainers for .NET + WebApplicationFactory."
+  ],
+  "checkpoint": "PASS if pyramid.py says `pyramid OK` and `pyramid.py --budget` (build task) passes.",
+  "checkYourself": [
+   {
+    "q": "Where should the 'max 3 loans' check be tested?",
+    "a": "Unit layer: it is a domain rule; e2e only needs one journey."
+   },
+   {
+    "q": "Why test the store against a real database?",
+    "a": "Type and SQL differences (bool vs 1) only show up there."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Run the pyramid and predict how many unit tests cost as much as one e2e test.",
+    "predict": "10? 100? 1,000?",
+    "expected": "Observed (README run): unit 0.03 ms, integration 83 ms, e2e 613 ms → about 20,000 (10^4). Other runs here: 10^3–10^5; the order never changed."
+   },
+   {
+    "task": "Plant two bugs in a copy: SQLite returns `row[3]` instead of `bool(row[3])`; HTTP maps BookAlreadyOnLoan to 422.",
+    "predict": "Which layer catches each?",
+    "expected": "bool bug: unit 0, integration 1, e2e 0 failed. 422 bug: unit 0, integration 0, e2e 1 failed."
+   }
+  ],
+  "buildTask": {
+   "task": "Add `--budget` to pyramid.py: fail when a layer's mean test time exceeds BUDGET_MS = {unit: 10, integration: 1000, e2e: 10000}.",
+   "hints": [
+    "Put the check in `budget_problems(rows, budgets)` returning messages like `unit: mean 42.00 ms is over the 10 ms budget`.",
+    "Skip layers with 0 tests; add `--budget` with argparse and keep `main()` returning the exit code."
+   ],
+   "solution": "labs/L200/11-testing-pyramid/solution/pyramid.py",
+   "check": "labs/L200/11-testing-pyramid/test_build_task.py (4 tests)"
+  },
+  "inRealSystems": [
+   "CI runs unit tests on every push, container-backed integration tests later.",
+   "Testcontainers replaces shared test databases; test-time dashboards track slow tests."
+  ],
+  "useWhen": "Use the pyramid when rules are rich enough to unit test; for glue-heavy code, lean on integration tests.",
+  "next": "L300 #12 CQRS and read models: projections that survive crashes",
+  "sources": [
+   {
+    "title": "The Practical Test Pyramid (martinfowler.com)",
+    "url": "https://martinfowler.com/articles/practical-test-pyramid.html"
+   },
+   {
+    "title": "Testcontainers – Getting started for Python",
+    "url": "https://testcontainers.com/guides/getting-started-with-testcontainers-for-python/"
+   },
+   {
+    "title": "testcontainers (PyPI) 4.15.0",
+    "url": "https://pypi.org/project/testcontainers/"
+   },
+   {
+    "title": "time.perf_counter (3.12)",
+    "url": "https://docs.python.org/3.12/library/time.html"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran pyramid.py (several times; timings recorded as ranges), `python -m unittest -v` (20 tests OK, 3 skipped) and try_it.py on Python 3.12.15, 2026-10-28. pending-ci: test_integration_postgres with Testcontainers (no pip/container engine in the sandbox).",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "test_integration_postgres.py + postgres_store.py (Testcontainers, PostgreSQL)"
+   ]
+  },
+  "conceptNote": "content/concepts/L200/11-testing-pyramid.md",
+  "conceptSummary": "Many fast unit tests, fewer integration tests against real dependencies, very few end-to-end journeys. Measure each layer; every layer catches bugs the others miss.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "Bruno",
+    "role": "CHECK",
+    "exercise": "Reuse the lesson-4 Bruno collection (POST /loans, GET /loans/{id} - the same routes as http_api.py) against `python ../../L100/04-api-first-openapi/server.py 18765`, run it with `bru run`, and put its wall time next to pyramid.py's layer means.",
+    "expected": "Pending a manual run. Expect the collection run to land at e2e scale (pyramid.py here: e2e mean 0.6-4.9 s per test, unit 0.03-3.8 ms): one journey through HTTP costs thousands of unit tests, so it belongs at the top of the pyramid. The `bru run` CLI's install is not in the KB catalogue - see the Bruno repo.",
+    "licence": "MIT, open-core: Pro/Ultimate paid tiers (OSI: yes)",
+    "url": "https://github.com/usebruno/bruno",
+    "mac": "brew install --cask bruno",
+    "windows": "winget install Bruno.Bruno"
+   }
+  ]
+ }
+]

@@ -1,0 +1,33 @@
+# Root-level CI for kb/shared/local_agent (the canonical copy of the helper each topic vendors in labs/_shared).
+name: shared local_agent
+
+on:
+  push:
+    paths: ['shared/**', '.github/workflows/shared.yml']
+  pull_request:
+    paths: ['shared/**', '.github/workflows/shared.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-agent:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]   # macos-latest = Apple silicon (arm64)
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: shared/local_agent
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Helper tests (fake model server only, no download)
+        run: python -m unittest -v

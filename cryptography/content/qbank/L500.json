@@ -1,0 +1,776 @@
+[
+  {
+    "id": "cr-L500-001",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the RSA correctness proof argue modulo p and modulo q separately and then use the CRT, instead of applying Euler's theorem modulo n?",
+    "options": [
+      "Euler's theorem only holds for prime moduli, so it cannot be applied to n = pq at all",
+      "The CRT is needed to make decryption fast, and the proof must follow the fast algorithm",
+      "Euler's theorem gives m^φ(n) ≡ 0 (mod n), so the result has to be corrected per prime",
+      "Euler needs gcd(m, n) = 1, which fails for messages that are multiples of p or q"
+    ],
+    "answer": 3,
+    "explanation": "Euler's theorem requires gcd(m, n) = 1; the per-prime argument covers p | m with 0 ≡ 0 and the CRT glues the halves. Euler does hold for composite n, so the 'prime moduli only' option is wrong.",
+    "source": "Lesson 23 T23.4"
+  },
+  {
+    "id": "cr-L500-002",
+    "level": "L500",
+    "lesson": 23,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Using extended Euclid, what is 17⁻¹ mod 3120 (the RSA private exponent for p = 61, q = 53, e = 17)?",
+    "options": [
+      "367",
+      "2743",
+      "2753",
+      "3103"
+    ],
+    "answer": 2,
+    "explanation": "3120 = 183·17 + 9, 17 = 9 + 8, 9 = 8 + 1 gives 1 = 2·3120 − 367·17, so the inverse is −367 ≡ 2753; 17·2753 = 46801 = 15·3120 + 1. 367 is the coefficient before reducing the sign.",
+    "source": "Lesson 23 problem 23-P1"
+  },
+  {
+    "id": "cr-L500-003",
+    "level": "L500",
+    "lesson": 23,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The snippet searches Z_105 for the CRT solution. What does this print?",
+    "code": "N = 3 * 5 * 7\nprint([x for x in range(N) if (x % 3, x % 5, x % 7) == (2, 3, 2)])",
+    "options": [
+      "[23]",
+      "[233]",
+      "[23, 128]",
+      "[]"
+    ],
+    "answer": 0,
+    "explanation": "The CRT guarantees exactly one solution in Z_105, and it is 23. 233 is the unreduced sum from the CRT formula, and 128 lies outside range(105).",
+    "source": "Lesson 23 T23.3"
+  },
+  {
+    "id": "cr-L500-004",
+    "level": "L500",
+    "lesson": 23,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Textbook RSA with n = 3233. An attacker who knows only (n, e) multiplies the ciphertext by 2^e. What does this print?",
+    "code": "n, e, d = 3233, 17, 2753\nc = pow(65, e, n)\nc2 = c * pow(2, e, n) % n\nprint(pow(c2, d, n))",
+    "options": [
+      "65",
+      "130",
+      "2790",
+      "3017"
+    ],
+    "answer": 1,
+    "explanation": "(2^e·m^e)^d = 2m mod n, so the key holder decrypts 130 = 2·65: textbook RSA is malleable. 2790 is the original ciphertext and 3017 the modified one.",
+    "source": "Lesson 23 [D23] demo"
+  },
+  {
+    "id": "cr-L500-005",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In this course, what does it mean that textbook RSA is malleable?",
+    "options": [
+      "Anyone with the public key can turn Enc(m) into a valid Enc(2m) without knowing m",
+      "Anyone with the public key can recover m from Enc(m) by taking an e-th root",
+      "The private exponent d can be changed without changing the ciphertexts it decrypts",
+      "Two different keys can produce the same ciphertext for the same message m"
+    ],
+    "answer": 0,
+    "explanation": "Malleability is transforming a ciphertext into one of a related plaintext; RSA's multiplicative property gives Enc(m)·2^e = Enc(2m). Taking e-th roots is only easy without wrap-around (small m, e = 3), which is a different flaw.",
+    "source": "Lesson 23 T23.4 remark"
+  },
+  {
+    "id": "cr-L500-006",
+    "level": "L500",
+    "lesson": 23,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "A home-made prime generator accepts n when pow(2, n - 1, n) == 1. A reviewer tests 561 = 3·11·17. What does this print?",
+    "code": "n = 561\nprint(pow(2, n - 1, n) == 1)",
+    "options": [
+      "True",
+      "False",
+      "1",
+      "0"
+    ],
+    "answer": 0,
+    "explanation": "561 is a Carmichael number: it passes the Fermat test for every base coprime to it although it is composite. That is why key generation uses Miller-Rabin (nt_toys.is_probable_prime rejects 561).",
+    "source": "Lesson 23 T23.2"
+  },
+  {
+    "id": "cr-L500-007",
+    "level": "L500",
+    "lesson": 23,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A team proposes plain Diffie-Hellman (g^a, g^b over a 3072-bit safe prime, no signatures, no certificates) between two internal services. What is the most serious problem?",
+    "options": [
+      "A passive eavesdropper can compute g^(ab) from g^a and g^b by taking discrete logs",
+      "Finite-field DH is mathematically incorrect for primes larger than 2048 bits",
+      "An active attacker can man-in-the-middle it and share a key with each side",
+      "Both services may derive different keys because exponentiation is not commutative"
+    ],
+    "answer": 2,
+    "explanation": "Unauthenticated DH resists passive attackers (if DL/CDH is hard) but an active attacker substitutes its own public values. Fix: authenticate the transcript (certificates, signatures) and use a KDF - L200 #8-#10.",
+    "source": "Lesson 23 / Lesson 27 problem 27-P4"
+  },
+  {
+    "id": "cr-L500-008",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "pyca/cryptography stores a private exponent d that differs from the d you compute as e⁻¹ mod φ(n). Why do both decrypt correctly?",
+    "options": [
+      "pyca re-randomises d on each decryption, so any odd value close to φ(n)/e works",
+      "Decryption only depends on d modulo n, and both values agree modulo n",
+      "pyca never uses d; it decrypts with p and q alone, so d is only metadata",
+      "Both satisfy ed ≡ 1 modulo λ(n) = lcm(p−1, q−1), which is all the proof uses"
+    ],
+    "answer": 3,
+    "explanation": "The proof needs (p−1) | (ed − 1) and (q−1) | (ed − 1); λ(n) divides φ(n), so the smaller λ-based d works (RFC 8017 §3.2). The lab confirms pyca's d satisfies ed ≡ 1 mod λ(n).",
+    "source": "Lesson 23 glossary / T23.4"
+  },
+  {
+    "id": "cr-L500-009",
+    "level": "L500",
+    "lesson": 23,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Textbook RSA with e = 3 and a 2048-bit n encrypts m = 42, giving c = 74088. What does an eavesdropper recover by taking the ordinary integer cube root of c?",
+    "options": [
+      "24",
+      "74",
+      "42",
+      "8"
+    ],
+    "answer": 2,
+    "explanation": "42³ = 74088 < n, so no modular reduction happened and the integer cube root is m itself. OAEP padding prevents this by making the encoded message nearly as large as n.",
+    "source": "Lesson 23 problem 23-P7"
+  },
+  {
+    "id": "cr-L500-010",
+    "level": "L500",
+    "lesson": 24,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A key encrypts 2^40 messages with independent random 96-bit nonces. Using the union bound q(q−1)/(2N), about how likely is a nonce collision?",
+    "options": [
+      "about 2^-56",
+      "about 2^-40",
+      "about 2^-8",
+      "about 2^-17"
+    ],
+    "answer": 3,
+    "explanation": "q²/(2N) ≈ 2^80/2^97 = 2^−17 (≈ 7.6·10^−6, matching the lab). 2^−56 forgets that collisions grow with pairs (q²), not with q.",
+    "source": "Lesson 24 T24.1"
+  },
+  {
+    "id": "cr-L500-011",
+    "level": "L500",
+    "lesson": 24,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "With N = 365 equally likely birthdays, what is the smallest group size for which a shared birthday is at least 50 % likely (exact product formula)?",
+    "options": [
+      "183",
+      "366",
+      "23",
+      "57"
+    ],
+    "answer": 2,
+    "explanation": "The no-collision product drops below 1/2 at q = 23 (P = 0.5073). 183 is N/2, a common linear-thinking mistake; 57 gives about 99 %.",
+    "source": "Lesson 24 problem 24-P1"
+  },
+  {
+    "id": "cr-L500-012",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is min-entropy, not Shannon entropy, the right measure for a password or KDF input?",
+    "options": [
+      "It is always larger than Shannon entropy, so it gives the more optimistic security estimate",
+      "It counts only the length of the secret in bits, which is easier to measure in practice",
+      "It bounds the success of the attacker's single best guess, which is what guessing attacks exploit",
+      "It averages over all values, so rare weak passwords do not distort the measurement"
+    ],
+    "answer": 2,
+    "explanation": "Pr[best guess] = 2^(−H∞). Shannon entropy averages and can be high while one value is very likely; min-entropy is never larger than Shannon entropy.",
+    "source": "Lesson 24 T24.4"
+  },
+  {
+    "id": "cr-L500-013",
+    "level": "L500",
+    "lesson": 24,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A PIN scheme where '1234' has probability 0.1 and the other 9,999 PINs share the rest. What does this print?",
+    "code": "import math\np = [0.1] + [0.9 / 9999] * 9999\nprint(round(-math.log2(max(p)), 2))",
+    "options": [
+      "12.43",
+      "13.29",
+      "0.1",
+      "3.32"
+    ],
+    "answer": 3,
+    "explanation": "-log2(max p) is the min-entropy: −log2 0.1 = 3.32 bits. 12.43 is the Shannon entropy and 13.29 = log2(10^4) is the uniform maximum.",
+    "source": "Lesson 24 problem 24-P6"
+  },
+  {
+    "id": "cr-L500-014",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which function of the security parameter n is NOT negligible?",
+    "options": [
+      "2^(-n)",
+      "1/n^3",
+      "2^(-sqrt(n))",
+      "n^10 * 2^(-n)"
+    ],
+    "answer": 1,
+    "explanation": "1/n³ is beaten by n^(−4) for every n > 1, so it is not smaller than every inverse polynomial; n³ attempts would succeed. The others are negligible (polynomial times negligible stays negligible).",
+    "source": "Lesson 24 T24.4"
+  },
+  {
+    "id": "cr-L500-015",
+    "level": "L500",
+    "lesson": 24,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The lower birthday bound for 2^48 random 96-bit nonces. What does this print?",
+    "code": "import math\nq, N = 2**48, 2**96\nprint(round(-math.expm1(-q * (q - 1) / (2 * N)), 2))",
+    "options": [
+      "0.39",
+      "0.5",
+      "0.0",
+      "1.0"
+    ],
+    "answer": 0,
+    "explanation": "1 − e^(−1/2) ≈ 0.39: at 2^48 messages a nonce repeat is likely. 0.0 is what people expect from '96 bits is huge'; 0.5 is reached slightly later, at about 2^48.24.",
+    "source": "Lesson 24 T24.2 / T24.3"
+  },
+  {
+    "id": "cr-L500-016",
+    "level": "L500",
+    "lesson": 24,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A telemetry service encrypts 1,000,000 messages per second under one AES-GCM key with random 96-bit nonces and rotates keys yearly. What should a reviewer say?",
+    "options": [
+      "Rotate keys far more often: 2^32 messages arrive in about 72 minutes",
+      "Nothing: 96-bit nonces make a collision impossible within a single year of traffic",
+      "Switch to AES-256: a longer key removes the nonce-collision risk entirely",
+      "Use os.urandom(12) instead of secrets for nonces: it has a larger output space"
+    ],
+    "answer": 0,
+    "explanation": "2^32 / 10^6 s ≈ 71.6 min, the NIST SP 800-38D budget for random IVs. Key length does not change the nonce space, and os.urandom and secrets draw from the same source.",
+    "source": "Lesson 24 T24.3"
+  },
+  {
+    "id": "cr-L500-017",
+    "level": "L500",
+    "lesson": 24,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Several stateless workers share one key and cannot coordinate counters; traffic is about 2^45 messages per key lifetime. Which design keeps nonce collisions negligible?",
+    "options": [
+      "AES-GCM with random 96-bit nonces, since 2^45 is far below the 2^96 nonce space",
+      "AES-GCM with each worker's own message counter starting at zero under the shared key",
+      "XChaCha20-Poly1305 with random 192-bit nonces, since 2^45 messages give about 2^-103",
+      "AES-GCM with a nonce of 64 random bits followed by a 32-bit timestamp in seconds"
+    ],
+    "answer": 2,
+    "explanation": "q²/2^193 ≈ 2^90/2^193 = 2^−103. With 96-bit random nonces 2^45 messages give ≈ 2^−7; per-worker counters from zero collide across workers; 64 random bits plus a coarse timestamp collides at the birthday point of 2^64 within one second.",
+    "source": "Lesson 24 concept note: choosing a nonce strategy"
+  },
+  {
+    "id": "cr-L500-018",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "In the birthday analysis, which step gives the LOWER bound on the collision probability?",
+    "options": [
+      "Adding the pair probabilities 1/N over all q(q − 1)/2 pairs with the union bound",
+      "Replacing q(q − 1) by q² because q is large compared with one",
+      "Assuming every draw is uniform, which makes the collision probability exactly q/N",
+      "Bounding each factor 1 − i/N by e^(−i/N) in the no-collision product"
+    ],
+    "answer": 3,
+    "explanation": "1 − x ≤ e^(−x) upper-bounds the no-collision probability, hence lower-bounds the collision probability. The union bound gives the UPPER bound.",
+    "source": "Lesson 24 T24.2"
+  },
+  {
+    "id": "cr-L500-019",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why can no deterministic encryption scheme be IND-CPA secure?",
+    "options": [
+      "The adversary can always recover the key from two ciphertexts of the same plaintext",
+      "Deterministic schemes have shorter ciphertexts, which leak the plaintext length",
+      "The challenger must reveal the bit b when two ciphertexts happen to be equal",
+      "The adversary encrypts m₀ itself and compares it with the challenge"
+    ],
+    "answer": 3,
+    "explanation": "Equality testing gives advantage 1 (T25.2) without recovering any key. IND-CPA allows encryption queries, so determinism alone is fatal.",
+    "source": "Lesson 25 T25.2"
+  },
+  {
+    "id": "cr-L500-020",
+    "level": "L500",
+    "lesson": 25,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "AES-GCM used with a fixed nonce. What does this print?",
+    "code": "import os\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nk = AESGCM(AESGCM.generate_key(bit_length=128))\nn = os.urandom(12)\nprint(k.encrypt(n, b\"yes\", None) == k.encrypt(n, b\"yes\", None))",
+    "options": [
+      "True",
+      "False",
+      "None",
+      "b'yes'"
+    ],
+    "answer": 0,
+    "explanation": "With the same key and nonce GCM is deterministic, so equal plaintexts give equal ciphertexts - the IND-CPA equality attack (lab: fixed-nonce GCM advantage 1.000).",
+    "source": "Lesson 25 T25.2"
+  },
+  {
+    "id": "cr-L500-021",
+    "level": "L500",
+    "lesson": 25,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "An adversary outputs 1 in 7,400 of 10,000 runs of experiment 1 and in 2,600 of 10,000 runs of experiment 0. What is its advantage?",
+    "options": [
+      "0.74",
+      "0.24",
+      "0.26",
+      "0.48"
+    ],
+    "answer": 3,
+    "explanation": "|0.74 − 0.26| = 0.48. 0.74 is just one experiment's rate; 0.24 is half the advantage, the other common convention error.",
+    "source": "Lesson 25 problem 25-P4"
+  },
+  {
+    "id": "cr-L500-022",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does Encrypt-and-MAC (ciphertext ‖ MAC(plaintext)) fail IND-CPA even when the encryption part is randomised?",
+    "options": [
+      "MAC(m) is deterministic, so equal plaintexts carry equal tags",
+      "MAC(m) reveals the MAC key whenever the same message is encrypted twice",
+      "The random IV of the encryption part is also used as the MAC key",
+      "Encrypt-and-MAC produces ciphertexts that cannot be decrypted"
+    ],
+    "answer": 0,
+    "explanation": "The tag repeats for repeated plaintexts, so the equality adversary wins (lab: advantage 1.000). Encrypt-then-MAC tags the randomised ciphertext instead.",
+    "source": "Lesson 25 T25.2 / T25.3"
+  },
+  {
+    "id": "cr-L500-023",
+    "level": "L500",
+    "lesson": 25,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "An API decrypts AES-CBC first, then checks an HMAC over the plaintext, and returns 'bad padding' or 'bad MAC' as different errors. What is the best fix?",
+    "options": [
+      "Keep the order but return the same HTTP status code for both error cases",
+      "Add a second HMAC over the plaintext with an independent key to double integrity",
+      "Switch the block cipher from AES-128 to AES-256 to increase the security margin",
+      "Use Encrypt-then-MAC or an AEAD so tampered ciphertexts are rejected first"
+    ],
+    "answer": 3,
+    "explanation": "MAC-then-encrypt makes the receiver process unauthenticated ciphertext; differing errors (or timing) create a decryption oracle. Verifying first (EtM/AEAD) removes it; equalising messages alone often leaves timing leaks.",
+    "source": "Lesson 25 T25.3"
+  },
+  {
+    "id": "cr-L500-024",
+    "level": "L500",
+    "lesson": 25,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Baby-step giant-step needs about √q group operations. Roughly how many operations does it need for a group of order about 2^256?",
+    "options": [
+      "about 2^256",
+      "about 2^64",
+      "about 2^255",
+      "about 2^128"
+    ],
+    "answer": 3,
+    "explanation": "√(2^256) = 2^128 - why 256-bit elliptic-curve groups give about 128-bit security (Shoup proved generic algorithms cannot do better). 2^255 is brute force over half the group.",
+    "source": "Lesson 25 T25.4"
+  },
+  {
+    "id": "cr-L500-025",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Shannon's theorem: what must hold for any perfectly secret encryption scheme?",
+    "options": [
+      "The key must be used for at most 2^32 messages",
+      "The ciphertext must be longer than the message",
+      "There are at least as many keys as possible messages",
+      "The message distribution must be uniform"
+    ],
+    "answer": 2,
+    "explanation": "If |K| < |M|, some message cannot decrypt from a given ciphertext, so its posterior is 0 (T25.1b). The OTP is perfectly secret for any message distribution.",
+    "source": "Lesson 25 T25.1"
+  },
+  {
+    "id": "cr-L500-026",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "In LWE (the assumption behind ML-KEM), what makes recovering s from (A, b = A·s + e mod q) hard?",
+    "options": [
+      "The large modulus q: with q = 2 the problem would also be hard",
+      "The secrecy of the matrix A, which is never published",
+      "The small random error e: without it Gaussian elimination recovers s",
+      "The use of floating-point arithmetic, which loses precision"
+    ],
+    "answer": 2,
+    "explanation": "The lab solves error-free LWE exactly and fails with errors in [−2, 2]. A is public; ML-KEM uses q = 3329 and integer arithmetic.",
+    "source": "Lesson 25 T25.4"
+  },
+  {
+    "id": "cr-L500-027",
+    "level": "L500",
+    "lesson": 25,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A textbook RSA signature check accepts (m, sig) when pow(sig, e, n) == m. An attacker never queries the signer. What does this print?",
+    "code": "n, e = 3233, 17\nsig = 100\nm = pow(sig, e, n)\nprint(pow(sig, e, n) == m, m)",
+    "options": [
+      "False 1773",
+      "True 100",
+      "False 100",
+      "True 1773"
+    ],
+    "answer": 3,
+    "explanation": "Choosing σ first and defining m = σ^e mod n is a no-message existential forgery: the check passes for m = 1773. RSA-PSS hashes and pads, so such m are meaningless and verification fails.",
+    "source": "Lesson 25 [D25] / problem 25-P6"
+  },
+  {
+    "id": "cr-L500-028",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "In its February 2016 customer letter, what did Apple say the FBI's request amounted to?",
+    "options": [
+      "Handing over the iPhone's AES key, which Apple keeps in escrow for every device",
+      "Decrypting iCloud backups that Apple had already provided under a warrant",
+      "Building a new iOS version that bypasses security features - in Apple's words a backdoor",
+      "Weakening the AES algorithm used by all iPhones to 56-bit keys"
+    ],
+    "answer": 2,
+    "explanation": "Apple described an order to create and install a new iOS version circumventing security features, and argued the technique could be reused on other devices. Apple does not hold per-device AES keys in escrow.",
+    "source": "Apple customer letter, 16 Feb 2016 (Lesson 26 case)"
+  },
+  {
+    "id": "cr-L500-029",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What did the DOJ Inspector General's 2018 report find about the FBI and the San Bernardino iPhone?",
+    "options": [
+      "The FBI had an internal exploit all along and misled the court on purpose",
+      "No evidence the FBI could access the phone when it testified, but coordination failures delayed the outside solution",
+      "Apple secretly unlocked the phone for the FBI after the public dispute ended",
+      "The phone's encryption was broken by a mathematical attack on AES"
+    ],
+    "answer": 1,
+    "explanation": "OIG Report 18-03 found no evidence of a capability at the time of testimony, but inadequate communication within the FBI's technology division delayed engaging the outside party; the government then withdrew its filing.",
+    "source": "DOJ OIG Report 18-03 (Lesson 26 case)"
+  },
+  {
+    "id": "cr-L500-030",
+    "level": "L500",
+    "lesson": 26,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "You find that an open-source library reuses AES-GCM nonces after a restart. What is the appropriate first step under coordinated disclosure?",
+    "options": [
+      "Publish a proof-of-concept exploit immediately so users learn about the risk",
+      "Report privately through the project's security channel with a minimal reproduction",
+      "Test the bug against production services that use the library to measure impact",
+      "Sell the finding to the highest bidder, since open-source projects have no budget"
+    ],
+    "answer": 1,
+    "explanation": "ISO/IEC 29147 and the CERT Guide aim to reduce user risk: private report, triage, fix, coordinated advisory. Testing others' systems without authorisation violates ACM 2.8.",
+    "source": "Lesson 26 / CERT Guide to CVD"
+  },
+  {
+    "id": "cr-L500-031",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does ISO/IEC 29147:2018 primarily provide?",
+    "options": [
+      "A catalogue of approved encryption algorithms and minimum key sizes for vendors",
+      "Rules for law-enforcement access to encrypted data held by service providers",
+      "Export-control classification numbers for products containing cryptography",
+      "Requirements and recommendations for vendors on receiving reports and disclosing vulnerabilities"
+    ],
+    "answer": 3,
+    "explanation": "ISO/IEC 29147 is the vulnerability-disclosure standard (handling processes are in ISO/IEC 30111). Algorithms, lawful access and export classification are covered by other instruments.",
+    "source": "ISO/IEC 29147:2018 abstract"
+  },
+  {
+    "id": "cr-L500-032",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Which ACM Code of Ethics (2018) principle explicitly requires designing systems that are robustly and usably secure?",
+    "options": [
+      "1.4",
+      "1.5",
+      "2.9",
+      "3.3"
+    ],
+    "answer": 2,
+    "explanation": "Principle 2.9 'Design and implement systems that are robustly and usably secure'. 1.4 is fairness/non-discrimination, 1.5 respects creative work, 3.3 is quality of working life.",
+    "source": "ACM Code of Ethics 2018"
+  },
+  {
+    "id": "cr-L500-033",
+    "level": "L500",
+    "lesson": 26,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Your company plans to ship an end-to-end encrypted messenger worldwide. At policy level, what should an engineer do about export rules?",
+    "options": [
+      "Flag it for trade compliance: crypto is dual-use and may need ENC classification",
+      "Nothing: export controls on encryption ended in the 1990s for all products",
+      "Remove encryption from builds for foreign customers to avoid any classification",
+      "Choose a key length of 56 bits so that the product is outside every control list"
+    ],
+    "answer": 0,
+    "explanation": "Encryption is in Wassenaar Category 5 Part 2; in the US most commercial items go out under License Exception ENC (15 CFR 740.17) after classification, with destination restrictions. Weakening crypto is not a compliance strategy.",
+    "source": "Lesson 26 / 15 CFR 740.17"
+  },
+  {
+    "id": "cr-L500-034",
+    "level": "L500",
+    "lesson": 26,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A uniformly random 6-digit passcode protects a phone. About how many bits of entropy does it have?",
+    "options": [
+      "about 19.9 bits",
+      "about 6.0 bits",
+      "about 24.0 bits",
+      "about 256.0 bits"
+    ],
+    "answer": 0,
+    "explanation": "log2(10^6) ≈ 19.9 bits, which is why the retry limit, not AES-256, protects the device. 24 bits would be 6 hex digits; 256 is the AES key size.",
+    "source": "Lesson 26 problem 26-P2"
+  },
+  {
+    "id": "cr-L500-035",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What is a central technical argument of 'Keys Under Doormats' (2015) against exceptional-access mandates?",
+    "options": [
+      "Modern ciphers such as AES cannot technically support a second decryption key",
+      "They would force reversing forward-secrecy designs and add complexity that creates hidden flaws",
+      "Law enforcement already has quantum computers, so mandates are unnecessary",
+      "Exceptional access is secure only if every user picks a password over 20 characters"
+    ],
+    "answer": 1,
+    "explanation": "The report argues exceptional access would undo forward secrecy and that the complexity of today's Internet makes new requirements likely to introduce hard-to-detect flaws. Adding escrowed keys is technically possible; the risk is the problem.",
+    "source": "Keys Under Doormats, MIT-CSAIL-TR-2015-026"
+  },
+  {
+    "id": "cr-L500-036",
+    "level": "L500",
+    "lesson": 26,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A student wants to confirm a suspected TLS misconfiguration by probing a company's production servers without permission. What do the codes say?",
+    "options": [
+      "Go ahead: a publicly accessible system implies permission to test it",
+      "Do not: ACM 2.8 requires authorisation; reproduce locally and report through a disclosure channel",
+      "Go ahead if the probe is read-only, since read-only access causes no harm",
+      "Go ahead but publish results anonymously to avoid personal responsibility"
+    ],
+    "answer": 1,
+    "explanation": "ACM 2.8: a system being publicly accessible is not sufficient grounds to imply authorisation. Reproduce in a lab and use the vendor's security contact.",
+    "source": "ACM Code 2.8"
+  },
+  {
+    "id": "cr-L500-037",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "How does Shannon (1949) define perfect secrecy?",
+    "options": [
+      "The enemy cannot recover the key even with unlimited computing time",
+      "After interception, the posterior probabilities of messages equal their prior probabilities",
+      "Every ciphertext is equally likely regardless of which key was used",
+      "The cryptogram is longer than the message, so no information can leak"
+    ],
+    "answer": 1,
+    "explanation": "Shannon requires a posteriori = a priori probabilities for every cryptogram - the definition used in T25.1. Key secrecy alone is weaker; a key can stay hidden while the message leaks.",
+    "source": "Shannon 1949, summary and Part II"
+  },
+  {
+    "id": "cr-L500-038",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does Shannon's unicity distance estimate?",
+    "options": [
+      "How many keys a cipher needs before it becomes perfectly secret",
+      "How far apart two ciphertexts must be to be decrypted independently",
+      "Ciphertext needed before only one solution remains plausible",
+      "How many letters a key can encrypt before it has to be changed"
+    ],
+    "answer": 2,
+    "explanation": "Unicity distance ≈ H(K)/D: with redundancy D, enough intercepted text leaves one plausible message and key (about 30 letters for simple substitution in his estimate).",
+    "source": "Shannon 1949"
+  },
+  {
+    "id": "cr-L500-039",
+    "level": "L500",
+    "lesson": 27,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "Diffie & Hellman note that n users need (n² − n)/2 pairwise keys. What does this print?",
+    "code": "users = 1000\nprint((users**2 - users) // 2)",
+    "options": [
+      "1000000",
+      "499500",
+      "999000",
+      "500500"
+    ],
+    "answer": 1,
+    "explanation": "(10^6 − 10^3)/2 = 499,500 pairs - the key-distribution problem that motivated public keys. 500500 is n(n+1)/2, an off-by-one.",
+    "source": "Diffie & Hellman 1976, section III"
+  },
+  {
+    "id": "cr-L500-040",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which two proposals do Diffie & Hellman distinguish in 'New Directions in Cryptography'?",
+    "options": [
+      "Public key cryptosystems and public key distribution systems",
+      "Stream ciphers and block ciphers for public channels",
+      "One-time pads and Vigenère ciphers with public keys",
+      "Symmetric key escrow systems and asymmetric key escrow systems"
+    ],
+    "answer": 0,
+    "explanation": "Section III: cryptosystems with separate enciphering/deciphering keys, and key distribution over a public channel (their exponentiation scheme). Stream/block ciphers appear only as background classification.",
+    "source": "Diffie & Hellman 1976"
+  },
+  {
+    "id": "cr-L500-041",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What do Diffie & Hellman say about proving their key exchange secure?",
+    "options": [
+      "They lack a proof that it is secure when logarithms mod q are hard",
+      "They prove it is exactly as hard as factoring the modulus q",
+      "They prove it secure against chosen-ciphertext attacks",
+      "They prove that logarithms mod q need at least q operations"
+    ],
+    "answer": 0,
+    "explanation": "They note that easy logs break it but have no proof of the converse, and only conjecture √q cost. Today this gap is the CDH vs DL distinction.",
+    "source": "Diffie & Hellman 1976, section III"
+  },
+  {
+    "id": "cr-L500-042",
+    "level": "L500",
+    "lesson": 27,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Shannon used H(K) = log₁₀ 26! for simple substitution. To one decimal place, what is log₁₀ 26!?",
+    "options": [
+      "26.6",
+      "20.0",
+      "4.0",
+      "35.2"
+    ],
+    "answer": 0,
+    "explanation": "26! ≈ 4.03·10^26, so log10 26! ≈ 26.6 - higher than the 'about 20' printed in the paper; the unicity distance becomes about 38 letters, the same order of magnitude.",
+    "source": "Lesson 27 problem 27-P3"
+  },
+  {
+    "id": "cr-L500-043",
+    "level": "L500",
+    "lesson": 27,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A reviewer is asked whether the 1976 key exchange (Y = α^X mod q, K = Y_j^X_i) can be deployed unchanged today. What is the most important objection?",
+    "options": [
+      "Exponentiation mod q is too slow for any modern processor to use",
+      "It is unauthenticated, so a man-in-the-middle can substitute public values",
+      "The shared key is different on the two sides for most choices of X",
+      "It needs a pre-shared secret, which defeats the purpose of the exchange"
+    ],
+    "answer": 1,
+    "explanation": "The protocol is correct and needs no pre-shared secret, but without authentication an active attacker splits the session. Modern protocols sign the transcript and use KDFs (TLS 1.3, L200 #8-#10).",
+    "source": "Lesson 27 problem 27-P4"
+  },
+  {
+    "id": "cr-L500-044",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Shannon assumes the enemy knows the system being used. Which modern principle does this correspond to?",
+    "options": [
+      "Security through obscurity: the algorithm must be kept secret",
+      "Kerckhoffs-style open design: security rests only on the secret key",
+      "Forward secrecy: old keys cannot decrypt new messages",
+      "Defence in depth: several algorithms are layered for safety"
+    ],
+    "answer": 1,
+    "explanation": "Shannon calls the assumption pessimistic but realistic because systems are eventually found out; every game in lesson 25 gives the adversary the scheme's description.",
+    "source": "Shannon 1949, section 2"
+  },
+  {
+    "id": "cr-L500-045",
+    "level": "L500",
+    "lesson": 27,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "The 1976 key exchange in the paper's notation, with toy numbers. What does this print?",
+    "code": "q, alpha = 23, 5\nXi, Xj = 6, 15\nYi, Yj = pow(alpha, Xi, q), pow(alpha, Xj, q)\nprint(pow(Yj, Xi, q), pow(Yi, Xj, q))",
+    "options": [
+      "8 19",
+      "2 2",
+      "19 8",
+      "2 19"
+    ],
+    "answer": 1,
+    "explanation": "Both sides compute α^(XiXj) mod q = 2. 8 and 19 are the public values Yi and Yj, which an eavesdropper also sees.",
+    "source": "Diffie & Hellman 1976 eq. (9)-(12); Lesson 23 problem 23-P6"
+  }
+]

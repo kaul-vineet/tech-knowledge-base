@@ -1,0 +1,684 @@
+{
+ "id": "03-agent-driven-simulation",
+ "number": 3,
+ "level": "L600",
+ "title": "An AI agent that runs simulation experiments — and can't fool you",
+ "phase": "Integrate",
+ "category": "Integrated project",
+ "combines": [
+  "ai-agents",
+  "simulation",
+  "application-architecture"
+ ],
+ "description": "A tool-calling agent proposes screening runs and A/B experiments on the help-desk simulation and writes a summary. A job pipeline decides everything else: contract gate, budget gate, seeded runs in an append-only registry, replications from a target CI half-width, and a claim check of every sentence.",
+ "outcome": "You can put an LLM agent in front of a stochastic simulator without letting it decide anything: arguments validated against a contract and an envelope, cost reserved before running, n chosen from statistics, every published number traced to a reproducible run, and overstated claims rejected.",
+ "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; reuses simulation L100 #6 / L200 #10 / L300 #14, ai-agents L200 #8 / L300 #14 and kb/shared/local_agent (fake model server) via _kb.py; optional Ollama (OpenAI-compatible /v1, tools supported) for --real-model",
+ "estimatedTime": "4-6 hours",
+ "overview": [
+  "The agent may ask for any experiment and write any sentence; code decides what runs, how many times, at what cost, and which sentences anyone reads. The failure lab is the classic one: 'significant improvement' from 3 replications."
+ ],
+ "prerequisites": [
+  "ai-agents L100 #6 A minimal agent loop and L200 #8 (tool schemas)",
+  "simulation L200 #10 (replications and confidence intervals) and L300 #14 (Morris)",
+  "application-architecture L300 #14 (contracts) and L300 #16 (fitness functions)",
+  "simulation L400 #20 (keyed random streams) helps"
+ ],
+ "designBrief": {
+  "context": "A help desk (M/M/1, lam 0.8/min, mu 1.0/min, 30 tickets waiting on Monday) is considering a triage script that makes service 5% faster (mu 1.05). An agent plans the experiments and writes the report for the manager; a local model may hallucinate numbers and overstate results.",
+  "constraints": [
+   "100% of numeric claims in the published report trace to a registered run",
+   "every registered run reproduces bit-for-bit from its record (same environment fingerprint)",
+   "session budget 300,000 simulated customers and 8 model calls - never exceeded, reserved before running",
+   "'significant' only with >= 10 replications per arm and a 95% Welch CI of the difference that excludes 0; target half-width <= 0.3 min",
+   "proposals outside the schema or the verified envelope (lam/mu <= 0.9) never run and cost nothing",
+   "the model sees only the brief and tool results - no keys, no data files"
+  ],
+  "question": "How do you let an agent drive simulation experiments while guaranteeing that every number and every 'significant' in its report is true?"
+ },
+ "architecture": {
+  "diagram": "labs/L600/03-agent-driven-simulation/architecture.mmd",
+  "summary": "agent.py (ai-agents L100 #6 loop, L300 #14 Budget) sends tool calls to a job pipeline. contract.py validates them with the ai-agents L200 #8 validator against the same schemas the model receives, plus the envelope rule lam/mu <= 0.9 (verified in M1). SimBudget reserves cost in simulated customers before any run. pipeline.py runs the simulation L200 #10 help desk with seeds keyed by SeedSequence(root, spawn_key=(arm, rep)) and the L300 #14 Morris code through an adapter, sizes replications with solution/replications.py, and writes runs and experiment facts to an append-only JSONL registry (run_id = sha256 of model, version, params, seed; value as float.hex). claims.py checks every summary sentence against the cited experiment's facts and verdict; rejected sentences are replaced by code-written lines. run_project.py prints a JSON-lines scorecard: 5 milestones, 4 seams, 3 fitness functions."
+ },
+ "buildsOn": [
+  {
+   "topic": "ai-agents",
+   "lesson": 6,
+   "title": "A minimal agent loop",
+   "uses": "the loop shape (model -> tool call -> result -> model, errors returned as data, step budget) in agent.py"
+  },
+  {
+   "topic": "ai-agents",
+   "lesson": 8,
+   "title": "Agents with several tools",
+   "uses": "schema_check.validate (JSON Schema subset with additionalProperties false) for every tool call"
+  },
+  {
+   "topic": "ai-agents",
+   "lesson": 14,
+   "title": "Reliability: timeouts, retries, budgets and fallbacks",
+   "uses": "resilient_agent.Budget caps model calls/tokens of the session"
+  },
+  {
+   "topic": "simulation",
+   "lesson": 6,
+   "title": "Is the model right? Verification vs validation",
+   "uses": "vv.formula (M/M/1 Wq) for M1 verification at rho 0.5/0.8/0.9"
+  },
+  {
+   "topic": "simulation",
+   "lesson": 10,
+   "title": "Warm-up, replications and confidence",
+   "uses": "warmup.waits is the simulated help desk; warm-up 200 > the 169 its Welch plot proposes; its t975 approximation is the df-2 caveat"
+  },
+  {
+   "topic": "simulation",
+   "lesson": 14,
+   "title": "Global sensitivity: OAT vs Morris vs Sobol'",
+   "uses": "sensitivity.morris / sobol through a unit-cube adapter for run_screening"
+  },
+  {
+   "topic": "application-architecture",
+   "lesson": 14,
+   "title": "Consumer-driven contract testing",
+   "uses": "one contract artefact (contract.SCHEMAS) used by both sides: sent to the model as tools and enforced by the pipeline"
+  },
+  {
+   "topic": "application-architecture",
+   "lesson": 16,
+   "title": "Performance and architecture fitness functions in CI",
+   "uses": "the three fitness functions as tests that keep the decisions true"
+  }
+ ],
+ "seams": [
+  {
+   "between": "ai-agents ↔ application-architecture (agent ↔ tool schema)",
+   "contract": "run_experiment / run_screening JSON arguments: JSON Schema (ranges, types, additionalProperties false) + envelope rule lam/mu <= 0.9",
+   "risk": "valid JSON, invalid science: lam 0.97, invented fields, strings for numbers, a utilisation the model was never verified at",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_seam_contract.py"
+  },
+  {
+   "between": "ai-agents ↔ simulation (agent claims ↔ computed statistics)",
+   "contract": "every sentence with a number cites an [exp-...] id; numbers match that experiment's facts at the written precision; 'significant'/direction/negation agree with the computed verdict",
+   "risk": "hallucinated numbers (32.3 min for a run that never happened), overstated effects (-40%), 'significant' on an inconclusive result",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_seam_claims.py"
+  },
+  {
+   "between": "simulation ↔ application-architecture (stochasticity ↔ conclusions)",
+   "contract": "n per arm from the target half-width (pilot 10, then n(h/target)^2), keyed streams so extensions re-use earlier runs; verdict from the 95% Welch CI of the difference",
+   "risk": "conclusions from noise: 3 replications give -40% with a CI from -3.436 to 0.019",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_seam_replications.py"
+  },
+  {
+   "between": "ai-agents ↔ simulation (cost/time budget)",
+   "contract": "cost in simulated customers computed by code and reserved before each batch; model calls capped by Budget",
+   "risk": "Sobol' N = 64 needs 384,000 of 300,000; a runaway plan of tool calls; the replication fix silently overspending",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_seam_budget.py"
+  }
+ ],
+ "milestones": [
+  {
+   "title": "M1 Model verified (V&V) + reproducible",
+   "deliverable": "model.py adapter over warmup.waits; keyed seeds; run_project.verify_model()",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_milestones.py::M1ModelVerified (95% CI covers the M/M/1 formula at rho 0.5/0.8/0.9; same seed -> same bits)"
+  },
+  {
+   "title": "M2 Contract gate before any run",
+   "deliverable": "contract.py (schemas + envelope) + Pipeline.submit job states",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_milestones.py::M2ContractGate and tests/test_seam_contract.py"
+  },
+  {
+   "title": "M3 Experiment registry",
+   "deliverable": "registry.py: append-only JSONL, run_id from model+version+params+seed, value_hex, reproduce()",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_milestones.py::M3Registry and tests/test_fitness.py::test_runs_reproducible"
+  },
+  {
+   "title": "M4 Replications from target half-width",
+   "deliverable": "solution/replications.py + budget-checked sequential extension in pipeline.py",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_milestones.py::M4Replications (55 per arm, half-width <= 0.3, significant decrease)"
+  },
+  {
+   "title": "M5 Claim check + published report",
+   "deliverable": "claims.py review(), code_line(), traced_runs(); out/report.md",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_milestones.py::M5ClaimCheck and tests/test_seam_claims.py"
+  }
+ ],
+ "rubric": [
+  {
+   "criterion": "The model is verified before the agent uses it",
+   "measure": "95% CI vs M/M/1 formula at rho 0.5, 0.8, 0.9",
+   "pass": "all three covered"
+  },
+  {
+   "criterion": "Bad proposals never run",
+   "measure": "runs and customers charged for rejected jobs",
+   "pass": "0 and 0"
+  },
+  {
+   "criterion": "Conclusions are sized, not guessed",
+   "measure": "replications per arm and 95% half-width of the difference",
+   "pass": ">= 10 and <= 0.3 min, or budget_limited reported"
+  },
+  {
+   "criterion": "Every published number is traceable",
+   "measure": "numbers traced / numbers found in the published report",
+   "pass": "7 / 7 (100%)"
+  },
+  {
+   "criterion": "Results are reproducible",
+   "measure": "registered runs re-created bit-for-bit",
+   "pass": "160 / 160"
+  },
+  {
+   "criterion": "Budgets hold",
+   "measure": "customers spent vs limit; model calls vs cap",
+   "pass": "270,000 <= 300,000; 5 <= 8"
+  },
+  {
+   "criterion": "Overclaims are caught",
+   "measure": "'significant' sentences on inconclusive results that get published",
+   "pass": "0 (failure lab: rejected with reason)"
+  }
+ ],
+ "fitnessFunctions": [
+  {
+   "what": "100% of numeric claims in the published report traced to a registry run",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_fitness.py::test_claims_traced",
+   "threshold": "traced == found > 0"
+  },
+  {
+   "what": "every registered run reproducible bit-for-bit from its seed",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_fitness.py::test_runs_reproducible",
+   "threshold": "all runs: float.hex equal; the unseeded fault must fail"
+  },
+  {
+   "what": "budget never exceeded",
+   "test": "labs/L600/03-agent-driven-simulation/tests/test_fitness.py::test_budget_never_exceeded",
+   "threshold": "spent <= limit and ledger == spent == sum of run costs, under adversarial proposals at 3 budgets"
+  }
+ ],
+ "decisionRecords": [
+  "labs/L600/03-agent-driven-simulation/decisions/0001-agent-proposes-code-decides.md",
+  "labs/L600/03-agent-driven-simulation/decisions/0002-registry-and-seeding.md",
+  "labs/L600/03-agent-driven-simulation/decisions/0003-replications-from-target-half-width.md"
+ ],
+ "glossary": [
+  {
+   "term": "contract gate",
+   "meaning": "Schema + semantic rules checked before a proposal becomes a job; rejections are returned to the agent as tool results and cost nothing."
+  },
+  {
+   "term": "verified envelope",
+   "meaning": "The input region where the model was checked against an independent answer (here lam/mu <= 0.9 against the M/M/1 formula)."
+  },
+  {
+   "term": "experiment registry",
+   "meaning": "Append-only record of every run (model version, params hash, seed, result bits) and every experiment's facts with the run ids behind each."
+  },
+  {
+   "term": "keyed stream",
+   "meaning": "Seed derived from (root, arm, replication) via SeedSequence spawn_key, so replication i is the same run however many replications follow."
+  },
+  {
+   "term": "target half-width",
+   "meaning": "The precision the decision needs (0.3 min on the difference); the replication count follows from it, not from the agent."
+  },
+  {
+   "term": "Welch CI",
+   "meaning": "Confidence interval for a difference of means with unequal variances and Welch-Satterthwaite degrees of freedom."
+  },
+  {
+   "term": "claim check",
+   "meaning": "Sentence-by-sentence verification of the agent's text: cited experiment, numbers at the written precision, wording vs verdict."
+  }
+ ],
+ "steps": [
+  {
+   "title": "Run the project",
+   "detail": "Starts the fake model on 127.0.0.1, verifies the model, runs the agent session and prints 12 JSON lines plus the scorecard.",
+   "mac": "cd integrated/labs/L600/03-agent-driven-simulation\npython run_project.py; echo \"exit $?\"",
+   "windows": "cd integrated\\labs\\L600\\03-agent-driven-simulation\npython run_project.py; \"exit $LASTEXITCODE\"",
+   "expected": "12 lines with pass true, then {\"scorecard\": \"PASS\", \"passed\": 12, \"total\": 12, \"inject\": null}; exit 0.",
+   "ifNot": "ModuleNotFoundError or FileNotFoundError from _kb.py: keep the kb/ folder layout (the lab loads simulation, ai-agents and shared files by path)."
+  },
+  {
+   "title": "Read the registry and the report",
+   "detail": "out/registry.jsonl has one line per run (160) and per experiment (2); out/report.md has the published text and the agent's draft.",
+   "mac": "head -c 400 out/registry.jsonl; echo; cat out/report.md",
+   "windows": "Get-Content out\\registry.jsonl -TotalCount 1; Get-Content out\\report.md",
+   "expected": "Run records with run_id, params_hash, version 3384b3898c59, seed, value_hex, env; the draft's '32.3 min' sentence missing from the published text.",
+   "ifNot": "Run step 1 first."
+  },
+  {
+   "title": "Reproduce the failure lab",
+   "detail": "The pipeline trusts the agent's 3 replications.",
+   "mac": "python run_project.py --inject few-reps; echo \"exit $?\"",
+   "windows": "python run_project.py --inject few-reps; \"exit $LASTEXITCODE\"",
+   "expected": "M4 and the stochasticity seam fail (half-width 1.728, verdict inconclusive); the 'significant improvement with 3 replications' sentence is rejected; scorecard 10/12, exit 1.",
+   "ifNot": "If it passes, check that --inject reached Pipeline(policy=naive_policy)."
+  },
+  {
+   "title": "Inject the other seam faults",
+   "detail": "Each flag breaks one seam: no-contract, no-budget-gate, unseeded.",
+   "mac": "for f in no-contract no-budget-gate unseeded; do python run_project.py --inject $f --out out/inj-$f | tail -1; done",
+   "windows": "foreach ($f in 'no-contract','no-budget-gate','unseeded') { python run_project.py --inject $f --out out\\inj-$f | Select-Object -Last 1 }",
+   "expected": "9/12, 10/12, 8/12 - each FAIL with exit 1.",
+   "ifNot": "A fault that still passes means a gate was bypassed somewhere else too."
+  },
+  {
+   "title": "Run the tests",
+   "detail": "Milestones, seams, fitness functions, failure lab, build task, try-its.",
+   "mac": "python -m unittest discover -s tests -v",
+   "windows": "python -m unittest discover -s tests -v",
+   "expected": "Ran 38 tests ... OK (about 2 minutes here).",
+   "ifNot": "Run from the lab folder; the tests add it to sys.path themselves."
+  },
+  {
+   "title": "Build task",
+   "detail": "Implement required_replications() in replications.py.",
+   "mac": "BUILD_TARGET=mine python -m unittest tests.test_build_task -v",
+   "windows": "$env:BUILD_TARGET = \"mine\"; python -m unittest tests.test_build_task -v",
+   "expected": "Shipped file: FAILED (failures=3); after your fix: Ran 3 tests ... OK.",
+   "ifNot": "Remove BUILD_TARGET to compare with solution/replications.py."
+  },
+  {
+   "title": "Optional: a real local model",
+   "detail": "Same pipeline, a real model proposes and writes. Only the brief and tool results are sent.",
+   "mac": "export LOCAL_MODEL_URL=http://localhost:11434/v1 LOCAL_MODEL=qwen2.5:1.5b\npython run_project.py --real-model",
+   "windows": "$env:LOCAL_MODEL_URL=\"http://localhost:11434/v1\"; $env:LOCAL_MODEL=\"qwen2.5:1.5b\"\npython run_project.py --real-model",
+   "expected": "Contract, budget and claim checks behave the same; lines that assume the fake's plan (e.g. one contract rejection) may differ.",
+   "ifNot": "Connection refused: start Ollama (shared/WORKSTATION-SETUP.md)."
+  }
+ ],
+ "code": "\"\"\"L600 #03: an AI agent that runs simulation experiments - and can't fool you.\n\nThe agent (a tool-calling loop) proposes screening runs and A/B experiments on the L200 #10 help-desk simulation and\nwrites a summary. Code decides everything else: the contract gate (schema + verified envelope), the budget gate,\nseeded runs into an append-only registry, replications sized from a target CI half-width, and a claim check of\nevery sentence. Prints one JSON line per milestone, seam and fitness function; exits 1 on any failure.\npython run_project.py [--inject few-reps|unseeded|no-contract|no-budget-gate] [--real-model]\n\"\"\"\nimport argparse\nimport json\nimport os\nimport sys\nfrom pathlib import Path\n\nimport agent\nimport claims\nimport model\nimport pipeline\nimport registry as reg\nimport stats\n\nHERE = Path(__file__).resolve().parent\nOUT = HERE / \"out\"\nBRIEF = (\"Help-desk study, seed 13. Screen with sobol 64. Screen with morris 10. \"\n         \"Compare mu 1.0 vs 1.05 at lam 0.8 with 3 replications. Compare mu 1.0 vs 1.05 at lam 0.97 with 3 replications.\")\nSIM_BUDGET, HALF_WIDTH, MAX_CALLS = 300_000, 0.3, 8  # customers per session; min; agent model calls\nFAULTS = (\"few-reps\", \"unseeded\", \"no-contract\", \"no-budget-gate\")\n\n\ndef verify_model():\n    \"\"\"M1 (L100 #6 V&V): 95% CI of 10 long runs must cover the M/M/1 formula; same seed -> same bits.\"\"\"\n    rows = []\n    for rho in (0.5, 0.8, 0.9):\n        p = {\"lam\": rho, \"mu\": 1.0, \"backlog\": 0, \"customers\": 20_000, \"warmup\": 2_000}\n        m, h = stats.mean_ci([model.run_once(p, model.seed_for(6, 0, r)) for r in range(10)])\n        rows.append({\"rho\": rho, \"sim\": round(m, 3), \"half_width\": round(h, 3), \"formula\": round(model.mm1_wq(rho, 1.0), 3),\n                     \"covered\": abs(m - model.mm1_wq(rho, 1.0)) <= h})\n    p = {\"lam\": 0.8, \"mu\": 1.0}\n    same = model.run_once(p, 123).hex() == model.run_once(p, 123).hex()\n    return rows, same\n\n\ndef session(inject, real_model, registry):\n    pl = pipeline.Pipeline(registry, pipeline.SimBudget(SIM_BUDGET, gate=inject != \"no-budget-gate\"),\n                           half_width=HALF_WIDTH, policy=pipeline.naive_policy if inject == \"few-reps\" else None,\n                           gate=inject != \"no-contract\", seeded=inject != \"unseeded\")\n    server = None\n    if real_model:\n        url, name = os.environ.get(\"LOCAL_MODEL_URL\", \"http://localhost:11434/v1\"), os.environ.get(\"LOCAL_MODEL\", \"qwen2.5:1.5b\")\n    else:\n        import fake_sim_agent\n        (server, url), name = fake_sim_agent.start_in_thread(), \"fake-model\"\n    try:\n        out = agent.run_session(BRIEF, pl, url, name, max_calls=MAX_CALLS)\n    finally:\n        if server:\n            server.shutdown()\n            server.server_close()\n    return pl, out\n\n\ndef main(argv=None):\n    ap = argparse.ArgumentParser()\n    ap.add_argument(\"--inject\", choices=FAULTS)\n    ap.add_argument(\"--real-model\", action=\"store_true\")\n    ap.add_argument(\"--out\", type=Path, default=OUT)\n    args = ap.parse_args(argv)\n    out_dir = args.out\n    out_dir.mkdir(parents=True, exist_ok=True)\n    (out_dir / \"registry.jsonl\").unlink(missing_ok=True)  # fresh registry per run (append-only within a run)\n    registry = reg.Registry(out_dir / \"registry.jsonl\")\n    lines = []\n\n    def score(kind, name, passed, **measures):\n        lines.append({kind: name, \"pass\": bool(passed), **measures})\n        print(json.dumps(lines[-1]))\n\n    v_rows, same = verify_model()\n    pl, out = session(args.inject, args.real_model, registry)\n    rows, published = claims.review(out[\"summary\"], registry)\n    rejected_jobs = [j for j in pl.jobs if j[\"states\"][-1] == \"REJECTED\"]\n    by_contract = [j[\"job\"] for j in rejected_jobs if \"VALIDATED\" not in j[\"states\"]]\n    by_budget = [j[\"job\"] for j in rejected_jobs if \"VALIDATED\" in j[\"states\"]]\n    runs_rejected = sum(r[\"job\"] in by_contract + by_budget for r in registry.runs())\n    outside = [j[\"job\"] for j in pl.jobs if j[\"tool\"] == \"run_experiment\" and \"RAN\" in j[\"states\"]\n               and max(j[\"args\"][a][\"lam\"] / j[\"args\"][a][\"mu\"] for a in (\"baseline\", \"candidate\")) > 0.9]\n    exps = [r for r in registry.records if r[\"kind\"] == \"experiment\" and \"verdict\" in r[\"facts\"]]\n    ab = {k: v[\"value\"] for k, v in exps[0][\"facts\"].items()} if exps else {}\n    hw = ab.get(\"difference_half_width\", float(\"inf\"))\n    run_ids = registry.run_ids()\n    facts_ok = all(set(f[\"runs\"]) <= run_ids for e in registry.records if e[\"kind\"] == \"experiment\" for f in e[\"facts\"].values())\n    repro = [reg.reproduce(r) for r in registry.runs()]\n    found, traced = claims.traced_runs(published, registry)\n    recheck = [r for r in claims.review(published, registry)[0] if not r[\"ok\"]]\n    overclaim = [r[\"sentence\"] for r in rows if \"significan\" in r[\"sentence\"] and not r[\"ok\"]]\n\n    score(\"milestone\", \"M1 model verified (V&V) + reproducible\", all(r[\"covered\"] for r in v_rows) and same,\n          checks=v_rows, same_seed_same_bits=same, model=f\"{model.NAME}@{model.VERSION}\")\n    score(\"milestone\", \"M2 contract gate before any run\", bool(by_contract) and not outside and not runs_rejected,\n          rejected_by_contract=by_contract, ran_outside_envelope=outside, runs_for_rejected_jobs=runs_rejected)\n    score(\"milestone\", \"M3 experiment registry\", len(repro) > 0 and facts_ok and all(repro),\n          runs=len(repro), experiments=len([r for r in registry.records if r[\"kind\"] == \"experiment\"]),\n          facts_trace_to_runs=facts_ok)\n    score(\"milestone\", \"M4 replications from target half-width\", hw <= HALF_WIDTH and ab.get(\"replications\", 0) >= 10,\n          requested=3, replications=ab.get(\"replications\"), diff_half_width=round(hw, 3), target=HALF_WIDTH,\n          verdict=ab.get(\"verdict\"), diff=round(ab.get(\"difference\", 0), 3))\n    score(\"milestone\", \"M5 claim check + published report\", bool(rows) and not recheck,\n          sentences=len(rows), rejected=[{\"sentence\": r[\"sentence\"][:60], \"reason\": r[\"reason\"]} for r in rows if not r[\"ok\"]])\n    score(\"seam\", \"agent <-> tool schema\", bool(by_contract) and not outside, test=\"tests/test_seam_contract.py\")\n    score(\"seam\", \"agent claims <-> computed statistics\", not recheck and all(not r[\"ok\"] for r in rows\n          if r[\"sentence\"].startswith(\"At lam\")), test=\"tests/test_seam_claims.py\")\n    score(\"seam\", \"sim stochasticity <-> conclusions\", ab.get(\"verdict\") != \"inconclusive\" and hw <= HALF_WIDTH\n          and not overclaim, verdict=ab.get(\"verdict\"), overclaims_rejected=overclaim, test=\"tests/test_seam_replications.py\")\n    score(\"seam\", \"cost/time budget\", pl.budget.spent <= SIM_BUDGET and out[\"calls\"] <= MAX_CALLS\n          and not runs_rejected, rejected_by_budget=by_budget, spent=pl.budget.spent, limit=SIM_BUDGET, agent_calls=out[\"calls\"], ledger=pl.budget.ledger,\n          test=\"tests/test_seam_budget.py\")\n    score(\"fitness\", \"100% of numeric claims traced to a registry run\", found > 0 and traced == found,\n          numbers=found, traced=traced, test=\"tests/test_fitness.py::test_claims_traced\")\n    score(\"fitness\", \"every run reproducible bit-for-bit from its seed\", repro and all(repro),\n          reproduced=sum(repro), runs=len(repro), env=model.ENVIRONMENT, test=\"tests/test_fitness.py::test_runs_reproducible\")\n    score(\"fitness\", \"budget never exceeded\", pl.budget.spent <= SIM_BUDGET\n          and sum(a for _, a in pl.budget.ledger) == pl.budget.spent, spent=pl.budget.spent, limit=SIM_BUDGET,\n          test=\"tests/test_fitness.py::test_budget_never_exceeded\")\n    passed = sum(x[\"pass\"] for x in lines)\n    final = {\"scorecard\": \"PASS\" if passed == len(lines) else \"FAIL\", \"passed\": passed, \"total\": len(lines),\n             \"inject\": args.inject}\n    print(json.dumps(final))\n    registry.close()\n    (out_dir / \"scorecard.jsonl\").write_text(\"\".join(json.dumps(x) + \"\\n\" for x in lines + [final]), encoding=\"utf-8\")\n    (out_dir / \"report.md\").write_text(f\"# Published summary\\n\\n{published}\\n\\n# Agent draft\\n\\n{out['summary']}\\n\",\n                                   encoding=\"utf-8\")\n    return 0 if final[\"scorecard\"] == \"PASS\" else 1\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+ "codeLanguage": "python",
+ "codeWalkthrough": [
+  {
+   "title": "contract.validate()",
+   "detail": "ai-agents L200 #8 schema_check on SCHEMAS (the same dict the model receives as tools), then the cross-field envelope rule lam/mu <= 0.9 a schema cannot express. Problems are returned as data."
+  },
+  {
+   "title": "Pipeline.submit() and job states",
+   "detail": "PROPOSED -> VALIDATED -> PLANNED -> RAN -> ANALYSED -> DONE, or REJECTED at the contract or the budget. A rejected job has no runs and no cost."
+  },
+  {
+   "title": "SimBudget.reserve() before every batch",
+   "detail": "Costs are computed by code (customers per run x runs). The first batch must fit or the job is rejected; an extension that does not fit stops the job with budget_limited instead of overspending."
+  },
+  {
+   "title": "_experiment(): keyed streams + sequential replications",
+   "detail": "Replication i of arm k uses SeedSequence(root, spawn_key=(k, i)); the policy (solution/replications.py) asks for 10 pilots, then n(h/target)^2 until the 95% Welch half-width of the difference <= 0.3."
+  },
+  {
+   "title": "Registry: run_id, value_hex, facts",
+   "detail": "Each run is keyed by sha256(model, version, params, seed); its mean (math.fsum) is stored as float.hex. Each experiment stores facts with the run ids behind them - the only numbers a summary may quote."
+  },
+  {
+   "title": "claims.check_sentence()",
+   "detail": "Uncited numbers, unknown ids, numbers not in the cited facts at the written precision, 'significant' on an inconclusive verdict, a wrong direction, a false 'not significant', or a direction without a qualifier -> rejected; code_line() writes the replacement."
+  },
+  {
+   "title": "run_project.py scorecard",
+   "detail": "One JSON line per milestone, seam and fitness function; --inject flips one gate (few-reps, unseeded, no-contract, no-budget-gate) and the exit code turns 1."
+  }
+ ],
+ "projectFiles": [
+  {
+   "path": "labs/L600/03-agent-driven-simulation/run_project.py",
+   "purpose": "main file: session, scorecard, --inject faults"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/agent.py",
+   "purpose": "tool-calling loop with the ai-agents Budget"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/fake_sim_agent.py",
+   "purpose": "deterministic stand-in model (wraps kb/shared/local_agent/fake_model_server.py, rule keyed on the run_experiment tool)"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/contract.py",
+   "purpose": "tool schemas + envelope rule"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/pipeline.py",
+   "purpose": "job states, budget gate, keyed runs, Morris adapter, statistics, facts"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/registry.py",
+   "purpose": "append-only JSONL registry + reproduce()"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/model.py",
+   "purpose": "help-desk adapter over simulation L200 #10 warmup.waits; model version hash"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/stats.py",
+   "purpose": "exact Student t (incomplete beta), mean CI, Welch CI"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/claims.py",
+   "purpose": "claim checker, code-written replacement lines, trace counter"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/replications.py",
+   "purpose": "build task (shipped unfixed)"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/solution/replications.py",
+   "purpose": "build task solution"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/_kb.py",
+   "purpose": "loads reused lab files by path under unique names"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/tests/",
+   "purpose": "milestones, seams, fitness functions, failure lab, build task, try-its (38 tests)"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/try_it/crn.py",
+   "purpose": "try it 1: common random numbers"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/try_it/tighter_target.py",
+   "purpose": "try it 2: tighter target vs budget"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/decisions/",
+   "purpose": "ADRs 0001-0003 (Nygard format)"
+  },
+  {
+   "path": "labs/L600/03-agent-driven-simulation/architecture.mmd",
+   "purpose": "Mermaid architecture diagram"
+  }
+ ],
+ "expectedResults": [
+  "Scorecard PASS 12/12 (5 milestones, 4 seams, 3 fitness functions), exit 0",
+  "M1: sim 0.992 +/- 0.038 vs 1.0, 3.894 +/- 0.229 vs 4.0, 8.491 +/- 0.817 vs 9.0 (rho 0.5/0.8/0.9)",
+  "Sobol' N 64 (384,000 customers) refused by budget; lam 0.97 refused by schema; Morris mu* mu 1.72 > lam 1.53 > warmup 0.74 > backlog 0.54",
+  "Experiment: 3 -> 10 -> 47 -> 55 replications; 4.04 vs 3.14 min, difference -0.895 +/- 0.293 (-22%), significant decrease; 270,000 of 300,000 customers",
+  "Claim check: 4 sentences, '32.3 min' rejected (untraced); published report 7/7 numbers traced; 160/160 runs reproduce",
+  "--inject few-reps: 4.28 vs 2.58 (-40%), difference CI -3.436 to 0.019, claim rejected, 10/12, exit 1"
+ ],
+ "testCases": [
+  {
+   "action": "python run_project.py",
+   "expected": "{\"scorecard\": \"PASS\", \"passed\": 12, \"total\": 12, \"inject\": null}"
+  },
+  {
+   "action": "python run_project.py --inject few-reps",
+   "expected": "{\"scorecard\": \"FAIL\", \"passed\": 10, \"total\": 12, \"inject\": \"few-reps\"}, exit 1"
+  },
+  {
+   "action": "python -m unittest discover -s tests -v",
+   "expected": "Ran 38 tests ... OK"
+  },
+  {
+   "action": "BUILD_TARGET=mine python -m unittest tests.test_build_task",
+   "expected": "FAILED (failures=3) on the shipped file"
+  }
+ ],
+ "tryIt": [
+  {
+   "task": "Common random numbers: give both arms the same stream per replication and analyse paired differences (try_it/crn.py).",
+   "predict": "The default needs 55 replications per arm for +/-0.3. How many does the paired design need?",
+   "expected": "common random numbers (paired): n = 10 per arm, difference -1.022 +/- 0.266 min, cost 40,000 customers, correlation between arms 0.963 (independent: n = 55, -0.895 +/- 0.293, 220,000)"
+  },
+  {
+   "task": "Ask for +/-0.2 min with the same 250,000-customer budget left after Morris (try_it/tighter_target.py).",
+   "predict": "Overspend, crash, or stop and say so?",
+   "expected": "target +/- 0.2: n = 10 (required 105), half-width 0.645, verdict significant decrease, budget_limited True, spent 40,000 of 250,000 - stops, never overspends"
+  }
+ ],
+ "failureLab": {
+  "inject": "python run_project.py --inject few-reps: the pipeline trusts the agent's replications: 3 (pipeline.naive_policy; the same fault ships in replications.py). Only appears because an agent's request meets a stochastic simulator.",
+  "symptom": "The agent's draft: 'Faster service (mu 1.05) cut the mean wait from 4.28 to 2.58 min (-40%), a significant improvement with 3 replications [exp-439c0335].' Every number traces to the registry. Scorecard 10/12: M4 (half-width 1.728 > 0.3) and the stochasticity seam fail; exit 1.",
+  "diagnose": "Arm CIs 4.28 +/- 2.07 and 2.58 +/- 1.05 overlap; the 95% Welch CI of the difference is -3.436 to 0.019 (includes 0) and n = 3 < 10. claims.check_sentence: 'claims significance; computed verdict is inconclusive'; the published text carries the code line ending 'n = 3 per arm: inconclusive.'",
+  "fix": "solution/replications.py: pilot of 10, then n = ceil(n (h/0.3)^2) until met, each extension reserved in the budget first: 3 -> 10 -> 47 -> 55; difference -0.895 +/- 0.293 (-22%), significant decrease; the claim passes.",
+  "test": "labs/L600/03-agent-driven-simulation/tests/test_failure_lab.py (fault reproduces + checker rejects; fixed pipeline supports the claim; --inject few-reps exits 1) and tests/test_build_task.py (shipped replications.py fails 3/3, solution passes)"
+ },
+ "buildTask": {
+  "task": "Implement required_replications(requested, a, b, half_width) in replications.py: at least N0 = 10 pilot replications, then n x (achieved 95% Welch half-width / target)^2, rounded up; never fewer than requested.",
+  "acceptance": "BUILD_TARGET=mine python -m unittest tests.test_build_task -v -> Ran 3 tests ... OK (shipped file: FAILED (failures=3)); BUILD_TARGET=mine python run_project.py -> PASS 12/12.",
+  "solution": "labs/L600/03-agent-driven-simulation/solution/replications.py"
+ },
+ "scalingLimits": [
+  "Precision costs 1/h^2: +/-0.2 needs 105 replications per arm (420,000 customers) vs 55 for +/-0.3 - signal: budget_limited true and half-width above target; use CRN (10 replications for +/-0.266 here) with a paired analysis, or relax the target.",
+  "Many experiments per session: each 95% CI is per comparison, so 20 A/B jobs expect about one false 'significant' - signal: significant results scattered across arbitrary variants; control the family (Bonferroni) or use ranking-and-selection (simulation L400 #18).",
+  "Bit-for-bit only within one environment fingerprint: random.expovariate uses the platform libm log and Python guarantees only random()'s sequence across versions - signal: reproduce() false after an OS/Python upgrade with unchanged code; pin the environment or store tolerances per fingerprint (cross-OS runs pendingCi)."
+ ],
+ "troubleshooting": [
+  {
+   "symptom": "M3/F2 fail with reproduced 0 after you edited simulation/labs/L200/10-warmup-replications/warmup.py",
+   "action": "Intended: model.VERSION is its hash, so old run ids no longer describe the code. Re-run the session to rebuild the registry."
+  },
+  {
+   "symptom": "Every sentence rejected with --real-model",
+   "action": "Small models often drop the [exp-...] citation. That is the checker working; the published text falls back to code-written lines. Strengthen the system prompt or pick a larger model, never relax the check."
+  },
+  {
+   "symptom": "budget seam fails after you raised the target precision",
+   "action": "Raise SIM_BUDGET deliberately (an ADR change) or accept budget_limited; the fitness function must stay green."
+  }
+ ],
+ "learningTools": [
+  {
+   "name": "SALib",
+   "role": "CHECK",
+   "exercise": "Run SALib's morris.sample/analyze (num_levels=4, 10 trajectories) on the same 4 inputs and ranges as pipeline.SCREEN_LOW/HIGH with model.run_once (1,000 customers, one fixed seed) and compare mu* with the lab's.",
+   "expected": "Same top group (mu and lam well above warmup and backlog; lab: 1.72, 1.53, 0.74, 0.54); exact values differ with SALib's trajectory design. Pending a manual run / CI (SALib not installed here).",
+   "mac": "pip install SALib (catalog version 1.6.0, Python >=3.10)",
+   "windows": "pip install SALib",
+   "licence": "MIT (OSI: yes)",
+   "url": "https://pypi.org/project/SALib/"
+  },
+  {
+   "name": "SimPy",
+   "role": "CHECK",
+   "exercise": "Rebuild the help desk as simpy.Resource(capacity=1) with a 30-ticket backlog, 2,000 customers, warm-up 200, mu 1.0 vs 1.05 at lam 0.8, and compare the 55-replication means with the registry's.",
+   "expected": "Within the lab's CIs: about 4.0 vs 3.1 min (lab 4.04 +/- 0.23 and 3.14 +/- 0.19). Pending a manual run / CI.",
+   "mac": "pip install simpy (catalog version 4.1.2)",
+   "windows": "pip install simpy",
+   "licence": "MIT (OSI: yes)",
+   "url": "https://pypi.org/project/simpy/"
+  },
+  {
+   "name": "promptfoo",
+   "role": "CHECK",
+   "exercise": "Point promptfoo's Ollama provider at the system prompt from agent.py with the run_experiment tool and assert (javascript assertion) that every sentence with a digit contains '[exp-'.",
+   "expected": "A citation-compliance rate per model; small models fail some cases - the reason the lab's checker, not the prompt, is the gate. Pending a manual run (Node >= 22.22).",
+   "mac": "npx promptfoo@latest or brew install promptfoo",
+   "windows": "npx promptfoo@latest",
+   "licence": "MIT (OSI: yes)",
+   "url": "https://www.promptfoo.dev/docs/providers/ollama/"
+  }
+ ],
+ "agentAssist": {
+  "task": "The whole project is an agent: it proposes run_experiment/run_screening calls and writes the summary; code decides runs, replications, cost and what gets published.",
+  "prompt": "agent.SYSTEM + the brief: 'Help-desk study, seed 13. Screen with sobol 64. Screen with morris 10. Compare mu 1.0 vs 1.05 at lam 0.8 with 3 replications. Compare mu 1.0 vs 1.05 at lam 0.97 with 3 replications.'",
+  "check": "contract.validate before running; SimBudget.reserve before every batch; claims.review on every sentence (citation, numbers at written precision, wording vs verdict).",
+  "expected": "Fake model: 2 of 4 jobs refused (budget, schema); 1 of 4 sentences rejected ('32.3 min', uncited); published report 7/7 traced.",
+  "realModelNote": "--real-model uses LOCAL_MODEL_URL/LOCAL_MODEL (Ollama's OpenAI-compatible /v1/chat/completions supports tools). Only the brief and tool results are sent. Not run here (no model in the sandbox): pendingCi."
+ },
+ "inRealSystems": [
+  "Simulation studies in operations and engineering use the same discipline - fixed precision targets for replications and documented seeds - before results reach a decision maker; an agent only makes asking cheaper.",
+  "Agent platforms validate tool arguments against JSON Schema and keep audit logs of tool calls; the registry here is that audit log with the extra promise that every entry can be re-run."
+ ],
+ "useWhen": "Use this shape whenever a model writes conclusions about numbers you computed: experiments, benchmarks, A/B tests, capacity studies. If the agent can choose the sample size or quote uncited numbers, it can fool you.",
+ "simulatorVsReal": "The 'real system' is a simulated M/M/1 help desk with a known answer (the formula), which is what makes the claim checker's verdicts checkable here. The fake model is a deterministic rule set that behaves like a naive agent (always says 'significant', invents a textbook number for a rejected run); real models vary run to run, the gates do not.",
+ "caution": "The agent never decides: it cannot run outside the envelope, choose n, overspend, or publish an unverified sentence. Send it only the brief and tool results - never keys, personal data or raw logs. A 'significant' result is still one comparison at 95%: many agent-chosen comparisons need family-wise control before anyone acts.",
+ "checkpoint": "PASS: run_project.py prints 12/12 and exits 0; --inject few-reps exits 1 with the overclaim rejected; python -m unittest discover -s tests passes 38 tests; three ADRs, three fitness functions, four seam tests.",
+ "checkYourself": [
+  {
+   "q": "Every number in the 3-replication sentence traced to the registry. Why was it still rejected?",
+   "a": "The word 'significant' was false: the 95% CI of the difference (-3.436 to 0.019) includes 0 and n = 3 < 10. Numbers and wording are separate claims."
+  },
+  {
+   "q": "Why does extending from 10 to 55 replications not change the first 10 runs?",
+   "a": "Seeds are keyed by (root, arm, replication) through SeedSequence spawn_key, so replication i is the same run whatever follows - same run_id, same bits."
+  },
+  {
+   "q": "Why is lam 0.9 / mu 0.95 rejected although both values are inside the schema ranges?",
+   "a": "Utilisation 0.947 is outside the envelope verified in M1 (<= 0.9). A schema checks fields one at a time; the cross-field rule lives in code."
+  },
+  {
+   "q": "The pipeline stopped at 10 replications with budget_limited. Is the result useless?",
+   "a": "No: it is reported with its real half-width (0.645), and code decides the verdict from it; what you may not do is quote the +/-0.2 precision you asked for."
+  }
+ ],
+ "sources": [
+  {
+   "title": "Hoad, Robinson & Davies (2010), Automated selection of the number of replications for a discrete-event simulation, JORS 61",
+   "url": "https://link.springer.com/article/10.1057/jors.2009.121"
+  },
+  {
+   "title": "NIST/SEMATECH e-Handbook 1.3.5.3 Two-sample t-test (Welch-Satterthwaite degrees of freedom)",
+   "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda353.htm"
+  },
+  {
+   "title": "Sargent (2020), Verification and validation of simulation models: an advanced tutorial, Proc. WSC",
+   "url": "https://www.informs-sim.org/wsc20papers/002.pdf"
+  },
+  {
+   "title": "JSON Schema 2020-12 Validation vocabulary (maximum, minimum, enum, required)",
+   "url": "https://json-schema.org/draft/2020-12/json-schema-validation"
+  },
+  {
+   "title": "NumPy SeedSequence (spawn_key, entropy, reproducible bit streams)",
+   "url": "https://numpy.org/doc/stable/reference/random/bit_generators/generated/numpy.random.SeedSequence.html"
+  },
+  {
+   "title": "Python random module - Notes on reproducibility",
+   "url": "https://docs.python.org/3/library/random.html"
+  },
+  {
+   "title": "Ollama OpenAI compatibility (/v1/chat/completions supports tools)",
+   "url": "https://docs.ollama.com/api/openai-compatibility"
+  },
+  {
+   "title": "SALib analyze.morris (mu, mu_star, sigma; Morris 1991, Campolongo et al. 2007)",
+   "url": "https://salib.readthedocs.io/en/latest/api/SALib.analyze.html"
+  },
+  {
+   "title": "Yao et al. (2023), ReAct: Synergizing Reasoning and Acting in Language Models, ICLR",
+   "url": "https://arxiv.org/abs/2210.03629"
+  }
+ ],
+ "next": "Back to the topics: simulation L400 #18 (ranking and selection when the agent compares many variants) or ai-agents L400 #21 (governance and evaluation in production).",
+ "validation": {
+  "status": "validated-local",
+  "how": "run_project.py (PASS 12/12, exit 0), all four --inject faults (FAIL 10/12, 9/12, 10/12, 8/12, exit 1), python -m unittest discover -s tests (Ran 38 tests ... OK), BUILD_TARGET=mine test_build_task (FAILED failures=3 on the shipped file), both try_it scripts and integrated/research/checks_03.py ran here on Python 3.12.15 + numpy 2.5.3, Linux x86_64, against the fake model server only.",
+  "pendingCi": [
+   "--real-model against Ollama (qwen2.5:1.5b) on the Mac mini and the Windows PC",
+   "macOS arm64 and Windows runs: bit-for-bit reproducibility per environment fingerprint, and whether registries move across OSes",
+   "SALib, SimPy and promptfoo learning-tool exercises (not installed here)"
+  ]
+ },
+ "conceptNote": "content/concepts/L600/03-agent-driven-simulation.md",
+ "conceptSummary": "An agent proposes help-desk experiments; a job pipeline decides. Contract gate (schema + verified envelope lam/mu <= 0.9) and budget gate (300,000 customers, reserved first) refuse 2 of 4 jobs at zero cost; keyed seeds and an append-only registry make all 160 runs reproducible bit-for-bit; replications grow 3 -> 55 until the difference CI is +/-0.293 (-22%, significant); the claim checker drops an invented 32.3 min and, in the failure lab, a 'significant improvement' from 3 replications whose CI runs from -3.436 to 0.019.",
+ "platforms": {
+  "mac": "expected",
+  "windows": "expected"
+ },
+ "seeAlso": [
+  "simulation L400 #20 Large-scale and parallel simulation: reproducible streams, checkpoints and result storage: the keyed-stream pattern behind run ids.",
+  "ai-agents L400 #20 Deterministic core, LLM at the edge: the same boundary - code decides, the model explains.",
+  "simulation L200 #11 A supply-chain model: (s, S) inventory with common random numbers: the CRN technique in try it 1."
+ ],
+ "macMini": {
+  "gains": "Real open-weight models (Ollama on Metal) replace the rule-following fake, so the contract, budget and claim gates are measured against mistakes nobody scripted; and every performance core runs seeded overnight studies (80,000 coverage runs, Sobol at n = 8192) that settle the verified envelope and the smallest trustworthy screening size.",
+  "needs": {
+   "minRamGB": 16,
+   "tools": [
+    {
+     "name": "Ollama",
+     "licence": "MIT",
+     "install": "brew install ollama && brew services start ollama (or the app: https://ollama.com/download)"
+    },
+    {
+     "name": "Qwen2.5 3b/7b/14b (32b with 32 GB+) via ollama pull",
+     "licence": "model licences per ollama.com/library/qwen2.5",
+     "install": "ollama pull qwen2.5:7b (sizes from integrated/mac-mini/scripts/mac_profile.py)"
+    },
+    {
+     "name": "mlx-lm (optional LoRA experiment)",
+     "licence": "MIT",
+     "install": "python3 -m pip install \"mlx-lm[train]\""
+    }
+   ]
+  },
+  "experiments": [
+   {
+    "title": "Three real models, one brief, the same gates",
+    "why": "The fake always proposes the out-of-envelope arm and always over-claims; a real model may refuse, invent a field, loop or over-claim differently. Each mistake must land on a gate, and the count per model shows where.",
+    "steps": [
+     {
+      "title": "Size the models",
+      "detail": "mac_profile.py reads RAM with sysctl and lists the 2-3 largest Qwen2.5 sizes whose Q4_K_M weights + f16 KV cache fit the budget.",
+      "mac": "python3 integrated/mac-mini/scripts/mac_profile.py\nollama pull qwen2.5:3b && ollama pull qwen2.5:7b",
+      "expected": "16/24 GB: qwen2.5:3b, 7b, 14b; 32/64 GB: 7b, 14b, 32b. ollama ps must show 100% GPU while a model answers."
+     },
+     {
+      "title": "Fake baseline, then the real models",
+      "detail": "compare_models.py runs the project BRIEF through the unchanged pipeline and claim checker once per model and writes one JSON line each.",
+      "mac": "cd integrated/labs/L600/03-agent-driven-simulation/mac_mini\npython3 compare_models.py --here\nLOCAL_MODEL_URL=http://localhost:11434/v1 python3 compare_models.py --auto",
+      "expected": "Fake row: contract_rejected 1, budget_rejected 1, claims_dropped 1, budget_spent 270000. Real rows differ per model; published_traced must equal numbers_found and budget_respected must be true for every model (exit 1 otherwise: a gate failure, not a model failure)."
+     },
+     {
+      "title": "Full scorecard with one real model",
+      "detail": "The existing --real-model switch; M2 needs a contract rejection, which a careful model may not produce.",
+      "mac": "LOCAL_MODEL=qwen2.5:7b python3 ../run_project.py --real-model",
+      "expected": "Fitness lines (claims traced, runs reproducible, budget) pass; M2 may FAIL if the model avoided the out-of-envelope arm - the known gap, now measured."
+     }
+    ],
+    "measure": "Per model: contract_rejected, budget_rejected, claims_dropped / claims_total, budget_spent of 300,000, agent_calls of 8, stopped.",
+    "decides": "ADR-0001 gets a measured-with-real-models note; if models avoid the bad arm, M2 gets a scripted bad proposal instead of relying on the model; MAX_CALLS changes only if a model needs all 8 calls for a valid plan."
+   },
+   {
+    "title": "Does the 95 % CI cover 95 % of the time across the envelope?",
+    "why": "M1 checks one 10-replication CI per utilisation. Coverage is a property of the procedure (warm-up, run length, replications) and only thousands of independent repetitions show it; the start-up transient biases short runs at high rho.",
+    "steps": [
+     {
+      "title": "Determinism check",
+      "detail": "Seeds come from (root, experiment, replication), never from the worker, so the hash of all values is identical for any pool size.",
+      "mac": "python3 overnight_sweep.py --here\npython3 overnight_sweep.py coverage --experiments 300 --workers 1 --rhos 0.8",
+      "expected": "values_sha256_16 identical with --workers 1 and with all cores."
+     },
+     {
+      "title": "Overnight coverage study",
+      "detail": "4 utilisations x 2000 experiments x 10 replications of 20,000 customers (M1's design) on every performance core.",
+      "mac": "caffeinate -i python3 overnight_sweep.py coverage --experiments 2000 --reps 10",
+      "expected": "Per rho: coverage, bias and z_vs_95 = (coverage - 0.95) / sqrt(0.95*0.05/2000). |z| < 2 is consistent with 95 %; falling coverage with positive bias as rho rises is the initial transient."
+     }
+    ],
+    "measure": "Coverage and bias at rho 0.5, 0.7, 0.8, 0.9 (2000 experiments each).",
+    "decides": "contract.RHO_MAX (verified envelope, now 0.9): if coverage at 0.9 is clearly below 0.95 (z < -3), lower RHO_MAX or lengthen M1's warm-up/run; recorded in ADR-0003."
+   },
+   {
+    "title": "Smallest trustworthy Sobol screening size",
+    "why": "The brief asks for sobol 64 and the schema allows size >= 2; with 1,000-customer runs small-n rankings can be noise. A large-n reference settles which size to allow.",
+    "steps": [
+     {
+      "title": "Reference run",
+      "detail": "Same screening function and CRN seed as pipeline._screening, base sizes n/8, n/4, n/2, n.",
+      "mac": "caffeinate -i python3 overnight_sweep.py sobol --n 8192",
+      "expected": "Rows for n = 1024, 2048, 4096, 8192 with ST per input, ranking and matches_reference; the first n from which every row is true is the smallest stable size for these ranges."
+     }
+    ],
+    "measure": "Smallest n whose ranking matches the n = 8192 reference; ST(lam) and ST(mu) at 8192.",
+    "decides": "The run_screening schema minimum for sobol and SIM_BUDGET together (n x 6 x 1,000 customers <= 300,000 allows n <= 50 today), or a pipeline rule that reports 'ranking not stable at this n' instead of a ranking."
+   }
+  ],
+  "overnight": "caffeinate -i python3 overnight_sweep.py both --experiments 2000 --n 8192: 80,000 coverage runs of 20,000 customers plus Sobol at four sizes on every performance core. It reveals the procedure's real CI coverage across the envelope and the smallest trustworthy screening size, and its hashes test bit-for-bit reproducibility against another machine (ADR-0002).",
+  "validation": {
+   "here": "Linux sandbox, Python 3.12.15, numpy 2.5.3: mac_mini/tests (7 tests OK) - compare_models --here (fake: contract_rejected 1, budget_rejected 1, claims_dropped 1, published numbers 7/7 traced), unreachable server recorded as an error, model lists from mac_profile for 16 and 64 GB, identical value hashes for 1 vs 2 spawn workers, coverage maths, export labels recomputed and budget refusals skipped; overnight_sweep --here and export_rejections --here ran; checks_03_mac.py OK.",
+   "pendingMac": [
+    "compare_models --auto with Ollama (qwen2.5 3b/7b/14b or 7b/14b/32b)",
+    "run_project.py --real-model with a real model",
+    "80,000-run coverage study and its z values",
+    "Sobol n = 8192 reference ranking",
+    "mlx-lm LoRA on collected rejections",
+    "sysctl RAM/performance-core detection on macOS"
+   ]
+  }
+ }
+}

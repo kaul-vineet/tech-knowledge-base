@@ -1,0 +1,1597 @@
+[
+ {
+  "id": "observation-planning",
+  "number": 12,
+  "level": "L300",
+  "title": "Observation planning: airmass, twilight, Moon distance and a scheduler under constraints",
+  "phase": "Harden",
+  "category": "observation planning",
+  "description": "Plan one night at Gurgaon under darkness, airmass and Moon constraints; find out why a textbook airmass formula schedules stars below the horizon.",
+  "outcome": "You can compute altitude, twilight and Moon separation, schedule blocks under constraints, and harden an airmass constraint against stars below the horizon.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; astropy 8.0.2 + astroplan 0.10.1 equivalent in CI; Stellarium 26.3 as the sky simulator",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "A greedy planner that works on paper points the telescope under the ground; an independent re-check catches it."
+  ],
+  "prerequisites": [
+   "Lesson 2 (Coordinates and the sky: RA/Dec to Alt/Az - is a star above the horizon now?)",
+   "Lesson 3 (Time systems: UTC, TAI, TT, Julian Date and sidereal time)"
+  ],
+  "glossary": [
+   {
+    "term": "airmass",
+    "meaning": "Path length through the atmosphere relative to the zenith; sec z for a flat sky, ~38 at the horizon for a curved one."
+   },
+   {
+    "term": "astronomical twilight",
+    "meaning": "Sun 12-18 deg below the horizon; the sky is fully dark when the Sun is below -18 deg."
+   },
+   {
+    "term": "block",
+    "meaning": "A scheduled observation of one target for a fixed time (here 60 min)."
+   }
+  ],
+  "concepts": [
+   "Constraints are masks over a time grid; a block needs them at start, middle and end.",
+   "sec z turns negative below the horizon - bound its domain.",
+   "Greedy 'best now' is not 'best night'.",
+   "Verify a plan with an independent recomputation."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python plan.py --check`",
+    "mac": "cd labs/L300/12-observation-planning\npython plan.py --check",
+    "windows": "cd labs\\L300\\12-observation-planning\npython plan.py --check",
+    "expected": "Astronomical darkness 18:50-05:20, six JSON blocks, 'unscheduled: [Aldebaran, Capella]', 'blocks below 30 deg altitude: [Sirius, Vega, Fomalhaut, Altair]'.",
+    "ifNot": "Run from the lab folder (it imports ephem.py next to it)."
+   },
+   {
+    "title": "Read the night",
+    "detail": "ephem.py: USNO GMST and Sun, Schlyter's Moon with perturbations and topocentric parallax. dark_window() scans the 10-minute grid for Sun altitude <= -18 deg; the full Moon (elongation > 170 deg) sits about 12 deg from Aldebaran.",
+    "expected": "dark 18:50-05:20 local; Aldebaran and Capella never pass the 30 deg Moon rule.",
+    "ifNot": "If the window is shifted by 5.5 h, a datetime lost its timezone (IST = UTC+5:30)."
+   },
+   {
+    "title": "Failure lab: blocks under the ground",
+    "detail": "--check recomputes the altitude of each block. The shipped airmass() is 1/sin(alt): negative below the horizon, so it passes 'airmass <= 2.0' and the lowest-airmass rule prefers it.",
+    "expected": "Sirius at 18:50 with alt -34.6 and airmass -1.76; Vega, Fomalhaut, Altair also below 0 deg.",
+    "ifNot": "If no negative airmass appears, you are running solution/plan.py."
+   },
+   {
+    "title": "Fix airmass() (build task)",
+    "detail": "Return infinity at or below the horizon; use the Kasten & Young (1989) formula above it: X = 1/(sin h + 0.50572 (h + 6.07995)^-1.6364), h in degrees.",
+    "expected": "Plan: Deneb 18:50, Betelgeuse 22:10, Sirius 00:10; airmass(30) = 1.994 (Kasten & Young table: 1.9939); '--check' lists no block below 30 deg.",
+    "ifNot": "If Altair or Vega still appear, the inf branch is not reached for alt <= 0."
+   },
+   {
+    "title": "Build task: check your own file",
+    "detail": "Edit the shipped file, then run the build-task test against it (test_build_task).",
+    "mac": "cd labs/L300/12-observation-planning\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L300\\12-observation-planning\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task -v\nRemove-Item Env:BUILD_TARGET",
+    "expected": "Shipped file: Ran 3 tests ... FAILED (failures=15). After your fix: OK.",
+    "ifNot": "Without BUILD_TARGET the test checks solution/ - make sure the variable is set in the same shell."
+   },
+   {
+    "title": "Second site (tryIt 1) and stretch",
+    "detail": "try_it.py plans the same night from Sydney (33.87 S, AEDT); solution/urgent.py schedules the target about to set first.",
+    "mac": "cd labs/L300/12-observation-planning\npython try_it.py\npython solution/urgent.py",
+    "windows": "cd labs\\L300\\12-observation-planning\npython try_it.py\npython solution/urgent.py",
+    "expected": "Sydney: Fomalhaut 21:30, Sirius 23:10, Betelgeuse 00:10; urgency-first adds Altair at 18:50 (4 blocks instead of 3).",
+    "ifNot": "Sydney's dark window is 21:30-03:50 local - check the tz offset (+11)."
+   },
+   {
+    "title": "Library equivalent (CI)",
+    "detail": "plan_astroplan.py runs astroplan's SequentialScheduler with the same constraints and compares ephem.py with astropy get_body.",
+    "expected": "Pending-ci: |Sun alt diff| < 0.1 deg and |Moon alt diff| < 0.5 deg over the night.",
+    "ifNot": "astroplan 0.10.1 is from 2024; an astropy-8 incompatibility is recorded in KNOWN-GAPS."
+   }
+  ],
+  "code": "\"\"\"L300 observation planning: one night at Gurgaon, eight bright stars, a greedy scheduler under constraints.\n\nConstraints (astroplan names in brackets): astronomical darkness, Sun below -18 deg [AtNightConstraint];\nairmass <= 2.0 [AirmassConstraint]; >= 30 deg from the Moon [MoonSeparationConstraint]. Each target gets one 60-min block.\npython plan.py            (night of 2026-11-24, full Moon near Aldebaran)\n\"\"\"\nimport json\nimport sys\nfrom datetime import datetime, timedelta, timezone\n\nimport numpy as np\n\nimport ephem\n\nSITE = {\"name\": \"Gurgaon, India\", \"lat\": 28.46, \"lon\": 77.03, \"tz\": timezone(timedelta(hours=5, minutes=30))}\nNIGHT = datetime(2026, 11, 24, 17, 0, tzinfo=SITE[\"tz\"])  # local evening; the grid runs 14 h from here\nSTEP_MIN, BLOCK_MIN = 10, 60\nMAX_AIRMASS, MIN_MOON_SEP, SUN_LIMIT = 2.0, 30.0, -18.0\n# J2000 RA/Dec in degrees, SIMBAD (van Leeuwen 2007 Hipparcos reduction)\nTARGETS = {\"Vega\": (279.23474, 38.78369), \"Altair\": (297.69583, 8.86832), \"Deneb\": (310.35798, 45.28034),\n           \"Fomalhaut\": (344.41269, -29.62224), \"Capella\": (79.17233, 45.99799), \"Aldebaran\": (68.98016, 16.50930),\n           \"Betelgeuse\": (88.79294, 7.40706), \"Sirius\": (101.28715, -16.71612)}\n\n\ndef airmass(alt_deg):\n    \"\"\"Plane-parallel airmass X = sec(z) = 1/sin(alt).\"\"\"\n    return 1.0 / np.sin(np.radians(alt_deg))\n\n\ndef grid(site=SITE, start=NIGHT, hours=14):\n    \"\"\"Time grid (UTC JDs) with Sun altitude and topocentric Moon RA/Dec at each step.\"\"\"\n    times = [start + timedelta(minutes=STEP_MIN * k) for k in range(hours * 60 // STEP_MIN + 1)]\n    jd = np.array([ephem.julian_date(t) for t in times])\n    sun_alt, _ = ephem.altaz(*ephem.sun_radec(jd), site[\"lat\"], site[\"lon\"], jd)\n    _, _, mra, mdec = ephem.moon_altaz(site[\"lat\"], site[\"lon\"], jd)\n    return times, jd, sun_alt, mra, mdec\n\n\ndef observable(name, k, g, site=SITE):\n    \"\"\"Every constraint at grid step k; returns (ok, alt, airmass, moon separation).\"\"\"\n    times, jd, sun_alt, mra, mdec = g\n    ra, dec = TARGETS[name]\n    alt, _ = ephem.altaz(ra, dec, site[\"lat\"], site[\"lon\"], jd[k])\n    x, sep = airmass(alt), ephem.separation(ra, dec, mra[k], mdec[k])\n    ok = sun_alt[k] <= SUN_LIMIT and x <= MAX_AIRMASS and sep >= MIN_MOON_SEP  # the night's three rules\n    return bool(ok), float(alt), float(x), float(sep)\n\n\ndef schedule(site=SITE, start=NIGHT):\n    \"\"\"Sequential greedy scheduler: at each free step, start the valid block with the lowest mean airmass.\"\"\"\n    g = grid(site, start)\n    n_block, k, plan, todo = BLOCK_MIN // STEP_MIN, 0, [], set(TARGETS)\n    while k + n_block < len(g[0]) and todo:\n        best = None\n        for name in sorted(todo):\n            checks = [observable(name, k + j, g, site) for j in (0, n_block // 2, n_block)]  # start, middle, end\n            if all(c[0] for c in checks):\n                mean_x = sum(c[2] for c in checks) / 3\n                if best is None or mean_x < best[0]:\n                    best = (mean_x, name, checks)\n        if best is None:\n            k += 1\n            continue\n        _, name, checks = best\n        plan.append({\"target\": name, \"start\": g[0][k].strftime(\"%H:%M\"), \"alt_deg\": round(checks[0][1], 1),\n                     \"airmass\": round(checks[0][2], 2), \"moon_sep_deg\": round(checks[0][3], 1)})\n        todo.discard(name)\n        k += n_block\n    return plan, sorted(todo)\n\n\ndef dark_window(site=SITE, start=NIGHT):\n    \"\"\"First and last grid step with the Sun below the astronomical-twilight limit.\"\"\"\n    times, _, sun_alt, _, _ = grid(site, start)\n    dark = np.flatnonzero(sun_alt <= SUN_LIMIT)\n    return times[dark[0]].strftime(\"%H:%M\"), times[dark[-1]].strftime(\"%H:%M\")\n\n\nif __name__ == \"__main__\":\n    first, last = dark_window()\n    print(f\"{SITE['name']} {NIGHT:%Y-%m-%d}: astronomical darkness {first}-{last} local (10-min grid)\")\n    plan, unscheduled = schedule()\n    for row in plan:\n        print(json.dumps(row))\n    print(\"unscheduled:\", unscheduled)\n    if \"--check\" in sys.argv:  # recompute altitude independently: did we schedule anything below 30 deg?\n        print(\"blocks below 30 deg altitude:\", [r[\"target\"] for r in plan if r[\"alt_deg\"] < 30])\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "SITE, NIGHT, TARGETS",
+    "detail": "Gurgaon with an aware IST datetime; 8 SIMBAD J2000 positions in degrees. Precession (~0.36 deg) is left to astropy (pending-ci)."
+   },
+   {
+    "title": "airmass()",
+    "detail": "The fault: sec z = 1/sin(alt) has no domain check - negative under the horizon, infinite at it."
+   },
+   {
+    "title": "grid()",
+    "detail": "One JD per 10-minute step; Sun altitude and topocentric Moon RA/Dec computed once per night, vectorised."
+   },
+   {
+    "title": "observable()",
+    "detail": "Three rules multiplied: Sun <= -18, airmass <= 2.0, Moon >= 30 deg. Returns the values so a plan can be audited."
+   },
+   {
+    "title": "schedule()",
+    "detail": "Sequential greedy: at each free step, among blocks valid at start, middle and end, pick the lowest mean airmass; else advance one step."
+   },
+   {
+    "title": "--check",
+    "detail": "An independent re-check of the printed plan: anything below 30 deg altitude is listed."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped airmass() is the plane-parallel sec z with no horizon guard (deterministic; night 2026-11-24, Gurgaon).",
+   "symptom": "The plan starts with Sirius at 18:50, altitude -34.6 deg, airmass -1.76; 4 of 6 blocks are below the horizon (Sirius, Vega, Fomalhaut, Altair).",
+   "fix": "Your build task: airmass() = inf at or below the horizon, Kasten & Young (1989) above (solution/plan.py) -> Deneb 18:50, Betelgeuse 22:10, Sirius 00:10.",
+   "proof": "test_build_task.py: BUILD_TARGET=mine on the shipped file -> Ran 3 tests ... FAILED (failures=15); default (solution) -> OK. TestFailureLab in test_plan.py keeps the fault reproducible."
+  },
+  "tradeOffs": [
+   {
+    "option": "sec z with an explicit domain (min=1, as astroplan's AirmassConstraint)",
+    "gains": "Simple, matches most tools",
+    "costs": "Overestimates airmass near the horizon (sec z -> infinity)",
+    "chooseWhen": "Limits around X <= 2-3 (alt >= 20-30 deg)"
+   },
+   {
+    "option": "Kasten & Young 1989 (curved, refracting standard atmosphere)",
+    "gains": "Finite and realistic down to the horizon",
+    "costs": "Empirical fit to a standard atmosphere (< 0.5 %); defined for apparent elevation; one more formula to cite",
+    "chooseWhen": "Low-altitude work (comets near the Sun, horizon surveys)"
+   },
+   {
+    "option": "Urgency-first instead of lowest-airmass-now",
+    "gains": "More targets per night (4 vs 3 here)",
+    "costs": "Some blocks at worse airmass",
+    "chooseWhen": "Many setting targets compete for the evening"
+   }
+  ],
+  "buildTask": {
+   "task": "Fix airmass() in plan.py so a star at or below the horizon can never satisfy 'airmass <= MAX_AIRMASS'.",
+   "hints": [
+    "Return np.inf where alt <= 0; nothing else needs to change.",
+    "Kasten & Young (1989, Applied Optics 28, 4735, eq. 3): X = 1/(sin h + 0.50572 (h + 6.07995)^-1.6364), h in degrees - 1.994 at 30 deg (their Table II: 1.9939)."
+   ],
+   "solution": "labs/L300/12-observation-planning/solution/plan.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped: FAILED (failures=15); after your fix: OK. Without the variable it checks the solution.",
+   "stretch": {
+    "task": "Schedule by urgency: pick the valid target with the fewest remaining valid start steps (solution/urgent.py).",
+    "check": "python -m unittest test_stretch -v -> OK (>= 4 blocks, Altair first)"
+   }
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L300/12-observation-planning/plan.py",
+    "purpose": "main lab code (ships the unfixed airmass())"
+   },
+   {
+    "path": "labs/L300/12-observation-planning/ephem.py",
+    "purpose": "USNO Sun/GMST, Schlyter Moon, alt/az, separation"
+   },
+   {
+    "path": "labs/L300/12-observation-planning/plan_astroplan.py",
+    "purpose": "astroplan equivalent + ephemeris cross-check (pending-ci)"
+   },
+   {
+    "path": "labs/L300/12-observation-planning/solution/plan.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L300/12-observation-planning/solution/urgent.py",
+    "purpose": "stretch solution"
+   },
+   {
+    "path": "labs/L300/12-observation-planning/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L300/12-observation-planning/test_plan.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L300/12-observation-planning/test_build_task.py",
+    "purpose": "buildTask check (BUILD_TARGET=mine)"
+   },
+   {
+    "path": "labs/L300/12-observation-planning/test_stretch.py",
+    "purpose": "stretch check"
+   }
+  ],
+  "expectedResults": [
+   "Dark window 18:50-05:20 on 2026-11-24 at Gurgaon",
+   "Shipped plan: 4 of 6 blocks below the horizon",
+   "Fixed plan: 3 blocks, all above 30 deg; urgency-first: 4"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 14 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task (shipped)",
+    "expected": "FAILED (failures=15)"
+   },
+   {
+    "action": "GMST at JD 2451545.0",
+    "expected": "18.697375 h (USNO formula)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Plan shifted by hours",
+    "action": "A naive datetime was treated as UTC; keep tzinfo on every datetime."
+   },
+   {
+    "symptom": "A target never scheduled although it is high",
+    "action": "Print observable() for it: the Moon rule (>= 30 deg) or the 60-min block length is usually why."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Plan the same night from Sydney (33.87 S, 151.21 E, UTC+11).",
+    "predict": "Which northern stars disappear?",
+    "expected": "1. Sydney dark 21:30-03:50 | scheduled ['Fomalhaut@21:30', 'Sirius@23:10', 'Betelgeuse@00:10'] | unscheduled ['Aldebaran', 'Altair', 'Capella', 'Deneb', 'Vega']"
+   },
+   {
+    "task": "Tighten the Moon rule from 30 to 45 degrees at Gurgaon.",
+    "predict": "One more target lost - which?",
+    "expected": "2. Gurgaon, Moon >= 45 deg | scheduled ['Deneb@18:50', 'Sirius@00:10'] | unscheduled ['Aldebaran', 'Altair', 'Betelgeuse', 'Capella', 'Fomalhaut', 'Vega']"
+   }
+  ],
+  "equivalents": [
+   "astroplan: Observer, FixedTarget, AtNightConstraint.twilight_astronomical(), AirmassConstraint(max=2), MoonSeparationConstraint(min=30 deg), SequentialScheduler / PriorityScheduler.",
+   "Skyfield or astropy get_body for higher-precision Sun/Moon positions.",
+   "KStars / Stellarium observing-list tools for manual planning."
+  ],
+  "learningTools": [
+   {
+    "name": "Stellarium",
+    "role": "SEE",
+    "exercise": "Set the location to Gurgaon (28.46 N, 77.03 E) and the time to 2026-11-24 18:50 IST; look at Sirius (below the horizon), Deneb (high in the north-west) and the full Moon next to Aldebaran.",
+    "expected": "Should match the lab: Sirius below the horizon at 18:50 (the shipped plan's first block), Deneb around 60 deg, the Moon within ~12 deg of Aldebaran. Pending a manual run in Stellarium.",
+    "mac": "brew install --cask stellarium   (26.3, Apple Silicon)",
+    "windows": "winget install -e --id Stellarium.Stellarium   (or the installer from stellarium.org)",
+    "licence": "GPL-2.0 (OSI: yes)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "inRealSystems": [
+   "Observatory schedulers (astroplan, ESO/Gemini queue schedulers) evaluate constraint grids and score blocks.",
+   "Robotic telescopes re-plan every few minutes with weather and Moon constraints."
+  ],
+  "useWhen": "Use for any plan that commits telescope time; always add an independent re-check of the final plan.",
+  "caution": "Low-precision ephemerides (1-2 arcmin) are for planning, not pointing or occultations; never point a real telescope near the Sun from a computed plan without a solar-avoidance check.",
+  "checkpoint": "PASS: shipped plan shows blocks below the horizon; after your fix test_build_task passes with BUILD_TARGET=mine and every block is above 30 deg.",
+  "checkYourself": [
+   {
+    "q": "Why does a negative airmass get scheduled first?",
+    "a": "The rule is 'airmass <= 2 and lowest wins'; -1.76 passes and is the lowest."
+   },
+   {
+    "q": "Why check start, middle and end of a block?",
+    "a": "A target can rise or set during 60 minutes; one sample at the start is not enough."
+   }
+  ],
+  "sources": [
+   {
+    "title": "USNO: Computing Approximate Solar Coordinates",
+    "url": "https://aa.usno.navy.mil/faq/sun_approx"
+   },
+   {
+    "title": "USNO: Computing Approximate Sidereal Time",
+    "url": "https://aa.usno.navy.mil/faq/GAST"
+   },
+   {
+    "title": "USNO: Rise, Set, and Twilight Definitions",
+    "url": "https://aa.usno.navy.mil/faq/RST_defs"
+   },
+   {
+    "title": "P. Schlyter: How to compute planetary positions",
+    "url": "https://www.stjarnhimlen.se/comp/ppcomp.html"
+   },
+   {
+    "title": "astroplan: AirmassConstraint",
+    "url": "https://astroplan.readthedocs.io/en/stable/api/astroplan.AirmassConstraint.html"
+   },
+   {
+    "title": "Kasten & Young 1989, Revised optical air mass tables and approximation formula (Applied Optics 28, 4735): eq. 3 constants and Table II",
+    "url": "https://doi.org/10.1364/AO.28.004735"
+   },
+   {
+    "title": "astroplan: Scheduling tutorial",
+    "url": "https://astroplan.readthedocs.io/en/stable/tutorials/scheduling.html"
+   }
+  ],
+  "next": "L300 #13 Calibration frames: bias, dark, flat and cosmic-ray rejection: once the frames exist, calibrate them before trusting any brightness.",
+  "validation": {
+   "status": "validated-local",
+   "how": "plan.py, solution/plan.py, solution/urgent.py, try_it.py and unittests (Ran 14 tests ... OK (skipped=1)) ran locally on Python 3.12.15 + numpy 2.5.3; outputs pasted; BUILD_TARGET=mine on the shipped file fails (failures=15), the solution passes; L300 cross_platform fingerprints match golden.json on Linux.",
+   "pendingCi": [
+    "labs/L300/12-observation-planning/plan_astroplan.py (astropy 8.0.2 + astroplan 0.10.1)",
+    "test_plan.py: test_low_precision_sun_and_moon_agree_with_astropy",
+    "macOS and Windows runs of the whole lab",
+    "Stellarium exercise (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L300/12-observation-planning.md",
+  "conceptSummary": "A night plan is a set of constraint masks on a time grid packed into blocks. Bound every score's domain (sec z is negative below the horizon) and re-check the final plan independently.",
+  "seeAlso": [
+   "astronomy L100 #2 Coordinates and the sky: RA/Dec to Alt/Az - is a star above the horizon now?: the alt/az conversion every constraint here is built on.",
+   "astronomy L100 #3 Time systems: UTC, TAI, TT, Julian Date and sidereal time: GMST and Julian Date feed every grid step.",
+   "simulation L400 #18 Simulation-based optimisation: search, ranking & selection and fair budgets: a scheduler is an optimiser under constraints - the greedy-vs-urgency result is the same search trade-off."
+  ]
+ },
+ {
+  "id": "ccd-calibration",
+  "number": 13,
+  "level": "L300",
+  "title": "Calibration frames: bias, dark, flat and cosmic-ray rejection",
+  "phase": "Harden",
+  "category": "calibration",
+  "description": "Build bias, dark and flat masters from a seeded synthetic camera, clean cosmic rays, and watch a wrong flat turn a constant star into a variable.",
+  "outcome": "You can calibrate CCD frames in the right order, combine masters robustly, clean cosmic rays, and test a light curve for variability with a robust statistic.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; astropy 8.0.2 + ccdproc 2.5.1 + astroscrappy 1.3.0 equivalent in CI; SAOImage DS9 8.8 / Siril 1.4.5 to inspect the FITS output",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "Calibration errors follow the star across the detector and become signal; a JSON log of each step shows where."
+  ],
+  "prerequisites": [
+   "Lesson 8 (FITS images and WCS: a minimal reader and a TAN projection)",
+   "Lesson 9 (Aperture photometry: background annulus and signal-to-noise)"
+  ],
+  "glossary": [
+   {
+    "term": "bias",
+    "meaning": "The electronic offset in a zero-second frame (~1000 ADU here)."
+   },
+   {
+    "term": "flat field",
+    "meaning": "Image of a uniform light source: the per-pixel response (vignetting, dust, pixel gain), normalised to 1."
+   },
+   {
+    "term": "robust rms",
+    "meaning": "1.4826 x median absolute deviation: the scatter that one outlier cannot inflate."
+   }
+  ],
+  "concepts": [
+   "Remove layers in the order the camera added them.",
+   "Subtract the bias from flats before normalising.",
+   "Sigma-clip masters; flag sharp outliers in single frames.",
+   "Judge variability with a robust statistic against the photon floor."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python calibrate.py`",
+    "mac": "cd labs/L300/13-ccd-calibration\npython calibrate.py",
+    "windows": "cd labs\\L300\\13-ccd-calibration\npython calibrate.py",
+    "expected": "Relative flux every 5th frame, a JSON summary with robust_rms_percent 0.899 and variable true, and master_flat min/max 0.8527/1.0792; calib_log.jsonl and master_flat.fits are written.",
+    "ifNot": "Run from the lab folder; numpy only."
+   },
+   {
+    "title": "Masters and the log",
+    "detail": "Read the first three lines of calib_log.jsonl: master bias 999.95 ADU, master dark 2.04 ADU (max 205.1: hot pixels), master flat min/max.",
+    "expected": "Bias ~1000, dark ~2.0 = 0.05 e-/s x 60 s / 1.5 e-/ADU.",
+    "ifNot": "A dark median near 0 means the bias was subtracted twice."
+   },
+   {
+    "title": "Cosmic rays",
+    "detail": "clean_cosmics() flags pixels far above their 3x3 median and > 3x brighter than their 4 neighbours (above sky); each frame logs 'cosmics_cleaned'.",
+    "expected": "3 per frame, 4 on frame 17 (the seeded hit inside the aperture).",
+    "ifNot": "Dozens per frame means star peaks are being 'repaired' - check the neighbour ratio."
+   },
+   {
+    "title": "Failure lab: fake variability",
+    "detail": "The shipped masters() normalises flats that still contain the 1000 ADU bias. The star drifts x = 12 -> 52 through vignetting and a dust donut.",
+    "expected": "robust rms 0.899 % vs a 0.224 % photon floor -> variable: true; master_flat min 0.8527 (truth ~0.821).",
+    "ifNot": "If 'variable' is false you are running solution/calibrate.py."
+   },
+   {
+    "title": "Fix the flat (build task)",
+    "detail": "Subtract the master bias from every flat before combining and normalising.",
+    "expected": "robust rms 0.382 %, variable false, master_flat 0.813/1.1009.",
+    "ifNot": "If the flat min is still ~0.85 the bias was subtracted after normalising."
+   },
+   {
+    "title": "Build task: check your own file",
+    "detail": "Edit the shipped file, then run the build-task test against it (test_build_task).",
+    "mac": "cd labs/L300/13-ccd-calibration\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L300\\13-ccd-calibration\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task -v\nRemove-Item Env:BUILD_TARGET",
+    "expected": "Shipped file: Ran 3 tests ... FAILED (failures=12). After your fix: OK.",
+    "ifNot": "Without BUILD_TARGET the test checks solution/ - make sure the variable is set in the same shell."
+   },
+   {
+    "title": "Stretch and library equivalent",
+    "detail": "solution/gain.py measures gain and read noise from bias/flat pairs (photon transfer); calibrate_ccdproc.py repeats the reduction with ccdproc (CI).",
+    "mac": "cd labs/L300/13-ccd-calibration\npython solution/gain.py",
+    "windows": "cd labs\\L300\\13-ccd-calibration\npython solution/gain.py",
+    "expected": "measured gain 1.473 e-/ADU (true 1.5), read noise 6.89 e- (true 7.0).",
+    "ifNot": "One frame pair scatters by ~15 %; average 5 pairs."
+   }
+  ],
+  "code": "\"\"\"L300 CCD calibration: bias, dark, flat, cosmic-ray cleaning, then the light curve of a CONSTANT star.\n\ncalibrated = (light - master_bias - master_dark) / master_flat      (ccdproc / Siril: Lc = (L - D) / (F - O))\nThe star drifts across the vignetting and a dust donut: a wrong flat turns that path into fake variability.\npython calibrate.py   ->  light-curve summary; calib_log.jsonl (one JSON line per step/frame); master_flat.fits\n\"\"\"\nimport json\nfrom pathlib import Path\n\nimport numpy as np\n\nimport camera\nfrom fitsmini import write_fits\n\nHERE = Path(__file__).resolve().parent\nAP_R, ANN_IN, ANN_OUT, CR_SIGMA = 5.0, 8.0, 12.0, 6.0\n\n\ndef sigma_clip_mean(stack, k=3.0):\n    \"\"\"Combine frames pixel by pixel, rejecting values > k robust sigmas from the median (cosmic rays, satellites).\"\"\"\n    med = np.median(stack, axis=0)\n    mad = 1.4826 * np.median(np.abs(stack - med), axis=0) + 1e-9  # robust sigma (ccdproc: 1.4826 x MAD)\n    keep = np.abs(stack - med) <= k * mad\n    return np.where(keep, stack, 0).sum(axis=0) / np.maximum(keep.sum(axis=0), 1)\n\n\ndef masters(f):\n    bias = sigma_clip_mean(f[\"bias\"])\n    dark = sigma_clip_mean(f[\"dark\"]) - bias  # dark current + hot pixels for EXPTIME, bias removed\n    flat = sigma_clip_mean(f[\"flat\"])  # raw flat frames, combined\n    flat = flat / np.median(flat)  # normalise to median 1\n    return bias, dark, flat\n\n\ndef median3(img):\n    p = np.pad(img, 1, mode=\"edge\")\n    win = np.lib.stride_tricks.sliding_window_view(p, (3, 3))\n    return np.median(win, axis=(-2, -1))\n\n\ndef clean_cosmics(img, read_adu):\n    \"\"\"L.A.Cosmic idea, simplified: a cosmic ray is a SHARP outlier - far above its 3x3 median AND more than\n    3x brighter (above sky) than the mean of its 4 neighbours. A star's PSF (FWHM 3 px) spreads light: its peak\n    is only ~1.4x its neighbours, so stars survive.\"\"\"\n    med, sky = median3(img), np.median(img)\n    p = np.pad(img, 1, mode=\"edge\")\n    neighbours = (p[:-2, 1:-1] + p[2:, 1:-1] + p[1:-1, :-2] + p[1:-1, 2:]) / 4\n    noise = np.sqrt(read_adu ** 2 + np.clip(img, 0, None) / camera.GAIN)  # read + photon noise per pixel, ADU\n    hit = (img - med > CR_SIGMA * noise) & (img - sky > 3.0 * (neighbours - sky))\n    return np.where(hit, neighbours, img), int(hit.sum())  # repair with the neighbours' mean (keeps star wings)\n\n\ndef photometry(img, x0, y0):\n    \"\"\"Aperture sum minus median sky from an annulus (photutils CircularAperture + CircularAnnulus).\"\"\"\n    r = np.hypot(camera.XX - x0, camera.YY - y0)\n    sky = np.median(img[(r >= ANN_IN) & (r < ANN_OUT)])\n    ap = r < AP_R\n    return float(img[ap].sum() - sky * ap.sum()), float(sky)\n\n\ndef run(seed=13, clean=True, log_path=HERE / \"calib_log.jsonl\"):\n    f = camera.frames(seed)\n    bias, dark, flat = masters(f)\n    log = [{\"step\": \"master_bias\", \"median_adu\": round(float(np.median(bias)), 2)},\n           {\"step\": \"master_dark\", \"median_adu\": round(float(np.median(dark)), 2), \"max_adu\": round(float(dark.max()), 1)},\n           {\"step\": \"master_flat\", \"min\": round(float(flat.min()), 4), \"max\": round(float(flat.max()), 4)}]\n    noise = camera.READ_E / camera.GAIN\n    flux = []\n    for i, raw in enumerate(f[\"light\"]):\n        sci = (raw - bias - dark) / flat\n        n_cr = 0\n        if clean:\n            sci, n_cr = clean_cosmics(sci, noise)\n        fl, sky = photometry(sci, camera.star_x(i), camera.Y_STAR)\n        flux.append(fl)\n        log.append({\"frame\": i, \"x\": round(camera.star_x(i), 2), \"flux_adu\": round(fl, 1), \"sky_adu\": round(sky, 2),\n                    \"cosmics_cleaned\": n_cr})\n    flux = np.array(flux)\n    rel = flux / np.median(flux)\n    expected = np.sqrt(camera.STAR_E) / camera.STAR_E  # photon-noise floor of a constant star (relative)\n    robust = 1.4826 * np.median(np.abs(rel - np.median(rel)))  # one stray cosmic ray cannot fake a trend\n    summary = {\"rms_percent\": round(100 * float(rel.std()), 3), \"robust_rms_percent\": round(100 * float(robust), 3),\n               \"expected_noise_percent\": round(100 * expected, 3), \"variable\": bool(robust > 2 * expected)}\n    log.append({\"step\": \"light_curve\", **summary})\n    if log_path:\n        Path(log_path).write_text(\"\".join(json.dumps(x) + \"\\n\" for x in log), encoding=\"utf-8\")\n    return rel, summary, flat\n\n\nif __name__ == \"__main__\":\n    rel, summary, flat = run()\n    write_fits(HERE / \"master_flat.fits\", flat, [(\"OBJECT\", \"'master flat'\")])\n    print(\"relative flux, every 5th frame:\", \" \".join(f\"{v:.4f}\" for v in rel[::5]))\n    print(json.dumps(summary))\n    print(\"master_flat min/max:\", round(float(flat.min()), 4), round(float(flat.max()), 4), \"(true response 0.75/1.00)\")\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "camera.py (helper)",
+    "detail": "Seeded synthetic camera with known truth: bias, gain, read noise, dark + hot pixels, vignetting x dust donut, a drifting constant star, cosmic rays."
+   },
+   {
+    "title": "sigma_clip_mean()",
+    "detail": "Per-pixel combination rejecting values beyond 3 robust sigmas (1.4826 x MAD) - cosmic rays in darks do not reach the master."
+   },
+   {
+    "title": "masters()",
+    "detail": "Where the fault lives: the flat is combined and normalised from raw frames that still carry the bias pedestal."
+   },
+   {
+    "title": "clean_cosmics()",
+    "detail": "L.A.Cosmic idea simplified: sharp = far above the local median AND much brighter than the neighbours; repaired with the neighbours' mean."
+   },
+   {
+    "title": "photometry()",
+    "detail": "Aperture sum (r = 5 px) minus median sky in an 8-12 px annulus (photutils CircularAperture/CircularAnnulus equivalent)."
+   },
+   {
+    "title": "run() and the log",
+    "detail": "One JSON line per master and per frame plus a summary; robust rms vs the photon floor decides 'variable'."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped masters() normalises flats without subtracting the master bias (seed 13).",
+   "symptom": "calib_log.jsonl: master_flat min/max 0.8527/1.0792 (truth 0.821/1.094); the constant star's robust rms 0.899 % vs a 0.224 % floor -> 'variable': true.",
+   "fix": "Your build task: sigma_clip_mean(f['flat'] - bias) before normalising (solution/calibrate.py) -> robust rms 0.382 %, variable false.",
+   "proof": "test_build_task.py: BUILD_TARGET=mine on the shipped file -> Ran 3 tests ... FAILED (failures=12, incl. 10 seed subtests); default (solution) -> OK. TestFailureLab in test_calibrate.py keeps the fault reproducible."
+  },
+  "tradeOffs": [
+   {
+    "option": "Median combine",
+    "gains": "Simple, robust to cosmic rays",
+    "costs": "~25 % noisier than a mean",
+    "chooseWhen": "Few frames (< 5) or many outliers"
+   },
+   {
+    "option": "Sigma-clipped mean",
+    "gains": "Mean's low noise, outliers rejected",
+    "costs": "Needs enough frames to estimate the scatter",
+    "chooseWhen": "10+ frames per master (this lab)"
+   },
+   {
+    "option": "Plain rms vs robust rms for variability",
+    "gains": "Plain rms sees every excursion",
+    "costs": "One cosmic ray (frame 17: +16.4 %) fakes a variable",
+    "chooseWhen": "Use robust rms to flag, inspect outliers separately"
+   }
+  ],
+  "buildTask": {
+   "task": "Fix masters() in calibrate.py so the master flat holds only the pixel response.",
+   "hints": [
+    "Siril/ccdproc: calibrated = (L - D) / (F - O); the flat's offset goes before normalising.",
+    "Twilight flats are short: dark current is negligible.",
+    "The true normalised response spans 0.821-1.094."
+   ],
+   "solution": "labs/L300/13-ccd-calibration/solution/calibrate.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped: FAILED (failures=12); after your fix: OK.",
+   "stretch": {
+    "task": "Measure gain and read noise from bias/flat pairs (photon transfer) - solution/gain.py.",
+    "check": "python -m unittest test_stretch -v -> OK (within 6 % for seeds 20-24)"
+   }
+  },
+  "observability": {
+   "emits": "calib_log.jsonl: master_bias {median_adu}, master_dark {median_adu, max_adu}, master_flat {min, max}, one line per frame {frame, x, flux_adu, sky_adu, cosmics_cleaned}, light_curve {rms_percent, robust_rms_percent, expected_noise_percent, variable}.",
+   "read": "A master_flat range narrower than the expected vignetting means a pedestal is left in; flux that tracks x means a flat error; a cosmics_cleaned jump on one frame explains a single outlier."
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L300/13-ccd-calibration/calibrate.py",
+    "purpose": "main lab code (ships the unfixed masters())"
+   },
+   {
+    "path": "labs/L300/13-ccd-calibration/camera.py",
+    "purpose": "seeded synthetic camera"
+   },
+   {
+    "path": "labs/L300/13-ccd-calibration/fitsmini.py",
+    "purpose": "minimal FITS writer (master_flat.fits)"
+   },
+   {
+    "path": "labs/L300/13-ccd-calibration/calibrate_ccdproc.py",
+    "purpose": "ccdproc equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L300/13-ccd-calibration/solution/calibrate.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L300/13-ccd-calibration/solution/gain.py",
+    "purpose": "stretch solution"
+   },
+   {
+    "path": "labs/L300/13-ccd-calibration/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L300/13-ccd-calibration/test_calibrate.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L300/13-ccd-calibration/test_build_task.py",
+    "purpose": "buildTask check"
+   },
+   {
+    "path": "labs/L300/13-ccd-calibration/test_stretch.py",
+    "purpose": "stretch check"
+   }
+  ],
+  "expectedResults": [
+   "Shipped: variable true (robust rms 0.899 %)",
+   "Fixed: variable false (0.382 %)",
+   "Gain 1.473 e-/ADU and read noise 6.89 e- measured from the frames"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 12 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task (shipped)",
+    "expected": "FAILED (failures=12)"
+   },
+   {
+    "action": "write_fits() of a 3 x 4 array",
+    "expected": "file length multiple of 2880; header starts 'SIMPLE  =                    T'; data round-trips"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "A 'variable' star whose flux follows its x position",
+    "action": "Inspect master_flat in calib_log.jsonl and in DS9; rebuild the flat with the bias removed."
+   },
+   {
+    "symptom": "Bright stars lose flux after cleaning",
+    "action": "The cosmic-ray test is too eager; raise the neighbour ratio or CR_SIGMA."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Turn cosmic-ray cleaning off in the fixed pipeline.",
+    "predict": "Does frame 17 make the star 'variable'?",
+    "expected": "1. no cleaning: frame 17 relative flux 1.1640; plain rms 2.96%, robust rms 0.377%, variable=False"
+   },
+   {
+    "task": "Keep the shipped bug but expose flats 5x brighter (30 000 e-).",
+    "predict": "Is the bug gone?",
+    "expected": "2. shipped flat, 30k e- flats: robust rms 0.366%, variable=False, flat min 0.8267 (fixed pipeline gives 0.813 at 6k e-)"
+   }
+  ],
+  "equivalents": [
+   "ccdproc: combine(sigma_clip=True), subtract_bias, subtract_dark, flat_correct, cosmicray_lacosmic (astroscrappy).",
+   "Siril: preprocessing with master bias/dark/flat ('pp_' prefix).",
+   "IRAF ccdproc (historical), PixInsight (commercial) - one line only."
+  ],
+  "learningTools": [
+   {
+    "name": "SAOImage DS9",
+    "role": "INSPECT",
+    "exercise": "Open master_flat.fits written by the lab (shipped run) with a linear scale; hover over the corners and the dust donut near x = 40, y = 32.",
+    "expected": "Should match the lab's printed range: min 0.8527, max 1.0792 for the shipped flat (0.813 / 1.1009 after your fix). Pending a manual run.",
+    "mac": "Download the Aqua DMG (8.8, 2026-10-01) from https://sites.google.com/cfa.harvard.edu/saoimageds9/download and drag to /Applications (the Homebrew cask saoimageds9 is disabled since 2026-09-01: fails the Gatekeeper check)",
+    "windows": "Windows installer from the same download page (installs to C:\\SAOImageDS9)",
+    "licence": "GPL-3.0, 'licensed in part' (OSI: yes)",
+    "url": "https://sites.google.com/cfa.harvard.edu/saoimageds9/download"
+   },
+   {
+    "name": "Siril",
+    "role": "CHECK",
+    "exercise": "Load master_flat.fits and open the Statistics dialog.",
+    "expected": "Should report the same minimum/maximum as the lab's master_flat line (0.8527 / 1.0792 shipped). Pending a manual run.",
+    "mac": "DMG from https://siril.org/download/ (1.4.5, 2026-10-28; macOS 13 Ventura or later)",
+    "windows": "Windows installer from https://siril.org/download/ (1.4.5)",
+    "licence": "GPL-3.0 (OSI: yes)",
+    "url": "https://siril.org/download/"
+   }
+  ],
+  "inRealSystems": [
+   "Every survey pipeline (ZTF, Rubin ip_isr) builds nightly masters and tracks their statistics.",
+   "Exoplanet photometry checks flat-field quality because pixel-to-pixel variations mimic transits."
+  ],
+  "useWhen": "Always before photometry; re-make flats when the optics, filter or dust change.",
+  "caution": "Synthetic data with known truth; real flats need sky or dome illumination below ~80 % full well, and real cameras have non-linearity and fringing not modelled here.",
+  "checkpoint": "PASS: the shipped pipeline flags a constant star as variable; after your fix test_build_task passes with BUILD_TARGET=mine (robust rms < 0.45 %).",
+  "checkYourself": [
+   {
+    "q": "Why does leaving the bias in the flat make it 'too flat'?",
+    "a": "Normalising (1000 + S r)/median compresses r towards 1, so the vignetting is only partly divided out."
+   },
+   {
+    "q": "Why can't single light frames be median-combined against cosmic rays?",
+    "a": "The star moves between frames; you need a single-frame detector (sharpness) instead."
+   }
+  ],
+  "sources": [
+   {
+    "title": "astropy CCD Data Reduction Guide (repo)",
+    "url": "https://github.com/astropy/ccd-reduction-and-photometry-guide"
+   },
+   {
+    "title": "ccdproc API: Combiner",
+    "url": "https://ccdproc.readthedocs.io/en/latest/api/ccdproc.Combiner.html"
+   },
+   {
+    "title": "van Dokkum 2001, L.A.Cosmic (PASP 113, 1420)",
+    "url": "https://arxiv.org/abs/astro-ph/0108003"
+   },
+   {
+    "title": "Siril docs: Calibration",
+    "url": "https://siril.readthedocs.io/en/stable/preprocessing/calibration.html"
+   }
+  ],
+  "next": "L300 #14 Plate solving (astrometry-lite): match star triangles, fit a WCS, check residuals: calibrated frames need sky coordinates before you can cross-match or stack them.",
+  "validation": {
+   "status": "validated-local",
+   "how": "calibrate.py, solution/calibrate.py, solution/gain.py, try_it.py and unittests (Ran 12 tests ... OK (skipped=1)) ran locally on Python 3.12.15 + numpy 2.5.3; BUILD_TARGET=mine fails (failures=12), the solution passes.",
+   "pendingCi": [
+    "labs/L300/13-ccd-calibration/calibrate_ccdproc.py (ccdproc 2.5.1, astroscrappy 1.3.0)",
+    "test_calibrate.py: test_ccdproc_light_curve_is_also_flat",
+    "macOS and Windows runs",
+    "DS9 and Siril exercises (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L300/13-ccd-calibration.md",
+  "conceptSummary": "Calibration removes bias, dark and the flat-field response in the order the camera added them; a flat that still contains the bias leaves position-dependent errors that look like variability. Robust statistics separate real variability from single outliers.",
+  "seeAlso": [
+   "astronomy L200 #9 Aperture photometry: background annulus and signal-to-noise: the aperture photometry this lesson's light curve uses.",
+   "astronomy L400 #17 Survey pipeline architecture: ingest, calibrate, detect, catalogue - throughput measured: the same calibrate stage, run nightly at survey scale.",
+   "microbit L100 #5 Sensing temperature and light: a light sensor has an offset and a gain too - calibrate before you compare readings."
+  ]
+ },
+ {
+  "id": "plate-solving",
+  "number": 14,
+  "level": "L300",
+  "title": "Plate solving (astrometry-lite): match star triangles, fit a WCS, check residuals",
+  "phase": "Harden",
+  "category": "astrometry",
+  "description": "Turn detected pixel positions into sky coordinates: triangle invariants, votes, RANSAC and a TAN WCS fit - then find out why the solver fails near the pole.",
+  "outcome": "You can match star patterns to a catalogue, fit a WCS with residuals in arcseconds, and project correctly at any declination.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; astropy 8.0.2 (fit_wcs_from_points) equivalent in CI; astrometry.net 0.97 for real images",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "A solver tested only near the equator hides a missing cos(Dec); a field at Dec +62 exposes it."
+  ],
+  "prerequisites": [
+   "Lesson 7 (Catalogues and cross-matching: angular separation and a k-d tree)",
+   "Lesson 8 (FITS images and WCS: a minimal reader and a TAN projection)"
+  ],
+  "glossary": [
+   {
+    "term": "plate solving",
+    "meaning": "Finding the WCS of an image from its star pattern alone."
+   },
+   {
+    "term": "TAN (gnomonic) projection",
+    "meaning": "The camera's projection of the sphere onto the focal plane; standard coordinates xi, eta."
+   },
+   {
+    "term": "RANSAC",
+    "meaning": "Fit models to minimal random (here: all) subsets and keep the one most data agree with."
+   }
+  ],
+  "concepts": [
+   "Shape invariants survive shift, rotation, scale and mirror.",
+   "Votes propose pairs; geometry (RANSAC) disposes.",
+   "Project with TAN - RA degrees shrink by cos(Dec).",
+   "Report residuals in arcsec and test fields near the poles."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python platesolve.py`",
+    "mac": "cd labs/L300/14-plate-solving\npython platesolve.py",
+    "windows": "cd labs\\L300\\14-plate-solving\npython platesolve.py",
+    "expected": "Two JSON lines: orion solved (32 stars, rms 0.373 arcsec, scale 2.0045) and cassiopeia {\"solved\": false}.",
+    "ifNot": "Run from the lab folder (fields.py and triangles.py are imported)."
+   },
+   {
+    "title": "Triangles and votes",
+    "detail": "triangles.py builds all triangles of the 12 brightest detections and the 40 brightest catalogue stars; invariants within 0.8 % vote for star pairs.",
+    "expected": "About 12 voted pairs; some are wrong (spurious detections).",
+    "ifNot": "No votes: check that the catalogue window (SEARCH_DEG 0.6) covers the field."
+   },
+   {
+    "title": "RANSAC and the WCS fit",
+    "detail": "consensus() tries every 3 voted pairs as an affine map and keeps the one most pairs agree with (< 6 arcsec); solve() refines on all detections; a second pass puts the tangent point at the solved centre.",
+    "expected": "Orion: rotation 11.991 deg, pointing error 0.07 arcsec.",
+    "ifNot": "Rotation off by ~0.13 deg at Dec +62: the second pass (tangent point at the centre) is missing."
+   },
+   {
+    "title": "Failure lab: Cassiopeia does not solve",
+    "detail": "Shipped to_plane() uses raw (dRA, dDec) offsets; tryIt 1 shows the triangle distortion.",
+    "expected": "Invariants differ by 0.4 % at Dec -5.4 but 36 % at Dec +62.1 (tolerance 0.8 %).",
+    "ifNot": "If Cassiopeia solves you are running the solution."
+   },
+   {
+    "title": "Project with TAN (build task)",
+    "detail": "Use fields.tan_project / tan_deproject in to_plane() / from_plane().",
+    "expected": "Both fields solve: Cassiopeia 23 stars, rms 0.503 arcsec, rotation -32.999 deg; Orion scale 2.0001.",
+    "ifNot": "Scale still 2.0045 at Orion: from_plane() is still flat."
+   },
+   {
+    "title": "Build task: check your own file",
+    "detail": "Edit the shipped file, then run the build-task test against it (test_build_task).",
+    "mac": "cd labs/L300/14-plate-solving\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L300\\14-plate-solving\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task -v\nRemove-Item Env:BUILD_TARGET",
+    "expected": "Shipped file: Ran 2 tests ... FAILED (failures=3). After your fix: OK.",
+    "ifNot": "Without BUILD_TARGET the test checks solution/ - make sure the variable is set in the same shell."
+   },
+   {
+    "title": "Stretch and real images",
+    "detail": "solution/search.py retries hints on rings 0.4 deg apart on the sky; astrometry.net solves real images blind (learningTools).",
+    "mac": "cd labs/L300/14-plate-solving\npython solution/search.py",
+    "windows": "cd labs\\L300\\14-plate-solving\npython solution/search.py",
+    "expected": "plain solve with a 0.8 deg hint error: unsolved; search: solved after 5 hints.",
+    "ifNot": "RA steps must be divided by cos(Dec) to be 0.4 deg on the sky."
+   }
+  ],
+  "code": "\"\"\"L300 plate solving (astrometry-lite): match star triangles to a catalogue, fit a TAN WCS, report residuals.\n\n1. Project catalogue stars near the rough pointing (the hint) onto a plane around the hint.\n2. Triangles of the brightest stars on both sides; invariants (L2/L1, L1/L0) do not change with shift, rotation\n   or scale, so matching invariants proposes star pairs (astroalign / Groth); pairs vote.\n3. Least-squares affine fit pixel -> plane (a CD matrix + reference point), refined on all stars with clipping.\npython platesolve.py    (solves the 'orion' and 'cassiopeia' fields)\n\"\"\"\n\nimport numpy as np\n\nimport fields\nimport triangles\n\nSEARCH_DEG = 0.6  # catalogue stars used: within 0.6 deg of the hint\n\n\ndef to_plane(ra, dec, ra0, dec0):\n    \"\"\"Catalogue -> plane coordinates (degrees) around the hint.\"\"\"\n    return ra - ra0, dec - dec0  # small offsets in RA and Dec\n\n\ndef from_plane(xi, eta, ra0, dec0):\n    return ra0 + xi, dec0 + eta\n\n\ndef solve(det, cat, hint):\n    \"\"\"Returns a WCS dict (crval, cd), residuals in arcsec, and the number of matched stars - or None.\"\"\"\n    ra0, dec0 = hint\n    near = np.hypot((cat[\"ra\"] - ra0) * np.cos(np.radians(dec0)), cat[\"dec\"] - dec0) < SEARCH_DEG\n    order_c = np.argsort(cat[\"mag\"][near])\n    c_ra, c_dec = cat[\"ra\"][near][order_c], cat[\"dec\"][near][order_c]\n    cat_xy = np.column_stack(to_plane(c_ra, c_dec, ra0, dec0))\n    order_i = np.argsort(det[\"mag\"])\n    img_xy = np.column_stack([det[\"x\"], det[\"y\"]])[order_i]\n    pairs = triangles.vote(img_xy, cat_xy)\n    if len(pairs) < 4:\n        return None\n    i_idx, c_idx = triangles.consensus(img_xy, cat_xy, np.array(list(pairs)), np.array(list(pairs.values())))\n    for _ in range(5):  # refine: transform ALL detections, re-match by nearest neighbour, clip, refit\n        A, _ = triangles.fit_affine(img_xy[i_idx], cat_xy[c_idx])\n        M = np.column_stack([img_xy[:, 0] - fields.CRPIX, img_xy[:, 1] - fields.CRPIX, np.ones(len(img_xy))])\n        pred = M @ A.T\n        d = np.hypot(*(pred[:, None, :] - cat_xy[None, :, :]).transpose(2, 0, 1)) * 3600\n        nearest, dist = d.argmin(axis=1), d.min(axis=1)\n        ok = dist < triangles.MATCH_ARCSEC\n        if ok.sum() < 4:\n            return None\n        i_idx, c_idx = np.flatnonzero(ok), nearest[ok]\n    A, M = triangles.fit_affine(img_xy[i_idx], cat_xy[c_idx])\n    res = (M @ A.T - cat_xy[c_idx]) * 3600\n    crval = from_plane(A[0, 2], A[1, 2], ra0, dec0)  # sky position of the reference pixel CRPIX\n    return {\"crval\": (float(crval[0]), float(crval[1])), \"cd\": A[:, :2], \"n_matched\": int(len(i_idx)),\n            \"rms_arcsec\": float(np.sqrt((res ** 2).sum(axis=1).mean())), \"residuals\": res}\n\n\ndef check(name, sol):\n    \"\"\"Compare a solution with the field's truth: pointing error (arcsec), scale (arcsec/px), rotation (deg).\"\"\"\n    f = fields.FIELDS[name]\n    if sol is None:\n        return {\"field\": name, \"solved\": False}\n    ra, dec = sol[\"crval\"]\n    err = np.hypot((ra - f[\"center\"][0]) * np.cos(np.radians(dec)), dec - f[\"center\"][1]) * 3600\n    cd = sol[\"cd\"]\n    scale = np.sqrt(abs(np.linalg.det(cd))) * 3600\n    rot = np.degrees(np.arctan2(cd[1, 0], cd[1, 1]))\n    return {\"field\": name, \"solved\": True, \"n_matched\": sol[\"n_matched\"], \"rms_arcsec\": round(sol[\"rms_arcsec\"], 3),\n            \"pointing_error_arcsec\": round(float(err), 2), \"scale_arcsec_px\": round(float(scale), 4),\n            \"rotation_deg\": round(float(rot), 3)}\n\n\ndef run(name):\n    f = fields.FIELDS[name]\n    hint = (f[\"center\"][0] + fields.HINT_ERROR_DEG[0], f[\"center\"][1] + fields.HINT_ERROR_DEG[1])\n    det, cat = fields.detections(name), fields.catalogue(name)\n    sol = solve(det, cat, hint)\n    if sol is not None:  # second pass with the tangent point at the solved center: CD then refers to north THERE\n        sol = solve(det, cat, sol[\"crval\"])\n    return check(name, sol)\n\n\nif __name__ == \"__main__\":\n    import json\n    for field in fields.FIELDS:\n        print(json.dumps(run(field)))\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "fields.py (helper)",
+    "detail": "Seeded synthetic catalogues and detections with known pointing, rotation and 2.0 arcsec/px scale; tan_project / tan_deproject (Calabretta & Greisen 2002)."
+   },
+   {
+    "title": "to_plane() / from_plane()",
+    "detail": "The fault: raw RA/Dec offsets instead of the TAN projection - triangle shapes change with declination."
+   },
+   {
+    "title": "triangles.vote()",
+    "detail": "Invariants (L2/L1, L1/L0); every matching triangle pair votes for 3 vertex correspondences ordered by the opposite side."
+   },
+   {
+    "title": "triangles.consensus()",
+    "detail": "Exhaustive RANSAC over voted pairs: wrong pairs from spurious detections cannot outvote a consistent geometry."
+   },
+   {
+    "title": "solve() refinement",
+    "detail": "Affine fit pixel -> plane (CD matrix + offset), transform all detections, nearest-neighbour re-match within 6 arcsec, refit 5 times."
+   },
+   {
+    "title": "check() and run()",
+    "detail": "Pointing error, scale = sqrt|det CD| and rotation compared with the field's truth; run() re-solves with the tangent point at the solved centre."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped to_plane() projects the catalogue with raw (dRA, dDec) offsets (no cos Dec, no gnomonic projection).",
+   "symptom": "Orion (Dec -5.4) solves with a 2.0045 arcsec/px scale; Cassiopeia (Dec +62.1) returns {'solved': false} - its triangles are 36 % distorted.",
+   "fix": "Your build task: to_plane()/from_plane() use fields.tan_project/tan_deproject (solution/platesolve.py) -> both fields solve, rms 0.359 / 0.503 arcsec.",
+   "proof": "test_build_task.py: BUILD_TARGET=mine on the shipped file -> Ran 2 tests ... FAILED (failures=3); default (solution) -> OK. TestFailureLab in test_platesolve.py keeps the fault reproducible."
+  },
+  "tradeOffs": [
+   {
+    "option": "Triangles (3 stars)",
+    "gains": "Few combinations, simple invariants",
+    "costs": "Many chance matches in dense fields",
+    "chooseWhen": "Small fields with a pointing hint (this lab, astroalign)"
+   },
+   {
+    "option": "Quads (4-5 stars, geometric hashing)",
+    "gains": "Far fewer false matches; blind all-sky solving",
+    "costs": "Large pre-built index files",
+    "chooseWhen": "No hint, any field (astrometry.net)"
+   },
+   {
+    "option": "Affine (CD matrix) vs SIP distortion",
+    "gains": "6 parameters, stable",
+    "costs": "Misses optical distortion at field edges",
+    "chooseWhen": "Small fields; add SIP when residuals grow with radius"
+   }
+  ],
+  "buildTask": {
+   "task": "Replace to_plane()/from_plane() in platesolve.py with the TAN projection so triangles keep their shape at every declination.",
+   "hints": [
+    "fields.tan_project(ra, dec, ra0, dec0) and fields.tan_deproject(xi, eta, ra0, dec0) already exist.",
+    "At the tangent point xi = dRA x cos(Dec): the missing cos(Dec) is the bug."
+   ],
+   "solution": "labs/L300/14-plate-solving/solution/platesolve.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped: FAILED (failures=3); after your fix: OK.",
+   "stretch": {
+    "task": "Solve with a 0.8 deg pointing error by retrying hints on rings 0.4 deg apart on the sky (solution/search.py).",
+    "check": "python -m unittest test_stretch -v -> OK"
+   }
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L300/14-plate-solving/platesolve.py",
+    "purpose": "main lab code (ships the unfixed to_plane())"
+   },
+   {
+    "path": "labs/L300/14-plate-solving/fields.py",
+    "purpose": "synthetic fields + TAN projection"
+   },
+   {
+    "path": "labs/L300/14-plate-solving/triangles.py",
+    "purpose": "invariants, votes, RANSAC, affine fit"
+   },
+   {
+    "path": "labs/L300/14-plate-solving/platesolve_astropy.py",
+    "purpose": "astropy fit_wcs_from_points equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L300/14-plate-solving/solution/platesolve.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L300/14-plate-solving/solution/search.py",
+    "purpose": "stretch solution"
+   },
+   {
+    "path": "labs/L300/14-plate-solving/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L300/14-plate-solving/test_platesolve.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L300/14-plate-solving/test_build_task.py",
+    "purpose": "buildTask check"
+   },
+   {
+    "path": "labs/L300/14-plate-solving/test_stretch.py",
+    "purpose": "stretch check"
+   }
+  ],
+  "expectedResults": [
+   "Shipped: Orion solves, Cassiopeia does not",
+   "Fixed: both solve, rms < 0.6 arcsec, pointing < 0.1 arcsec, rotation within 0.01 deg",
+   "Ring search recovers a 0.8 deg pointing error"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 9 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task (shipped)",
+    "expected": "FAILED (failures=3)"
+   },
+   {
+    "action": "tan_project at the tangent point, dRA = 0.01 deg at Dec 62",
+    "expected": "xi / 0.01 = cos 62 deg = 0.4695"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Solution 1 pixel off everywhere",
+    "action": "FITS pixels are 1-based, numpy/astropy pixel arrays 0-based - convert once, at the boundary."
+   },
+   {
+    "symptom": "Many votes but no solution",
+    "action": "Too loose a tolerance: count pairs agreeing with the RANSAC geometry, not votes (tryIt 2)."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Compare a test triangle's invariants in flat offsets and on the TAN plane at both fields.",
+    "predict": "How large is the distortion at Dec +62?",
+    "expected": "1. orion      Dec -5.4: invariants flat [1.049 1.083] vs TAN [1.051 1.078] (max relative difference 0.004; match tolerance 0.008) | 1. cassiopeia Dec +62.1: invariants flat [1.049 1.083] vs TAN [1.097 1.685] (max relative difference 0.357; match tolerance 0.008)"
+   },
+   {
+    "task": "In the fixed solver, loosen TOL from 0.008 to 0.05.",
+    "predict": "More correct pairs or more wrong ones?",
+    "expected": "2. TOL 0.008: 12 voted pairs, 8 agree with the best geometry | 2. TOL 0.05: 12 voted pairs, 3 agree with the best geometry"
+   }
+  ],
+  "equivalents": [
+   "astrometry.net solve-field (blind, quads + Bayesian verification) and nova.astrometry.net.",
+   "astroalign (triangles + RANSAC, MIT) for image-to-image registration.",
+   "astropy.wcs.utils.fit_wcs_from_points(projection='TAN', sip_degree=...)."
+  ],
+  "learningTools": [
+   {
+    "name": "astrometry.net (solve-field)",
+    "role": "CHECK",
+    "exercise": "Solve any real image of yours (or a public-domain sky photo) with: solve-field --scale-units arcsecperpix --scale-low 1.8 --scale-high 2.2 image.fits, then read the .wcs header.",
+    "expected": "The .wcs header gives CRVAL, CD and the pixel scale in the same form as the lab's check() (scale, rotation). The lab's synthetic fields are not real sky, so astrometry.net cannot solve them. Pending a manual run with index files.",
+    "mac": "brew install astrometry-net   (0.97; plus index files that cover your images' scale)",
+    "windows": "WSL2 (Ubuntu): sudo apt install astrometry.net   (the project says 'it should work in WSL'; no native Windows build)",
+    "licence": "Own code BSD-3-Clause; the whole work GPL-3.0-or-later (README) (OSI: yes)",
+    "url": "https://astrometry.net/use.html"
+   },
+   {
+    "name": "Stellarium",
+    "role": "SEE",
+    "exercise": "Turn on the equatorial grid and compare RA lines 1 h apart near Orion (Dec -5) and near Cassiopeia (Dec +62).",
+    "expected": "The RA lines are about half as far apart near Cassiopeia (cos 62 deg = 0.47), the distortion the lab's tryIt 1 measures (36 % on a triangle). Pending a manual run.",
+    "mac": "brew install --cask stellarium   (26.3, Apple Silicon)",
+    "windows": "winget install -e --id Stellarium.Stellarium   (or the installer from stellarium.org)",
+    "licence": "GPL-2.0 (OSI: yes)",
+    "url": "https://stellarium.org/"
+   }
+  ],
+  "inRealSystems": [
+   "Survey pipelines (ZTF uses SCAMP against Gaia) refine a pointing-based WCS on every frame.",
+   "Amateur imaging tools (Siril, N.I.N.A.) call astrometry.net or ASTAP to plate solve."
+  ],
+  "useWhen": "Use whenever pixel positions must become sky positions; always validate on fields far from the equator.",
+  "caution": "Synthetic fields; real images add distortion (SIP), blended stars and saturated cores. Never trust a solution without a residual check.",
+  "checkpoint": "PASS: the shipped solver fails Cassiopeia; after your fix test_build_task passes with BUILD_TARGET=mine (both fields, rms < 0.6 arcsec).",
+  "checkYourself": [
+   {
+    "q": "Why do triangle invariants not care about rotation or scale?",
+    "a": "They are ratios of side lengths, which rotation, shift, scale and mirror leave unchanged."
+   },
+   {
+    "q": "Why can the shipped solver work at Orion but not Cassiopeia?",
+    "a": "cos(-5.4) = 0.996 barely distorts shapes; cos(62) = 0.47 stretches RA by 2x."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Lang et al. 2010, Astrometry.net (AJ 139, 1782)",
+    "url": "https://arxiv.org/abs/0910.2233"
+   },
+   {
+    "title": "Calabretta & Greisen 2002, Representations of celestial coordinates in FITS",
+    "url": "https://arxiv.org/abs/astro-ph/0207413"
+   },
+   {
+    "title": "Beroiz, Cabral & Sanchez 2020, astroalign",
+    "url": "https://arxiv.org/abs/1909.02946"
+   },
+   {
+    "title": "astropy: fit_wcs_from_points",
+    "url": "https://docs.astropy.org/en/stable/api/astropy.wcs.utils.fit_wcs_from_points.html"
+   }
+  ],
+  "next": "L300 #15 Fitting with honest uncertainty: least squares, bootstrap and MCMC for a transit: with positions and fluxes in hand, fit a model - and get the error bars right.",
+  "validation": {
+   "status": "validated-local",
+   "how": "platesolve.py, solution/platesolve.py, solution/search.py, try_it.py and unittests (Ran 9 tests ... OK (skipped=1)) ran locally; BUILD_TARGET=mine fails (failures=3), the solution passes. The TAN projection formulas are derived in the lab (projection of the unit vector onto the tangent plane; R_theta = (180/pi) cot theta, C&G 2002 eq. 16 with mu = 0) - sketch in the README section 'Derived formula'; verified by a round-trip test and by astropy in CI.",
+   "pendingCi": [
+    "labs/L300/14-plate-solving/platesolve_astropy.py (astropy 8.0.2)",
+    "test_platesolve.py: test_astropy_scale_matches",
+    "macOS and Windows runs",
+    "astrometry.net and Stellarium exercises (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L300/14-plate-solving.md",
+  "conceptSummary": "Plate solving matches shape invariants of star triangles, keeps the geometry most pairs agree with, and fits a TAN WCS. Raw RA/Dec offsets distort shapes by cos(Dec), so a solver that works near the equator fails near the pole.",
+  "seeAlso": [
+   "astronomy L200 #8 FITS images and WCS: a minimal reader and a TAN projection: the TAN projection and FITS WCS keywords this solver produces.",
+   "astronomy L200 #7 Catalogues and cross-matching: angular separation and a k-d tree: cross-matching uses the same angular-separation geometry.",
+   "astronomy L400 #19 Big catalogues: sky indexing, cone-search performance and TAP/ADQL: cone searches have the same cos(Dec) trap in their RA window."
+  ]
+ },
+ {
+  "id": "honest-uncertainty",
+  "number": 15,
+  "level": "L300",
+  "title": "Fitting with honest uncertainty: least squares, bootstrap and MCMC for a transit",
+  "phase": "Harden",
+  "category": "fitting",
+  "description": "Fit a transit by least squares, then test the error bars: bootstrap, MCMC with a free noise scale, and coverage over 200 seeded datasets.",
+  "outcome": "You can fit a nonlinear model, check its error bars by coverage, rescale them honestly, and run and diagnose a small MCMC.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; emcee 3.1.6 equivalent in CI",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "The best fit is easy; a +/- that contains the truth 68 % of the time is the hard part."
+  ],
+  "prerequisites": [
+   "Lesson 10 (Light curves and periods: Lomb-Scargle, transits vs variable stars)",
+   "Lesson 4 (Units and scales: AU, light-year, parsec, magnitudes and distance modulus)"
+  ],
+  "glossary": [
+   {
+    "term": "coverage",
+    "meaning": "How often an interval contains the true value over many repeats; +/-1 sigma should reach ~68 %."
+   },
+   {
+    "term": "reduced chi-square",
+    "meaning": "chi^2 / (n - p); about 1 when the model and the error bars are right."
+   },
+   {
+    "term": "autocorrelation time",
+    "meaning": "Steps an MCMC chain needs to forget where it was; effective samples = length / tau."
+   }
+  ],
+  "concepts": [
+   "Formal errors trust the reported sigma.",
+   "Coverage tests error bars, not fits.",
+   "Scale by chi^2_red or bootstrap; sample the noise in MCMC.",
+   "Nonlinear parameters need percentiles, not +/-."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python transit_fit.py`",
+    "mac": "cd labs/L300/15-honest-uncertainty\npython transit_fit.py",
+    "windows": "cd labs\\L300\\15-honest-uncertainty\npython transit_fit.py",
+    "expected": "4 JSON lines (fit, sigma_formal, sigma_bootstrap), 'reduced chi^2 ... 4.13', and the coverage line t0 0.36, depth 0.335, T14 0.275, T12 0.22.",
+    "ifNot": "Takes ~10 s (500 fits)."
+   },
+   {
+    "title": "Least squares and formal errors",
+    "detail": "fit_lm() is Levenberg-Marquardt on the trapezoid; uncertainty() returns sqrt(diag((J^T W J)^-1)) with W = 1/flux_err^2.",
+    "expected": "t0 0.15667 h +/- 0.00601 (formal).",
+    "ifNot": "A fit stuck at the start values means the damping (lam) blew up - check the data are fluxes near 1."
+   },
+   {
+    "title": "Bootstrap",
+    "detail": "300 refits of best model + resampled residuals.",
+    "expected": "sigma_bootstrap(t0) 0.0128 h - twice the formal value.",
+    "ifNot": "Bootstrap equal to formal: you resampled noise with the reported sigma instead of the residuals."
+   },
+   {
+    "title": "Failure lab: coverage 36 %",
+    "detail": "coverage() fits 200 seeded datasets and counts |fit - truth| <= sigma.",
+    "expected": "t0 0.36 instead of ~0.68: the error bars are half their true size.",
+    "ifNot": "Coverage near 0.7: you are running the solution."
+   },
+   {
+    "title": "Rescale (build task)",
+    "detail": "Multiply the covariance by max(chi^2_red, 1).",
+    "expected": "sigma_formal(t0) 0.01222 h; coverage 0.73 / 0.615 / 0.555 / 0.56.",
+    "ifNot": "If depth coverage is still ~0.33 the factor is applied to sigma instead of variance or not at all."
+   },
+   {
+    "title": "Build task: check your own file",
+    "detail": "Edit the shipped file, then run the build-task test against it (test_build_task).",
+    "mac": "cd labs/L300/15-honest-uncertainty\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L300\\15-honest-uncertainty\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task -v\nRemove-Item Env:BUILD_TARGET",
+    "expected": "Shipped file: Ran 2 tests ... FAILED (failures=2). After your fix: OK.",
+    "ifNot": "Without BUILD_TARGET the test checks solution/ - make sure the variable is set in the same shell."
+   },
+   {
+    "title": "MCMC with a free noise scale",
+    "detail": "mcmc.py samples (t0, depth, T14, T12, ln s) with Metropolis; reports percentiles, acceptance and autocorrelation time.",
+    "mac": "cd labs/L300/15-honest-uncertainty\npython mcmc.py",
+    "windows": "cd labs\\L300\\15-honest-uncertainty\npython mcmc.py",
+    "expected": "s = 2.035 (+0.093/-0.091); T14 -0.089/+0.071 h; acceptance 0.270; tau 35; 430 effective samples.",
+    "ifNot": "Acceptance < 0.1: proposal too wide; > 0.6: too narrow."
+   }
+  ],
+  "code": "\"\"\"L300 fitting with honest uncertainty: one transit, a trapezoid model, least squares, bootstrap and coverage.\n\nSYNTHETIC light curve: 8 h at 2-min cadence, depth 1.0 %, duration 2.5 h, ingress 0.3 h, mid-time 0.12 h.\nThe photometry pipeline reports flux_err = 0.0010 per point, but the real scatter is 0.0020 (scintillation,\nunmodelled systematics): a common, realistic mismatch. The question is not the best fit - it is the error bar.\npython transit_fit.py\n\"\"\"\nimport json\n\nimport numpy as np\n\nTRUE = np.array([0.12, 0.010, 2.5, 0.3])  # t0 [h], depth, T14 [h], T12 [h]\nNAMES = [\"t0_h\", \"depth\", \"T14_h\", \"T12_h\"]\nSIGMA_REPORTED, SIGMA_TRUE = 0.0010, 0.0020\nT = np.arange(-4.0, 4.0, 2 / 60)  # 240 points\n\n\ndef model(p, t=T):\n    \"\"\"Trapezoid transit (Seager & Mallen-Ornelas 2003 shape): flat bottom between 2nd and 3rd contact.\"\"\"\n    t0, depth, t14, t12 = p\n    x = np.abs(t - t0)\n    half = t14 / 2\n    ramp = np.clip((half - x) / max(t12, 1e-6), 0.0, 1.0)  # 0 outside, 1 on the flat bottom\n    return 1.0 - depth * ramp\n\n\ndef make_data(seed=15):\n    rng = np.random.default_rng(seed)\n    return model(TRUE) + rng.normal(0.0, SIGMA_TRUE, T.size)\n\n\ndef jacobian(p, h=1e-6, t=T):\n    f0 = model(p, t)\n    return np.column_stack([(model(p + h * np.eye(4)[k], t) - f0) / h for k in range(4)])\n\n\ndef fit_lm(y, p0=(0.0, 0.008, 2.3, 0.4), iters=60, t=T):\n    \"\"\"Levenberg-Marquardt: damped Gauss-Newton on chi^2 = sum((y - model)/sigma)^2 (t: any time grid).\"\"\"\n    p, lam = np.array(p0, float), 1e-3\n    cost = np.sum((y - model(p, t)) ** 2)\n    for _ in range(iters):\n        J, r = jacobian(p, t=t), y - model(p, t)\n        A = J.T @ J\n        step = np.linalg.solve(A + lam * np.diag(np.diag(A)), J.T @ r)\n        trial = p + step\n        trial[3] = np.clip(trial[3], 0.01, trial[2] / 2)  # ingress cannot exceed half the duration\n        new = np.sum((y - model(trial, t)) ** 2)\n        if new < cost:\n            p, cost, lam = trial, new, lam / 3\n        else:\n            lam *= 4\n    return p\n\n\ndef uncertainty(y, p):\n    \"\"\"1-sigma errors from the curvature of chi^2: cov = (J^T W J)^-1 with W = 1/sigma^2.\"\"\"\n    J = jacobian(p)\n    cov = np.linalg.inv(J.T @ J / SIGMA_REPORTED ** 2)  # trusts the pipeline's flux_err\n    return np.sqrt(np.diag(cov))\n\n\ndef bootstrap(y, p, n=300, seed=1):\n    \"\"\"Residual bootstrap: refit fake data = best model + resampled residuals (with replacement).\"\"\"\n    rng, res, best = np.random.default_rng(seed), y - model(p), model(p)\n    fits = np.array([fit_lm(best + rng.choice(res, res.size), p0=p, iters=25) for _ in range(n)])\n    return fits.std(axis=0, ddof=1)\n\n\ndef coverage(n=200, seed0=1000):\n    \"\"\"Fraction of seeded datasets whose +/-1 sigma interval contains the TRUE value (should be ~68%).\"\"\"\n    hits = np.zeros(4)\n    for k in range(n):\n        y = make_data(seed0 + k)\n        p = fit_lm(y)\n        hits += np.abs(p - TRUE) <= uncertainty(y, p)\n    return hits / n\n\n\nif __name__ == \"__main__\":\n    y = make_data()\n    p = fit_lm(y)\n    chi2_red = float(np.sum(((y - model(p)) / SIGMA_REPORTED) ** 2) / (T.size - 4))\n    err, boot = uncertainty(y, p), bootstrap(y, p)\n    for k, name in enumerate(NAMES):\n        print(json.dumps({\"param\": name, \"true\": float(TRUE[k]), \"fit\": round(float(p[k]), 5),\n                          \"sigma_formal\": round(float(err[k]), 5), \"sigma_bootstrap\": round(float(boot[k]), 5)}))\n    print(f\"reduced chi^2 with the reported flux_err: {chi2_red:.2f}\")\n    print(\"1-sigma coverage over 200 seeded datasets:\", dict(zip(NAMES, coverage().round(3).tolist())))\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "TRUE, SIGMA_REPORTED, SIGMA_TRUE",
+    "detail": "Synthetic truth with a realistic mismatch: the pipeline reports 0.0010, the scatter is 0.0020."
+   },
+   {
+    "title": "model()",
+    "detail": "Trapezoid transit: flat bottom between 2nd and 3rd contact, linear ingress/egress (Seager & Mallen-Ornelas 2003 contacts)."
+   },
+   {
+    "title": "fit_lm()",
+    "detail": "Damped Gauss-Newton with a finite-difference Jacobian; the ingress is clipped to [0.01, T14/2]."
+   },
+   {
+    "title": "uncertainty()",
+    "detail": "The fault: (J^T W J)^-1 with the REPORTED sigma - no look at the residuals."
+   },
+   {
+    "title": "bootstrap()",
+    "detail": "Residual bootstrap: errors from the spread of 300 refits, independent of sigma."
+   },
+   {
+    "title": "coverage()",
+    "detail": "The honest test: 200 datasets with known truth, fraction inside +/-1 sigma."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped uncertainty() trusts flux_err = 0.0010 while the true scatter is 0.0020 (seeds 1000-1199).",
+   "symptom": "1-sigma coverage t0 0.36, depth 0.335, T14 0.275, T12 0.22 (68 % expected); bootstrap sigma(t0) 0.0128 vs formal 0.0060; chi^2_red 4.13.",
+   "fix": "Your build task: scale the covariance by max(chi^2_red, 1) (solution/transit_fit.py) -> coverage 0.73 / 0.615 / 0.555 / 0.56; formal = bootstrap.",
+   "proof": "test_build_task.py: BUILD_TARGET=mine on the shipped file -> Ran 2 tests ... FAILED (failures=2); default (solution) -> OK. TestFailureLab in test_transit_fit.py pins the shipped coverage."
+  },
+  "tradeOffs": [
+   {
+    "option": "chi^2_red scaling",
+    "gains": "One line, no refits",
+    "costs": "Assumes the model is right and noise is white",
+    "chooseWhen": "Quick, near-linear problems"
+   },
+   {
+    "option": "Residual bootstrap",
+    "gains": "No sigma needed; captures some nonlinearity",
+    "costs": "300 refits; breaks with correlated noise",
+    "chooseWhen": "Moderate cost, white noise"
+   },
+   {
+    "option": "MCMC with a noise parameter",
+    "gains": "Full posterior, asymmetric intervals, noise estimated",
+    "costs": "Tuning and convergence checks (tau)",
+    "chooseWhen": "Nonlinear or degenerate parameters (T14, T12 here)"
+   }
+  ],
+  "buildTask": {
+   "task": "Fix uncertainty() in transit_fit.py so +/-1 sigma covers the truth about 68 % of the time.",
+   "hints": [
+    "chi^2_red = sum((r/flux_err)^2)/(n - p) = 4.13 here: the real sigma is ~2.03 x flux_err.",
+    "Multiply the covariance by max(chi^2_red, 1) - never shrink below the reported noise."
+   ],
+   "solution": "labs/L300/15-honest-uncertainty/solution/transit_fit.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped: FAILED (failures=2); after your fix: OK.",
+   "stretch": {
+    "task": "Report MCMC results as median +plus -minus and flag non-Gaussian parameters (solution/report.py).",
+    "check": "python -m unittest test_stretch -v -> OK"
+   }
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L300/15-honest-uncertainty/transit_fit.py",
+    "purpose": "main lab code (ships the unfixed uncertainty())"
+   },
+   {
+    "path": "labs/L300/15-honest-uncertainty/mcmc.py",
+    "purpose": "Metropolis with free noise scale + autocorrelation time (reused by the capstone)"
+   },
+   {
+    "path": "labs/L300/15-honest-uncertainty/fit_emcee.py",
+    "purpose": "emcee equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L300/15-honest-uncertainty/solution/transit_fit.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L300/15-honest-uncertainty/solution/report.py",
+    "purpose": "stretch solution"
+   },
+   {
+    "path": "labs/L300/15-honest-uncertainty/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L300/15-honest-uncertainty/test_transit_fit.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L300/15-honest-uncertainty/test_build_task.py",
+    "purpose": "buildTask check"
+   },
+   {
+    "path": "labs/L300/15-honest-uncertainty/test_stretch.py",
+    "purpose": "stretch check"
+   }
+  ],
+  "expectedResults": [
+   "Shipped coverage ~0.22-0.36",
+   "Fixed coverage 0.73 / 0.615 / 0.555 / 0.56",
+   "MCMC recovers the noise scale s = 2.035 +/- 0.09"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 10 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task (shipped)",
+    "expected": "FAILED (failures=2)"
+   },
+   {
+    "action": "autocorr_time of an AR(1) chain with rho 0.9",
+    "expected": "within 15 % of (1+rho)/(1-rho) = 19"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "chi^2_red far above 1 but you trust the errors",
+    "action": "Either the model or the error bars are wrong - look at the residuals before scaling."
+   },
+   {
+    "symptom": "MCMC numbers change with the seed",
+    "action": "Chain too short: check len/tau > 50 and the acceptance rate."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Shipped uncertainty(), but make flux_err right (0.0020).",
+    "predict": "Coverage now?",
+    "expected": "1. flux_err = true scatter: coverage {'t0_h': 0.73, 'depth': 0.625, 'T14_h': 0.545, 'T12_h': 0.56}"
+   },
+   {
+    "task": "Run the MCMC for only 1000 steps.",
+    "predict": "Does it look converged?",
+    "expected": "2. 1000 steps: acceptance 0.277, tau 25, chain/tau 32 (emcee docs: > ~50 is often enough), s = 2.024"
+   }
+  ],
+  "equivalents": [
+   "emcee EnsembleSampler (affine-invariant) with get_autocorr_time.",
+   "scipy.optimize.least_squares / curve_fit(absolute_sigma=False) rescales by chi^2_red.",
+   "batman / juliet / exoplanet for physical transit models with limb darkening."
+  ],
+  "learningTools": [
+   {
+    "name": "JupyterLab (+ JupyterLab Desktop)",
+    "role": "CHECK",
+    "exercise": "In a notebook in this lab folder: from mcmc import *; post, acc, tau = run(tf.make_data()); plot histograms of post[:, 2] (T14) and post[:, 4] (ln s).",
+    "expected": "T14 should look skewed (median 2.362 h, -0.089/+0.071) and exp(ln s) centred near 2.035 - the lab's printed values. Pending a manual run.",
+    "mac": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or the JupyterLab Desktop arm64 installer",
+    "windows": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or winget install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   }
+  ],
+  "inRealSystems": [
+   "Exoplanet papers report MCMC posteriors with jitter/noise terms (juliet, exoplanet, emcee).",
+   "Survey pipelines inject synthetic signals and measure recovery and error coverage."
+  ],
+  "useWhen": "Use coverage tests whenever error bars feed decisions; use MCMC when parameters are nonlinear or degenerate.",
+  "caution": "Synthetic white noise; real light curves have red noise and systematics - neither chi^2 scaling nor a residual bootstrap captures time-correlated noise.",
+  "checkpoint": "PASS: shipped coverage ~0.36; after your fix test_build_task passes with BUILD_TARGET=mine (t0 and depth coverage 0.60-0.78).",
+  "checkYourself": [
+   {
+    "q": "Why is chi^2_red = 4.13 a warning even though the fit looks perfect?",
+    "a": "Residuals are ~2x larger than the stated errors, so the stated errors (and every +/-) are too small."
+   },
+   {
+    "q": "Why do T14 and T12 still under-cover after the fix?",
+    "a": "The trapezoid has kinks; the linear approximation behind (J^T W J)^-1 underestimates their spread."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Hogg, Bovy & Lang 2010, Data analysis recipes: Fitting a model to data",
+    "url": "https://arxiv.org/abs/1008.4686"
+   },
+   {
+    "title": "Hogg & Foreman-Mackey 2018, Data analysis recipes: Using MCMC",
+    "url": "https://arxiv.org/abs/1710.06068"
+   },
+   {
+    "title": "emcee docs: Autocorrelation analysis & convergence",
+    "url": "https://emcee.readthedocs.io/en/stable/tutorials/autocorr/"
+   },
+   {
+    "title": "Seager & Mallen-Ornelas 2003, transit light-curve shape",
+    "url": "https://arxiv.org/abs/astro-ph/0206228"
+   },
+   {
+    "title": "NIST/SEMATECH e-Handbook: Bootstrap plot",
+    "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/bootplot.htm"
+   }
+  ],
+  "next": "L300 #16 Reproducible data pipelines: provenance, caching and versioned inputs: make every fit traceable - inputs, code and parameters - before you publish it.",
+  "validation": {
+   "status": "validated-local",
+   "how": "transit_fit.py, solution/transit_fit.py, mcmc.py, solution/report.py, try_it.py and unittests (Ran 10 tests ... OK (skipped=1)) ran locally; BUILD_TARGET=mine fails (failures=2), the solution passes.",
+   "pendingCi": [
+    "labs/L300/15-honest-uncertainty/fit_emcee.py (emcee 3.1.6)",
+    "test_transit_fit.py: test_emcee_agrees_with_metropolis",
+    "macOS and Windows runs",
+    "JupyterLab exercise (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L300/15-honest-uncertainty.md",
+  "conceptSummary": "An error bar is a promise you can test by coverage over simulated datasets. Formal errors trust the reported noise; chi^2_red, bootstrap and MCMC with a noise parameter make them honest, and nonlinear parameters need percentiles.",
+  "seeAlso": [
+   "astronomy L200 #10 Light curves and periods: Lomb-Scargle, transits vs variable stars: the light curves whose transits are fitted here.",
+   "astronomy Capstone #22 Capstone: an exoplanet transit search pipeline: the capstone imports this model and sampler for every candidate.",
+   "astronomy L400 #20 Model comparison: a galaxy rotation curve with and without a dark-matter halo: BIC differences scale with these error bars.",
+   "simulation L300 #13 Calibration: fit to data, validate on data you did not fit: the same least-squares machinery, judged on a holdout instead of by coverage."
+  ]
+ },
+ {
+  "id": "reproducible-pipelines",
+  "number": 16,
+  "level": "L300",
+  "title": "Reproducible data pipelines: provenance, caching and versioned inputs",
+  "phase": "Harden",
+  "category": "reproducibility",
+  "description": "A load -> detrend -> period pipeline with a step cache and a provenance log; a corrected data release silently returns yesterday's wrong period.",
+  "outcome": "You can content-address cached results, log W3C-PROV-style provenance per step, and trace a number back to its input bytes.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; joblib 1.6.0 equivalent in CI",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "A cache keyed by file name is correct until the file changes; the provenance log notices, the cache does not."
+  ],
+  "prerequisites": [
+   "Lesson 10 (Light curves and periods: Lomb-Scargle, transits vs variable stars)",
+   "Lesson 3 (Time systems: UTC, TAI, TT, Julian Date and sidereal time)"
+  ],
+  "glossary": [
+   {
+    "term": "content addressing",
+    "meaning": "Identify a result by the hash of what produced it (data, code, parameters), not by a name."
+   },
+   {
+    "term": "provenance",
+    "meaning": "A record of which activity used which entities and generated which result (W3C PROV)."
+   },
+   {
+    "term": "MJD",
+    "meaning": "Modified Julian Date = JD - 2400000.5; mixing the two shifts times by half a day."
+   }
+  ],
+  "concepts": [
+   "Key = hash(step, code, upstream data, params).",
+   "Log input and output hashes at run time.",
+   "Version inputs; never overwrite in place.",
+   "Module constants are hidden inputs."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python pipeline.py`",
+    "mac": "cd labs/L300/16-reproducible-pipelines\npython pipeline.py",
+    "windows": "cd labs\\L300\\16-reproducible-pipelines\npython pipeline.py",
+    "expected": "v1 input and re-run 0.43049 d, v2 (corrected) also 0.43049 d, then 6 provenance lines.",
+    "ifNot": "Writes work/ (git-ignored); make_data.py rewrites data/ with the same bytes."
+   },
+   {
+    "title": "Read prov.jsonl",
+    "detail": "Each line: activity, used entity + sha256, upstream_sha256, params, code_sha256, generated_sha256, cache hit/miss.",
+    "expected": "Lines 5-6: input sha 6141395bece9 (new) next to cache 'hit' and the old generated hash.",
+    "ifNot": "If every line is 'miss', the work/ folder was deleted between runs (demo() does it on purpose at the start only)."
+   },
+   {
+    "title": "Failure lab: the stale answer",
+    "detail": "The v2 release fixes telescope B's JD/MJD half-day offset but keeps the file name lightcurve.csv; cache_key() uses the name.",
+    "expected": "v2 returns 0.43049 d (v1's alias); the truth is 0.3011 d.",
+    "ifNot": "v2 = 0.30112: you are running the solution."
+   },
+   {
+    "title": "Content-address the key (build task)",
+    "detail": "Hash the upstream data, the step's source code and the parameters.",
+    "expected": "v2: miss, miss -> 0.30112 d (power 0.882); identical reruns still hit.",
+    "ifNot": "Downstream steps still hit after a parameter change: the key must include upstream data, not just the file."
+   },
+   {
+    "title": "Build task: check your own file",
+    "detail": "Edit the shipped file, then run the build-task test against it (test_build_task).",
+    "mac": "cd labs/L300/16-reproducible-pipelines\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L300\\16-reproducible-pipelines\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task -v\nRemove-Item Env:BUILD_TARGET",
+    "expected": "Shipped file: Ran 3 tests ... FAILED (failures=2). After your fix: OK.",
+    "ifNot": "Without BUILD_TARGET the test checks solution/ - make sure the variable is set in the same shell."
+   },
+   {
+    "title": "Hidden inputs (tryIt) and lineage (stretch)",
+    "detail": "try_it.py changes a module constant (FREQ); solution/lineage.py walks prov.jsonl back to the input file.",
+    "mac": "cd labs/L300/16-reproducible-pipelines\npython try_it.py\npython solution/lineage.py",
+    "windows": "cd labs\\L300\\16-reproducible-pipelines\npython try_it.py\npython solution/lineage.py",
+    "expected": "FREQ change -> cache 'hit', stale 0.30112; lineage: best_period <- detrend(window 5) <- input 6141395bece9.",
+    "ifNot": "Lineage stops after one step: match generated_sha256 to the next record's upstream_sha256."
+   }
+  ],
+  "code": "\"\"\"L300 reproducible pipeline: load -> detrend -> periodogram, with a step cache and a provenance log.\n\nEvery step run appends one JSON line to prov.jsonl (W3C PROV idea: activity, used entity + hash, generated\nentity + hash, parameters, code version, cache hit/miss). A cache makes re-runs fast - and can make them WRONG.\npython pipeline.py   (demo: v1 input, re-run, then the corrected v2 release replaces the file)\n\"\"\"\nimport hashlib\nimport inspect\nimport json\nimport shutil\nfrom pathlib import Path\n\nimport numpy as np\n\nfrom periodogram import lomb_scargle\n\nHERE = Path(__file__).resolve().parent\nFREQ = np.linspace(0.05, 12.0, 60_000)  # cycles per day\n\n\ndef sha256(data):\n    return hashlib.sha256(data if isinstance(data, bytes) else json.dumps(data, sort_keys=True).encode()).hexdigest()\n\n\ndef load(path):\n    rows = Path(path).read_text(encoding=\"utf-8\").splitlines()[1:]\n    t, mag = zip(*[(float(r.split(\",\")[0]), float(r.split(\",\")[2])) for r in rows])\n    return {\"t\": list(t), \"mag\": list(mag)}\n\n\ndef detrend(lc, window_nights=5):\n    \"\"\"Subtract a running median over +/- window_nights (removes slow drifts, keeps the 0.3 d pulsation).\"\"\"\n    t, m = np.array(lc[\"t\"]), np.array(lc[\"mag\"])\n    med = np.array([np.median(m[np.abs(t - x) <= window_nights]) for x in t])\n    return {\"t\": lc[\"t\"], \"mag\": (m - med).round(6).tolist()}\n\n\ndef best_period(lc):\n    power = lomb_scargle(np.array(lc[\"t\"]), np.array(lc[\"mag\"]), FREQ)\n    k = int(np.argmax(power))\n    return {\"period_d\": round(float(1 / FREQ[k]), 5), \"power\": round(float(power[k]), 4)}\n\n\nclass Pipeline:\n    def __init__(self, workdir):\n        self.dir = Path(workdir)\n        (self.dir / \"cache\").mkdir(parents=True, exist_ok=True)\n        self.prov = self.dir / \"prov.jsonl\"\n\n    def cache_key(self, step, input_path, upstream, params):\n        \"\"\"What identifies a result: step name, input file and parameters.\"\"\"\n        return sha256({\"step\": step.__name__, \"input\": Path(input_path).name, \"params\": params})\n\n    def step(self, func, input_path, upstream, params):\n        key = self.cache_key(func, input_path, upstream, params)\n        cached = self.dir / \"cache\" / f\"{key}.json\"\n        hit = cached.exists()\n        out = json.loads(cached.read_text(encoding=\"utf-8\")) if hit else func(upstream, **params)\n        if not hit:\n            cached.write_text(json.dumps(out), encoding=\"utf-8\")\n        record = {\"activity\": func.__name__, \"used\": {\"entity\": Path(input_path).name,\n                                                       \"sha256\": sha256(Path(input_path).read_bytes())[:12]},\n                  \"upstream_sha256\": sha256(upstream)[:12], \"params\": params, \"code_sha256\": sha256(inspect.getsource(func).encode())[:12],\n                  \"generated_sha256\": sha256(out)[:12], \"cache\": \"hit\" if hit else \"miss\"}\n        with self.prov.open(\"a\", encoding=\"utf-8\") as f:\n            f.write(json.dumps(record) + \"\\n\")\n        return out\n\n    def run(self, input_path, window_nights=5):\n        lc = load(input_path)\n        flat = self.step(detrend, input_path, lc, {\"window_nights\": window_nights})\n        return self.step(best_period, input_path, flat, {})\n\n\ndef demo(workdir):\n    shutil.rmtree(workdir, ignore_errors=True)\n    p, current = Pipeline(workdir), Path(workdir) / \"lightcurve.csv\"\n    shutil.copyfile(HERE / \"data\" / \"lightcurve_v1.csv\", current)\n    first, again = p.run(current), p.run(current)\n    shutil.copyfile(HERE / \"data\" / \"lightcurve_v2.csv\", current)  # the corrected release arrives\n    return first, again, p.run(current)\n\n\nif __name__ == \"__main__\":\n    first, again, corrected = demo(HERE / \"work\")\n    print(\"v1 input        :\", first)\n    print(\"v1 re-run       :\", again)\n    print(\"v2 (corrected)  :\", corrected, \"  <- true period 0.3011 d\")\n    print((HERE / \"work\" / \"prov.jsonl\").read_text(encoding=\"utf-8\").rstrip())\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "load / detrend / best_period",
+    "detail": "Pure steps: data and parameters in, data out; detrend is a running median over +/- window_nights."
+   },
+   {
+    "title": "periodogram.lomb_scargle()",
+    "detail": "Classical Lomb-Scargle with astropy's 'standard' normalisation (1 = perfect sinusoid)."
+   },
+   {
+    "title": "Pipeline.cache_key()",
+    "detail": "The fault: sha256 of (step name, input FILE NAME, params) - the bytes and the upstream data are not in the key."
+   },
+   {
+    "title": "Pipeline.step()",
+    "detail": "Look up cache/<key>.json; on a miss run the step and store; always append a provenance record with real hashes."
+   },
+   {
+    "title": "demo()",
+    "detail": "v1 run, identical rerun, then the corrected v2 release copied over the same file name."
+   },
+   {
+    "title": "make_data.py",
+    "detail": "Seeded synthetic light curve (period 0.3011 d) and the v1 bug: telescope B in JD - 2460000 instead of MJD - 60000 (+0.5 d)."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped cache_key() = sha256(step name, input file name, params); the v2 release replaces data/lightcurve.csv under the same name.",
+   "symptom": "v2 returns the v1 alias 0.43049 d (truth 0.3011 d) with 'cache': 'hit' on both steps; prov.jsonl shows the new input hash 6141395bece9 next to the old generated hash.",
+   "fix": "Your build task: key = sha256(step, step source, upstream data, params) (solution/pipeline.py) -> v2 miss, miss -> 0.30112 d.",
+   "proof": "test_build_task.py: BUILD_TARGET=mine on the shipped file -> Ran 3 tests ... FAILED (failures=2); default (solution) -> OK. TestFailureLab in test_pipeline.py keeps the fault reproducible."
+  },
+  "tradeOffs": [
+   {
+    "option": "Name/mtime-keyed cache",
+    "gains": "Cheap to compute",
+    "costs": "Stale on in-place updates and copies",
+    "chooseWhen": "Never for science outputs"
+   },
+   {
+    "option": "Content-addressed (hash data + code + params)",
+    "gains": "Correct by construction; shareable",
+    "costs": "Hashing cost; disk only grows",
+    "chooseWhen": "Default for pipelines (DVC, Nix-style stores)"
+   },
+   {
+    "option": "No cache",
+    "gains": "Always fresh",
+    "costs": "Slow iteration",
+    "chooseWhen": "Cheap steps or final release runs"
+   }
+  ],
+  "buildTask": {
+   "task": "Change cache_key() in pipeline.py so a cached result is reused only for the same data, code and parameters.",
+   "hints": [
+    "cache_key() already receives upstream - hash it with sha256(upstream).",
+    "inspect.getsource(step) gives the step's code; hash it.",
+    "A file name is not an identity: releases keep their names."
+   ],
+   "solution": "labs/L300/16-reproducible-pipelines/solution/pipeline.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped: FAILED (failures=2); after your fix: OK.",
+   "stretch": {
+    "task": "lineage(prov_lines, generated_sha): walk generated -> upstream records back to the input file (solution/lineage.py).",
+    "check": "python -m unittest test_stretch -v -> OK"
+   }
+  },
+  "observability": {
+   "emits": "work/prov.jsonl: one line per step run {activity, used {entity, sha256}, upstream_sha256, params, code_sha256, generated_sha256, cache}.",
+   "read": "A changed used.sha256 next to cache 'hit' and an unchanged generated_sha256 is the stale-cache signature; lineage() turns the log into an answer to 'where did this number come from?'."
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L300/16-reproducible-pipelines/pipeline.py",
+    "purpose": "main lab code (ships the unfixed cache_key())"
+   },
+   {
+    "path": "labs/L300/16-reproducible-pipelines/periodogram.py",
+    "purpose": "numpy Lomb-Scargle"
+   },
+   {
+    "path": "labs/L300/16-reproducible-pipelines/make_data.py",
+    "purpose": "writes data/lightcurve_v1.csv and _v2.csv (synthetic)"
+   },
+   {
+    "path": "labs/L300/16-reproducible-pipelines/data/lightcurve_v1.csv",
+    "purpose": "first release (JD/MJD bug)"
+   },
+   {
+    "path": "labs/L300/16-reproducible-pipelines/data/lightcurve_v2.csv",
+    "purpose": "corrected release"
+   },
+   {
+    "path": "labs/L300/16-reproducible-pipelines/cache_joblib.py",
+    "purpose": "joblib.Memory equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L300/16-reproducible-pipelines/solution/pipeline.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L300/16-reproducible-pipelines/solution/lineage.py",
+    "purpose": "stretch solution"
+   },
+   {
+    "path": "labs/L300/16-reproducible-pipelines/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L300/16-reproducible-pipelines/test_pipeline.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L300/16-reproducible-pipelines/test_build_task.py",
+    "purpose": "buildTask check"
+   },
+   {
+    "path": "labs/L300/16-reproducible-pipelines/test_stretch.py",
+    "purpose": "stretch check"
+   }
+  ],
+  "expectedResults": [
+   "v1: alias 0.43049 d (half-day offset)",
+   "Shipped v2: stale 0.43049 d from cache",
+   "Fixed v2: 0.30112 d, power 0.882"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 9 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task (shipped)",
+    "expected": "FAILED (failures=2)"
+   },
+   {
+    "action": "sha256 of data/lightcurve_v2.csv",
+    "expected": "starts 6141395bece9 (make_data.py rewrites the same bytes)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Two machines disagree on a cached result",
+    "action": "Hidden inputs (globals, library versions, locale): add them to the parameters or the code hash."
+   },
+   {
+    "symptom": "Cache folder keeps growing",
+    "action": "Content addressing never overwrites; evict by age or size and keep the provenance log."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Shipped cache, v2 input: change detrend's window from 5 to 1 night.",
+    "predict": "Which steps re-run?",
+    "expected": "1. shipped: window 5 -> {'period_d': 0.30112, 'power': 0.882}; window 1 -> {'period_d': 0.30112, 'power': 0.882}; cache ['miss', 'miss', 'miss', 'hit']"
+   },
+   {
+    "task": "Fixed cache: change the module-level FREQ grid (0.05-3.0 c/d) and re-run.",
+    "predict": "Hit or miss?",
+    "expected": "2. fixed, FREQ changed: before {'period_d': 0.30112, 'power': 0.882}; after {'period_d': 0.30112, 'power': 0.882}; cache ['miss', 'miss', 'hit', 'hit']"
+   }
+  ],
+  "equivalents": [
+   "joblib.Memory (hashes arguments + checks code) - pass data, not paths.",
+   "DVC / Snakemake / Nextflow: content-hashed inputs and outputs per stage.",
+   "IVOA Provenance DM / W3C PROV for exchanging provenance records."
+  ],
+  "learningTools": [],
+  "inRealSystems": [
+   "Rubin's data butler records dataset provenance per processing run.",
+   "Data releases (Gaia DR3, TESS sectors) are versioned; papers cite the release, not 'the latest file'."
+  ],
+  "useWhen": "Use content-addressed caching and provenance for every multi-step analysis you might rerun or publish.",
+  "caution": "Hashes identify bytes, not meaning: a new release with identical bytes is the same input; a reformatted file with identical data is not. Never cache results of steps with side effects.",
+  "checkpoint": "PASS: the shipped cache returns the stale v1 period for v2; after your fix test_build_task passes with BUILD_TARGET=mine (v2 -> 0.30112 d).",
+  "checkYourself": [
+   {
+    "q": "Why did the provenance log notice the new release when the cache did not?",
+    "a": "It records the input bytes' hash; the cache key used only the file name."
+   },
+   {
+    "q": "Why does changing FREQ still hit the fixed cache?",
+    "a": "FREQ is a module constant read inside the step: a hidden input not in the key or the step's source."
+   }
+  ],
+  "sources": [
+   {
+    "title": "W3C PROV-DM",
+    "url": "https://www.w3.org/TR/prov-dm/"
+   },
+   {
+    "title": "IVOA Provenance Data Model 1.0 (HAL copy)",
+    "url": "https://hal.science/hal-03433754/document"
+   },
+   {
+    "title": "Sandve et al. 2013, Ten Simple Rules for Reproducible Computational Research",
+    "url": "https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1003285"
+   },
+   {
+    "title": "joblib: On demand recomputing (Memory)",
+    "url": "https://joblib.readthedocs.io/en/stable/user_guide/memory.html"
+   }
+  ],
+  "next": "L400 #17 Survey pipeline architecture: ingest, calibrate, detect, catalogue - throughput measured: put calibration, detection and provenance into one production pipeline and measure it.",
+  "validation": {
+   "status": "validated-local",
+   "how": "make_data.py, pipeline.py, solution/pipeline.py, solution/lineage.py, try_it.py and unittests (Ran 9 tests ... OK (skipped=1)) ran locally; BUILD_TARGET=mine fails (failures=2), the solution passes.",
+   "pendingCi": [
+    "labs/L300/16-reproducible-pipelines/cache_joblib.py (joblib 1.6.0)",
+    "test_pipeline.py: test_joblib_path_key_is_stale_data_key_is_not",
+    "macOS and Windows runs"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L300/16-reproducible-pipelines.md",
+  "conceptSummary": "A result is a function of input bytes, code and parameters; hash all three and log them per step. Name-keyed caches silently serve stale answers when a corrected release keeps its file name.",
+  "seeAlso": [
+   "astronomy L100 #3 Time systems: UTC, TAI, TT, Julian Date and sidereal time: the JD/MJD half-day offset that breaks the v1 release.",
+   "astronomy L400 #21 Open data and science software practice: VO standards, licences, citation and validation: releases carry a SHA-256 manifest for the same reason.",
+   "cryptography L100 #2 Hashing and integrity: SHA-256 and HMAC: the hash that makes content addressing work.",
+   "distributed-systems L200 #10 Caching and invalidation: cache-aside, TTL, stale reads, thundering herd: the same stale-read failure in a service cache."
+  ]
+ }
+]

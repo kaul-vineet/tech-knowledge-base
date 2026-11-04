@@ -1,0 +1,229 @@
+# Root-level CI for the microbit topic (GENERATED from microbit/.github/workflows/labs.yml by tools/sync_root_ci.py).
+# kb/ is the repository root; every job runs inside microbit/. Edit the topic file, then re-run the script.
+# CI for the micro:bit L100 + L200 + L300 + L400 labs, the capstone and the L500 theory checks: Linux + Apple-silicon macOS + Windows.
+name: microbit labs
+
+on:
+  push:
+    paths: ['microbit/**', 'shared/**', '.github/workflows/microbit.yml']
+  pull_request:
+    paths: ['microbit/**', 'shared/**', '.github/workflows/microbit.yml']
+  workflow_dispatch:
+
+env:
+  # Topic folder relative to the repository root (kb/).
+  KB_DIR: microbit
+
+jobs:
+  unit-stub:
+    name: Lab logic + agent assist vs stub/fake server (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-latest = arm64 (Apple silicon, like the Mac mini); windows-latest = x64 Windows
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ${{ env.KB_DIR }}
+        shell: bash   # Git Bash on Windows; the Python commands themselves are OS-neutral
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install numpy 2.5.3 (only the L500 theory checks use it; L100-L400 labs stay stdlib-only)
+        run: python -m pip install numpy==2.5.3
+      - name: Run every lab test (L100-L400 + capstone, incl. tryIt, failureLab, build-task and fitness checks; L500 theorem checks) + local-agent tests (fake model only)
+        working-directory: ${{ env.KB_DIR }}
+        env:
+          PYTHONUTF8: "1"
+        run: python labs/run_tests.py
+      - name: L500 theorem + problem-set checks, L500 question bank and concept inventory, all qbank recomputations
+        working-directory: ${{ env.KB_DIR }}
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python research/l500_checks.py
+          python research/check_l500_qbank.py
+          python research/qbank_checks.py
+      - name: Agent assist demo (fake model server)
+        working-directory: ${{ env.KB_DIR }}/labs/L100/05-temperature-light
+        run: python agent_assist.py --fake
+      - name: Agent assist demo L200 lab 08 (fake model server)
+        working-directory: ${{ env.KB_DIR }}/labs/L200/08-data-logging
+        run: python agent_assist.py --fake
+      - name: Agent assist demo L300 lab 15 (fake model server)
+        working-directory: ${{ env.KB_DIR }}/labs/L300/15-serial-gateway
+        run: python agent_assist.py --fake
+      - name: Agent assist demo L400 lab 21 (fake model server; the model cannot change an alarm)
+        working-directory: ${{ env.KB_DIR }}/labs/L400/21-edge-ai-explain
+        run: python solution.py
+      - name: Capstone scorecard (seed 22, must print scorecard PASS)
+        working-directory: ${{ env.KB_DIR }}/labs/L400/22-capstone
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python run_capstone.py | tee scorecard.jsonl
+          grep -q '"scorecard": "PASS"' scorecard.jsonl
+      - name: L400 fail-before checks (BUILD_TARGET=mine = the shipped BEFORE file must FAIL its build-task test)
+        working-directory: ${{ env.KB_DIR }}/labs/L400
+        shell: bash
+        run: |
+          set +e
+          for lab in 17-edge-to-cloud 18-fleet-config 19-radio-auth 20-digital-twin 21-edge-ai-explain; do
+            (cd "$lab" && BUILD_TARGET=mine python -m unittest test_build_task > /dev/null 2>&1)
+            if [ $? -eq 0 ]; then echo "UNEXPECTED PASS: $lab (BUILD_TARGET=mine)"; exit 1; fi
+            echo "ok: $lab shipped file fails its build-task check, as documented"
+          done
+      - name: L300 fail-before checks (each BEFORE file must FAIL its build-task test)
+        working-directory: ${{ env.KB_DIR }}/labs/L300
+        shell: bash
+        run: |
+          set +e
+          for pair in 12-reliable-radio:main.py 13-nonblocking-scheduler:main.py 14-power-budget:main.py \
+                      15-serial-gateway:gateway.py 16-interrupt-race:race_model.py; do
+            lab=${pair%%:*}; before=${pair##*:}
+            (cd "$lab" && BUILD_FILE="$before" python -m unittest test_build_task > /dev/null 2>&1)
+            if [ $? -eq 0 ]; then echo "UNEXPECTED PASS: $lab/$before"; exit 1; fi
+            echo "ok: $lab/$before fails its build-task check, as documented"
+          done
+
+  simulator:
+    name: Labs in MicroPython V2 simulator (Playwright, ${{ matrix.os }})
+    needs: unit-stub
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ${{ env.KB_DIR }}
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Offline harness checks (syntax + host.html radio bridge, no browser)
+        working-directory: ${{ env.KB_DIR }}/harness
+        run: npm run check
+      - name: Install pinned Playwright
+        working-directory: ${{ env.KB_DIR }}/harness
+        run: npm install --no-audit --no-fund --save-exact
+      - name: Install Chromium (+ Linux system deps)
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.KB_DIR }}/harness
+        run: npx playwright install --with-deps chromium
+      - name: Install Chromium (macOS / Windows)
+        if: runner.os != 'Linux'
+        working-directory: ${{ env.KB_DIR }}/harness
+        run: npx playwright install chromium
+      - name: Run simulator tests (L100-L400 device programs; labs 07, 12 and 17 use two bridged simulators)
+        working-directory: ${{ env.KB_DIR }}/harness
+        env:
+          CI: "true"
+          # Override to test another simulator build, e.g. the staging URL.
+          SIM_URL: "https://python-simulator.usermbit.org/v/0.1/simulator.html"
+        run: npx playwright test
+      - name: Upload traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces-${{ matrix.os }}
+          path: ${{ env.KB_DIR }}/harness/test-results
+
+  # L300 lab 15: the gateway publishes to a real Mosquitto broker with paho-mqtt (pinned).
+  gateway-mqtt:
+    name: L300 lab 15 + L400 capstone -> Mosquitto + paho-mqtt (${{ matrix.os }})
+    needs: unit-stub
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ${{ env.KB_DIR }}
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install paho-mqtt 2.1.0 (PyPI)
+        run: python -m pip install paho-mqtt==2.1.0
+      - name: Install and start Mosquitto (Linux, apt)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y mosquitto && (mosquitto -p 1883 -v > mosquitto.log 2>&1 &)
+      - name: Install and start Mosquitto (macOS, Homebrew)
+        if: runner.os == 'macOS'
+        run: brew install mosquitto && ($(brew --prefix)/opt/mosquitto/sbin/mosquitto -p 1883 > mosquitto.log 2>&1 &)
+      - name: Install and start Mosquitto (Windows, winget id EclipseFoundation.Mosquitto)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          winget install -e --id EclipseFoundation.Mosquitto --accept-source-agreements --accept-package-agreements --disable-interactivity
+          Start-Process -FilePath "C:\Program Files\mosquitto\mosquitto.exe" -ArgumentList "-p","1883"
+      - name: Publish through the broker (test_mqtt_ci.py)
+        working-directory: ${{ env.KB_DIR }}/labs/L300/15-serial-gateway
+        env:
+          MQTT_BROKER: "127.0.0.1:1883"
+          PYTHONUTF8: "1"
+        run: sleep 2 && python -m unittest -v test_mqtt_ci
+      - name: Capstone readings through the broker (L400 #22 test_mqtt_ci.py)
+        working-directory: ${{ env.KB_DIR }}/labs/L400/22-capstone
+        env:
+          MQTT_BROKER: "127.0.0.1:1883"
+          PYTHONUTF8: "1"
+        run: python -m unittest -v test_mqtt_ci
+
+  # L300 lab 16: Rust + Embassy firmware for the nRF52833 (micro:bit V2) and the host-side logic tests.
+  rust-firmware:
+    name: L300 lab 16 firmware build + logic tests (${{ matrix.os }})
+    needs: unit-stub
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ${{ env.KB_DIR }}
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust stable + thumbv7em-none-eabihf (rustup is preinstalled on GitHub runners)
+        run: rustup toolchain install stable --profile minimal && rustup target add thumbv7em-none-eabihf
+      - name: Host-side unit tests of the pure logic (cargo test)
+        working-directory: ${{ env.KB_DIR }}/labs/L300/16-interrupt-race/logic
+        run: cargo test
+      - name: Build both firmware binaries (racy + fixed) for the nRF52833
+        working-directory: ${{ env.KB_DIR }}/labs/L300/16-interrupt-race/firmware
+        run: cargo build --release --bins
+
+  # L300 lab 16: run the firmware under Renode's nRF52840 model (close sibling, not the micro:bit).
+  renode:
+    name: L300 lab 16 in Renode 1.17.0 (nRF52840 model, Linux)
+    needs: rust-firmware
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.KB_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild the firmware (same commands as rust-firmware)
+        working-directory: ${{ env.KB_DIR }}/labs/L300/16-interrupt-race/firmware
+        run: rustup target add thumbv7em-none-eabihf && cargo build --release --bins
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download Renode 1.17.0 portable (GitHub release asset)
+        run: |
+          curl -fsSL -o renode.tar.gz https://github.com/renode/renode/releases/download/v1.17.0/renode-1.17.0.linux-portable.tar.gz
+          mkdir renode && tar -xzf renode.tar.gz -C renode --strip-components=1
+          python -m pip install -r renode/tests/requirements.txt
+      - name: renode-test interrupt_race.robot
+        working-directory: ${{ env.KB_DIR }}/labs/L300/16-interrupt-race/renode
+        run: ${{ github.workspace }}/${{ env.KB_DIR }}/renode/renode-test interrupt_race.robot

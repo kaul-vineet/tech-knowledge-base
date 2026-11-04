@@ -1,0 +1,551 @@
+[
+ {
+  "id": "int03-L600-001",
+  "level": "L600",
+  "lesson": 3,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "In the lab, contract.SCHEMAS is sent to the model as the `tools` list and also used by the pipeline's validator. What does using one dict for both achieve?",
+  "options": [
+   "What the model is told and what is enforced cannot drift",
+   "The model can skip validation because it already saw the schema",
+   "The validator can trust any call whose name matches a schema",
+   "The schema can be shortened because the model fills in defaults"
+  ],
+  "answer": 0,
+  "explanation": "One artefact on both sides of the seam is the consumer-driven contract idea: what the agent is told and what the gate enforces are the same bytes. Seeing a schema does not make a model obey it, so validation still runs.",
+  "source": "Lesson L600 #03 seams; tests/test_milestones.py::test_tool_spec_and_validator_share_one_schema"
+ },
+ {
+  "id": "int03-L600-002",
+  "level": "L600",
+  "lesson": 3,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "The agent proposes baseline lam 0.9, mu 0.95. Both values are inside the schema ranges (lam <= 0.95, mu >= 0.8). What happens?",
+  "options": [
+   "Accepted, because every field passes its own schema range",
+   "Rejected by the envelope rule lam/mu <= 0.9 before anything runs",
+   "Run with a warning attached to the experiment record",
+   "Clipped to lam 0.855 so that the utilisation fits the envelope"
+  ],
+  "answer": 1,
+  "explanation": "Utilisation 0.947 is outside the region verified in M1. A schema checks fields one at a time; the cross-field rule is code, and rejections cost nothing. Silently clipping would run an experiment nobody asked for.",
+  "source": "Lesson L600 #03 seam agent <-> tool schema"
+ },
+ {
+  "id": "int03-L600-003",
+  "level": "L600",
+  "lesson": 3,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does the pipeline return a rejected proposal to the agent as a tool result instead of raising an exception that ends the session?",
+  "options": [
+   "Errors are data: the agent can re-plan, and nothing is charged",
+   "Exceptions would leak the budget limit to the model",
+   "The tool-calling protocol has no message type that can end a session",
+   "A tool result lets the model override the rejection later"
+  ],
+  "answer": 0,
+  "explanation": "As in ai-agents L100 #6, a rejection is information the agent can act on (propose Morris instead of Sobol'). The rejection is final either way; the result text cannot override the gate.",
+  "source": "Lesson L600 #03 codeWalkthrough contract.validate()"
+ },
+ {
+  "id": "int03-L600-004",
+  "level": "L600",
+  "lesson": 3,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "A summary sentence quotes only numbers that match registry facts, yet the checker rejects it. Which sentence fits?",
+  "options": [
+   "Mean wait fell from 4.04 to 3.14 min, a significant decrease [55-replication exp]",
+   "The sobol screening was skipped because the run budget did not allow it.",
+   "Cut waits from 4.28 to 2.58 min (-40%), a significant improvement [3-replication exp]",
+   "Code result: difference -1.71 min, n = 3 per arm: inconclusive [3-replication exp]"
+  ],
+  "answer": 2,
+  "explanation": "Numbers and wording are separate claims. With 3 replications the verdict is inconclusive (CI -3.436 to 0.019), so 'significant' is false even though every number traces. The 55-replication sentence matches its verdict.",
+  "source": "Lesson L600 #03 failureLab"
+ },
+ {
+  "id": "int03-L600-005",
+  "level": "L600",
+  "lesson": 3,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The fake agent wrote 'At lam 0.97 the mean wait would be about 32.3 min.' Why was it dropped rather than replaced by a code-written line?",
+  "options": [
+   "Its numbers were rounded to one decimal instead of two",
+   "Replacement lines are only written for screening results",
+   "It cites no experiment, and the lam 0.97 job never ran, so no facts exist",
+   "The checker drops every sentence that mentions lam"
+  ],
+  "answer": 2,
+  "explanation": "A replacement line is written from the cited experiment's facts. The contract rejected the lam 0.97 job, so there is no experiment to cite and nothing true to say about it.",
+  "source": "Lesson L600 #03 worked run"
+ },
+ {
+  "id": "int03-L600-006",
+  "level": "L600",
+  "lesson": 3,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "In the budget seam, why must cost be reserved BEFORE a batch of replications runs rather than charged afterwards?",
+  "options": [
+   "Reserving first makes each replication run faster",
+   "Charging afterwards cannot stop the run that breaks the limit",
+   "Charging afterwards double-counts the pilot replications",
+   "The registry needs the cost before it can hash the run id"
+  ],
+  "answer": 1,
+  "explanation": "A post-hoc ledger only records the overspend: with the gate off, Sobol' ran and 654,000 of 300,000 customers were spent. Reservation turns the limit into a precondition.",
+  "source": "Lesson L600 #03 seam cost/time budget; --inject no-budget-gate"
+ },
+ {
+  "id": "int03-L600-007",
+  "level": "L600",
+  "lesson": 3,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "The experiment was extended from 10 to 47 replications. Where does the decision to extend come from?",
+  "options": [
+   "The pipeline's policy: achieved half-width vs the 0.3 target",
+   "The agent's follow-up tool call asking for 47 replications",
+   "The registry, which extends any experiment with fewer than 50 runs",
+   "The claim checker, after rejecting the 10-replication sentence"
+  ],
+  "answer": 0,
+  "explanation": "The agent's replications value is only a floor. solution/replications.py computes n(h/target)^2 and the pipeline extends after reserving the cost; the agent is not asked.",
+  "source": "Lesson L600 #03 seam stochasticity <-> conclusions; ADR 0003"
+ },
+ {
+  "id": "int03-L600-008",
+  "level": "L600",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Sobol' screening needs N(d + 2) model runs. With N = 64, d = 4 inputs and 1,000 simulated customers per run, how many customers does it need?",
+  "options": [
+   "256,000",
+   "320,000",
+   "448,000",
+   "384,000"
+  ],
+  "answer": 3,
+  "explanation": "64 x 6 = 384 runs x 1,000 = 384,000 > 300,000, so the budget gate refused it. 256,000 forgets the A and B matrices (N x d only).",
+  "source": "Lesson L600 #03 seam cost/time budget"
+ },
+ {
+  "id": "int03-L600-009",
+  "level": "L600",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "At n = 10 replications the 95% half-width of the difference was 0.645 min. Using n_new = ceil(n (h / target)^2), how many replications are needed for a target of 0.3 min?",
+  "options": [
+   "22",
+   "35",
+   "93",
+   "47"
+  ],
+  "answer": 3,
+  "explanation": "10 x (0.645 / 0.3)^2 = 46.2, rounded up to 47 - the ledger's 'extend to 47 replications'. 22 forgets to square the ratio.",
+  "source": "Lesson L600 #03 expectedResults; ADR 0003"
+ },
+ {
+  "id": "int03-L600-010",
+  "level": "L600",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Same pilot (n = 10, half-width 0.645). How many replications per arm would a target of 0.2 min need?",
+  "options": [
+   "33",
+   "65",
+   "105",
+   "104"
+  ],
+  "answer": 2,
+  "explanation": "10 x (0.645 / 0.2)^2 = 104.0 and the rule rounds up to 105 - more than the budget allows, so the pipeline stops with budget_limited. 33 is the unsquared ratio.",
+  "source": "Lesson L600 #03 tryIt 2"
+ },
+ {
+  "id": "int03-L600-011",
+  "level": "L600",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "For the M/M/1 help desk, Wq = lam / (mu (mu - lam)). With lam = 0.8, what is the steady-state difference in mean wait from mu 1.0 to mu 1.05?",
+  "options": [
+   "-0.895 min",
+   "-0.800 min",
+   "-1.709 min",
+   "-0.952 min"
+  ],
+  "answer": 3,
+  "explanation": "4.0 - 3.048 = 0.952, a drop. -0.895 is the simulation's 55-replication estimate, whose CI (+/-0.293) contains the formula value; -1.709 is the 3-replication estimate.",
+  "source": "Lesson L600 #03 worked run"
+ },
+ {
+  "id": "int03-L600-012",
+  "level": "L600",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 1,
+  "question": "Each replication of each arm simulates 2,000 customers. What does a 55-replication two-arm experiment cost?",
+  "options": [
+   "110,000 customers",
+   "232,000 customers",
+   "270,000 customers",
+   "220,000 customers"
+  ],
+  "answer": 3,
+  "explanation": "55 x 2 arms x 2,000 = 220,000. 270,000 is the session total including Morris (50,000).",
+  "source": "Lesson L600 #03 seam cost/time budget"
+ },
+ {
+  "id": "int03-L600-013",
+  "level": "L600",
+  "lesson": 3,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "What utilisation lam/mu does the proposal lam 0.85, mu 0.95 have, and does it pass the envelope rule lam/mu <= 0.9?",
+  "options": [
+   "0.947 - it is rejected",
+   "0.895 - it passes",
+   "0.905 - it is rejected",
+   "0.850 - it passes"
+  ],
+  "answer": 1,
+  "explanation": "0.85 / 0.95 = 0.8947 <= 0.9, the upper corner of the screening ranges. 0.947 is the lam 0.9 / mu 0.95 case.",
+  "source": "Lesson L600 #03 contract.py; pipeline.SCREEN_LOW/HIGH"
+ },
+ {
+  "id": "int03-L600-014",
+  "level": "L600",
+  "lesson": 3,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "Scorecard: M4 fails with replications 3 and diff_half_width 1.728; the stochasticity seam lists 'a significant improvement with 3 replications' as rejected; all fitness functions pass. Most likely cause?",
+  "options": [
+   "The registry lost the extension runs after a crash",
+   "The claim checker's precision rule is too strict",
+   "The budget gate refused the 3-replication pilot",
+   "The pipeline used the agent's replication count instead of the policy"
+  ],
+  "answer": 3,
+  "explanation": "That is the failure lab (--inject few-reps / unfixed replications.py). The checker did its job; the experiment was never sized.",
+  "source": "Lesson L600 #03 failureLab"
+ },
+ {
+  "id": "int03-L600-015",
+  "level": "L600",
+  "lesson": 3,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "After someone edits simulation/labs/L200/10-warmup-replications/warmup.py, every registered run fails reproduce() although seeds are stored. Why?",
+  "options": [
+   "model.VERSION hashes that file, so the old run ids are stale",
+   "SeedSequence derives new seeds whenever any lab file changes",
+   "The registry file was truncated when the file was saved",
+   "math.fsum gives a different sum after the source is edited"
+  ],
+  "answer": 0,
+  "explanation": "reproduce() refuses runs whose version differs from the current code - intended friction: re-run to rebuild the registry. Seeds are pure functions of (root, arm, rep).",
+  "source": "Lesson L600 #03 troubleshooting; ADR 0002"
+ },
+ {
+  "id": "int03-L600-016",
+  "level": "L600",
+  "lesson": 3,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "F2 reports 'reproduced 0 of 70' and the registry shows \"seed\": null for every run. What happened?",
+  "options": [
+   "The environment fingerprint changed between run and check",
+   "Runs used OS entropy (unseeded), so the record cannot recreate them",
+   "The float.hex values were rounded when written to JSON",
+   "The keyed streams collided across the two arms"
+  ],
+  "answer": 1,
+  "explanation": "random.Random(None) seeds from the OS; nothing in the record can repeat it (--inject unseeded). A fingerprint change would show a real seed with differing bits.",
+  "source": "Lesson L600 #03 --inject unseeded"
+ },
+ {
+  "id": "int03-L600-017",
+  "level": "L600",
+  "lesson": 3,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "The budget seam fails: spent 654,000 of 300,000 and the ledger starts with 'job-1 sobol 384 runs'. Diagnosis?",
+  "options": [
+   "The budget gate let the over-budget Sobol' job run",
+   "The Morris adapter double-counted its runs",
+   "The replication policy overshot its target",
+   "The agent made more than 8 model calls"
+  ],
+  "answer": 0,
+  "explanation": "384,000 alone exceeds the limit; with the gate on, job-1 is rejected before running (--inject no-budget-gate). Agent calls stayed at 5.",
+  "source": "Lesson L600 #03 --inject no-budget-gate"
+ },
+ {
+  "id": "int03-L600-018",
+  "level": "L600",
+  "lesson": 3,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "With --real-model, every sentence containing a number is rejected with 'untraced numbers ... no experiment cited'. What is the right fix?",
+  "options": [
+   "Fix the prompt or model so it cites [exp-...]",
+   "Relax the checker to accept uncited numbers within 5%",
+   "Let the model call the registry to look up run ids",
+   "Disable the claim checker for real-model sessions"
+  ],
+  "answer": 0,
+  "explanation": "Small models often drop citations; the checker falling back to code-written lines is the system working. Weakening the gate defeats the project's purpose.",
+  "source": "Lesson L600 #03 troubleshooting"
+ },
+ {
+  "id": "int03-L600-019",
+  "level": "L600",
+  "lesson": 3,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "A colleague's version derives seeds from a counter that increments on every run. After extending an experiment from 3 to 55 replications, the first three run ids changed. Why?",
+  "options": [
+   "Run ids include the total replication count",
+   "The registry re-hashes runs when an experiment grows",
+   "Welch's df changes the seed of earlier replications",
+   "Counter seeds depend on call order; keyed (arm, rep) seeds do not"
+  ],
+  "answer": 3,
+  "explanation": "With SeedSequence(root, spawn_key=(arm, rep)) replication i is the same run whatever follows (tests/test_seam_replications.py). A counter interleaves arms and jobs, so order changes streams.",
+  "source": "Lesson L600 #03 common mistakes; ADR 0002"
+ },
+ {
+  "id": "int03-L600-020",
+  "level": "L600",
+  "lesson": 3,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this print?",
+  "code": "def matches(token, value):\n    d = len(token.split(\".\")[1]) if \".\" in token else 0\n    return abs(abs(value) - abs(float(token))) <= 0.5 * 10 ** -d + 1e-9\n\nprint(matches(\"3.14\", 3.139905), matches(\"3.141\", 3.139905), matches(\"-22\", -22.1885))",
+  "options": [
+   "True True True",
+   "False False True",
+   "True False True",
+   "True False False"
+  ],
+  "answer": 2,
+  "explanation": "Precision rule: '3.14' matches 3.139905 at 2 decimals; '3.141' claims 3 decimals and is 0.0011 off; '-22' matches -22.19 at 0 decimals (sign is judged by wording).",
+  "source": "Lesson L600 #03 claims.trace"
+ },
+ {
+  "id": "int03-L600-021",
+  "level": "L600",
+  "lesson": 3,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this print?",
+  "code": "import numpy as np\n\ndef seed(rep):\n    return int(np.random.SeedSequence(13, spawn_key=(0, rep)).generate_state(1)[0])\n\nfirst = [seed(r) for r in range(3)]\nmore = [seed(r) for r in range(10)]\nprint(more[:3] == first)",
+  "options": [
+   "False",
+   "It raises TypeError",
+   "It depends on the platform",
+   "True"
+  ],
+  "answer": 3,
+  "explanation": "spawn_key makes each seed a pure function of (root, arm, rep), so the first three of ten equal the three - why extending 3 -> 55 keeps run ids.",
+  "source": "Lesson L600 #03 ADR 0002"
+ },
+ {
+  "id": "int03-L600-022",
+  "level": "L600",
+  "lesson": 3,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this print?",
+  "code": "class B:\n    def __init__(self, limit):\n        self.limit, self.spent = limit, 0\n    def reserve(self, amount):\n        if self.spent + amount > self.limit:\n            raise RuntimeError(\"over\")\n        self.spent += amount\n\nb = B(300_000)\nfor cost in (384_000, 50_000, 12_000, 28_000, 148_000, 32_000):\n    try:\n        b.reserve(cost)\n    except RuntimeError:\n        pass\nprint(b.spent)",
+  "options": [
+   "654000",
+   "220000",
+   "270000",
+   "0"
+  ],
+  "answer": 2,
+  "explanation": "The 384,000 reservation fails up front and is skipped; the rest (50,000 + 12,000 + 28,000 + 148,000 + 32,000) fit - the default session's ledger.",
+  "source": "Lesson L600 #03 pipeline.SimBudget"
+ },
+ {
+  "id": "int03-L600-023",
+  "level": "L600",
+  "lesson": 3,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this print?",
+  "code": "import re\nSIG = re.compile(r\"\\bsignifican\", re.I)\nNEG = re.compile(r\"\\b(not|no)\\s+(statistically\\s+)?significan|\\binconclusive\\b\", re.I)\ns = \"The change is not statistically significant.\"\nprint(bool(SIG.search(s)), bool(NEG.search(s)))",
+  "options": [
+   "True False",
+   "True True",
+   "False True",
+   "False False"
+  ],
+  "answer": 1,
+  "explanation": "The sentence contains 'significant' and a negation; the checker then requires the verdict to be inconclusive.",
+  "source": "Lesson L600 #03 claims.py"
+ },
+ {
+  "id": "int03-L600-024",
+  "level": "L600",
+  "lesson": 3,
+  "type": "code-reading",
+  "difficulty": 1,
+  "question": "What does this print?",
+  "code": "def rho_ok(arm, rho_max=0.9):\n    return arm[\"lam\"] / arm[\"mu\"] <= rho_max\n\narms = ({\"lam\": 0.8, \"mu\": 1.0}, {\"lam\": 0.9, \"mu\": 0.95}, {\"lam\": 0.85, \"mu\": 0.95})\nprint([rho_ok(a) for a in arms])",
+  "options": [
+   "[True, False, True]",
+   "[True, True, True]",
+   "[True, False, False]",
+   "[False, False, True]"
+  ],
+  "answer": 0,
+  "explanation": "0.8 and 0.8947 are inside the envelope; 0.9 / 0.95 = 0.947 is not.",
+  "source": "Lesson L600 #03 contract.validate"
+ },
+ {
+  "id": "int03-L600-025",
+  "level": "L600",
+  "lesson": 3,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Common random numbers reached +/-0.266 with 10 replications instead of 55. Why does the lab still default to independent streams?",
+  "options": [
+   "CRN gives biased estimates of each arm's own mean wait time",
+   "Arms stay reusable elsewhere; CRN needs a paired analysis",
+   "CRN cannot be reproduced bit-for-bit from a seed",
+   "Independent streams use less of the session budget"
+  ],
+  "answer": 1,
+  "explanation": "CRN is unbiased per arm and reproducible; the cost is coupling: results are only cheap for that pair and require a paired CI. ADR 0003 records it as an upgrade.",
+  "source": "Lesson L600 #03 tryIt 1; ADR 0003"
+ },
+ {
+  "id": "int03-L600-026",
+  "level": "L600",
+  "lesson": 3,
+  "type": "design",
+  "difficulty": 3,
+  "question": "With target +/-0.2 the pipeline needs 105 replications but can afford fewer. It stops at 10 and reports budget_limited. Why not spend the remaining budget first?",
+  "options": [
+   "Partial extensions would break the keyed random streams of earlier runs",
+   "More runs still miss the target; the limit stays predictable",
+   "The registry cannot store more than 100 runs",
+   "Welch's interval is undefined above 10 runs"
+  ],
+  "answer": 1,
+  "explanation": "Extra runs would narrow the CI but still miss the stated precision; stopping keeps the budget for other jobs and states honestly what precision was achieved.",
+  "source": "Lesson L600 #03 tryIt 2"
+ },
+ {
+  "id": "int03-L600-027",
+  "level": "L600",
+  "lesson": 3,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Why does the replication policy insist on a pilot of 10 before computing n from the half-width?",
+  "options": [
+   "From 2-3 runs, s and the t quantile are too unstable to plan",
+   "Ten replications always reach the 0.3-minute target precision",
+   "The warm-up needs ten replications to be deleted",
+   "The registry hashes runs in batches of ten"
+  ],
+  "answer": 0,
+  "explanation": "At df 2, t = 4.303 and s is very noisy; the Cornish-Fisher t975 reused from L200 #10 is only good from df 9. The pilot gives a usable estimate; 10 is not a guarantee of precision.",
+  "source": "Lesson L600 #03 ADR 0003"
+ },
+ {
+  "id": "int03-L600-028",
+  "level": "L600",
+  "lesson": 3,
+  "type": "design",
+  "difficulty": 2,
+  "question": "Why is run_id a hash of model name, model version, parameters and seed rather than a random UUID?",
+  "options": [
+   "Hashes are shorter to store than UUIDs",
+   "UUIDs cannot be written to JSON lines",
+   "The same run always gets the same id",
+   "Hashes let the registry sort runs by time"
+  ],
+  "answer": 2,
+  "explanation": "Content-addressed ids make re-runs and reproductions recognisable (same id, same bits) and expose code changes (new version, new id).",
+  "source": "Lesson L600 #03 ADR 0002"
+ },
+ {
+  "id": "int03-L600-029",
+  "level": "L600",
+  "lesson": 3,
+  "type": "design",
+  "difficulty": 3,
+  "question": "An agent runs 20 A/B experiments in one session and reports the one that came out 'significant'. Every check in the lab passes. What is the remaining risk?",
+  "options": [
+   "The registry overflows after 20 experiments",
+   "Welch's CI becomes biased after many experiments",
+   "The claim checker caches verdicts across experiments",
+   "About one false 'significant' is expected among 20"
+  ],
+  "answer": 3,
+  "explanation": "Each CI is per comparison; selection across many needs family-wise control (Bonferroni) or ranking-and-selection - a scaling limit of the design.",
+  "source": "Lesson L600 #03 scalingLimits"
+ },
+ {
+  "id": "int03-L600-030",
+  "level": "L600",
+  "lesson": 3,
+  "type": "design",
+  "difficulty": 2,
+  "question": "model.run_once computes the mean with math.fsum over a list instead of numpy's .mean(). Why?",
+  "options": [
+   "fsum runs faster than numpy for 2,000 values",
+   "numpy's mean gives a biased estimate of the wait",
+   "fsum is correctly rounded: bits do not depend on order",
+   "fsum avoids the warm-up bias in the first customers"
+  ],
+  "answer": 2,
+  "explanation": "Bit-for-bit reproducibility needs an order-independent sum; pairwise/SIMD summation can change the last bit across builds. Bias is unaffected either way.",
+  "source": "Lesson L600 #03 ADR 0002"
+ },
+ {
+  "id": "int03-L600-031",
+  "level": "L600",
+  "lesson": 3,
+  "type": "design",
+  "difficulty": 2,
+  "question": "Why does the pipeline replace a rejected sentence with a line written by code instead of asking the agent to rewrite it?",
+  "options": [
+   "The agent cannot see why its sentence was rejected",
+   "A code line is true by construction and costs no model calls",
+   "A rewrite would need a second tool schema",
+   "Code lines are shorter than model sentences"
+  ],
+  "answer": 1,
+  "explanation": "A retry loop could be added, but its output would need the same check and more budget; the deterministic fallback always yields a publishable, verified report.",
+  "source": "Lesson L600 #03 ADR 0001"
+ },
+ {
+  "id": "int03-L600-032",
+  "level": "L600",
+  "lesson": 3,
+  "type": "design",
+  "difficulty": 3,
+  "question": "The two arms' CI half-widths are 0.23 and 0.19 with 55 runs each. Why does the lab use Welch's interval for the difference?",
+  "options": [
+   "It is narrower than every other interval for a difference",
+   "It needs no degrees of freedom when the arms are the same size",
+   "It allows unequal variances, which differ between the arms",
+   "It removes the need for independent replications"
+  ],
+  "answer": 2,
+  "explanation": "Faster service lowers the wait variance; Welch-Satterthwaite df handles unequal variances (NIST 1.3.5.3). It still needs independent replications.",
+  "source": "Lesson L600 #03 stats.welch_ci; NIST handbook"
+ }
+]

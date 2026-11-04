@@ -1,0 +1,64 @@
+{
+  "_about": "Threat model of this topic's designs: envelope encryption + rotation (L300 #12, L400 #17), release/token signing (#11, #14), TLS between components (#10, #18), keys in a token (#19), group messaging (#20). Test references are relative to the topic folder: file::Class::method.",
+  "boundaries": {"internet": "untrusted network", "app": "application host", "token": "key-storage boundary", "store": "storage tier"},
+  "elements": {
+    "client":        {"type": "external", "zone": "internet"},
+    "doc-api":       {"type": "process",  "zone": "app"},
+    "signer":        {"type": "process",  "zone": "token"},
+    "group-chat":    {"type": "process",  "zone": "app"},
+    "envelope-db":   {"type": "store",    "zone": "store"},
+    "app-log":       {"type": "store",    "zone": "app"},
+    "client->doc-api":      {"type": "flow", "from": "client",  "to": "doc-api"},
+    "doc-api->envelope-db": {"type": "flow", "from": "doc-api", "to": "envelope-db"},
+    "doc-api->signer":      {"type": "flow", "from": "doc-api", "to": "signer"},
+    "doc-api->app-log":     {"type": "flow", "from": "doc-api", "to": "app-log"},
+    "client->group-chat":   {"type": "flow", "from": "client",  "to": "group-chat"}
+  },
+  "controls": {
+    "C-MTLS":       {"what": "mutual TLS: unauthenticated clients are refused",          "tests": ["labs/L200/10-tls-localhost/test_build_task.py::TestMTLS::test_client_without_cert_is_rejected"]},
+    "C-NO-FALLBACK":{"what": "hybrid PQ key exchange, no silent classical fallback",     "tests": ["labs/L400/18-post-quantum/test_build_task.py::TestNoSilentFallback::test_downgraded_share_is_refused"]},
+    "C-REPLAY":     {"what": "token jti replay guard",                                   "tests": ["labs/L200/11-tokens/test_build_task.py::TestReplay::test_second_use_rejected"]},
+    "C-AEAD-HDR":   {"what": "envelope header is AEAD associated data",                  "tests": ["labs/L400/17-crypto-agility/test_agile_envelope.py::TestAgileEnvelope::test_header_is_authenticated"]},
+    "C-RETIRE":     {"what": "KEK version retired only when no record needs it",         "tests": ["labs/L300/12-envelope-rotation/test_build_task.py::TestRetireAfterRewrap::test_retire_refused_while_records_use_the_version"]},
+    "C-DUAL-SIG":   {"what": "verifier policy requires Ed25519 + ML-DSA signatures",     "tests": ["labs/L400/17-crypto-agility/test_build_task.py::TestPolicyDecidesSignatures::test_stripped_envelope_rejected_in_transition"]},
+    "C-NONEXPORT":  {"what": "signing keys are non-exportable token objects",            "tests": ["labs/L400/19-hsm-pkcs11/test_build_task.py::TestNonExportableByDefault::test_private_value_cannot_be_read"]},
+    "C-PIN-LOCK":   {"what": "token locks after 3 wrong PINs",                           "tests": ["labs/L400/19-hsm-pkcs11/test_soft_token.py::TestSoftToken::test_pin_lockout_after_three_failures"]},
+    "C-REDACT":     {"what": "log handler redacts secrets; logs are scanned in tests",   "tests": ["labs/L300/16-secrets-handling/test_build_task.py::TestNoSecretsInLogs::test_seeded_request_mix_leaves_clean_logs"]},
+    "C-REMOVE":     {"what": "group removal blanks the removed path (fresh epoch)",      "tests": ["labs/L400/20-group-e2ee/test_build_task.py::TestRemovalExcludes::test_every_committer_removed_pair"]},
+    "C-GROUP-AEAD": {"what": "group messages are AEAD-sealed with the epoch key",      "tests": ["labs/L400/20-group-e2ee/test_group_keys.py::TestGroupKeys::test_tampered_message_rejected"]},
+    "C-STRICT-RELEASE": {"what": "installer rejects swapped or unknown files",           "tests": ["labs/L300/14-supply-chain-signing/test_build_task.py::TestStrictInstall::test_swapped_file_rejected"]}
+  },
+  "threats": [
+    {"id": "T1",  "element": "client",               "stride": "S", "what": "attacker impersonates a client service",                 "controls": ["C-MTLS"]},
+    {"id": "T2",  "element": "client->doc-api",      "stride": "I", "what": "traffic recorded now, decrypted by a future quantum computer", "controls": ["C-NO-FALLBACK"]},
+    {"id": "T3",  "element": "client->doc-api",      "stride": "T", "what": "request modified in transit",                          "controls": ["C-MTLS"]},
+    {"id": "T4",  "element": "client->doc-api",      "stride": "D", "what": "handshake flood with large PQ key shares",              "controls": [], "accepted": "ADR-0018: rate limits at the edge (distributed-systems #11)"},
+    {"id": "T5",  "element": "doc-api",              "stride": "S", "what": "replayed bearer token",                                 "controls": ["C-REPLAY"]},
+    {"id": "T6",  "element": "envelope-db",          "stride": "T", "what": "header relabelled to another key or algorithm",         "controls": ["C-AEAD-HDR"]},
+    {"id": "T7",  "element": "envelope-db",          "stride": "D", "what": "old KEK deleted while records still need it",           "controls": ["C-RETIRE"]},
+    {"id": "T8",  "element": "doc-api->envelope-db", "stride": "T", "what": "stored document replaced by a forged, re-signed one",   "controls": ["C-DUAL-SIG"]},
+    {"id": "T9",  "element": "signer",               "stride": "I", "what": "signing key copied off the host",                      "controls": ["C-NONEXPORT"]},
+    {"id": "T10", "element": "signer",               "stride": "E", "what": "PIN guessed by a local process",                        "controls": ["C-PIN-LOCK"]},
+    {"id": "T11", "element": "app-log",              "stride": "I", "what": "secret written to logs",                                "controls": ["C-REDACT"]},
+    {"id": "T12", "element": "group-chat",           "stride": "I", "what": "removed member keeps reading the room",                 "controls": ["C-REMOVE"]},
+    {"id": "T13", "element": "doc-api->signer",      "stride": "T", "what": "unsigned or swapped release accepted",                  "controls": ["C-STRICT-RELEASE"]},
+    {"id": "T14", "element": "doc-api->app-log",     "stride": "I", "what": "token logged on the way to the log store",              "controls": ["C-REDACT"]},
+    {"id": "T15", "element": "client->group-chat",   "stride": "I", "what": "group traffic recorded and decrypted later",            "controls": ["C-NO-FALLBACK"]},
+    {"id": "T16", "element": "doc-api->envelope-db", "stride": "I", "what": "plaintext written to the database",                      "controls": ["C-AEAD-HDR"]},
+    {"id": "T18", "element": "client->group-chat",   "stride": "T", "what": "group message altered by the delivery service",       "controls": ["C-GROUP-AEAD"]},
+    {"id": "T17", "element": "doc-api->signer",      "stride": "I", "what": "data to sign read by a co-located process",             "controls": ["C-NONEXPORT"]}
+  ],
+  "attack_tree": {
+    "_costs": "attacker effort points on the lab's own 1-10 scale; a control with a passing test closes a leaf",
+    "goal": "read a customer document without authorisation", "type": "OR", "children": [
+      {"name": "steal the signing/data key from the app host", "type": "AND", "children": [
+        {"name": "compromise the app host", "cost": 5},
+        {"name": "read key bytes out of the token", "cost": 1, "control": "C-NONEXPORT"}]},
+      {"name": "harvest traffic now, decrypt later", "type": "AND", "children": [
+        {"name": "record traffic on path", "cost": 2},
+        {"name": "client accepts classical-only share", "cost": 1, "control": "C-NO-FALLBACK"},
+        {"name": "wait for a quantum computer", "cost": 5}]},
+      {"name": "stay in the project room after removal", "cost": 3, "control": "C-REMOVE"},
+      {"name": "phish an authorised user", "cost": 9}]
+  }
+}

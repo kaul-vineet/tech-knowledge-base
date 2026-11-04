@@ -1,0 +1,451 @@
+{
+ "_about": "Capstone threat model (lesson 21 format). Test references are relative to the topic folder. Checked by lesson 21's solution_verified.check() in milestone M5.",
+ "boundaries": {
+  "internet": "untrusted network",
+  "app": "document-service host",
+  "kms": "KMS component (mTLS)",
+  "token": "key-storage boundary"
+ },
+ "elements": {
+  "user": {
+   "type": "external",
+   "zone": "internet"
+  },
+  "recipient": {
+   "type": "external",
+   "zone": "internet"
+  },
+  "doc-service": {
+   "type": "process",
+   "zone": "app"
+  },
+  "kms": {
+   "type": "process",
+   "zone": "kms"
+  },
+  "token": {
+   "type": "process",
+   "zone": "token"
+  },
+  "doc-store": {
+   "type": "store",
+   "zone": "app"
+  },
+  "audit-log": {
+   "type": "store",
+   "zone": "app"
+  },
+  "user->doc-service": {
+   "type": "flow",
+   "from": "user",
+   "to": "doc-service"
+  },
+  "doc-service->kms": {
+   "type": "flow",
+   "from": "doc-service",
+   "to": "kms"
+  },
+  "doc-service->token": {
+   "type": "flow",
+   "from": "doc-service",
+   "to": "token"
+  },
+  "doc-service->doc-store": {
+   "type": "flow",
+   "from": "doc-service",
+   "to": "doc-store"
+  },
+  "doc-service->audit-log": {
+   "type": "flow",
+   "from": "doc-service",
+   "to": "audit-log"
+  },
+  "doc-service->recipient": {
+   "type": "flow",
+   "from": "doc-service",
+   "to": "recipient"
+  }
+ },
+ "controls": {
+  "C-KMS-MTLS": {
+   "what": "KMS demands a client certificate from our CA",
+   "tests": [
+    "labs/L400/22-capstone/test_m2_mtls_kms.py::TestM2::test_client_without_cert_refused",
+    "labs/L400/22-capstone/test_m2_mtls_kms.py::TestM2::test_foreign_ca_client_refused"
+   ]
+  },
+  "C-RETIRE": {
+   "what": "KEK version retired only after the rewrap job finished",
+   "tests": [
+    "labs/L400/22-capstone/test_m1_envelope_rotation.py::TestM1::test_retire_refused_until_rewrap_done"
+   ]
+  },
+  "C-AEAD-HDR": {
+   "what": "envelope header is AEAD associated data",
+   "tests": [
+    "labs/L400/22-capstone/test_m1_envelope_rotation.py::TestM1::test_header_relabel_rejected"
+   ]
+  },
+  "C-STORE-NO-KEYS": {
+   "what": "the document store holds only wrapped DEKs",
+   "tests": [
+    "labs/L400/22-capstone/test_m1_envelope_rotation.py::TestM1::test_store_holds_no_plaintext_keys"
+   ]
+  },
+  "C-ACL": {
+   "what": "only listed readers get a document",
+   "tests": [
+    "labs/L400/22-capstone/test_m1_envelope_rotation.py::TestM1::test_unlisted_user_denied"
+   ]
+  },
+  "C-AUDIT-CHAIN": {
+   "what": "audit entries are hash-chained and signed via a token handle",
+   "tests": [
+    "labs/L400/22-capstone/test_m3_signed_audit.py::TestM3::test_edit_and_delete_detected"
+   ]
+  },
+  "C-AUDIT-RULES": {
+   "what": "unwrap bursts and access after revocation are flagged",
+   "tests": [
+    "labs/L400/22-capstone/test_m3_signed_audit.py::TestM3::test_burst_and_revoke_rules"
+   ]
+  },
+  "C-SHARE": {
+   "what": "external shares use the PQ-hybrid KEM; deprecated KEM refused",
+   "tests": [
+    "labs/L400/22-capstone/test_m4_pq_sharing.py::TestM4::test_recipient_opens_and_old_kem_refused"
+   ]
+  },
+  "C-REDACT-LOGS": {
+   "what": "JSON logs pass the redaction filter and the leak scanner",
+   "tests": [
+    "labs/L400/22-capstone/test_m5_fitness.py::TestM5::test_no_secrets_in_logs"
+   ]
+  },
+  "C-AGILITY": {
+   "what": "no hard-coded algorithm outside the registry",
+   "tests": [
+    "labs/L400/22-capstone/test_m5_fitness.py::TestM5::test_no_hard_coded_algorithms"
+   ]
+  },
+  "C-NONEXPORT": {
+   "what": "signing keys are non-exportable token objects",
+   "tests": [
+    "labs/L400/19-hsm-pkcs11/test_build_task.py::TestNonExportableByDefault::test_private_value_cannot_be_read",
+    "labs/L400/22-capstone/test_m5_fitness.py::TestM5::test_no_key_export"
+   ]
+  },
+  "C-PIN-LOCK": {
+   "what": "token locks after 3 wrong PINs",
+   "tests": [
+    "labs/L400/19-hsm-pkcs11/test_soft_token.py::TestSoftToken::test_pin_lockout_after_three_failures"
+   ]
+  },
+  "C-NO-FALLBACK": {
+   "what": "edge TLS uses X25519MLKEM768 with no classical fallback (ADR-0018)",
+   "tests": [
+    "labs/L400/18-post-quantum/test_build_task.py::TestNoSilentFallback::test_downgraded_share_is_refused"
+   ]
+  }
+ },
+ "threats": [
+  {
+   "id": "T1",
+   "element": "user",
+   "stride": "S",
+   "what": "stolen session keeps reading after revocation",
+   "controls": [
+    "C-AUDIT-RULES"
+   ]
+  },
+  {
+   "id": "T2",
+   "element": "user",
+   "stride": "R",
+   "what": "a user denies having read a document",
+   "controls": [
+    "C-AUDIT-CHAIN"
+   ]
+  },
+  {
+   "id": "T3",
+   "element": "user->doc-service",
+   "stride": "T",
+   "what": "request altered in transit",
+   "controls": [],
+   "accepted": "ADR-0022-1: user-facing TLS terminates at the edge, outside this lab"
+  },
+  {
+   "id": "T4",
+   "element": "user->doc-service",
+   "stride": "I",
+   "what": "documents recorded on the wire, decrypted later",
+   "controls": [
+    "C-NO-FALLBACK"
+   ]
+  },
+  {
+   "id": "T5",
+   "element": "doc-service",
+   "stride": "S",
+   "what": "a rogue process poses as the document service to the KMS",
+   "controls": [
+    "C-KMS-MTLS"
+   ]
+  },
+  {
+   "id": "T6",
+   "element": "doc-service",
+   "stride": "E",
+   "what": "a user outside the ACL reads a document",
+   "controls": [
+    "C-ACL"
+   ]
+  },
+  {
+   "id": "T7",
+   "element": "kms",
+   "stride": "I",
+   "what": "KEK copied out of the KMS process",
+   "controls": [],
+   "accepted": "ADR-0022-1: production KMS = OpenBao transit (exportable=false) or an HSM-backed external key"
+  },
+  {
+   "id": "T8",
+   "element": "kms",
+   "stride": "D",
+   "what": "old KEK retired while records still need it",
+   "controls": [
+    "C-RETIRE"
+   ]
+  },
+  {
+   "id": "T9",
+   "element": "token",
+   "stride": "I",
+   "what": "signing key read out of the token",
+   "controls": [
+    "C-NONEXPORT"
+   ]
+  },
+  {
+   "id": "T10",
+   "element": "token",
+   "stride": "E",
+   "what": "token PIN guessed",
+   "controls": [
+    "C-PIN-LOCK"
+   ]
+  },
+  {
+   "id": "T11",
+   "element": "doc-store",
+   "stride": "T",
+   "what": "envelope header relabelled or forced onto a disallowed algorithm",
+   "controls": [
+    "C-AEAD-HDR",
+    "C-AGILITY"
+   ]
+  },
+  {
+   "id": "T12",
+   "element": "doc-store",
+   "stride": "I",
+   "what": "database dump read by an operator",
+   "controls": [
+    "C-STORE-NO-KEYS"
+   ]
+  },
+  {
+   "id": "T13",
+   "element": "audit-log",
+   "stride": "T",
+   "what": "entries edited or deleted to hide access",
+   "controls": [
+    "C-AUDIT-CHAIN"
+   ]
+  },
+  {
+   "id": "T14",
+   "element": "audit-log",
+   "stride": "I",
+   "what": "secrets written into logs",
+   "controls": [
+    "C-REDACT-LOGS"
+   ]
+  },
+  {
+   "id": "T15",
+   "element": "doc-service->kms",
+   "stride": "T",
+   "what": "wrapped key altered in transit",
+   "controls": [
+    "C-KMS-MTLS"
+   ]
+  },
+  {
+   "id": "T16",
+   "element": "doc-service->kms",
+   "stride": "I",
+   "what": "unwrapped DEK observed in transit",
+   "controls": [
+    "C-KMS-MTLS"
+   ]
+  },
+  {
+   "id": "T17",
+   "element": "doc-service->token",
+   "stride": "T",
+   "what": "sign request substituted by a co-located process",
+   "controls": [],
+   "accepted": "ADR-0019: PKCS#11 session + PIN; in-process token in this lab"
+  },
+  {
+   "id": "T18",
+   "element": "doc-service->token",
+   "stride": "I",
+   "what": "data to be signed read by a co-located process",
+   "controls": [],
+   "accepted": "ADR-0019: same host boundary as the service"
+  },
+  {
+   "id": "T19",
+   "element": "doc-service->doc-store",
+   "stride": "T",
+   "what": "stored record swapped",
+   "controls": [
+    "C-AEAD-HDR"
+   ]
+  },
+  {
+   "id": "T20",
+   "element": "doc-service->doc-store",
+   "stride": "I",
+   "what": "plaintext or DEK written to the store",
+   "controls": [
+    "C-STORE-NO-KEYS"
+   ]
+  },
+  {
+   "id": "T21",
+   "element": "doc-service->audit-log",
+   "stride": "T",
+   "what": "entry altered on the way to the log",
+   "controls": [
+    "C-AUDIT-CHAIN"
+   ]
+  },
+  {
+   "id": "T22",
+   "element": "doc-service->audit-log",
+   "stride": "I",
+   "what": "token or PIN logged",
+   "controls": [
+    "C-REDACT-LOGS"
+   ]
+  },
+  {
+   "id": "T23",
+   "element": "doc-service->recipient",
+   "stride": "T",
+   "what": "shared package altered",
+   "controls": [
+    "C-SHARE"
+   ]
+  },
+  {
+   "id": "T24",
+   "element": "doc-service->recipient",
+   "stride": "I",
+   "what": "share harvested now, decrypted by a future quantum computer",
+   "controls": [
+    "C-SHARE"
+   ]
+  },
+  {
+   "id": "T25",
+   "element": "recipient",
+   "stride": "S",
+   "what": "attacker poses as the recipient",
+   "controls": [],
+   "accepted": "ADR-0022-4: recipient public keys are verified out of band"
+  },
+  {
+   "id": "T26",
+   "element": "recipient",
+   "stride": "R",
+   "what": "recipient denies receiving the share",
+   "controls": [
+    "C-AUDIT-CHAIN"
+   ]
+  },
+  {
+   "id": "T27",
+   "element": "audit-log",
+   "stride": "D",
+   "what": "log flooded to hide one entry",
+   "controls": [],
+   "accepted": "ADR-0022-3: rate limits and log shipping outside this lab"
+  }
+ ],
+ "attack_tree": {
+  "_costs": "attacker effort points on the lab's own 1-10 scale",
+  "goal": "read a document without authorisation",
+  "type": "OR",
+  "children": [
+   {
+    "name": "steal the KEK",
+    "type": "AND",
+    "children": [
+     {
+      "name": "compromise the app host",
+      "cost": 5
+     },
+     {
+      "name": "call the KMS without a client certificate",
+      "cost": 1,
+      "control": "C-KMS-MTLS"
+     }
+    ]
+   },
+   {
+    "name": "insider bulk read goes unnoticed",
+    "type": "AND",
+    "children": [
+     {
+      "name": "be a listed reader",
+      "cost": 2
+     },
+     {
+      "name": "read every document quickly",
+      "cost": 1,
+      "control": "C-AUDIT-RULES"
+     }
+    ]
+   },
+   {
+    "name": "harvest a share for later",
+    "type": "AND",
+    "children": [
+     {
+      "name": "copy the shared package",
+      "cost": 2
+     },
+     {
+      "name": "package used a classical-only KEM",
+      "cost": 1,
+      "control": "C-SHARE"
+     },
+     {
+      "name": "wait for a quantum computer",
+      "cost": 5
+     }
+    ]
+   },
+   {
+    "name": "phish an authorised user",
+    "cost": 9
+   }
+  ]
+ }
+}

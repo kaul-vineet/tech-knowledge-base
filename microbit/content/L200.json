@@ -1,0 +1,1263 @@
+[
+  {
+    "id": "radio-two-boards",
+    "number": 7,
+    "level": "L200",
+    "title": "Radio between two boards",
+    "phase": "Communication",
+    "category": "radio",
+    "description": "Send and receive text messages between two boards with radio.config(group), a small message format, validation and duplicate filtering.",
+    "outcome": "You can design a tiny radio protocol, test it on two stub boards, and add acknowledgements.",
+    "environment": "As L100 lesson 1 (Python Editor v3 + V2 simulator; Python 3.12 + labs/sim_stub; CI Node 24 + Playwright 1.64.1). No new packages; the stub adds radio, log, pins, i2c. Two boards: load_boards() in tests; two bridged simulators in CI.",
+    "estimatedTime": "45-60 minutes",
+    "overview": [
+      "The radio broadcasts small packets to every board on the same group; your code adds the format, the checks and any confirmation."
+    ],
+    "prerequisites": [
+      "Lessons 1-3"
+    ],
+    "glossary": [
+      {
+        "term": "Group",
+        "meaning": "0-255 filter number; only boards on the same group hear each other."
+      },
+      {
+        "term": "Sequence number",
+        "meaning": "Counter in each message; lets the receiver drop duplicates."
+      },
+      {
+        "term": "Ack",
+        "meaning": "A reply that confirms a message arrived."
+      }
+    ],
+    "concepts": [
+      "Broadcast, no delivery guarantee: design for loss.",
+      "Validate every received message.",
+      "Small packets (32 bytes) and short queues (3) by default."
+    ],
+    "steps": [
+      {
+        "title": "Run it and use the radio module",
+        "detail": "Run labs/L200/07-radio/main.py in the Python Editor; open serial and the simulator's Radio module (the other board). Press A.",
+        "expected": "Serial 'radio group 7' then 'tx btn 1 A'; the radio module shows the message from code.",
+        "ifNot": "Expand the Radio module; restart the simulator."
+      },
+      {
+        "title": "Send good and bad messages",
+        "detail": "In the radio module send 'btn:5:B', then 'hello'.",
+        "expected": "'rx btn 5 B', then 'rx bad 1'.",
+        "ifNot": "Check the format kind:seq:value with ':' separators."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "In labs/L200/07-radio: run the unit tests on the stub.",
+        "expected": "13 tests OK.",
+        "ifNot": "The assertion shows the serial text.",
+        "mac": "cd labs/L200/07-radio && python3 -m unittest -v",
+        "windows": "cd labs\\L200\\07-radio; py -m unittest -v"
+      },
+      {
+        "title": "Change the group (tryIt 1)",
+        "detail": "Run try_it.py: board B uses GROUP = 8, board A presses A.",
+        "expected": "Only 'tx btn 1 A': B hears nothing.",
+        "ifNot": "Both boards must differ only in GROUP.",
+        "mac": "python3 try_it.py",
+        "windows": "py try_it.py"
+      },
+      {
+        "title": "Send a long value (tryIt 2)",
+        "detail": "Same run: a 40-character value with the default length=32.",
+        "expected": "'rx btn 1' with 23 A's; 32 bytes on air.",
+        "ifNot": "radio.config(length=...) raises the limit (max 251)."
+      },
+      {
+        "title": "Build task",
+        "detail": "Reply 'ack:<seq>:' to every btn/tmp message; the sender prints 'acked <seq>'. Check: test_build_task.py.",
+        "expected": "test_build_task: OK.",
+        "ifNot": "Compare with solution.py.",
+        "mac": "BUILD_FILE=main.py python3 -m unittest -v test_build_task",
+        "windows": "$env:BUILD_FILE=\"main.py\"; py -m unittest -v test_build_task"
+      }
+    ],
+    "code": "# Lab 07 - radio between two boards. Flash the SAME main.py on both.\n# A sends \"btn:<seq>:A\", B sends \"tmp:<seq>:<temperature>\"; the other board\n# decodes, drops duplicates and garbage, and prints what it received.\nfrom microbit import *\nimport radio\n\nGROUP = 7                  # group: both boards must use the same number (0-255)\nKINDS = (\"btn\", \"tmp\")     # message format \"<kind>:<seq>:<value>\", text only\nradio.config(group=GROUP)  # radio is already on after `import radio` (V2)\n\n\ndef encode(kind, seq, value):\n    # one line of text; \":\" separates fields, so values must not contain \":\"\n    return \"{}:{}:{}\".format(kind, seq, value)\n\n\ndef decode(text):\n    # validate everything that came over the air: format, kind, sequence number\n    parts = text.split(\":\")\n    if len(parts) != 3 or parts[0] not in KINDS:\n        return None\n    try:\n        seq = int(parts[1])\n    except ValueError:\n        return None\n    return parts[0], seq, parts[2]\n\n\ndef new_state():\n    return {\"seq\": 0, \"last_rx\": 0, \"bad\": 0}\n\n\ndef send(state, kind, value):\n    state[\"seq\"] += 1\n    radio.send(encode(kind, state[\"seq\"], value))   # send(str) adds b'\\x01\\x00\\x01'\n    print(\"tx\", kind, state[\"seq\"], value)\n\n\ndef receive(state):\n    try:\n        text = radio.receive()          # None when the queue is empty\n    except ValueError:                  # bytes that are not a radio.send() string\n        text = \"?\"\n    if text is None:\n        return None\n    msg = decode(text)\n    if msg is None:\n        state[\"bad\"] += 1\n        print(\"rx bad\", state[\"bad\"])\n        return None\n    kind, seq, value = msg\n    if seq <= state[\"last_rx\"]:         # duplicate or old sequence number: ignore\n        return None\n    state[\"last_rx\"] = seq\n    print(\"rx\", kind, seq, value)\n    display.show(value if kind == \"btn\" else Image.YES, wait=False)\n    return msg\n\n\ndef step(state):\n    if button_a.was_pressed():\n        send(state, \"btn\", \"A\")\n    if button_b.was_pressed():\n        send(state, \"tmp\", temperature())\n    return receive(state)\n\n\ndef main():\n    print(\"radio group\", GROUP)\n    state = new_state()\n    while True:\n        step(state)\n        sleep(50)                       # poll often: the receive queue holds 3 messages\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "radio.config(group=GROUP)",
+        "detail": "Runs once at import. Both boards must use the same group; the radio is already on after `import radio`."
+      },
+      {
+        "title": "decode()",
+        "detail": "Splits on ':' and returns None unless there are exactly 3 fields, a known kind and an integer sequence number. Nothing from the air is trusted."
+      },
+      {
+        "title": "try: radio.receive() / except ValueError",
+        "detail": "receive() raises ValueError for packets that are not radio.send() strings (no 01 00 01 header); the lab counts them as bad instead of crashing."
+      },
+      {
+        "title": "if seq <= state['last_rx']",
+        "detail": "Drops duplicates and old messages. Trade-off: a sender that restarts at 1 is ignored until it passes the last number."
+      }
+    ],
+    "buildTask": {
+      "task": "Acknowledge every received btn/tmp message with 'ack:<seq>:' and print 'acked <seq>' on the sender.",
+      "hints": [
+        "Add 'ack' to KINDS.",
+        "Handle kind 'ack' before the duplicate check: its seq is YOUR number.",
+        "Reply even to duplicates: the first ack may have been lost."
+      ],
+      "solution": "labs/L200/07-radio/solution.py",
+      "check": "labs/L200/07-radio/test_build_task.py (2 tests, two stub boards)"
+    },
+    "projectFiles": [
+      {
+        "path": "labs/L200/07-radio/main.py",
+        "purpose": "Lab program"
+      },
+      {
+        "path": "labs/L200/07-radio/test_main.py",
+        "purpose": "Unit tests"
+      },
+      {
+        "path": "labs/L200/07-radio/solution.py",
+        "purpose": "Build task solution"
+      },
+      {
+        "path": "labs/L200/07-radio/test_build_task.py",
+        "purpose": "Build task check"
+      },
+      {
+        "path": "labs/L200/07-radio/try_it.py",
+        "purpose": "tryIt runner (try_it.json)"
+      },
+      {
+        "path": "labs/L200/07-radio/README.md",
+        "purpose": "Commands, observed output"
+      },
+      {
+        "path": "labs/L200/07-radio/../../sim_stub/radio.py",
+        "purpose": "Radio stub"
+      },
+      {
+        "path": "labs/L200/07-radio/../../sim_stub/labtest.py",
+        "purpose": "load_boards(): two stub boards"
+      }
+    ],
+    "expectedResults": [
+      "Board B prints 'rx btn 1 A' after A is pressed on board A; garbage prints 'rx bad N'."
+    ],
+    "testCases": [
+      {
+        "action": "Unit tests (step above)",
+        "expected": "13 tests OK"
+      },
+      {
+        "action": "CI: harness/simulator-l200.spec.js, two simulators",
+        "expected": "board 1 serial 'rx btn 1 A'; radio_output starts 1,0,1"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Board B runs GROUP = 8 (variant group-8), board A keeps 7; press A on board A.",
+        "predict": "B hears nothing.",
+        "expected": "Observed (stub): tx btn 1 A (no rx line)."
+      },
+      {
+        "task": "Send 'A' * 40 instead of 'A' (variant long-value) with the default length=32.",
+        "predict": "The message is cut, not split.",
+        "expected": "Observed (stub): tx btn 1 A*40 | rx btn 1 A*23 | bytes on air: 32. (The 23-character cut follows the V1 modradio.cpp rule; V2 behaviour is unverified until harness/tryit-l200.spec.js 'long-value' runs - pending-ci, review F26.)"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Nothing received",
+        "action": "Same group on both boards? Is the receiver polling (no long sleep/scroll)?"
+      },
+      {
+        "symptom": "ValueError in receive()",
+        "action": "A non-text packet arrived; catch it as the lab does."
+      }
+    ],
+    "equivalents": [
+      "MakeCode: radio.setGroup / radio.sendString / onReceivedString.",
+      "Same pattern as UDP broadcast: no connection, add sequence numbers and acks yourself."
+    ],
+    "inRealSystems": [
+      "Sensor networks (Zigbee, BLE advertising) broadcast small frames and add sequence numbers.",
+      "Reliable delivery on top of unreliable links uses acks and retries (TCP, MQTT QoS 1)."
+    ],
+    "useWhen": "Short events between nearby boards; add acks when loss matters; never for secrets.",
+    "caution": "Radio messages are not encrypted or authenticated: never send secrets, and validate every received message.",
+    "simulatorVsReal": "Stub: models groups, queue, truncation and ValueError rules; no timing, range or collisions. Simulator: host.html forwards radio_output to the other board's radio_input and filters by group itself (the README says radio_input assumes the current group). Real boards: range and interference apply.",
+    "checkpoint": "Pass if board B prints 'rx btn 1 A' after A on board A, and the 13 tests and the build-task check pass.",
+    "checkYourself": [
+      {
+        "q": "Why does the lab catch ValueError around radio.receive()?",
+        "a": "Packets without the 01 00 01 text header (e.g. send_bytes) cannot become a string."
+      },
+      {
+        "q": "What happens to the 4th message if the receiver does not poll?",
+        "a": "It is dropped: the default queue holds 3."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: Radio",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/radio.html"
+      },
+      {
+        "title": "micropython-microbit-v2-simulator README (radio_output / radio_input)",
+        "url": "https://github.com/microbit-foundation/micropython-microbit-v2-simulator"
+      },
+      {
+        "title": "micro:bit Python Editor reference: Radio",
+        "url": "https://python.microbit.org/v/3/reference/radio"
+      },
+      {
+        "title": "MicroPython (V1) modradio.cpp: truncation and 'radio is not enabled'",
+        "url": "https://github.com/bbcmicrobit/micropython/blob/master/source/microbit/modradio.cpp"
+      },
+      {
+        "title": "micropython-microbit-v2 releases (radio on at import)",
+        "url": "https://github.com/microbit-foundation/micropython-microbit-v2/releases"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran `python3 -m unittest -v` in labs/L200/07-radio: 13 tests OK on labs/sim_stub (CPython 3.12.15, Linux sandbox), including test_try_it.py (both tryIt results) and test_build_task.py (solution.py passes; main.py fails it on purpose). This validates lab logic on the stub, not MicroPython. The simulator run (harness/simulator-l200.spec.js '07-radio', two bridged simulators) is pending-ci: no internet in the sandbox. macOS/Windows: CI matrix, pending-ci.",
+      "pendingCi": [
+        "harness/simulator-l200.spec.js: '07-radio: A on board 0 arrives on board 1, B on board 1 arrives on board 0' (MicroPython V2 simulator, needs internet)",
+        "harness/tryit-l200.spec.js: 'tryIt 07 group-8: board 1 on group 8 hears nothing from group 7'",
+        "harness/tryit-l200.spec.js: 'tryIt 07 long-value: 40 characters are cut to a 32-byte packet'",
+        "two bridged simulators via harness/host.html?boards=2 (radio_output -> radio_input)",
+        "CI matrix macos-latest (arm64) + windows-latest: stub tests and harness (platforms = expected)"
+      ]
+    },
+    "next": "L300 #12 A reliable radio protocol: acks, retransmit with timeout and backoff, duplicate suppression and a CRC on every frame",
+    "conceptNote": "content/concepts/L200/07-radio.md",
+    "conceptSummary": "The radio broadcasts small packets to one group with no delivery guarantee. Add a text format (kind:seq:value), validate every message, drop duplicates by sequence number, and add acks when loss matters.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "Microsoft MakeCode for micro:bit",
+        "role": "SEE",
+        "exercise": "Build Marco/Polo in Blocks with radio set group 7, on button A -> radio send string, on received string -> show string. The simulator shows two micro:bits running the same code.",
+        "expected": "Pending a manual run (no simulator/browser in the sandbox). Pressing A on one simulated board shows the text on the other, as in the lab's two-board run ('tx btn 1 A' on board 0, 'rx btn 1 A' on board 1).",
+        "mac": "Browser: open https://makecode.microbit.org/ (works offline once cached)",
+        "windows": "Browser: Start-Process https://makecode.microbit.org/ (offline app availability unclear)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microsoft/pxt-microbit"
+      },
+      {
+        "name": "micropython-microbit-v2-simulator (standalone)",
+        "role": "CHECK",
+        "exercise": "Load labs/L200/07-radio/main.py into demo.html and inject one radio_input packet carrying 'btn:1:A' via the embedder message API, acting as board 2.",
+        "expected": "Pending a manual run (no simulator/browser in the sandbox). Should match the lab's printed value: 'rx btn 1 A'. The embedding API is declared not yet stable; harness/host.html does the same forwarding in CI (pending-ci).",
+        "mac": "Build/serve demo.html locally in a browser (repo README); hosted copy: open https://python-simulator.usermbit.org/v/0.1/demo.html",
+        "windows": "Same: build/serve demo.html locally, or Start-Process https://python-simulator.usermbit.org/v/0.1/demo.html",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microbit-foundation/micropython-microbit-v2-simulator"
+      }
+    ]
+  },
+  {
+    "id": "data-logging",
+    "number": 8,
+    "level": "L200",
+    "title": "Data logging",
+    "phase": "Data",
+    "category": "logging",
+    "description": "Log temperature and light with the V2 log module (set_labels, add, timestamps) and as serial CSV; export a clean CSV on the PC.",
+    "outcome": "You can log rows with a fixed schema, handle a full log, and turn serial output into a spreadsheet-ready CSV.",
+    "environment": "As L100 lesson 1 (Python Editor v3 + V2 simulator; Python 3.12 + labs/sim_stub; CI Node 24 + Playwright 1.64.1). No new packages; the stub adds radio, log, pins, i2c.",
+    "estimatedTime": "45-60 minutes",
+    "overview": [
+      "The log module stores table rows in MY_DATA on a V2 board; the same rows printed as CSV are the export path in the simulator."
+    ],
+    "prerequisites": [
+      "Lesson 5"
+    ],
+    "glossary": [
+      {
+        "term": "Schema",
+        "meaning": "The fixed list of columns (labels) every row follows."
+      },
+      {
+        "term": "Timestamp column",
+        "meaning": "First column added by the log module, e.g. 'Time (seconds)'."
+      },
+      {
+        "term": "ENOSPC (28)",
+        "meaning": "OSError code raised by log.add when the log is full."
+      }
+    ],
+    "concepts": [
+      "Set labels once, then add rows.",
+      "Log on the device and print CSV for the PC.",
+      "A full log is a normal state to handle."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "Paste labs/L200/08-data-logging/main.py, press play, open serial, move the temperature and light sliders.",
+        "expected": "'time_ms,temp,light' then one row per second, e.g. '3000,25,200'.",
+        "ifNot": "Restart; the header prints once at start."
+      },
+      {
+        "title": "Look at the simulated log",
+        "detail": "Expand the simulator's Data logging module.",
+        "expected": "A table with Time (seconds), temp, light (micro:bit docs; not observed here).",
+        "ifNot": "Use the serial CSV path instead."
+      },
+      {
+        "title": "Export to CSV",
+        "detail": "Copy the serial text into serial.txt and run export_csv.py.",
+        "expected": "'kept N rows, skipped M' and readings.csv.",
+        "ifNot": "The file must contain the 'time_ms,...' header line.",
+        "mac": "python3 export_csv.py serial.txt readings.csv",
+        "windows": "py export_csv.py serial.txt readings.csv"
+      },
+      {
+        "title": "Run the tests",
+        "detail": "In labs/L200/08-data-logging: run the unit tests on the stub.",
+        "expected": "15 tests OK.",
+        "ifNot": "The assertion shows the serial text.",
+        "mac": "cd labs/L200/08-data-logging && python3 -m unittest -v",
+        "windows": "cd labs\\L200\\08-data-logging; py -m unittest -v"
+      },
+      {
+        "title": "Mirror the log to serial (tryIt)",
+        "detail": "Run try_it.py: log.set_mirroring(True) added after set_labels, then export that transcript.",
+        "expected": "Each row twice; export keeps only the integer-time rows.",
+        "ifNot": "See try_it.json for the edit.",
+        "mac": "python3 try_it.py",
+        "windows": "py try_it.py"
+      },
+      {
+        "title": "Build task",
+        "detail": "Catch OSError 28 from log.add: print 'log full after N rows' once, stop logging, keep serial CSV. Check: test_build_task.py.",
+        "expected": "test_build_task: OK.",
+        "ifNot": "Compare with solution.py.",
+        "mac": "BUILD_FILE=main.py python3 -m unittest -v test_build_task",
+        "windows": "$env:BUILD_FILE=\"main.py\"; py -m unittest -v test_build_task"
+      },
+      {
+        "title": "Optional: agent explains the CSV",
+        "detail": "Run agent_assist.py --fake (drop --fake with Ollama running).",
+        "expected": "Code stats, a checked explanation, 'check: PASS'.",
+        "ifNot": "'REJECTED' = the model quoted a number or trend the data does not support.",
+        "mac": "python3 agent_assist.py --fake",
+        "windows": "py agent_assist.py --fake"
+      }
+    ],
+    "code": "# Lab 08 - data logging: sample temperature and light once per interval,\n# store each row with the V2 `log` module (MY_DATA on a real board) and\n# print the same row as serial CSV (the export path in the simulator).\nfrom microbit import *\ntry:\n    import log                  # V2 only; on a V1 board -> serial CSV only\nexcept ImportError:\n    log = None\n\nINTERVAL_MS = 1000\nLABELS = (\"temp\", \"light\")      # column labels: set ONCE, before the first row\n\n\ndef setup():\n    if log:\n        # timestamp column \"Time (seconds)\" is added in front of the labels\n        log.set_labels(*LABELS, timestamp=log.SECONDS)\n    print(\"time_ms,\" + \",\".join(LABELS))   # serial CSV header (our own format)\n\n\ndef sample():\n    return {\"temp\": temperature(), \"light\": display.read_light_level()}\n\n\ndef to_csv(t_ms, row):\n    # one CSV record: same column order as the header, numbers only, no quotes needed\n    return \",\".join([str(t_ms)] + [str(row[k]) for k in LABELS])\n\n\ndef new_state():\n    return {\"rows\": 0, \"logging\": log is not None}\n\n\ndef step(state):\n    row = sample()\n    if state[\"logging\"]:\n        log.add(row)            # dict form; raises OSError(28) when the log is full\n    print(to_csv(running_time(), row))\n    state[\"rows\"] += 1\n    display.show(Image.SQUARE_SMALL if state[\"rows\"] % 2 else Image.SQUARE, wait=False)\n    return row\n\n\ndef main():\n    setup()\n    state = new_state()\n    while True:\n        step(state)\n        sleep(INTERVAL_MS)      # sampling interval (run_every is the scheduled alternative)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "try: import log / except ImportError",
+        "detail": "log exists only on V2; on V1 the lab still prints serial CSV."
+      },
+      {
+        "title": "log.set_labels(*LABELS, timestamp=log.SECONDS)",
+        "detail": "Sets the header once; the log adds 'Time (seconds)' as the first column."
+      },
+      {
+        "title": "log.add(row)",
+        "detail": "Dict form: keys are labels. Raises OSError 28 when full, the build task's job to handle."
+      },
+      {
+        "title": "print(to_csv(running_time(), row))",
+        "detail": "Same row as CSV with time in ms: what export_csv.py reads."
+      }
+    ],
+    "buildTask": {
+      "task": "Handle a full log: catch OSError 28 from log.add, print 'log full after N rows' once, stop logging, keep serial CSV going.",
+      "hints": [
+        "Check e.args[0] == 28 and re-raise anything else.",
+        "Set state['logging'] = False.",
+        "The stub's log._set_capacity(n) makes the log fill up in tests."
+      ],
+      "solution": "labs/L200/08-data-logging/solution.py",
+      "check": "labs/L200/08-data-logging/test_build_task.py (2 tests)"
+    },
+    "projectFiles": [
+      {
+        "path": "labs/L200/08-data-logging/main.py",
+        "purpose": "Lab program"
+      },
+      {
+        "path": "labs/L200/08-data-logging/test_main.py",
+        "purpose": "Unit tests"
+      },
+      {
+        "path": "labs/L200/08-data-logging/solution.py",
+        "purpose": "Build task solution"
+      },
+      {
+        "path": "labs/L200/08-data-logging/test_build_task.py",
+        "purpose": "Build task check"
+      },
+      {
+        "path": "labs/L200/08-data-logging/try_it.py",
+        "purpose": "tryIt runner (try_it.json)"
+      },
+      {
+        "path": "labs/L200/08-data-logging/README.md",
+        "purpose": "Commands, observed output"
+      },
+      {
+        "path": "labs/L200/08-data-logging/export_csv.py",
+        "purpose": "Serial -> CSV"
+      },
+      {
+        "path": "labs/L200/08-data-logging/agent_assist.py",
+        "purpose": "Agent assist"
+      },
+      {
+        "path": "labs/L200/08-data-logging/test_agent_assist.py",
+        "purpose": "Agent assist tests (fake server)"
+      },
+      {
+        "path": "labs/L200/08-data-logging/../../sim_stub/log.py",
+        "purpose": "log stub"
+      }
+    ],
+    "expectedResults": [
+      "Serial CSV rows every second; log rows with 'Time (seconds)'; readings.csv opens in a spreadsheet."
+    ],
+    "testCases": [
+      {
+        "action": "Unit tests (step above)",
+        "expected": "15 tests OK"
+      },
+      {
+        "action": "CI: simulator, temperature 25, light 200",
+        "expected": "a row '<t>,25,200'"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Add log.set_mirroring(True) after set_labels (variant mirroring-on); log two samples.",
+        "predict": "Rows appear twice on serial.",
+        "expected": "Observed (stub): time_ms,temp,light | Time (seconds),temp,light | 0.00,21,120 | 0,21,120 | 1.00,22,110 | 1000,22,110"
+      },
+      {
+        "task": "Run export_csv.extract() on that transcript.",
+        "predict": "Mirrored rows are rejected.",
+        "expected": "Observed (stub): kept 2 rows [['0', '21', '120'], ['1000', '22', '110']]; skipped 3 (Time (seconds),temp,light: time_ms not an integer, 0.00,21,120: time_ms not an integer, 1.00,22,110: time_ms not an integer)"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Logging stops after a while",
+        "action": "The log is full (OSError 28); handle it (build task) or log.delete()."
+      },
+      {
+        "symptom": "Two header sections in MY_DATA",
+        "action": "Labels or timestamp unit changed mid-run; set them once at start."
+      }
+    ],
+    "equivalents": [
+      "MakeCode datalogger extension: set columns, log data, mirror to serial.",
+      "Any logger: fixed schema + timestamp + CSV export (pandas, spreadsheets)."
+    ],
+    "inRealSystems": [
+      "Field data loggers store timestamped rows locally and upload CSV later.",
+      "Time-series databases keep the same idea: schema, timestamps, retention when storage fills."
+    ],
+    "useWhen": "log for unattended V2 boards; serial CSV when a computer is listening or in the simulator.",
+    "simulatorVsReal": "Stub: CSV format from the CODAL MicroBitLog source; capacity set by tests. Simulator: Data logging module documented, format not observed (pending-ci). Real V2: MY_DATA.HTM on the MICROBIT drive.",
+    "checkpoint": "Pass if serial shows CSV rows that follow the sliders, readings.csv opens, and the 15 tests pass.",
+    "checkYourself": [
+      {
+        "q": "What does log.add raise when the log is full?",
+        "a": "OSError with code 28 (ENOSPC)."
+      },
+      {
+        "q": "Why does export_csv skip '1.00,22,110'?",
+        "a": "time_ms must be an integer; that is a mirrored log row in seconds."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: Data Logging V2 (log)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/log.html"
+      },
+      {
+        "title": "micro:bit user guide: Data logging",
+        "url": "https://microbit.org/get-started/user-guide/data-logging/"
+      },
+      {
+        "title": "micro:bit Python Editor reference: Data logging",
+        "url": "https://python.microbit.org/v/3/reference/data-logging"
+      },
+      {
+        "title": "codal-microbit-v2 MicroBitLog.cpp (CSV, timestamp heading, mirroring)",
+        "url": "https://github.com/lancaster-university/codal-microbit-v2/blob/master/source/MicroBitLog.cpp"
+      },
+      {
+        "title": "MicroPython docs: microbit module (run_every)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/microbit.html"
+      },
+      {
+        "title": "MicroPython docs: Local persistent file system",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/filesystem.html"
+      },
+      {
+        "title": "RFC 4180: CSV format",
+        "url": "https://www.rfc-editor.org/rfc/rfc4180"
+      },
+      {
+        "title": "Ollama: OpenAI compatibility",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran `python3 -m unittest -v` in labs/L200/08-data-logging: 15 tests OK on labs/sim_stub (CPython 3.12.15, Linux sandbox), including test_try_it.py (both tryIt results) and test_build_task.py (solution.py passes; main.py fails it on purpose). This validates lab logic on the stub, not MicroPython. The simulator run (harness/simulator-l200.spec.js '08-data-logging') is pending-ci: no internet in the sandbox. macOS/Windows: CI matrix, pending-ci. Agent assist: 5 tests on the fake model server and `python3 agent_assist.py --fake` were run; no real model was run.",
+      "pendingCi": [
+        "harness/simulator-l200.spec.js: '08-data-logging prints serial CSV that follows the sliders' (MicroPython V2 simulator, needs internet)",
+        "harness/tryit-l200.spec.js: 'tryIt 08 mirroring-on: rows also appear in log-module format'",
+        "agent_assist.py with a real local model (manual - tests use the fake server only)",
+        "simulator data-log module output (log_output messages; KNOWN-GAPS #40)",
+        "CI matrix macos-latest (arm64) + windows-latest: stub tests and harness (platforms = expected)"
+      ]
+    },
+    "next": "L300 #14 Power budgeting (modelled, not measured): what logging every 100 ms costs on batteries; then #15 A serial gateway to the PC",
+    "conceptNote": "content/concepts/L200/08-data-logging.md",
+    "conceptSummary": "A log is a table: labels set once, one row per sample, a timestamp column, and a plan for full storage. On V2, log.add writes MY_DATA; serial CSV is the export path in the simulator.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "agentAssist": {
+      "task": "A local model summarises a logged CSV; code computes the real statistics and checks every number and trend the model quotes.",
+      "prompt": "system: summarise a micro:bit CSV log in 3-4 plain sentences; quote only numbers in the CSV or computed exactly from it (1 decimal); no advice. | user: [[MICROBIT-CSV]] ... <csv> time_ms,temp,light ... </csv>",
+      "check": "stats() computes rows, duration, min/max/mean and trend; check_explanation() rejects numbers not in the CSV or stats (tolerance 0.05) and rose/fell claims against the trend. Failed check or server down -> code stats only.",
+      "expected": "Observed with the fake server: code stats (authoritative): 6 rows over 5 s; temp 21..24 mean 22.5 (up); light 41..120 mean 89.8 (down) / agent explanation (checked): The log has 6 rows over 5 seconds. Temperature rose from 21 to 24, with a mean of 22.5. Light fell from 120 to 41, with a mean of 89.8. / check: PASS (every number matches the CSV or a computed stat; trends match)",
+      "realModelNote": "Same setup as lab 05 (Ollama, qwen2.5:1.5b, LOCAL_MODEL_URL / LOCAL_MODEL). Not run with a real model here."
+    },
+    "caution": "Agent assist: the model only explains; code computes every statistic and checks the text. Never send secrets or keys to a model.",
+    "learningTools": [
+      {
+        "name": "micro:bit Python Editor v3 (with V2 simulator)",
+        "role": "CHECK",
+        "exercise": "Run labs/L200/08-data-logging/main.py, move the temperature and light sliders, open the Data logging module, then copy serial into serial.txt and run export_csv.py on it.",
+        "expected": "Pending a manual run (no simulator/browser in the sandbox). Should match the lab's printed format: header 'time_ms,temp,light' then one '<t>,<temp>,<light>' row per second following the sliders; export_csv.py keeps every data row. Whether the simulator shows the data-log table is not documented.",
+        "mac": "Browser: open https://python.microbit.org/ (installable as an offline app)",
+        "windows": "Browser: Start-Process https://python.microbit.org/ (installable as an offline app)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microbit-foundation/python-editor-v3"
+      },
+      {
+        "name": "Orange Data Mining 3.40.0",
+        "role": "SEE",
+        "exercise": "Save the 6-row 'csv:' block from labs/L200/08-data-logging/agent_assist_output.txt (or your readings.csv) as a .csv; File -> Scatter Plot with temp on x and light on y; Distributions for each column.",
+        "expected": "Pending a manual run (no simulator/browser in the sandbox). Should match the lab's computed stats: 6 rows, temp 21..24 (mean 22.5, up), light 41..120 (mean 89.8, down) - points fall from (21,120) to (24,41).",
+        "mac": "Orange3-3.40.0-Python3.12.10-arm64.dmg from https://orangedatamining.com/download/, or pip install PyQt6 PyQt6-WebEngine orange3",
+        "windows": "winget install --id UniversityofLjubljana.Orange (or Orange3-3.40.0-x86_64.exe)",
+        "licence": "GPL-3.0-or-later (OSI: yes)",
+        "url": "https://github.com/biolab/orange3"
+      }
+    ],
+    "seeAlso": [
+      "simulation L200 #7 Input modelling: fit service times and check the fit: the logged temp/light CSV is the kind of raw data you look at and fit before it drives a model"
+    ]
+  },
+  {
+    "id": "pins-pwm",
+    "number": 9,
+    "level": "L200",
+    "title": "Pins and PWM on the edge connector",
+    "phase": "Hardware I/O",
+    "category": "pins",
+    "description": "Build a dimmer: touch logo toggles, A/B set a level, pin0 touch boosts; pin1 digital output, pin2 PWM output.",
+    "outcome": "You can read touch and digital inputs, detect edges, and drive digital and PWM outputs.",
+    "environment": "As L100 lesson 1 (Python Editor v3 + V2 simulator; Python 3.12 + labs/sim_stub; CI Node 24 + Playwright 1.64.1). No new packages; the stub adds radio, log, pins, i2c.",
+    "estimatedTime": "30-45 minutes",
+    "overview": [
+      "write_digital gives 0 V or 3.3 V; write_analog gives PWM with duty 0-1023; is_touched is a level you turn into an event."
+    ],
+    "prerequisites": [
+      "Lessons 3 and 4"
+    ],
+    "glossary": [
+      {
+        "term": "PWM",
+        "meaning": "Switching a pin on and off fast; duty = fraction of time on."
+      },
+      {
+        "term": "Duty (0-1023)",
+        "meaning": "write_analog value: 511 = 50 %."
+      },
+      {
+        "term": "Edge",
+        "meaning": "The moment an input changes, e.g. touch starts."
+      }
+    ],
+    "concepts": [
+      "Digital vs PWM output.",
+      "Edge detection on a level input.",
+      "Simulator pins: touch 0/1 only, no analog input yet."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "Paste labs/L200/09-pins-pwm/main.py, press play, open serial.",
+        "expected": "'on=0,level=2,duty=0'.",
+        "ifNot": "Restart the simulator."
+      },
+      {
+        "title": "Touch the logo",
+        "detail": "Click the gold logo once.",
+        "expected": "'on=1,level=2,duty=511' (pin1 high, pin2 50 % PWM).",
+        "ifNot": "Click and release: holding does not toggle again."
+      },
+      {
+        "title": "Change the level",
+        "detail": "Press A, then B.",
+        "expected": "'duty=767', then 'duty=511'.",
+        "ifNot": "Levels stop at 0 and 4."
+      },
+      {
+        "title": "Boost with pin 0",
+        "detail": "Hold the simulator's pin 0 touch control.",
+        "expected": "'duty=1023' while held.",
+        "ifNot": "The light must be on (logo) first."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "In labs/L200/09-pins-pwm: run the unit tests on the stub.",
+        "expected": "10 tests OK.",
+        "ifNot": "The assertion shows the serial text.",
+        "mac": "cd labs/L200/09-pins-pwm && python3 -m unittest -v",
+        "windows": "cd labs\\L200\\09-pins-pwm; py -m unittest -v"
+      },
+      {
+        "title": "Build task",
+        "detail": "Add USE_POT: duty = pin0.read_analog() (0-1023) when on. The simulator cannot feed analog values, so the stub test is the check. Check: test_build_task.py.",
+        "expected": "test_build_task: OK.",
+        "ifNot": "Compare with solution.py.",
+        "mac": "BUILD_FILE=main.py python3 -m unittest -v test_build_task",
+        "windows": "$env:BUILD_FILE=\"main.py\"; py -m unittest -v test_build_task"
+      }
+    ],
+    "code": "# Lab 09 - pins and PWM: a dimmer on the edge connector.\n# Inputs:  touch logo = on/off, A/B = brightness level, touch pin0 = boost.\n# Outputs: pin1 = on/off indicator (digital), pin2 = LED brightness (PWM).\nfrom microbit import *\n\nLEVELS = 4                      # brightness steps 0..LEVELS\nPERIOD_MS = 20                  # PWM period: 20 ms = 50 Hz\npin2.set_analog_period(PERIOD_MS)\n\n\ndef duty_for(level):\n    # write_analog takes 0 (0 % duty) .. 1023 (100 % duty)\n    return level * 1023 // LEVELS\n\n\ndef new_state():\n    return {\"on\": False, \"level\": 2, \"logo_was\": False, \"last\": None}\n\n\ndef step(state):\n    # edge detect: is_touched() is a level (\"touched now\"), we want the moment it starts\n    touched = pin_logo.is_touched()\n    if touched and not state[\"logo_was\"]:\n        state[\"on\"] = not state[\"on\"]\n    state[\"logo_was\"] = touched\n    if button_a.was_pressed():\n        state[\"level\"] = min(LEVELS, state[\"level\"] + 1)\n    if button_b.was_pressed():\n        state[\"level\"] = max(0, state[\"level\"] - 1)\n    boost = pin0.is_touched()   # pin0..2 touch is resistive by default (touch GND too)\n    duty = 0\n    if state[\"on\"]:\n        duty = 1023 if boost else duty_for(state[\"level\"])\n    pin1.write_digital(1 if state[\"on\"] else 0)    # digital output: 0 V or 3.3 V\n    pin2.write_analog(duty)                        # PWM output: average voltage = duty/1023 * 3.3 V\n    report = (state[\"on\"], state[\"level\"], duty)\n    if report != state[\"last\"]:                    # print only changes\n        print(\"on={},level={},duty={}\".format(int(state[\"on\"]), state[\"level\"], duty))\n        state[\"last\"] = report\n    return duty\n\n\ndef main():\n    print(\"logo = on/off, A/B = level, pin0 = boost\")\n    state = new_state()\n    while True:\n        step(state)\n        sleep(50)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "pin2.set_analog_period(PERIOD_MS)",
+        "detail": "PWM period 20 ms (50 Hz). Minimum 1 ms (or 256 µs with the microseconds call)."
+      },
+      {
+        "title": "if touched and not state['logo_was']",
+        "detail": "Edge detection: toggle only when touch starts, not every poll while held."
+      },
+      {
+        "title": "pin1.write_digital(...) / pin2.write_analog(duty)",
+        "detail": "Digital: 0 or 1. PWM: 0..1023, values outside raise ValueError."
+      },
+      {
+        "title": "if report != state['last']",
+        "detail": "Print only changes so serial stays readable at a 50 ms poll."
+      }
+    ],
+    "buildTask": {
+      "task": "Potentiometer mode: with USE_POT = True the duty comes from pin0.read_analog() (0-1023) instead of A/B and boost.",
+      "hints": [
+        "read_analog and write_analog share the 0-1023 scale.",
+        "Keep duty 0 when the light is off.",
+        "Tests inject values with microbit.pin0.inject_analog(n)."
+      ],
+      "solution": "labs/L200/09-pins-pwm/solution.py",
+      "check": "labs/L200/09-pins-pwm/test_build_task.py (2 tests)"
+    },
+    "projectFiles": [
+      {
+        "path": "labs/L200/09-pins-pwm/main.py",
+        "purpose": "Lab program"
+      },
+      {
+        "path": "labs/L200/09-pins-pwm/test_main.py",
+        "purpose": "Unit tests"
+      },
+      {
+        "path": "labs/L200/09-pins-pwm/solution.py",
+        "purpose": "Build task solution"
+      },
+      {
+        "path": "labs/L200/09-pins-pwm/test_build_task.py",
+        "purpose": "Build task check"
+      },
+      {
+        "path": "labs/L200/09-pins-pwm/try_it.py",
+        "purpose": "tryIt runner (try_it.json)"
+      },
+      {
+        "path": "labs/L200/09-pins-pwm/README.md",
+        "purpose": "Commands, observed output"
+      },
+      {
+        "path": "labs/L200/09-pins-pwm/../../sim_stub/microbit/__init__.py",
+        "purpose": "Stub pins"
+      }
+    ],
+    "expectedResults": [
+      "Serial shows on/level/duty changes; stub pins record pin1 digital_out and pin2 duty."
+    ],
+    "testCases": [
+      {
+        "action": "Unit tests (step above)",
+        "expected": "10 tests OK"
+      },
+      {
+        "action": "CI: logo, A, pin0",
+        "expected": "'duty=511', 'duty=767', 'duty=1023'"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Remove the edge check: 'if touched:' (variant no-edge); hold the logo for 3 polls.",
+        "predict": "It toggles every poll.",
+        "expected": "Observed (stub): on=1,level=2,duty=511 | on=0,level=2,duty=0 | on=1,level=2,duty=511"
+      },
+      {
+        "task": "LEVELS = 3 (variant levels-3); turn on at level 2.",
+        "predict": "Duty changes because steps are wider.",
+        "expected": "Observed (stub): on=1,level=2,duty=682 | duty_for(0..3) = [0, 341, 682, 1023]"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Light flickers on/off while touching",
+        "action": "Missing edge detection (tryIt 1)."
+      },
+      {
+        "symptom": "Pin touch never fires on a board",
+        "action": "Pins 0-2 are resistive by default: touch GND too, or set_touch_mode(CAPACITIVE)."
+      }
+    ],
+    "equivalents": [
+      "MakeCode: pins.digitalWritePin, pins.analogWritePin, input.onLogoEvent.",
+      "MicroPython machine.PWM(duty_u16) on other boards."
+    ],
+    "inRealSystems": [
+      "LED dimmers and motor drivers use PWM duty for brightness and speed.",
+      "Servo control uses a 20 ms PWM period with a 1-2 ms pulse."
+    ],
+    "useWhen": "PWM for LEDs/motors; digital for on/off loads; touch for simple pads (edge-detect them).",
+    "caution": "Never put more than 3.3 V on a pin; drive motors through a driver.",
+    "simulatorVsReal": "Stub: records outputs, injects inputs; no voltage or current. Simulator: pins take touch 0/1 only (README: analog 'in future'); the harness checks serial only.",
+    "checkpoint": "Pass if logo, A/B and pin0 change the serial line as described and the 10 tests pass.",
+    "checkYourself": [
+      {
+        "q": "What average voltage does write_analog(511) give?",
+        "a": "About 1.65 V (50 % of 3.3 V)."
+      },
+      {
+        "q": "Why compare with logo_was?",
+        "a": "is_touched is a level; toggling needs the start edge."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: Input/Output Pins",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/pin.html"
+      },
+      {
+        "title": "micro:bit Python Editor reference: Pins",
+        "url": "https://python.microbit.org/v/3/reference/pins"
+      },
+      {
+        "title": "micropython-microbit-v2-simulator README (set_value, pins 0/1)",
+        "url": "https://github.com/microbit-foundation/micropython-microbit-v2-simulator"
+      },
+      {
+        "title": "Simulator demo page (state ids pin0, pin1, pin2, pinLogo)",
+        "url": "https://python-simulator.usermbit.org/v/0.1/demo.html"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran `python3 -m unittest -v` in labs/L200/09-pins-pwm: 10 tests OK on labs/sim_stub (CPython 3.12.15, Linux sandbox), including test_try_it.py (both tryIt results) and test_build_task.py (solution.py passes; main.py fails it on purpose). This validates lab logic on the stub, not MicroPython. The simulator run (harness/simulator-l200.spec.js '09-pins-pwm') is pending-ci: no internet in the sandbox. macOS/Windows: CI matrix, pending-ci.",
+      "pendingCi": [
+        "harness/simulator-l200.spec.js: '09-pins-pwm: logo toggles, A raises the level, pin0 touch boosts' (MicroPython V2 simulator, needs internet)",
+        "harness/tryit-l200.spec.js: 'tryIt 09 no-edge: holding the logo keeps toggling'",
+        "harness/tryit-l200.spec.js: 'tryIt 09 levels-3: level 2 of 3 is duty 682'",
+        "CI matrix macos-latest (arm64) + windows-latest: stub tests and harness (platforms = expected)"
+      ]
+    },
+    "next": "L300 #14 Power budgeting (modelled, not measured): current budgets for the board and what you connect to it",
+    "conceptNote": "content/concepts/L200/09-pins-pwm.md",
+    "conceptSummary": "Pins give digital (0/3.3 V), PWM (duty 0-1023) and touch. Touch is a level; detect the edge to toggle. Simulator pins accept touch 0/1 only.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "i2c-sensor",
+    "number": 10,
+    "level": "L200",
+    "title": "An external sensor over I2C",
+    "phase": "Hardware I/O",
+    "category": "i2c",
+    "description": "Read a TMP102 temperature sensor: write the pointer register, read two bytes, decode 12-bit two's complement, handle a missing device.",
+    "outcome": "You can turn a datasheet register map into tested I2C code with error handling.",
+    "environment": "As L100 lesson 1 (Python Editor v3 + V2 simulator; Python 3.12 + labs/sim_stub; CI Node 24 + Playwright 1.64.1). No new packages; the stub adds radio, log, pins, i2c. I2C device: SIMULATED TMP102 (stub only).",
+    "estimatedTime": "45-60 minutes",
+    "overview": [
+      "I2C devices are register maps at a 7-bit address: write the register number, then read its bytes and decode them per the datasheet."
+    ],
+    "prerequisites": [
+      "Lesson 5"
+    ],
+    "glossary": [
+      {
+        "term": "7-bit address",
+        "meaning": "Device number on the bus, 0x48 for the TMP102 with ADD0 to GND."
+      },
+      {
+        "term": "Pointer register",
+        "meaning": "First byte of a write: selects which register the next read returns."
+      },
+      {
+        "term": "Two's complement",
+        "meaning": "Signed binary: top bit set means negative."
+      }
+    ],
+    "concepts": [
+      "Write pointer, then read.",
+      "Decode bytes per the datasheet and test it.",
+      "I2C errors are OSError (19 = no device)."
+    ],
+    "steps": [
+      {
+        "title": "Run it in the simulator",
+        "detail": "Paste labs/L200/10-i2c-sensor/main.py, press play, open serial.",
+        "expected": "'scan: [...]' then a line per second; with no device the firmware raises OSError 19: 'i2c: no device at 0x48 (errno 19)'.",
+        "ifNot": "No traceback should appear; the error is caught."
+      },
+      {
+        "title": "Run the tests with the simulated sensor",
+        "detail": "The tests attach a SIMULATED TMP102 at 0x48 (21.5 C).",
+        "expected": "11 tests OK; transactions write 00, read 15 80.",
+        "ifNot": "Read the transaction list in the failure.",
+        "mac": "cd labs/L200/10-i2c-sensor && python3 -m unittest -v",
+        "windows": "cd labs\\L200\\10-i2c-sensor; py -m unittest -v"
+      },
+      {
+        "title": "Decode by hand",
+        "detail": "Use the datasheet table: 0x190 = 25 C, 0xE70 = -25 C.",
+        "expected": "(0x15 << 4) | (0x80 >> 4) = 344, x 0.0625 = 21.5.",
+        "ifNot": "Check the shift: the 12 bits are left-justified."
+      },
+      {
+        "title": "Break it (tryIt)",
+        "detail": "Run try_it.py: wrong address, then no sign handling.",
+        "expected": "'no device at 0x49 (errno 19)', then 'temp_c=231.00'.",
+        "ifNot": "See try_it.json.",
+        "mac": "python3 try_it.py",
+        "windows": "py try_it.py"
+      },
+      {
+        "title": "Build task",
+        "detail": "Write encode_temp(c) and set_high_limit(c): pointer 0x03 + two data bytes, then read back. Check: test_build_task.py.",
+        "expected": "test_build_task: OK.",
+        "ifNot": "Compare with solution.py.",
+        "mac": "BUILD_FILE=main.py python3 -m unittest -v test_build_task",
+        "windows": "$env:BUILD_FILE=\"main.py\"; py -m unittest -v test_build_task"
+      },
+      {
+        "title": "Optional: real board",
+        "detail": "TMP102 breakout: SCL pin 19, SDA pin 20, 3V, GND, ADD0 to GND.",
+        "expected": "'scan: ['0x48']' and room temperature.",
+        "ifNot": "Check wiring and the address with scan()."
+      }
+    ],
+    "code": "# Lab 10 - an external temperature sensor over I2C (TMP102 register map).\n# Wiring on a real board: SCL -> pin19, SDA -> pin20, GND, 3V; ADD0 -> GND.\n# The browser simulator has NO I2C devices: expect \"no device\" there.\n# Unit tests attach a simulated TMP102 (labs/sim_stub/i2c_devices.py).\nfrom microbit import *\n\nADDR = 0x48            # 7-bit address (TMP102 with ADD0 to GND)\nREG_TEMP = 0x00        # pointer register values: temperature (read-only)\nREG_CONFIG = 0x01      # configuration, power-up value 0x60A0\nLSB_C = 0.0625         # 12-bit result: one step = 0.0625 C\n\n\ndef decode_temp(msb, lsb):\n    # 12-bit two's complement, left-justified: MSB holds bits 11..4, LSB bits 3..0\n    raw = (msb << 4) | (lsb >> 4)\n    if raw & 0x800:                      # sign bit set -> negative temperature\n        raw -= 4096\n    return raw * LSB_C\n\n\ndef read_register(reg, n=2):\n    i2c.write(ADDR, bytes([reg]))        # 1) set the pointer register\n    return i2c.read(ADDR, n)             # 2) read n bytes, most significant first\n\n\ndef read_temp_c():\n    data = read_register(REG_TEMP)\n    return decode_temp(data[0], data[1])\n\n\ndef step():\n    # an I2C error is an OSError; 19 (ENODEV) = nothing answered at ADDR\n    try:\n        t = read_temp_c()\n    except OSError as e:\n        print(\"i2c: no device at {} (errno {})\".format(hex(ADDR), e.args[0]))\n        display.show(Image.NO, wait=False)\n        return None\n    print(\"temp_c={:.2f}\".format(t))\n    display.show(Image.YES if t < 30 else Image.ANGRY, wait=False)\n    return t\n\n\ndef main():\n    print(\"scan:\", [hex(a) for a in i2c.scan()])   # which addresses answer?\n    while True:\n        step()\n        sleep(1000)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "i2c.write(ADDR, bytes([reg]))",
+        "detail": "Sets the pointer register; the next read returns that register."
+      },
+      {
+        "title": "i2c.read(ADDR, n)",
+        "detail": "Returns n bytes, most significant first; raises OSError 19 if nothing answers."
+      },
+      {
+        "title": "raw = (msb << 4) | (lsb >> 4)",
+        "detail": "Joins the left-justified 12-bit value."
+      },
+      {
+        "title": "if raw & 0x800: raw -= 4096",
+        "detail": "Two's complement: top bit set means negative."
+      }
+    ],
+    "buildTask": {
+      "task": "Write encode_temp(c) -> (msb, lsb) and set_high_limit(c), which writes T_HIGH (pointer 0x03 + 2 bytes) and returns the value read back.",
+      "hints": [
+        "Inverse of decode: round(c / 0.0625), mask with 0xFFF, shift left 4.",
+        "One write: bytes([0x03, msb, lsb]).",
+        "Read back with read_register(0x03)."
+      ],
+      "solution": "labs/L200/10-i2c-sensor/solution.py",
+      "check": "labs/L200/10-i2c-sensor/test_build_task.py (3 tests)"
+    },
+    "projectFiles": [
+      {
+        "path": "labs/L200/10-i2c-sensor/main.py",
+        "purpose": "Lab program"
+      },
+      {
+        "path": "labs/L200/10-i2c-sensor/test_main.py",
+        "purpose": "Unit tests"
+      },
+      {
+        "path": "labs/L200/10-i2c-sensor/solution.py",
+        "purpose": "Build task solution"
+      },
+      {
+        "path": "labs/L200/10-i2c-sensor/test_build_task.py",
+        "purpose": "Build task check"
+      },
+      {
+        "path": "labs/L200/10-i2c-sensor/try_it.py",
+        "purpose": "tryIt runner (try_it.json)"
+      },
+      {
+        "path": "labs/L200/10-i2c-sensor/README.md",
+        "purpose": "Commands, observed output"
+      },
+      {
+        "path": "labs/L200/10-i2c-sensor/../../sim_stub/i2c_devices.py",
+        "purpose": "SIMULATED TMP102"
+      }
+    ],
+    "expectedResults": [
+      "With the simulated sensor: 'temp_c=21.50'; without: 'i2c: no device at 0x48 (errno 19)'."
+    ],
+    "testCases": [
+      {
+        "action": "Unit tests (step above)",
+        "expected": "11 tests OK"
+      },
+      {
+        "action": "CI: simulator, no device",
+        "expected": "an error line or temp_c line, no traceback (result recorded)"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "ADDR = 0x49 (variant addr-0x49) while the sensor is at 0x48.",
+        "predict": "OSError 19, reported.",
+        "expected": "Observed (stub): i2c: no device at 0x49 (errno 19)"
+      },
+      {
+        "task": "Delete the two's-complement lines (variant no-sign); sensor at -25 C.",
+        "predict": "A large positive number.",
+        "expected": "Observed (stub): temp_c=231.00"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "OSError 19 on a real board",
+        "action": "Wiring, power, or address: run i2c.scan()."
+      },
+      {
+        "symptom": "Values near 4096 x 0.0625 = 256",
+        "action": "Sign handling missing (tryIt 2)."
+      }
+    ],
+    "equivalents": [
+      "MicroPython machine.I2C.readfrom_mem(addr, reg, n) on other boards.",
+      "Linux: smbus2 read_i2c_block_data."
+    ],
+    "inRealSystems": [
+      "Board sensors (temperature, IMU, power monitors) are I2C register maps.",
+      "Drivers decode bytes per datasheet and are unit-tested against recorded bytes."
+    ],
+    "useWhen": "Short, on-board connections to sensors with a register map; avoid long cables.",
+    "caution": "Power I2C breakouts from 3.3 V; check the device's voltage range before wiring.",
+    "simulatorVsReal": "SIMULATED device: the TMP102 is a Python model in the stub (TI register map), not in MicroPython or the simulator. Simulator: no I2C devices; behaviour not observed (pending-ci). Real board: pins 19/20.",
+    "checkpoint": "Pass if the 11 tests pass against the simulated sensor and the build-task check passes.",
+    "checkYourself": [
+      {
+        "q": "Which bytes encode 25 C?",
+        "a": "0x19 0x00 (raw 0x190 = 400 x 0.0625)."
+      },
+      {
+        "q": "Why write before reading?",
+        "a": "The write sets the pointer register that the read returns."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: I2C",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/i2c.html"
+      },
+      {
+        "title": "micropython-microbit-v2 microbit_i2c.c (OSError ENODEV)",
+        "url": "https://github.com/microbit-foundation/micropython-microbit-v2/blob/master/src/codal_port/microbit_i2c.c"
+      },
+      {
+        "title": "TI TMP102 datasheet (SBOS397I)",
+        "url": "https://www.ti.com/lit/ds/symlink/tmp102.pdf"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran `python3 -m unittest -v` in labs/L200/10-i2c-sensor: 11 tests OK on labs/sim_stub (CPython 3.12.15, Linux sandbox), including test_try_it.py (both tryIt results) and test_build_task.py (solution.py passes; main.py fails it on purpose). This validates lab logic on the stub, not MicroPython. The simulator run (harness/simulator-l200.spec.js '10-i2c-sensor') is pending-ci: no internet in the sandbox. macOS/Windows: CI matrix, pending-ci. The sensor is a SIMULATED TMP102 model; no physical device was used.",
+      "pendingCi": [
+        "harness/simulator-l200.spec.js: '10-i2c-sensor: no I2C device in the simulator is reported, not a crash' (MicroPython V2 simulator, needs internet)",
+        "harness/tryit-l200.spec.js: 'tryIt 10 addr-0x49: the error names the address the code used'",
+        "optional TMP102 wiring on a real board (manual; the lab's sensor is a simulated model)",
+        "CI matrix macos-latest (arm64) + windows-latest: stub tests and harness (platforms = expected)"
+      ]
+    },
+    "next": "L300 #13 Non-blocking firmware structure: contain a sensor that stops answering (OSError 19) and go to a safe state",
+    "conceptNote": "content/concepts/L200/10-i2c-sensor.md",
+    "conceptSummary": "I2C devices are register maps at a 7-bit address: write the pointer, read the bytes, decode per datasheet (12-bit two's complement for the TMP102), and handle OSError 19 when nothing answers.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "game-state-machine",
+    "number": 11,
+    "level": "L200",
+    "title": "A game as a state machine",
+    "phase": "Program structure",
+    "category": "state machine",
+    "description": "Catch-the-dot with states idle/play/over, events from buttons, shake and time, and a testable transition table.",
+    "outcome": "You can structure an interactive program as a state machine and test every transition.",
+    "environment": "As L100 lesson 1 (Python Editor v3 + V2 simulator; Python 3.12 + labs/sim_stub; CI Node 24 + Playwright 1.64.1). No new packages; the stub adds radio, log, pins, i2c.",
+    "estimatedTime": "45-60 minutes",
+    "overview": [
+      "One explicit state plus a (state, event) table replaces tangled flags; time is just another event."
+    ],
+    "prerequisites": [
+      "Lessons 3 and 6"
+    ],
+    "glossary": [
+      {
+        "term": "State",
+        "meaning": "Where the program is: idle, play or over."
+      },
+      {
+        "term": "Event",
+        "meaning": "Something that happened: a, shake, timeout."
+      },
+      {
+        "term": "Transition table",
+        "meaning": "Dict (state, event) -> (next state, action)."
+      }
+    ],
+    "concepts": [
+      "Exactly one current state.",
+      "Events from inputs and the clock.",
+      "Unknown (state, event) pairs are ignored."
+    ],
+    "steps": [
+      {
+        "title": "Play a round",
+        "detail": "Paste labs/L200/11-game-state-machine/main.py, press play, open serial, press A; press A again when the dot is in the centre.",
+        "expected": "'idle -> play (a)', 'hit 1' or 'miss 0', after 6 s 'play -> over (timeout)' and 'score N'.",
+        "ifNot": "Press A once after 'over' to return to idle."
+      },
+      {
+        "title": "Shake",
+        "detail": "Send the shake gesture in idle, then during play.",
+        "expected": "'idle -> play (shake)', then 'play -> idle (shake)'.",
+        "ifNot": "Use the accelerometer module's gesture send button."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "In labs/L200/11-game-state-machine: run the unit tests on the stub.",
+        "expected": "9 tests OK.",
+        "ifNot": "The assertion shows the serial text.",
+        "mac": "cd labs/L200/11-game-state-machine && python3 -m unittest -v",
+        "windows": "cd labs\\L200\\11-game-state-machine; py -m unittest -v"
+      },
+      {
+        "title": "Change the table and the timing (tryIt)",
+        "detail": "Run try_it.py: no shake-abort row; STEP_MS = 150.",
+        "expected": "Shake ignored in play; the press at 600 ms becomes a miss.",
+        "ifNot": "See try_it.json.",
+        "mac": "python3 try_it.py",
+        "windows": "py try_it.py"
+      },
+      {
+        "title": "Build task",
+        "detail": "Add pause: B in play -> paused, B in paused -> play; paused time must not count. Check: test_build_task.py.",
+        "expected": "test_build_task: OK.",
+        "ifNot": "Compare with solution.py.",
+        "mac": "BUILD_FILE=main.py python3 -m unittest -v test_build_task",
+        "windows": "$env:BUILD_FILE=\"main.py\"; py -m unittest -v test_build_task"
+      }
+    ],
+    "code": "# Lab 11 - a game as a state machine: \"catch the dot\".\n# idle --A or shake--> play --6 s--> over --A--> idle; in play, press A when\n# the moving dot is in the middle column to score.\nfrom microbit import *\n\nROUND_MS = 6000            # one round, timed with running_time()\nSTEP_MS = 300              # the dot moves one column every 300 ms\nTARGET_X = 2               # middle column\n\n# transition table: (state, event) -> (next state, action). Anything else is ignored.\nTRANSITIONS = {\n    (\"idle\", \"a\"): (\"play\", \"start\"),\n    (\"idle\", \"shake\"): (\"play\", \"start\"),\n    (\"play\", \"a\"): (\"play\", \"hit\"),\n    (\"play\", \"shake\"): (\"idle\", \"abort\"),\n    (\"play\", \"timeout\"): (\"over\", \"score\"),\n    (\"over\", \"a\"): (\"idle\", None),\n}\n\n\ndef next_state(state, event):\n    return TRANSITIONS.get((state, event), (state, None))\n\n\ndef new_game():\n    return {\"state\": \"idle\", \"score\": 0, \"started\": 0}\n\n\ndef dot_x(game, now):\n    return ((now - game[\"started\"]) // STEP_MS) % 5\n\n\ndef events(game, now):\n    # events come from buttons, gestures and time; the table decides what they mean\n    found = []\n    if button_a.was_pressed():\n        found.append(\"a\")\n    if accelerometer.was_gesture(\"shake\"):\n        found.append(\"shake\")\n    if game[\"state\"] == \"play\" and now - game[\"started\"] >= ROUND_MS:\n        found.append(\"timeout\")    # time is an event too: elapsed ms since \"start\"\n    return found\n\n\ndef handle(game, event, now):\n    state, action = next_state(game[\"state\"], event)\n    if action == \"start\":\n        game[\"score\"], game[\"started\"] = 0, now\n    elif action == \"hit\":\n        hit = dot_x(game, now) == TARGET_X\n        game[\"score\"] += 1 if hit else 0\n        print(\"hit\" if hit else \"miss\", game[\"score\"])\n    if state != game[\"state\"]:\n        print(\"{} -> {} ({})\".format(game[\"state\"], state, event))\n        game[\"state\"] = state\n    if action == \"score\":\n        print(\"score\", game[\"score\"])\n\n\ndef draw(game, now):\n    if game[\"state\"] == \"play\":\n        display.clear()\n        display.set_pixel(dot_x(game, now), 2, 9)\n    elif game[\"state\"] == \"over\":\n        display.show(min(game[\"score\"], 9), wait=False)\n    else:\n        display.show(Image.TARGET, wait=False)\n\n\ndef step(game):\n    now = running_time()           # ms since start: never sleep() to measure time\n    for event in events(game, now):\n        handle(game, event, now)\n    draw(game, now)\n\n\ndef main():\n    print(\"game ready: A or shake to start\")\n    game = new_game()\n    while True:\n        step(game)\n        sleep(20)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "TRANSITIONS = {...}",
+        "detail": "The whole behaviour as data: (state, event) -> (next state, action)."
+      },
+      {
+        "title": "next_state(): TRANSITIONS.get(..., (state, None))",
+        "detail": "A missing pair means 'ignore the event'."
+      },
+      {
+        "title": "now - game['started'] >= ROUND_MS",
+        "detail": "Time becomes the 'timeout' event, measured with running_time()."
+      },
+      {
+        "title": "handle()",
+        "detail": "Runs the action, prints the transition, then switches state."
+      }
+    ],
+    "buildTask": {
+      "task": "Add a paused state: B in play pauses, B in paused resumes; paused time must not count toward ROUND_MS.",
+      "hints": [
+        "Two new table rows and a 'b' event.",
+        "On pause store now; on resume add the paused time to started.",
+        "timeout is only generated in play."
+      ],
+      "solution": "labs/L200/11-game-state-machine/solution.py",
+      "check": "labs/L200/11-game-state-machine/test_build_task.py (2 tests)"
+    },
+    "projectFiles": [
+      {
+        "path": "labs/L200/11-game-state-machine/main.py",
+        "purpose": "Lab program"
+      },
+      {
+        "path": "labs/L200/11-game-state-machine/test_main.py",
+        "purpose": "Unit tests"
+      },
+      {
+        "path": "labs/L200/11-game-state-machine/solution.py",
+        "purpose": "Build task solution"
+      },
+      {
+        "path": "labs/L200/11-game-state-machine/test_build_task.py",
+        "purpose": "Build task check"
+      },
+      {
+        "path": "labs/L200/11-game-state-machine/try_it.py",
+        "purpose": "tryIt runner (try_it.json)"
+      },
+      {
+        "path": "labs/L200/11-game-state-machine/README.md",
+        "purpose": "Commands, observed output"
+      }
+    ],
+    "expectedResults": [
+      "Transitions printed as 'from -> to (event)'; a round ends after 6000 ms."
+    ],
+    "testCases": [
+      {
+        "action": "Unit tests (step above)",
+        "expected": "9 tests OK"
+      },
+      {
+        "action": "CI: A, wait, A, shake",
+        "expected": "play -> over (timeout), over -> idle (a), idle -> play (shake)"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Delete the ('play', 'shake') row (variant no-shake-abort); start with A, then shake.",
+        "predict": "Shake is ignored during play.",
+        "expected": "Observed (stub): idle -> play (a) (no 'play -> idle')."
+      },
+      {
+        "task": "STEP_MS = 150 (variant step-150); press A 600 ms after the start.",
+        "predict": "The dot is elsewhere: a miss.",
+        "expected": "Observed (stub): idle -> play (a) | miss 0"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "One press counts many times",
+        "action": "Use was_pressed() (edge), not is_pressed() (level)."
+      },
+      {
+        "symptom": "Round length drifts",
+        "action": "Measure with running_time(), not by counting sleeps."
+      }
+    ],
+    "equivalents": [
+      "MakeCode: a state variable with on button / on shake events.",
+      "Python libraries: transitions; Rust/C: enum + match/switch."
+    ],
+    "inRealSystems": [
+      "Protocols (TCP), UI flows and embedded controllers are specified as state machines.",
+      "Tables make transitions reviewable and testable."
+    ],
+    "useWhen": "A few modes changed by events; use two machines when two things vary independently.",
+    "simulatorVsReal": "Stub: running_time() advances only with sleep(), so timing tests are exact. Simulator: real time, so the harness checks transitions only.",
+    "checkpoint": "Pass if a full round prints idle -> play -> over -> idle and the 9 tests pass.",
+    "checkYourself": [
+      {
+        "q": "What happens to ('over', 'shake')?",
+        "a": "Nothing: no table row, so it is ignored."
+      },
+      {
+        "q": "Why not count loop passes for the 6 s round?",
+        "a": "A pass can take longer than sleep(20); running_time() is the real clock."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Game Programming Patterns: State",
+        "url": "https://gameprogrammingpatterns.com/state.html"
+      },
+      {
+        "title": "MicroPython docs: microbit module (running_time)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/microbit.html"
+      },
+      {
+        "title": "MicroPython docs: Accelerometer (was_gesture)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/accelerometer.html"
+      },
+      {
+        "title": "MicroPython docs: Buttons (was_pressed)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/button.html"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran `python3 -m unittest -v` in labs/L200/11-game-state-machine: 9 tests OK on labs/sim_stub (CPython 3.12.15, Linux sandbox), including test_try_it.py (both tryIt results) and test_build_task.py (solution.py passes; main.py fails it on purpose). This validates lab logic on the stub, not MicroPython. The simulator run (harness/simulator-l200.spec.js '11-game-state-machine') is pending-ci: no internet in the sandbox. macOS/Windows: CI matrix, pending-ci.",
+      "pendingCi": [
+        "harness/simulator-l200.spec.js: '11-game-state-machine: idle -> play -> over -> idle, shake starts' (MicroPython V2 simulator, needs internet)",
+        "harness/tryit-l200.spec.js: 'tryIt 11 no-shake-abort: shake during play is ignored'",
+        "CI matrix macos-latest (arm64) + windows-latest: stub tests and harness (platforms = expected)"
+      ]
+    },
+    "next": "L300 #12 A reliable radio protocol (then #13 Non-blocking firmware structure: a scheduler instead of sleep())",
+    "conceptNote": "content/concepts/L200/11-game-state-machine.md",
+    "conceptSummary": "A finite state machine has one current state, events from inputs and the clock, and a transition table (state, event) -> (next, action); missing pairs are ignored, so the table can be tested as data.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "Microsoft MakeCode for micro:bit",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Build the game's states (idle, play, over) in Blocks with a variable and on button A / on shake handlers, then switch to the Python view and compare with your transition table in labs/L200/11-game-state-machine/main.py.",
+        "expected": "Pending a manual run (no simulator/browser in the sandbox). Same transitions as the lab prints: 'idle -> play (a)', 'play -> over (timeout)' after 6 s, 'over -> idle (a)', 'idle -> play (shake)'. MakeCode's Python view is MakeCode Python, not MicroPython - it will not run in the Python Editor.",
+        "mac": "Browser: open https://makecode.microbit.org/ (works offline once cached)",
+        "windows": "Browser: Start-Process https://makecode.microbit.org/ (offline app availability unclear)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microsoft/pxt-microbit"
+      }
+    ]
+  }
+]

@@ -1,0 +1,1665 @@
+[
+ {
+  "id": "envelope-encryption-key-rotation",
+  "number": 12,
+  "level": "L300",
+  "title": "Envelope encryption and key rotation",
+  "phase": "Key management",
+  "category": "Envelope encryption",
+  "description": "Per-record data keys wrapped by a versioned key-encryption key, key IDs in each header, KEK rotation without re-encrypting data, a resumable rewrap job, and safe retirement of old versions.",
+  "outcome": "You can rotate a KEK without touching data ciphertext, run and monitor a resumable rewrap job, and prove (with a test) that an old key version cannot be deleted while any record still needs it. You can map each step to OpenBao's transit engine.",
+  "environment": "Python 3.12 (3.9+), cryptography==50.0.2, stdlib only otherwise (no new packages); optional: OpenBao 2.7.2 dev server in a container (Podman/Docker) for the equivalence test (pending CI)",
+  "estimatedTime": "50-70 minutes",
+  "overview": [
+   "Start from working envelope encryption with a KEK keyring and a rewrap job, then inject a seeded fault: the job crashes part-way and the operator deletes the old KEK anyway. Harden retirement so it asks the data first."
+  ],
+  "prerequisites": [
+   "L100 lesson 4 (AEAD, nonces, AAD)",
+   "L200 lesson 8 (wrapping a file key for recipients)"
+  ],
+  "glossary": [
+   {
+    "term": "DEK / KEK",
+    "meaning": "Data-encryption key (one per record) / key-encryption key that wraps DEKs and never encrypts data itself."
+   },
+   {
+    "term": "Key ID (kid)",
+    "meaning": "Name + version of the KEK written into each record header, e.g. orders-kek:v2 (OpenBao: vault:v2:)."
+   },
+   {
+    "term": "Rewrap",
+    "meaning": "Unwrap a DEK with an old KEK version and wrap it with the primary; returns no plaintext data."
+   },
+   {
+    "term": "Retire",
+    "meaning": "Remove a KEK version from the keyring (or forbid decryption with it) after no record needs it."
+   }
+  ],
+  "concepts": [
+   "Rotation adds a version; it never replaces one.",
+   "Rewrap moves 60-byte wrapped keys, not the data.",
+   "Retire only when the per-version record count is zero.",
+   "Authenticate the header: the kid is AAD of the wrap."
+  ],
+  "steps": [
+   {
+    "title": "Run the lab",
+    "detail": "python envelope.py - seals 6 records under orders-kek:v1 (fresh DEK each, AES-256-GCM, record id as AAD)",
+    "expected": "sealed 6 records with orders-kek:v1 | header: {'kid': 'orders-kek:v1', 'ctx': 'order-1'}",
+    "ifNot": "ModuleNotFoundError: activate the venv and install requirements.txt (cryptography==50.0.2)."
+   },
+   {
+    "title": "Rotate the KEK",
+    "detail": "The keyring adds v2 and makes it primary; v1 stays for decryption.",
+    "expected": "rotate -> orders-kek:v2 | old records still: 6/6 decrypt",
+    "ifNot": "If old records fail here, rotate() replaced the key instead of adding a version."
+   },
+   {
+    "title": "Run the rewrap job and read its JSON lines",
+    "detail": "One JSON line per moved record, then the records_by_kid metric. The data ciphertext is compared before/after.",
+    "expected": "6 lines {\"event\": \"rewrap\", ...}, then {\"metric\": \"records_by_kid\", \"orders-kek:v2\": 6}; data ciphertext unchanged by rewrap: True; retire v1 after a full rewrap: 6/6 decrypt",
+    "ifNot": "If ct changed, you re-encrypted the data instead of only the DEK."
+   },
+   {
+    "title": "Watch the seeded fault",
+    "detail": "Rotate to v3, the job crashes (crash point from random.Random(12)), the naive retire() deletes v2.",
+    "expected": "{\"event\": \"rewrap\", \"id\": \"order-1\", \"from\": \"orders-kek:v2\", \"to\": \"orders-kek:v3\"} / job: rewrap job crashed after 1 records | counts: {'orders-kek:v2': 5, 'orders-kek:v3': 1} / after retire v2: 1/6 decrypt; LOST ['order-2', 'order-3', 'order-4', 'order-5', 'order-6'] ({'no KEK for orders-kek:v2'})",
+    "ifNot": "Different crash point? SEED must stay 12 and nothing else may consume the RNG first."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v (lab tests + build task + offline OpenBao parser; the live OpenBao test is skipped without a server)",
+    "expected": "Ran 11 tests in 0.007s | OK (skipped=1)",
+    "ifNot": "Read the failing assertion."
+   },
+   {
+    "title": "Build task (the hardening change)",
+    "detail": "Fix the fault in your copy, then run the failure-lab proof against it. Without the fix it fails on purpose.",
+    "expected": "Reference solution: Ran 3 tests in 0.003s | OK. Your unfixed file: FAILED (the 'fails before'); your fixed file: OK.",
+    "ifNot": "Read the failing assertion: it names the case your code still accepts.",
+    "mac": "BUILD_IMPL=envelope python -m unittest -v test_build_task",
+    "windows": "$env:BUILD_IMPL=\"envelope\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_IMPL"
+   },
+   {
+    "title": "Equivalent: OpenBao transit (optional, needs a container)",
+    "detail": "Start a dev server with Podman (or Docker), enable transit, then run openbao_transit.py: encrypt -> rotate -> rewrap -> min_decryption_version=2 -> old ciphertext refused. Dev mode is in-memory and unsealed: never for real data.",
+    "expected": "encrypt -> vault:v1: | rotate + rewrap -> vault:v2: ... decrypt old v1: refused (pending CI: not run in the sandbox)",
+    "ifNot": "HTTP 400/403: transit not enabled or wrong token. Without BAO_ADDR/BAO_TOKEN the script prints 'skipped'.",
+    "mac": "podman run -d --name bao -p 127.0.0.1:8200:8200 docker.io/openbao/openbao:2.7.2 server -dev -dev-root-token-id=root -dev-listen-address=0.0.0.0:8200\npodman exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN=root bao bao secrets enable transit\nexport BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN=root && python openbao_transit.py",
+    "windows": "podman run -d --name bao -p 127.0.0.1:8200:8200 docker.io/openbao/openbao:2.7.2 server -dev -dev-root-token-id=root -dev-listen-address=0.0.0.0:8200\npodman exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN=root bao bao secrets enable transit\n$env:BAO_ADDR=\"http://127.0.0.1:8200\"; $env:BAO_TOKEN=\"root\"; python openbao_transit.py"
+   }
+  ],
+  "codeLanguage": "python",
+  "code": "\"\"\"Envelope encryption with a versioned key-encryption key (KEK) and a rewrap job.\nEach record gets its own data key (DEK); the DEK is wrapped by the KEK version named in the record header.\nLearning code: in production the KEK stays inside a KMS/HSM or OpenBao transit and never leaves it.\"\"\"\nimport base64\nimport json\nimport os\nimport random\n\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\n\nSEED = 12  # seeds the injected fault (where the rewrap job crashes), so every run fails the same way\n\n\nclass UnknownKey(Exception):\n    \"\"\"The record names a KEK version that is not (or no longer) in the keyring.\"\"\"\n\n\nclass KeyInUse(Exception):\n    \"\"\"Raised by the hardened retire() you write in the build task.\"\"\"\n\n\ndef b64(b: bytes) -> str:\n    return base64.b64encode(b).decode()\n\n\nclass Keyring:\n    \"\"\"KEK versions by number: the primary wraps new DEKs, every version still present can unwrap.\"\"\"\n\n    def __init__(self, name=\"orders-kek\"):\n        self.name, self.versions, self.primary = name, {}, 0\n        self.rotate()\n\n    def kid(self, version: int) -> str:\n        return f\"{self.name}:v{version}\"  # key ID: written into every record header\n\n    def rotate(self) -> str:\n        self.primary += 1  # rotation = add a new version and make it primary; old versions stay\n        self.versions[self.primary] = AESGCM.generate_key(bit_length=256)\n        return self.kid(self.primary)\n\n    def kek(self, kid: str) -> AESGCM:\n        name, _, v = kid.rpartition(\":v\")\n        if name != self.name or int(v) not in self.versions:\n            raise UnknownKey(f\"no KEK for {kid}\")\n        return AESGCM(self.versions[int(v)])\n\n\ndef wrap(ring: Keyring, dek: bytes):\n    kid, n = ring.kid(ring.primary), os.urandom(12)\n    return kid, b64(n + ring.kek(kid).encrypt(n, dek, kid.encode()))  # AAD = kid: a wrapped DEK cannot be relabelled\n\n\ndef unwrap(ring: Keyring, kid: str, wdek: str) -> bytes:\n    raw = base64.b64decode(wdek)\n    return ring.kek(kid).decrypt(raw[:12], raw[12:], kid.encode())\n\n\ndef seal(ring: Keyring, plaintext: bytes, context: str) -> dict:\n    dek, n = AESGCM.generate_key(bit_length=256), os.urandom(12)  # fresh DEK per record\n    kid, wdek = wrap(ring, dek)\n    ct = AESGCM(dek).encrypt(n, plaintext, context.encode())  # data encrypted once, with the DEK\n    return {\"kid\": kid, \"wdek\": wdek, \"n\": b64(n), \"ct\": b64(ct), \"ctx\": context}\n\n\ndef open_(ring: Keyring, rec: dict) -> bytes:\n    dek = unwrap(ring, rec[\"kid\"], rec[\"wdek\"])\n    return AESGCM(dek).decrypt(base64.b64decode(rec[\"n\"]), base64.b64decode(rec[\"ct\"]), rec[\"ctx\"].encode())\n\n\ndef rewrap(ring: Keyring, rec: dict) -> dict:\n    kid, wdek = wrap(ring, unwrap(ring, rec[\"kid\"], rec[\"wdek\"]))  # only the 32-byte DEK is re-encrypted\n    return {**rec, \"kid\": kid, \"wdek\": wdek}  # n and ct are untouched\n\n\ndef count_by_kid(store: dict) -> dict:\n    kids = [rec[\"kid\"] for rec in store.values()]\n    return {k: kids.count(k) for k in sorted(set(kids))}\n\n\ndef rewrap_job(ring: Keyring, store: dict, log=print, crash_after=None) -> int:\n    target, done = ring.kid(ring.primary), 0\n    for rid, rec in store.items():\n        if rec[\"kid\"] == target:  # idempotent: records already on the primary are skipped, so a rerun resumes\n            continue\n        if crash_after is not None and done == crash_after:\n            raise RuntimeError(f\"rewrap job crashed after {done} records\")  # injected fault\n        store[rid] = rewrap(ring, rec)\n        done += 1\n        log(json.dumps({\"event\": \"rewrap\", \"id\": rid, \"from\": rec[\"kid\"], \"to\": target}))\n    log(json.dumps({\"metric\": \"records_by_kid\", **count_by_kid(store)}))  # observability: who still needs which KEK\n    return done\n\n\ndef retire(ring: Keyring, store: dict, version: int) -> None:\n    del ring.versions[version]  # BUG on purpose: never asks whether a record still uses this version\n\n\ndef try_all(ring, store) -> str:\n    bad = {}\n    for rid, rec in store.items():\n        try:\n            open_(ring, rec)\n        except UnknownKey as e:\n            bad[rid] = str(e)\n    return f\"{len(store) - len(bad)}/{len(store)} decrypt\" + (f\"; LOST {list(bad)} ({set(bad.values())})\" if bad else \"\")\n\n\nif __name__ == \"__main__\":\n    rng = random.Random(SEED)\n    ring = Keyring()\n    store = {f\"order-{i}\": seal(ring, f\"card=4111-{rng.randrange(1000, 9999)}\".encode(), f\"order-{i}\") for i in range(1, 7)}\n    print(\"sealed 6 records with\", ring.kid(1), \"| header:\", {k: store[\"order-1\"][k] for k in (\"kid\", \"ctx\")})\n    print(\"rotate ->\", ring.rotate(), \"| old records still:\", try_all(ring, store))\n    before = store[\"order-1\"][\"ct\"]\n    rewrap_job(ring, store)\n    print(\"data ciphertext unchanged by rewrap:\", store[\"order-1\"][\"ct\"] == before)\n    retire(ring, store, 1)\n    print(\"retire v1 after a full rewrap:\", try_all(ring, store))\n\n    print(\"--- fault: rotate again, the rewrap job crashes, the operator deletes v2 anyway\")\n    print(\"rotate ->\", ring.rotate())\n    try:\n        rewrap_job(ring, store, crash_after=rng.randrange(1, 5))  # seeded crash point\n    except RuntimeError as e:\n        print(\"job:\", e, \"| counts:\", count_by_kid(store))\n    retire(ring, store, 2)\n    print(\"after retire v2:\", try_all(ring, store))\n",
+  "codeWalkthrough": [
+   {
+    "title": "Keyring",
+    "detail": "versions maps number -> 32-byte KEK; primary wraps new DEKs; rotate() adds a version and never deletes one. kek(kid) parses 'orders-kek:vN' and raises UnknownKey for a missing version."
+   },
+   {
+    "title": "wrap / unwrap",
+    "detail": "AES-256-GCM over the 32-byte DEK with a fresh 12-byte nonce and the kid as AAD: 60 bytes stored as base64. Relabelling the header makes unwrap fail with InvalidTag."
+   },
+   {
+    "title": "seal / open_",
+    "detail": "A fresh DEK per record encrypts the data once, with the record id (ctx) as AAD so a ciphertext cannot be moved to another row. The record = {kid, wdek, n, ct, ctx}."
+   },
+   {
+    "title": "rewrap",
+    "detail": "Unwrap with the version named in the header, wrap with the primary, return a copy with new kid/wdek; n and ct are untouched."
+   },
+   {
+    "title": "rewrap_job",
+    "detail": "Skips records already on the primary (idempotent, so a rerun resumes), logs one JSON line per move and ends with the records_by_kid metric. crash_after injects the fault."
+   },
+   {
+    "title": "retire (the bug)",
+    "detail": "Deletes the version without looking at the store. The build task makes it raise KeyInUse while count_by_kid(store) still lists the version, and refuse the primary."
+   },
+   {
+    "title": "__main__",
+    "detail": "Seeded run (SEED=12): happy rotation + full rewrap + retire, then the fault: rotate, crash after N records, naive retire, and the LOST report."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L300/12-envelope-rotation/README.md",
+    "purpose": "observed output"
+   },
+   {
+    "path": "labs/L300/12-envelope-rotation/envelope.py",
+    "purpose": "main lab"
+   },
+   {
+    "path": "labs/L300/12-envelope-rotation/openbao_transit.py",
+    "purpose": "equivalent: OpenBao transit client (stdlib urllib)"
+   },
+   {
+    "path": "labs/L300/12-envelope-rotation/solution_retire.py",
+    "purpose": "build solution (retire-after-rewrap)"
+   },
+   {
+    "path": "labs/L300/12-envelope-rotation/test_build_task.py",
+    "purpose": "failure-lab proof (fails before / passes after)"
+   },
+   {
+    "path": "labs/L300/12-envelope-rotation/test_envelope.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L300/12-envelope-rotation/test_openbao_transit.py",
+    "purpose": "offline parser test + live test (pending CI)"
+   },
+   {
+    "path": "labs/L300/12-envelope-rotation/tool_check.py",
+    "purpose": "fixed demo values for the CyberChef check"
+   },
+   {
+    "path": "labs/L300/12-envelope-rotation/try_it.py",
+    "purpose": "tryIt"
+   }
+  ],
+  "expectedResults": [
+   "sealed 6 records with orders-kek:v1 | header: {'kid': 'orders-kek:v1', 'ctx': 'order-1'}",
+   "rotate -> orders-kek:v2 | old records still: 6/6 decrypt",
+   "data ciphertext unchanged by rewrap: True",
+   "job: rewrap job crashed after 1 records | counts: {'orders-kek:v2': 5, 'orders-kek:v3': 1}",
+   "after retire v2: 1/6 decrypt; LOST ['order-2', 'order-3', 'order-4', 'order-5', 'order-6'] ({'no KEK for orders-kek:v2'})"
+  ],
+  "testCases": [
+   {
+    "action": "Rotate, then open a v1 record",
+    "expected": "Plaintext returned; seal() now writes kid orders-kek:v2"
+   },
+   {
+    "action": "Rewrap a record",
+    "expected": "n and ct identical; wdek differs; still decrypts"
+   },
+   {
+    "action": "Edit kid v1 -> v2 or ctx order-1 -> order-2",
+    "expected": "InvalidTag"
+   },
+   {
+    "action": "Crash after 1, then naive retire(v1)",
+    "expected": "1/4 decrypt; LOST ... (documents the bug)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "UnknownKey: no KEK for orders-kek:vN",
+    "action": "That version was deleted; restore it from backup if you can. Next time check records_by_kid before retiring."
+   },
+   {
+    "symptom": "InvalidTag on open",
+    "action": "Header or record id changed, or wrong KEK bytes loaded."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Change a v1 record's header to kid orders-kek:v2 (v2 exists) and decrypt.",
+    "predict": "Fails: the kid is authenticated.",
+    "expected": "1) relabelled header: InvalidTag - the kid is bound to the wrapped DEK as AAD"
+   },
+   {
+    "task": "Compare the bytes a rewrap re-encrypts with re-encrypting 1,000 records of 4 KiB.",
+    "predict": "About 128x less (32 B per record instead of 4,096 B).",
+    "expected": "2) wrapped DEK = 60 B (12 nonce + 32 key + 16 tag); rewrapping 1000 x 4096 B records re-encrypts 32,000 key bytes instead of 4,096,000 data bytes"
+   }
+  ],
+  "buildTask": {
+   "task": "Retire-after-rewrap: make retire(ring, store, version) raise KeyInUse while any record header names that version (and for the primary); add rewrap_then_retire() that resumes the idempotent job first.",
+   "hints": [
+    "count_by_kid(store) already tells you who needs each version.",
+    "The rewrap job skips records on the primary, so rerunning it after a crash is safe."
+   ],
+   "solution": "labs/L300/12-envelope-rotation/solution_retire.py",
+   "check": "test_build_task.py (3 tests: refused while in use and nothing lost, succeeds after resumed rewrap, primary cannot be retired)"
+  },
+  "failureLab": {
+   "fault": "rewrap_job(crash_after=N) with N from random.Random(12) dies part-way through moving records to the new KEK; the naive retire() then deletes the old version.",
+   "symptom": "job: rewrap job crashed after 1 records | counts: {'orders-kek:v2': 5, 'orders-kek:v3': 1} -> after retire v2: 1/6 decrypt; LOST ['order-2', 'order-3', 'order-4', 'order-5', 'order-6'] ({'no KEK for orders-kek:v2'})",
+   "fix": "Keyring with versions + retire-after-rewrap: retire() checks count_by_kid(store) and raises KeyInUse; the resumable rewrap job runs again before retirement.",
+   "proof": "test_build_task.py: against envelope.py Ran 3 tests in 0.005s | FAILED (failures=2); against solution_retire.py Ran 3 tests in 0.003s | OK"
+  },
+  "tradeOffs": [
+   {
+    "option": "Envelope encryption + KEK versions + rewrap",
+    "gains": "Rotation in seconds; data never re-encrypted; per-version metric",
+    "costs": "Keyring and header format to maintain; old versions kept until rewrap ends",
+    "chooseWhen": "Large or many records, regular or emergency rotation"
+   },
+   {
+    "option": "Re-encrypt all data under a new key",
+    "gains": "Simplest format (one key, no headers)",
+    "costs": "Hours of I/O, half-done states, downtime risk",
+    "chooseWhen": "Small data sets, or when the DEKs themselves may be compromised"
+   },
+   {
+    "option": "Encryption as a service (OpenBao transit / cloud KMS)",
+    "gains": "KEK never leaves the service; rotate/rewrap/min_decryption_version built in; audit log",
+    "costs": "Network call per wrap/unwrap; service availability becomes yours",
+    "chooseWhen": "Production systems; multiple services share keys"
+   }
+  ],
+  "equivalents": [
+   "Same idea in OpenBao transit: POST /v1/transit/keys/:name/rotate, /transit/rewrap/:name, /transit/keys/:name/config {min_decryption_version} (openbao_transit.py, pending CI)",
+   "Same idea with transit data keys: POST /transit/datakey/wrapped/:name returns only the wrapped DEK",
+   "Same idea in Google Tink: a keyset with a primary key and key IDs prefixed to ciphertexts",
+   "Vendor equivalent (one line, not a source): AWS KMS, Google Cloud KMS and Azure Key Vault offer the same envelope pattern and key rotation"
+  ],
+  "learningTools": [
+   {
+    "name": "CyberChef",
+    "role": "CHECK",
+    "licence": "Apache-2.0 (OSI)",
+    "url": "https://github.com/gchq/CyberChef",
+    "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+    "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+    "exercise": "Run `python tool_check.py`. In CyberChef use AES Decrypt: Key = printed hex, IV = printed hex, Mode GCM, Input = printed ciphertext (hex), GCM Tag = printed tag, Additional Authenticated Data = orders-kek:v1. Then change the AAD to orders-kek:v2.",
+    "expected": "Should match the lab's printed value: output a0a0…a0 (32 bytes of 0xa0) with AAD orders-kek:v1; the v2 AAD must fail, as the lab's `AAD 'orders-kek:v2' must fail: yes, InvalidTag`. Demo key only - never paste a real KEK into a web tool. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's tool_check.py output."
+   },
+   {
+    "name": "OpenBao (transit engine + web UI)",
+    "role": "SEE / CHECK",
+    "licence": "MPL-2.0 (OSI)",
+    "url": "https://github.com/openbao/openbao/releases",
+    "mac": "brew install openbao (official install page), or the lab's container: podman/docker run docker.io/openbao/openbao:2.7.2 server -dev",
+    "windows": "Container (Docker Desktop / Podman) as in the lab README; a native Windows binary was not checked",
+    "exercise": "Start the dev server from the lab README and run `python openbao_transit.py`. Then `bao read transit/keys/orders-kl12` (inside the container: podman exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN=root bao bao read transit/keys/orders-kl12) and open the web UI on the dev listener to see the key versions and min decryption version. Then try to decrypt the old vault:v1 ciphertext; set min_decryption_version back to 1, rewrap it, and set it to 2 again.",
+    "expected": "Should match the lab's story: rewrap returns vault:v2 without plaintext; latest_version 2 and min_decryption_version 2; the old vault:v1 ciphertext is refused (HTTP 4xx) - the service version of 'retire v1 after a full rewrap: 6/6 decrypt', while the lab's naive retire() silently gives '1/6 decrypt; LOST [...]'. OpenBao archives versions below min_decryption_version instead of deleting them. The UI path on the listener was not checked in the official docs (catalog gap). Dev mode only (in-memory, unsealed, 127.0.0.1). Pending a manual run: the tool was not run in the sandbox; the value comes from the lab README."
+   }
+  ],
+  "caution": "Learning code: the KEK sits in Python memory here. In production keep it in a KMS/HSM or OpenBao and send only wrap/unwrap calls. OpenBao dev mode (in-memory, unsealed, root token 'root') is for local experiments only. Never paste keys into a model or web tool.",
+  "checkpoint": "PASS if old records decrypt after rotation, rewrap leaves the data ciphertext unchanged, the seeded fault loses records with the naive retire(), and test_build_task passes against your hardened retire().",
+  "checkYourself": [
+   {
+    "q": "Why does rotation add a version instead of replacing the key?",
+    "a": "Every existing record names the old version in its header; deleting it makes them undecryptable."
+   },
+   {
+    "q": "What tells you it is safe to retire v1?",
+    "a": "records_by_kid shows 0 for v1 (and in OpenBao, raising min_decryption_version above 1 breaks nothing)."
+   },
+   {
+    "q": "Why is the kid passed as AAD when wrapping?",
+    "a": "So a header edited to another version fails authentication instead of silently trying another key."
+   }
+  ],
+  "sources": [
+   {
+    "title": "OpenBao – Transit secrets engine (HTTP API)",
+    "url": "https://openbao.org/docs/api/secret/transit/"
+   },
+   {
+    "title": "OpenBao – Transit secrets engine (rotate, rewrap, working set / min_decryption_version, NIST rotation guidance)",
+    "url": "https://openbao.org/docs/secrets/transit/"
+   },
+   {
+    "title": "pyca/cryptography – Authenticated encryption",
+    "url": "https://cryptography.io/en/latest/hazmat/primitives/aead/"
+   },
+   {
+    "title": "NIST SP 800-57 Part 1 Rev. 5 – Recommendation for Key Management: Part 1 – General (May 2020)",
+    "url": "https://csrc.nist.gov/pubs/sp/800/57/pt1/r5/final"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran envelope.py, solution_retire.py, try_it.py, tool_check.py, openbao_transit.py (offline branch) and 11 unittests (6 lab + 3 build task + 2 OpenBao, of which the live one is skipped) locally. test_build_task observed FAILED (failures=2) against envelope.py and OK against solution_retire.py. tryIt expected = observed output.",
+   "pendingCi": [
+    "test_openbao_transit.py TestLive (OpenBao 2.7.2 dev container, ubuntu CI job only)",
+    "openbao_transit.py live branch",
+    "Container commands on macOS/Windows (Podman)",
+    "CyberChef and OpenBao web-UI learning-tool exercises (manual)"
+   ]
+  },
+  "conceptNote": "content/concepts/L300/12-envelope-encryption-key-rotation.md",
+  "conceptSummary": "Envelope encryption encrypts each record with its own data key and wraps that key with a versioned KEK named in the header. Rotation adds a KEK version, a resumable rewrap job moves the small wrapped keys, and a version may be retired only when no record still names it.",
+  "inRealSystems": [
+   "OpenBao/Vault transit and cloud KMS services implement rotate + rewrap + minimum decryption version.",
+   "Database and object-store encryption at rest use per-object data keys wrapped by a managed KEK."
+  ],
+  "useWhen": "Use envelope encryption with versioned KEKs whenever data outlives a key or must survive an emergency rotation; avoid hand-rolled keyrings in production - use a KMS/transit engine.",
+  "next": "L300 #13 Certificate lifecycle: short-lived certs, renewal and revocation",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "seeAlso": [
+   "cryptography L200 #8 Key exchange and hybrid encryption (X25519 + HKDF + AEAD): the same wrap-a-file-key idea, per recipient instead of per KEK version.",
+   "cryptography L400 #17 Crypto agility: versioned envelopes, negotiation and dual signing: adds algorithm versions to this lesson's key versions."
+  ]
+ },
+ {
+  "id": "certificate-lifecycle",
+  "number": 13,
+  "level": "L300",
+  "title": "Certificate lifecycle: short-lived certs, renewal and revocation",
+  "phase": "PKI operations",
+  "category": "Certificates",
+  "description": "Short-lived (160 h) certificates on a simulated clock, an expiry metric, a CRL built and checked with cryptography, clock-skew tolerance, and a jittered renewal loop that survives a CA outage.",
+  "outcome": "You can show a service failing on an expired certificate from its metrics, harden it with renewal before expiry (jittered, retried, alerted), build and check a CRL, and explain OCSP and clock skew.",
+  "environment": "Python 3.12 (3.9+), cryptography==50.0.2, stdlib only otherwise (no new packages); reuses lesson 9's local_ca.py",
+  "estimatedTime": "50-70 minutes",
+  "overview": [
+   "A server that loads its certificate once works for 159 simulated hours, then every handshake fails. Read the JSON metric that predicted it, then add a renewal loop with jitter, retries and an alert."
+  ],
+  "prerequisites": [
+   "L200 lesson 9 (local CA, path validation)",
+   "L200 lesson 10 (TLS on localhost)"
+  ],
+  "glossary": [
+   {
+    "term": "Short-lived certificate",
+    "meaning": "Days, not years (Let's Encrypt's shortlived profile: 160 hours); renewal must be automatic."
+   },
+   {
+    "term": "CRL",
+    "meaning": "Signed list of revoked serial numbers with thisUpdate/nextUpdate (RFC 5280)."
+   },
+   {
+    "term": "OCSP",
+    "meaning": "Per-certificate status query: good / revoked / unknown (RFC 6960)."
+   },
+   {
+    "term": "Jitter",
+    "meaning": "A random offset inside the renewal window so a fleet does not renew at the same moment (RFC 9773 ARI clients pick a uniform random time)."
+   }
+  ],
+  "concepts": [
+   "Expiry is a scheduled outage unless renewal is a loop.",
+   "Renew at about 2/3 of the lifetime, with jitter and retries.",
+   "Monitor time-to-expiry, not just 'renewal ran'.",
+   "A CRL is only as good as its signature and freshness."
+  ],
+  "steps": [
+   {
+    "title": "Run the lab",
+    "detail": "python cert_lifecycle.py - simulates 8 days hour by hour for a server that never renews",
+    "expected": "static server: first failed handshake at hour 160, 32 failed hours of 192",
+    "ifNot": "Import error for local_ca: keep the labs/L200/09-local-ca folder next to labs/L300."
+   },
+   {
+    "title": "Diagnose from the metric lines",
+    "detail": "Read the JSON lines: cert_expires_in_hours falls 24 h per day; handshake turns FAIL when it goes negative.",
+    "expected": "{\"hour\": 144, \"metric\": \"cert_expires_in_hours\", \"value\": 15.0, \"handshake\": \"ok\", \"renewals\": 0} ... {\"hour\": 160, \"metric\": \"cert_expires_in_hours\", \"value\": -1.0, \"handshake\": \"FAIL\", \"renewals\": 0}",
+    "ifNot": "Only daily lines and the first failure are printed."
+   },
+   {
+    "title": "Build and check a CRL",
+    "detail": "make_crl() revokes the leaf (key_compromise); check_revocation verifies issuer, signature and nextUpdate, then the serial.",
+    "expected": "CRL check now:         revoked (key_compromise) / CRL check other cert:  good / CRL check 25 h later:  stale CRL",
+    "ifNot": "'bad CRL': the CRL was signed by another CA."
+   },
+   {
+    "title": "Clock skew",
+    "detail": "A client 5 minutes slow checks a cert with notBefore = issue time, then one backdated by 1 h.",
+    "expected": "skew 5 min, notBefore = issue time: False / skew 5 min, notBefore backdated 1 h: True",
+    "ifNot": "Both False: the client clock is more than 1 h behind."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 8 tests in 0.889s | OK",
+    "ifNot": "Read the failing assertion."
+   },
+   {
+    "title": "Build task (the hardening change)",
+    "detail": "Fix the fault in your copy, then run the failure-lab proof against it. Without the fix it fails on purpose.",
+    "expected": "Reference solution: Ran 3 tests in 0.237s | OK. Your unfixed file: FAILED (the 'fails before'); your fixed file: OK.",
+    "ifNot": "Read the failing assertion: it names the case your code still accepts.",
+    "mac": "BUILD_IMPL=cert_lifecycle python -m unittest -v test_build_task",
+    "windows": "$env:BUILD_IMPL=\"cert_lifecycle\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_IMPL"
+   },
+   {
+    "title": "Inspect with a tool (optional)",
+    "detail": "python tool_check.py writes tool_check/ca.pem, leaf.pem and crl.pem (public files only) for step CLI or KeyStore Explorer.",
+    "expected": "leaf validity hours: 160.0",
+    "ifNot": "Delete tool_check/ when done; tests do not need it.",
+    "mac": "step certificate inspect tool_check/leaf.pem",
+    "windows": "step certificate inspect tool_check\\leaf.pem"
+   }
+  ],
+  "codeLanguage": "python",
+  "code": "\"\"\"Certificate lifecycle on a simulated clock: short-lived certs, expiry metrics, CRL revocation, clock skew.\nReuses lesson 9's local CA. The Server below never renews (the fault); the build task adds a jittered renewal loop.\"\"\"\nimport datetime as dt\nimport json\nimport random\nimport sys\nfrom pathlib import Path\n\nsys.path.append(str(Path(__file__).resolve().parents[2] / \"L200\" / \"09-local-ca\"))  # after this folder: no name clashes\nimport local_ca  # noqa: E402\nfrom cryptography import x509  # noqa: E402\nfrom cryptography.hazmat.primitives import hashes  # noqa: E402\n\nSEED = 13\nHOUR = dt.timedelta(hours=1)\nLIFETIME = dt.timedelta(hours=160)  # short-lived: like Let's Encrypt's 160-hour \"shortlived\" profile\nT0 = local_ca.NOW + dt.timedelta(days=1)  # simulated clock starts after the root became valid\n\n\ndef issue(ca_key, ca, at, backdate=HOUR):\n    start = at - backdate  # backdated notBefore tolerates clients whose clock runs a little slow\n    return local_ca.issue_server(ca_key, ca, days=LIFETIME / dt.timedelta(days=1), not_before=start)[1]\n\n\ndef handshake_ok(cert, ca, client_time) -> bool:\n    try:\n        local_ca.verify(cert, [ca], \"localhost\", at=client_time)\n        return True\n    except x509.verification.VerificationError:\n        return False\n\n\nclass Server:\n    \"\"\"Loads one certificate at start-up. BUG on purpose: tick() never renews it.\"\"\"\n\n    def __init__(self, ca_key, ca, now, rng):\n        self.ca_key, self.ca, self.rng = ca_key, ca, rng\n        self.cert, self.renewals, self.alerts, self.log = issue(ca_key, ca, now), 0, 0, print\n\n    def tick(self, now, ca_up=True):\n        pass\n\n\ndef simulate(server_cls, days=10, seed=SEED, ca_down=range(0), log=print):\n    ca_key, ca = local_ca.make_root()\n    srv = server_cls(ca_key, ca, T0, random.Random(seed))  # seeded: renewal jitter is reproducible\n    srv.log = log\n    failures = []\n    for h in range(days * 24):\n        now = T0 + h * HOUR\n        srv.tick(now, ca_up=h not in ca_down)  # injected fault: the CA is unreachable during ca_down hours\n        left = (srv.cert.not_valid_after_utc - now) / HOUR\n        ok = handshake_ok(srv.cert, ca, now)\n        if not ok:\n            failures.append(h)\n        if h % 24 == 0 or (not ok and len(failures) == 1):  # metric line: what a dashboard would scrape\n            log(json.dumps({\"hour\": h, \"metric\": \"cert_expires_in_hours\", \"value\": round(left, 1),\n                            \"handshake\": \"ok\" if ok else \"FAIL\", \"renewals\": srv.renewals}))\n    return failures, srv\n\n\ndef make_crl(ca_key, ca, revoked_serials, now, valid_for=dt.timedelta(hours=24)):\n    b = (x509.CertificateRevocationListBuilder().issuer_name(ca.subject)\n         .last_update(now).next_update(now + valid_for))  # thisUpdate / nextUpdate (RFC 5280 s5.1.2.4-5)\n    for serial in revoked_serials:\n        b = b.add_revoked_certificate(\n            x509.RevokedCertificateBuilder().serial_number(serial).revocation_date(now)\n            .add_extension(x509.CRLReason(x509.ReasonFlags.key_compromise), critical=False).build())\n    return b.sign(ca_key, hashes.SHA256())\n\n\ndef check_revocation(cert, crl, ca, now) -> str:\n    if crl.issuer != ca.subject or not crl.is_signature_valid(ca.public_key()):\n        return \"bad CRL\"  # an unsigned or foreign CRL must not decide anything\n    if now > crl.next_update_utc:\n        return \"stale CRL\"  # fail closed or alert: an old CRL may miss recent revocations\n    entry = crl.get_revoked_certificate_by_serial_number(cert.serial_number)\n    return \"good\" if entry is None else f\"revoked ({entry.extensions.get_extension_for_class(x509.CRLReason).value.reason.name})\"\n\n\nif __name__ == \"__main__\":\n    failures, srv = simulate(Server, days=8)\n    print(f\"static server: first failed handshake at hour {failures[0]}, {len(failures)} failed hours of {8 * 24}\")\n\n    ca_key, ca = local_ca.make_root()\n    cert = issue(ca_key, ca, T0)\n    print(\"lifetime:\", (cert.not_valid_after_utc - cert.not_valid_before_utc) / HOUR, \"h, notBefore backdated 1 h\")\n    crl = make_crl(ca_key, ca, [cert.serial_number], T0)\n    print(\"CRL check now:        \", check_revocation(cert, crl, ca, T0))\n    print(\"CRL check other cert: \", check_revocation(issue(ca_key, ca, T0), crl, ca, T0))\n    print(\"CRL check 25 h later: \", check_revocation(cert, crl, ca, T0 + 25 * HOUR))\n\n    slow_client = T0 - dt.timedelta(minutes=5)  # client clock 5 minutes behind the issuer\n    print(\"skew 5 min, notBefore = issue time:\", handshake_ok(issue(ca_key, ca, T0, backdate=dt.timedelta(0)), ca, slow_client))\n    print(\"skew 5 min, notBefore backdated 1 h:\", handshake_ok(cert, ca, slow_client))\n",
+  "codeWalkthrough": [
+   {
+    "title": "T0 and LIFETIME",
+    "detail": "The simulated clock starts one day after the root became valid; leaves last 160 hours like Let's Encrypt's short-lived profile."
+   },
+   {
+    "title": "issue(..., backdate=HOUR)",
+    "detail": "Calls lesson 9's issue_server with notBefore one hour in the past, so slightly slow clients still accept a fresh certificate."
+   },
+   {
+    "title": "Server (the bug)",
+    "detail": "Issues once in __init__; tick(now, ca_up) does nothing, so the certificate is never replaced."
+   },
+   {
+    "title": "simulate()",
+    "detail": "Hour loop: tick, compute hours left, run a full path validation at that hour, and log the cert_expires_in_hours metric daily and at the first failure. ca_down injects a CA outage."
+   },
+   {
+    "title": "make_crl()",
+    "detail": "CertificateRevocationListBuilder with issuer, last_update (thisUpdate), next_update and one RevokedCertificate with a CRLReason extension, signed by the CA key."
+   },
+   {
+    "title": "check_revocation()",
+    "detail": "Rejects a CRL from another issuer or with a bad signature, treats one past next_update_utc as stale, then looks up the serial and returns the reason."
+   },
+   {
+    "title": "Fix (solution_renewal.py)",
+    "detail": "next_renewal() picks a uniform random time at 60-72 % of the lifetime; tick() renews when due, retries hourly while the CA is down, and logs cert_expiry_soon below 25 % left."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L300/13-cert-lifecycle/README.md",
+    "purpose": "observed output"
+   },
+   {
+    "path": "labs/L300/13-cert-lifecycle/cert_lifecycle.py",
+    "purpose": "main lab"
+   },
+   {
+    "path": "labs/L300/13-cert-lifecycle/solution_renewal.py",
+    "purpose": "build solution (jittered renewal loop + alert)"
+   },
+   {
+    "path": "labs/L300/13-cert-lifecycle/test_build_task.py",
+    "purpose": "failure-lab proof (fails before / passes after)"
+   },
+   {
+    "path": "labs/L300/13-cert-lifecycle/test_cert_lifecycle.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L300/13-cert-lifecycle/tool_check.py",
+    "purpose": "writes public PEM files for step CLI / KeyStore Explorer"
+   },
+   {
+    "path": "labs/L300/13-cert-lifecycle/try_it.py",
+    "purpose": "tryIt"
+   }
+  ],
+  "expectedResults": [
+   "static server: first failed handshake at hour 160, 32 failed hours of 192",
+   "CRL check now:         revoked (key_compromise)",
+   "CRL check other cert:  good",
+   "CRL check 25 h later:  stale CRL",
+   "skew 5 min, notBefore = issue time: False",
+   "skew 5 min, notBefore backdated 1 h: True"
+  ],
+  "testCases": [
+   {
+    "action": "simulate(Server, days=8)",
+    "expected": "first failure at hour 160, 32 failed hours"
+   },
+   {
+    "action": "CRL from another CA",
+    "expected": "'bad CRL'"
+   },
+   {
+    "action": "Renewing server, 21 days, CA down hours 90-124",
+    "expected": "0 failed handshakes, alert lines emitted"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Handshakes fail 'not yet valid' right after renewal",
+    "action": "Client clock behind: backdate notBefore and fix NTP."
+   },
+   {
+    "symptom": "Renewal ran but clients still get the old certificate",
+    "action": "The process did not reload: hot-swap the certificate in the server or restart after writing it."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "100 servers renew the same certificate: count distinct renewal hours without and with jitter.",
+    "predict": "1 without jitter, many with it.",
+    "expected": "1) distinct renewal hours for 100 servers: no jitter 1, jitter 20"
+   },
+   {
+    "task": "Check the 1 h backdated certificate with a client 5, 59 and 61 minutes slow.",
+    "predict": "Fails only beyond 60 minutes.",
+    "expected": "2) client clock  5 min slow: handshake ok | 2) client clock 59 min slow: handshake ok | 2) client clock 61 min slow: handshake FAIL (not yet valid)"
+   }
+  ],
+  "buildTask": {
+   "task": "Renewal loop: write next_renewal(cert, rng) (uniform random at 60-72 % of the lifetime) and Server.tick(now, ca_up) that renews when due, retries hourly while the CA is down, hot-swaps the certificate and logs a cert_expiry_soon alert line below 25 % lifetime.",
+   "hints": [
+    "Jitter = notBefore + LIFETIME * rng.uniform(0.60, 0.72).",
+    "On failed issuance set renew_at = now + 1 h and keep serving the still-valid certificate."
+   ],
+   "solution": "labs/L300/13-cert-lifecycle/solution_renewal.py",
+   "check": "test_build_task.py (3 tests: 21 days without an expired cert, CA outage alerts and recovers, jitter spreads 50 servers over >= 10 hours)"
+  },
+  "failureLab": {
+   "fault": "Server loads one 160 h certificate and never renews; the build-task test adds a seeded CA outage (hours 90-124). Jitter is seeded with random.Random(13).",
+   "symptom": "{\"hour\": 160, \"metric\": \"cert_expires_in_hours\", \"value\": -1.0, \"handshake\": \"FAIL\", \"renewals\": 0} -> static server: first failed handshake at hour 160, 32 failed hours of 192",
+   "fix": "Renewal loop with jittered schedule (60-72 % of lifetime), hourly retry while the CA is down, hot swap, and an alert metric below 25 % lifetime.",
+   "proof": "test_build_task.py: against cert_lifecycle.py Ran 3 tests in 0.163s | FAILED (failures=2, errors=1); against solution_renewal.py Ran 3 tests in 0.237s | OK"
+  },
+  "tradeOffs": [
+   {
+    "option": "Short-lived certs + automated renewal",
+    "gains": "A leaked key expires within days; revocation matters less",
+    "costs": "Renewal must be reliable and monitored; CA availability matters",
+    "chooseWhen": "Anything automated (ACME, internal CA, service mesh)"
+   },
+   {
+    "option": "Long-lived certs + CRL/OCSP",
+    "gains": "Fewer renewals",
+    "costs": "Revocation checking is slow, often soft-fail, and can leak browsing data (OCSP)",
+    "chooseWhen": "Devices that cannot renew often; offline systems with distributed CRLs"
+   },
+   {
+    "option": "Fixed renewal time vs jitter",
+    "gains": "Fixed: predictable",
+    "costs": "Fixed: a whole fleet hits the CA at once",
+    "chooseWhen": "Always add jitter (or follow ACME ARI windows) once there is more than one server"
+   }
+  ],
+  "equivalents": [
+   "Same idea with ACME clients (certbot, lego, Caddy): renew at ~1/3 lifetime left, prefer ARI (RFC 9773) windows",
+   "Same idea with step CLI: step ca renew --daemon renews before expiry (flags not checked)",
+   "Same idea in OpenSSL: openssl ca -gencrl builds a CRL; openssl ocsp queries a responder",
+   "Same idea in Kubernetes: cert-manager renews Certificates before expiry"
+  ],
+  "learningTools": [
+   {
+    "name": "step CLI (smallstep)",
+    "role": "CHECK",
+    "licence": "Apache-2.0 (OSI)",
+    "url": "https://github.com/smallstep/cli/releases",
+    "exercise": "After `python tool_check.py`: zsh `step certificate inspect tool_check/leaf.pem`; PowerShell `step certificate inspect tool_check\\leaf.pem`. Compare Validity (Not Before / Not After) and the serial.",
+    "expected": "Should match the lab's printed value: validity of exactly 160 hours with Not Before one hour before the simulated issue time, and the serial printed by tool_check.py. Subcommand flags were not checked against the docs (catalog note). Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's tool_check.py output.",
+    "mac": "brew install step",
+    "windows": "winget install -e --id Smallstep.step (manifest at 0.30.6) or step_windows_0.31.0_amd64.zip from https://github.com/smallstep/cli/releases"
+   },
+   {
+    "name": "KeyStore Explorer",
+    "role": "INSPECT",
+    "licence": "GPL-3.0 (OSI)",
+    "url": "https://github.com/kaikramer/keystore-explorer",
+    "exercise": "Open tool_check/leaf.pem (Examine File) and read the validity period, serial number and X.509 v3 extensions (SAN localhost/127.0.0.1, BasicConstraints CA=false).",
+    "expected": "Should match the lab's printed value: 160 h validity and the serial from tool_check.py; SAN localhost and 127.0.0.1. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's tool_check.py output.",
+    "mac": "brew install --cask keystore-explorer (or kse-570-arm64.dmg)",
+    "windows": "winget install -e --id KaiKramer.KeyStoreExplorer (or kse-570-setup.exe, bundled JRE)"
+   }
+  ],
+  "caution": "Learning code: the simulated CA keeps its key in memory and has no protection. tool_check.py writes public certificates and a CRL only. Do not treat a CRL's valid signature alone as trust; check issuer and freshness too.",
+  "checkpoint": "PASS if the static server fails at hour 160 in the metrics, the CRL check returns revoked/good/stale as shown, the 1 h backdate absorbs 5 minutes of skew, and test_build_task passes against your renewal loop.",
+  "checkYourself": [
+   {
+    "q": "Why renew at 60-72 % of the lifetime instead of at 95 %?",
+    "a": "To leave time for retries when the CA or network is down; the alert fires long before expiry."
+   },
+   {
+    "q": "Why jitter?",
+    "a": "Without it every server renews at the same moment and overloads or gets rate-limited by the CA."
+   },
+   {
+    "q": "A CRL verifies with the CA key but nextUpdate has passed. Trust it?",
+    "a": "No: it is stale. Fetch a new one; decide in advance whether stale means fail closed or alert."
+   }
+  ],
+  "sources": [
+   {
+    "title": "pyca/cryptography – X.509 reference (CRL builder, RevokedCertificateBuilder)",
+    "url": "https://cryptography.io/en/latest/x509/reference/"
+   },
+   {
+    "title": "RFC 5280 – X.509 PKI Certificate and CRL Profile",
+    "url": "https://www.rfc-editor.org/rfc/rfc5280.html"
+   },
+   {
+    "title": "RFC 6960 – OCSP",
+    "url": "https://www.rfc-editor.org/rfc/rfc6960"
+   },
+   {
+    "title": "RFC 9773 – ACME Renewal Information (ARI)",
+    "url": "https://www.rfc-editor.org/rfc/rfc9773"
+   },
+   {
+    "title": "Let's Encrypt – Integration Guide (renewal timing, randomization)",
+    "url": "https://letsencrypt.org/docs/integration-guide/"
+   },
+   {
+    "title": "CA/Browser Forum – Ballot SC-081v3 (validity reduction schedule)",
+    "url": "https://cabforum.org/2025/04/11/ballot-sc081v3-introduce-schedule-of-reducing-validity-and-data-reuse-periods/"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran cert_lifecycle.py, solution_renewal.py, try_it.py, tool_check.py and 8 unittests (5 lab + 3 build task) locally. test_build_task observed FAILED (failures=2, errors=1) against cert_lifecycle.py and OK against solution_renewal.py. tryIt expected = observed output.",
+   "pendingCi": [
+    "step CLI and KeyStore Explorer exercises (manual)",
+    "Run time on Windows/macOS runners (504 path validations per 21-day simulation)"
+   ]
+  },
+  "conceptNote": "content/concepts/L300/13-certificate-lifecycle.md",
+  "conceptSummary": "Short-lived certificates make expiry a certainty, so renewal must be a monitored loop: renew at about two-thirds of the lifetime with jitter and retries, alert on time-to-expiry, backdate notBefore for skew, and check revocation lists for signature and freshness.",
+  "inRealSystems": [
+   "Public TLS lifetimes fall to 200 days (2026-03-15), 100 days (2027-03-15) and 47 days (2029-03-15) under CA/B Forum ballot SC-081.",
+   "Let's Encrypt recommends ARI checks and renewing with a third of the lifetime left, at a randomized time."
+  ],
+  "useWhen": "Use short-lived certificates with automated, jittered, monitored renewal; avoid manual renewal and reminder-based processes entirely.",
+  "next": "L300 #14 Signing the software supply chain",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "seeAlso": [
+   "cryptography L200 #9 A local certificate authority: the CA, issue_server() and verify() this lesson reuses.",
+   "cryptography L200 #10 TLS on localhost: where an expired or not-yet-valid certificate shows up as a handshake error."
+  ]
+ },
+ {
+  "id": "signing-the-supply-chain",
+  "number": 14,
+  "level": "L300",
+  "title": "Signing the software supply chain",
+  "phase": "Supply chain",
+  "category": "Signing",
+  "description": "Sign a manifest of SHA-256 digests with Ed25519, verify it in an install step with pinned signer key IDs, rotate signers, and reject swapped or unlisted files.",
+  "outcome": "You can sign a release manifest, write an install step that checks every file against it (no unknown, missing or altered files) before copying, rotate signer keys, and use minisign or cosign for the same job.",
+  "environment": "Python 3.12 (3.9+), cryptography==50.0.2, stdlib only otherwise (no new packages); optional: minisign 0.12, cosign v3.1.4 (equivalents, pending CI)",
+  "estimatedTime": "45-60 minutes",
+  "overview": [
+   "A signed manifest protects many files with one signature, but only if the installer checks each file. Start from a working sign/install pair, let a seeded attacker swap and add files, then make the install step strict."
+  ],
+  "prerequisites": [
+   "L100 lesson 2 (SHA-256)",
+   "L200 lesson 7 (Ed25519, key IDs, keyring)"
+  ],
+  "glossary": [
+   {
+    "term": "Manifest",
+    "meaning": "List of artifact paths with SHA-256 and size; the only thing that is signed."
+   },
+   {
+    "term": "Pinned signer",
+    "meaning": "The installer trusts specific key IDs, not 'any valid signature'."
+   },
+   {
+    "term": "Allow-list install",
+    "meaning": "Install exactly the listed files; anything else is an attack."
+   }
+  ],
+  "concepts": [
+   "Sign the digests, verify the files.",
+   "Verify the exact signed bytes, then parse.",
+   "Reject unknown, missing and altered files before copying anything.",
+   "Signer rotation = keyring with a window."
+  ],
+  "steps": [
+   {
+    "title": "Run the lab",
+    "detail": "python release_sign.py - seeded build of 4 files, signed manifest, clean install",
+    "expected": "manifest lists 4 files; signer 4793bac0a5cc620b / clean release                installed 4 files",
+    "ifNot": "Signer kid differs per run (random key); the file count must be 4."
+   },
+   {
+    "title": "Pinned signer",
+    "detail": "The installer pins a different key ID.",
+    "expected": "installer pins another key   REJECTED: unknown signer 4793bac0a5cc620b",
+    "ifNot": "Accepted? The kid check must run before verify()."
+   },
+   {
+    "title": "Watch the seeded attack",
+    "detail": "tamper(seed=14) swaps README.txt and adds app/zz_extra.pth; manifest and signature unchanged.",
+    "expected": "fault: attacker swapped README.txt and added app/zz_extra.pth; manifest + signature unchanged / tampered release             installed 5 files",
+    "ifNot": "Another victim file? Keep SEED=14 and the seeded build."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v (minisign test skipped if minisign is missing)",
+    "expected": "Ran 9 tests in 0.159s | OK (skipped=1)",
+    "ifNot": "Read the failing assertion."
+   },
+   {
+    "title": "Build task (the hardening change)",
+    "detail": "Fix the fault in your copy, then run the failure-lab proof against it. Without the fix it fails on purpose.",
+    "expected": "Reference solution: Ran 4 tests in 0.107s | OK. Your unfixed file: FAILED (the 'fails before'); your fixed file: OK.",
+    "ifNot": "Read the failing assertion: it names the case your code still accepts.",
+    "mac": "BUILD_IMPL=release_sign python -m unittest -v test_build_task",
+    "windows": "$env:BUILD_IMPL=\"release_sign\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_IMPL"
+   },
+   {
+    "title": "Equivalent: minisign (optional)",
+    "detail": "Install minisign; test_cli_equivalents.py then signs and verifies MANIFEST.json and checks that an edited manifest fails.",
+    "expected": "test_sign_verify_and_detect_edit ... ok (pending CI: minisign not installed in the sandbox)",
+    "ifNot": "Skipped = minisign not on PATH.",
+    "mac": "brew install minisign && python -m unittest -v test_cli_equivalents",
+    "windows": "winget install -e --id jedisct1.minisign; python -m unittest -v test_cli_equivalents"
+   }
+  ],
+  "codeLanguage": "python",
+  "code": "\"\"\"Sign a release: a manifest of SHA-256 digests, signed once with Ed25519, checked by the install step.\nThe install step below verifies the signature but trusts the folder (the fault); the build task makes it strict.\"\"\"\nimport base64\nimport hashlib\nimport json\nimport random\nimport shutil\nimport tempfile\nfrom pathlib import Path\n\nfrom cryptography.exceptions import InvalidSignature\nfrom cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey\n\nSEED = 14\nMETA = {\"MANIFEST.json\", \"MANIFEST.json.sig\"}\n\n\nclass Rejected(Exception):\n    pass\n\n\ndef key_id(pub) -> str:\n    return hashlib.sha256(pub.public_bytes_raw()).hexdigest()[:16]  # same key ID as lesson 7's keyring\n\n\ndef digest(path: Path) -> str:\n    h = hashlib.sha256()\n    with path.open(\"rb\") as f:\n        for chunk in iter(lambda: f.read(65536), b\"\"):  # stream: artifacts can be large\n            h.update(chunk)\n    return h.hexdigest()\n\n\ndef build_artifacts(dist: Path, seed=SEED) -> None:\n    rng = random.Random(seed)  # seeded \"build\": same bytes every run\n    for rel in (\"app/__init__.py\", \"app/core.py\", \"app/data.json\", \"README.txt\"):\n        (dist / rel).parent.mkdir(parents=True, exist_ok=True)\n        (dist / rel).write_bytes(f\"# {rel} build {rng.randrange(10**6)}\\n\".encode() * 20)\n\n\ndef files_in(dist: Path) -> list:\n    return sorted(p.relative_to(dist).as_posix() for p in dist.rglob(\"*\") if p.is_file())  # '/' on Windows too\n\n\ndef sign_release(dist: Path, key: Ed25519PrivateKey, version: str) -> None:\n    files = {rel: {\"sha256\": digest(dist / rel), \"size\": (dist / rel).stat().st_size}\n             for rel in files_in(dist) if rel not in META}\n    raw = json.dumps({\"name\": \"demo-app\", \"version\": version, \"files\": files}, sort_keys=True, indent=1).encode()\n    (dist / \"MANIFEST.json\").write_bytes(raw)  # one signature covers every digest listed here\n    sig = {\"kid\": key_id(key.public_key()), \"sig\": base64.b64encode(key.sign(raw)).decode()}\n    (dist / \"MANIFEST.json.sig\").write_text(json.dumps(sig), encoding=\"utf-8\")\n\n\ndef verified_manifest(dist: Path, trusted: dict) -> dict:\n    raw = (dist / \"MANIFEST.json\").read_bytes()\n    sig = json.loads((dist / \"MANIFEST.json.sig\").read_text(encoding=\"utf-8\"))\n    if sig[\"kid\"] not in trusted:  # signer keyring: rotation = add the new kid, later remove the old one\n        raise Rejected(f\"unknown signer {sig['kid']}\")\n    try:\n        trusted[sig[\"kid\"]].verify(base64.b64decode(sig[\"sig\"]), raw)  # verify the exact bytes, then parse\n    except InvalidSignature:\n        raise Rejected(\"manifest signature invalid\") from None\n    return json.loads(raw)\n\n\ndef install(dist: Path, target: Path, trusted: dict) -> list:\n    \"\"\"BUG on purpose: checks the signature and that listed files exist, then copies the whole folder.\"\"\"\n    manifest = verified_manifest(dist, trusted)\n    for rel in manifest[\"files\"]:\n        if not (dist / rel).is_file():\n            raise Rejected(f\"missing {rel}\")\n    copied = [rel for rel in files_in(dist) if rel not in META]\n    for rel in copied:\n        (target / rel).parent.mkdir(parents=True, exist_ok=True)\n        shutil.copyfile(dist / rel, target / rel)\n    return copied\n\n\ndef tamper(dist: Path, seed=SEED) -> str:\n    rel = random.Random(seed).choice([r for r in files_in(dist) if r not in META])  # seeded: same victim each run\n    (dist / rel).write_bytes(b\"import os  # attacker payload\\n\")  # swap content, keep name and old manifest + sig\n    (dist / \"app\" / \"zz_extra.pth\").write_bytes(b\"import app.core  # auto-runs at start-up\\n\")  # unlisted file\n    return rel\n\n\ndef attempt(label, dist, trusted):\n    with tempfile.TemporaryDirectory() as tmp:\n        try:\n            print(f\"{label:<28} installed {len(install(dist, Path(tmp), trusted))} files\")\n        except Rejected as e:\n            print(f\"{label:<28} REJECTED: {e}\")\n\n\nif __name__ == \"__main__\":\n    signer = Ed25519PrivateKey.generate()  # CI release key; the private key never ships\n    trusted = {key_id(signer.public_key()): signer.public_key()}  # what the installer pins\n    with tempfile.TemporaryDirectory() as tmp:\n        dist = Path(tmp)\n        build_artifacts(dist)\n        sign_release(dist, signer, \"1.0.0\")\n        print(\"manifest lists\", len(json.loads((dist / \"MANIFEST.json\").read_bytes())[\"files\"]), \"files; signer\", key_id(signer.public_key()))\n        attempt(\"clean release\", dist, trusted)\n        stranger = Ed25519PrivateKey.generate().public_key()\n        attempt(\"installer pins another key\", dist, {key_id(stranger): stranger})\n        print(\"fault: attacker swapped\", tamper(dist), \"and added app/zz_extra.pth; manifest + signature unchanged\")\n        attempt(\"tampered release\", dist, trusted)\n",
+  "codeWalkthrough": [
+   {
+    "title": "key_id / digest",
+    "detail": "Key ID = first 16 hex of SHA-256 of the raw public key (as in lesson 7). digest() streams the file in 64 KiB chunks."
+   },
+   {
+    "title": "build_artifacts / files_in",
+    "detail": "Seeded build: identical bytes on every machine. files_in() returns POSIX paths (app/core.py) on Windows too, so manifests match across OSes."
+   },
+   {
+    "title": "sign_release",
+    "detail": "Writes MANIFEST.json (sorted keys) with sha256 + size per file and a .sig file {kid, sig} with an Ed25519 signature over those exact bytes."
+   },
+   {
+    "title": "verified_manifest",
+    "detail": "Unknown kid -> Rejected before any crypto; then verify the raw bytes and only afterwards json.loads them."
+   },
+   {
+    "title": "install (the bug)",
+    "detail": "After the signature check it only confirms listed files exist, then copies EVERY file in the folder - swapped content and extra files included."
+   },
+   {
+    "title": "tamper",
+    "detail": "Seeded attacker: random.Random(14) chooses the listed file to overwrite and adds an unlisted .pth file that Python would run at start-up."
+   },
+   {
+    "title": "Fix (solution_strict.py)",
+    "detail": "Set comparison both ways (unknown / missing), then size + hmac.compare_digest on every digest, then copy only listed files - nothing is copied unless everything passed."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L300/14-supply-chain-signing/README.md",
+    "purpose": "observed output"
+   },
+   {
+    "path": "labs/L300/14-supply-chain-signing/release_sign.py",
+    "purpose": "main lab"
+   },
+   {
+    "path": "labs/L300/14-supply-chain-signing/solution_strict.py",
+    "purpose": "build solution (strict install)"
+   },
+   {
+    "path": "labs/L300/14-supply-chain-signing/test_build_task.py",
+    "purpose": "failure-lab proof (fails before / passes after)"
+   },
+   {
+    "path": "labs/L300/14-supply-chain-signing/test_cli_equivalents.py",
+    "purpose": "minisign equivalence test (pending CI)"
+   },
+   {
+    "path": "labs/L300/14-supply-chain-signing/test_release_sign.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L300/14-supply-chain-signing/tool_check.py",
+    "purpose": "SHA-256 of one artifact for the CyberChef check; --out DIR writes the signed demo release for the minisign exercise"
+   },
+   {
+    "path": "labs/L300/14-supply-chain-signing/try_it.py",
+    "purpose": "tryIt"
+   }
+  ],
+  "expectedResults": [
+   "clean release                installed 4 files",
+   "installer pins another key   REJECTED: unknown signer 4793bac0a5cc620b",
+   "fault: attacker swapped README.txt and added app/zz_extra.pth; manifest + signature unchanged",
+   "tampered release             installed 5 files"
+  ],
+  "testCases": [
+   {
+    "action": "Edit '1.0.0' to '1.0.1' in MANIFEST.json",
+    "expected": "Rejected: manifest signature invalid"
+   },
+   {
+    "action": "Swap app/core.py content",
+    "expected": "Strict install: Rejected digest mismatch: app/core.py; nothing copied"
+   },
+   {
+    "action": "Add an unlisted file",
+    "expected": "Strict install: Rejected unknown file(s)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Digests differ only on Windows",
+    "action": "Text-mode reads/writes changed line endings: use binary mode for artifacts."
+   },
+   {
+    "symptom": "manifest signature invalid after 'pretty-printing' the manifest",
+    "action": "Verify the exact bytes that were signed; never re-serialize before verifying."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Trust old + new signer kids, then remove the old kid; install a 1.0.0 (old key) and 2.0.0 (new key) release.",
+    "predict": "Both during the window; only 2.0.0 afterwards.",
+    "expected": "1) both keys trusted  v1.0.0: 4 files                                  v2.0.0: 4 files | 1) old key removed    v1.0.0: REJECTED (unknown signer 34750f98bd59fcfc) v2.0.0: 4 files"
+   },
+   {
+    "task": "Change one hex digit of a digest inside MANIFEST.json.",
+    "predict": "Signature error, not a digest error.",
+    "expected": "2) one hex digit changed in MANIFEST.json: manifest signature invalid"
+   }
+  ],
+  "buildTask": {
+   "task": "Strict install: verify the pinned signature, reject unknown and missing files, check every size and SHA-256 digest before copying anything.",
+   "hints": [
+    "Compare set(manifest['files']) with the files on disk in both directions.",
+    "Use hmac.compare_digest for digest strings; copy only after all checks passed."
+   ],
+   "solution": "labs/L300/14-supply-chain-signing/solution_strict.py",
+   "check": "test_build_task.py (4 tests: clean install, swapped file rejected with nothing copied, unknown file rejected, seeded attack rejected)"
+  },
+  "failureLab": {
+   "fault": "tamper(dist, seed=14): swap the content of one listed file (README.txt) and add app/zz_extra.pth, keeping the old manifest and its valid signature.",
+   "symptom": "tampered release             installed 5 files",
+   "fix": "Strict install: allow-list the manifest (reject unknown/missing files) and verify every digest + size before copying.",
+   "proof": "test_build_task.py: against release_sign.py Ran 4 tests in 0.152s | FAILED (failures=3); against solution_strict.py Ran 4 tests in 0.107s | OK"
+  },
+  "tradeOffs": [
+   {
+    "option": "Signed manifest of digests (this lab, TUF targets, SHA256SUMS + signature)",
+    "gains": "One signature for many files; cheap to verify",
+    "costs": "Installer must check every file and the file set",
+    "chooseWhen": "Releases with many artifacts"
+   },
+   {
+    "option": "Signature per artifact (minisign / cosign sign-blob)",
+    "gains": "Each file verifiable on its own",
+    "costs": "Unsigned extra files are not noticed unless the set is checked too",
+    "chooseWhen": "Single-file downloads"
+   },
+   {
+    "option": "Keyless signing with a transparency log (Sigstore)",
+    "gains": "No long-lived private key; public audit trail of signatures",
+    "costs": "Depends on OIDC identity and online services; verify identity + issuer, not just 'signed'",
+    "chooseWhen": "Open-source CI releases"
+   }
+  ],
+  "equivalents": [
+   "Same idea with minisign: minisign -S -s key -m MANIFEST.json / minisign -V -p pub -m MANIFEST.json (test_cli_equivalents.py, pending CI)",
+   "Same idea with Sigstore cosign: cosign sign-blob --key cosign.key --bundle MANIFEST.bundle.json MANIFEST.json; cosign verify-blob with the bundle",
+   "Same idea in TUF: targets metadata lists hashes and lengths; root rotation needs a threshold of old and new keys",
+   "Same idea in Debian/apt: a signed Release file lists digests of index files, which list digests of packages"
+  ],
+  "learningTools": [
+   {
+    "name": "CyberChef",
+    "role": "CHECK",
+    "licence": "Apache-2.0 (OSI)",
+    "url": "https://github.com/gchq/CyberChef",
+    "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+    "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+    "exercise": "Run `python tool_check.py`. In CyberChef, build Input = the printed first line repeated 20 times (each line ends with a newline) and run SHA2 (Size 256).",
+    "expected": "Should match the lab's printed value: b9dc24f7d532058c476aec857dac72ac30b147cd4fe6acd171f31a435d6e516c (540 bytes). A different hash usually means a missing final newline or CRLF line endings. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's tool_check.py output."
+   },
+   {
+    "name": "minisign",
+    "role": "CHECK",
+    "licence": "ISC (OSI)",
+    "url": "https://github.com/jedisct1/minisign/releases",
+    "mac": "brew install minisign",
+    "windows": "Win64 zip from the GitHub releases (precompiled Win64 binaries since 0.10)",
+    "exercise": "Run `python tool_check.py --out release_demo`, then in release_demo: minisign -G -W -p ms.pub -s ms.key; minisign -S -s ms.key -m MANIFEST.json; minisign -V -p ms.pub -m MANIFEST.json. Change one hex digit of the app/core.py digest (b9dc24f7…516c) in MANIFEST.json and verify again.",
+    "expected": "Should match the lab's verdict: the first verify passes, the second fails - the same as tryIt 2, 'one hex digit changed in MANIFEST.json: manifest signature invalid'. tool_check.py prints 'wrote 6 files to release_demo | manifest: release_demo/MANIFEST.json'. Demo key only; delete it afterwards. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab README."
+   }
+  ],
+  "caution": "Learning code: keep release signing keys in CI secrets, an HSM or a KMS, never in the build image or repository. A valid signature says who published a release, not that it is safe.",
+  "checkpoint": "PASS if the naive installer installs the tampered release (5 files), the strict one rejects it before copying anything, an unknown signer is refused, and test_build_task passes against your install().",
+  "checkYourself": [
+   {
+    "q": "The manifest signature is valid. Why can the release still be malicious?",
+    "a": "Files outside the manifest, or files whose digest no longer matches, are not covered unless the installer checks them."
+   },
+   {
+    "q": "Why verify the raw manifest bytes before json.loads?",
+    "a": "Re-serializing can change bytes (order, whitespace) and either break or bypass verification."
+   },
+   {
+    "q": "How do you rotate a signer without breaking installs?",
+    "a": "Ship the new kid to installers first, sign with the new key, then remove the old kid after the window."
+   }
+  ],
+  "sources": [
+   {
+    "title": "The Update Framework (TUF) specification 1.0.37",
+    "url": "https://theupdateframework.github.io/specification/latest/"
+   },
+   {
+    "title": "Sigstore – Signing blobs with cosign",
+    "url": "https://docs.sigstore.dev/cosign/signing/signing_with_blobs/"
+   },
+   {
+    "title": "minisign – releases (0.12, prehash default since 0.10)",
+    "url": "https://github.com/jedisct1/minisign/releases"
+   },
+   {
+    "title": "SLSA – Provenance (background)",
+    "url": "https://slsa.dev/spec/v1.1/provenance"
+   },
+   {
+    "title": "pyca/cryptography – Ed25519 signing",
+    "url": "https://cryptography.io/en/latest/hazmat/primitives/asymmetric/ed25519/"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran release_sign.py, solution_strict.py, try_it.py, tool_check.py (also with --out) and 9 unittests (4 lab + 4 build task + 1 minisign test, skipped) locally. test_build_task observed FAILED (failures=3) against release_sign.py and OK against solution_strict.py. tryIt expected = observed output (demo keys fixed so key IDs repeat).",
+   "pendingCi": [
+    "test_cli_equivalents.py (minisign; installed by Homebrew on the macOS CI runner)",
+    "cosign sign-blob / verify-blob commands (documented only; not executed)",
+    "CyberChef and minisign learning-tool exercises (manual)"
+   ]
+  },
+  "conceptNote": "content/concepts/L300/14-signing-the-supply-chain.md",
+  "conceptSummary": "Signing a manifest of digests lets one signature cover a whole release, but the install step must pin signer key IDs, verify the exact bytes, and check that the set of files and every digest match before copying anything.",
+  "inRealSystems": [
+   "TUF and Sigstore secure package and container distribution; TUF targets metadata lists hashes and lengths of files.",
+   "Linux distributions sign Release/repomd files that list digests of everything below them."
+  ],
+  "useWhen": "Use a signed digest manifest plus a strict, allow-listing installer for multi-file releases; avoid 'signature valid, install the folder' logic.",
+  "next": "L300 #15 Misuse you can test: Wycheproof vectors, timing and nonce reuse",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "seeAlso": [
+   "cryptography L200 #7 Digital signatures with Ed25519: detached signatures, key IDs and the keyring reused here.",
+   "cryptography L400 #19 Keys in hardware-style storage: PKCS#11, non-exportable keys and key ceremonies: moves the release-signing key into a token with non-exportable keys."
+  ]
+ },
+ {
+  "id": "misuse-you-can-test",
+  "number": 15,
+  "level": "L300",
+  "title": "Misuse you can test: Wycheproof vectors, timing and nonce reuse",
+  "phase": "Testing crypto code",
+  "category": "Testing",
+  "description": "Run Project Wycheproof-format vectors against your own AEAD and signature wrappers, measure an early-exit comparison against hmac.compare_digest, and detect nonce reuse across restarts.",
+  "outcome": "You can vendor known-answer vectors with their licence, write a harness that finds wrapper bugs (truncated tags, non-canonical signatures), demonstrate a timing leak statistically and honestly, and audit stored ciphertexts for nonce reuse.",
+  "environment": "Python 3.12 (3.9+), cryptography==50.0.2, stdlib only otherwise (no new packages); vendored Wycheproof subset (Apache-2.0; copied from downstream copies, provenance in vectors/NOTICE.md) in vectors/",
+  "estimatedTime": "50-70 minutes",
+  "overview": [
+   "The library is fine; your wrapper is the risk. Run vendored Wycheproof vectors plus lab-derived attack vectors through 'convenient' wrappers, watch four attacks pass, then make the wrappers strict."
+  ],
+  "prerequisites": [
+   "L100 lesson 4 (AEAD, nonce reuse)",
+   "L200 lesson 7 (Ed25519)",
+   "L200 lesson 11 (constant-time compare)"
+  ],
+  "glossary": [
+   {
+    "term": "Wycheproof",
+    "meaning": "C2SP project of JSON test vectors for known crypto attacks; tests have result valid / invalid / acceptable and flags."
+   },
+   {
+    "term": "Truncated tag",
+    "meaning": "An AEAD tag shorter than the API promises; 4 bytes means 1-in-2^32 forgery odds per try."
+   },
+   {
+    "term": "Non-canonical signature",
+    "meaning": "A second byte string that verifies (trailing bytes, S >= L): breaks replay caches and IDs."
+   },
+   {
+    "term": "Timing leak",
+    "meaning": "Run time depends on secret data, e.g. an early exit at the first differing byte."
+   }
+  ],
+  "concepts": [
+   "Test your wrapper, not only the library.",
+   "Exact sizes and canonical encodings: reject everything else.",
+   "Timing evidence is statistical: seed, interleave, use medians.",
+   "Nonce reuse across restarts needs an offline scan."
+  ],
+  "steps": [
+   {
+    "title": "Run the harness",
+    "detail": "python wycheproof_check.py - 21 vectors through the lenient wrappers",
+    "expected": "aes_gcm_subset.json    5/5 pass / derived_vectors.json   1/5 pass / ed25519_subset.json    11/11 pass",
+    "ifNot": "FileNotFoundError: run from the lab folder so vectors/ is found (the code uses a path relative to the file)."
+   },
+   {
+    "title": "Read the vector format",
+    "detail": "Open vectors/aes_gcm_subset.json and ed25519_subset.json: testGroups -> tests with tcId, comment, flags, inputs and result. vectors/NOTICE.md says where each came from; derived_vectors.json is marked as not Wycheproof. Provenance is exact but not yet upstream: the 16 cases were copied from downstream copies (pycryptodome 3.7.2, BoringSSL), not from C2SP; NOTICE.md has the table.",
+    "expected": "AeadTest group (ivSize 96, keySize 128, tagSize 128); EddsaVerify group with publicKey.pk 7d4d0e7f...49fa",
+    "ifNot": "Full files: git submodule add https://github.com/C2SP/wycheproof.git and point load() at testvectors_v1/."
+   },
+   {
+    "title": "Build task (the hardening change)",
+    "detail": "Fix the fault in your copy, then run the failure-lab proof against it. Without the fix it fails on purpose.",
+    "expected": "Reference solution: Ran 3 tests in 0.095s | OK. Your unfixed file: FAILED (the 'fails before'); your fixed file: OK.",
+    "ifNot": "Read the failing assertion: it names the case your code still accepts.",
+    "mac": "BUILD_IMPL=wycheproof_check python -m unittest -v test_build_task",
+    "windows": "$env:BUILD_IMPL=\"wycheproof_check\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_IMPL"
+   },
+   {
+    "title": "Timing demo (statistical)",
+    "detail": "python timing_demo.py - guess wrong at byte 0 vs byte 31, 7 interleaved rounds x 2,000 calls, medians",
+    "expected": "naive loop           wrong at byte 0:    398 ns | wrong at byte 31:   1023 ns | ratio 2.57 / hmac.compare_digest  wrong at byte 0:    119 ns | wrong at byte 31:    119 ns | ratio 1.00",
+    "ifNot": "Ratios vary with CPU and load (Apple silicon vs x64, Windows timer). Look for 'well above 1' vs 'about 1', not exact ns."
+   },
+   {
+    "title": "Nonce-reuse detection",
+    "detail": "python nonce_guard.py - in-process tripwire, then two simulated restarts with a seeded PRNG nonce source and an offline scan",
+    "expected": "buggy seeded nonces  2 restarts x 2 messages: tripwire silent, offline scan finds 2 reused [[0, 2], [1, 3]] / os.urandom nonces    2 restarts x 2 messages: tripwire silent, offline scan finds 0 reused [] / attacker knows run-1 message 0, recovers run-2 message 0: b'pay mal 9999'",
+    "ifNot": "Scan finds 0 with buggy nonces? The generator must be re-created per restart."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 12 tests in 0.184s | OK",
+    "ifNot": "A timing assertion failed on a busy machine: rerun; it only asserts ratio > 1.3 for the naive loop."
+   },
+   {
+    "title": "Check the provenance against upstream",
+    "detail": "python upstream_diff.py prints the SHA-256 of both subsets; with --upstream <checkout>/testvectors_v1 it finds every vendored case by content (inputs + result) and exits 1 on a miss. CI job wycheproof-upstream clones C2SP/wycheproof main and prints the commit.",
+    "expected": "Offline: vendored aes_gcm_subset.json  sha256 08ce9236…0cd8 / vendored ed25519_subset.json  sha256 b1dc8bbc…5632 / offline: no upstream folder given, nothing compared. With a checkout: '5/5 vendored cases found verbatim' and '11/11 ...' (not run here).",
+    "ifNot": "MISSING upstream: the copy differs from upstream - re-vendor the case from the upstream file and record the commit; never edit an expected result by hand.",
+    "mac": "git clone --depth 1 https://github.com/C2SP/wycheproof.git ../wycheproof-upstream && python upstream_diff.py --upstream ../wycheproof-upstream/testvectors_v1 --ref \"$(git -C ../wycheproof-upstream log -1 --format='%H %cs')\"",
+    "windows": "git clone --depth 1 https://github.com/C2SP/wycheproof.git ..\\wycheproof-upstream; python upstream_diff.py --upstream ..\\wycheproof-upstream\\testvectors_v1 --ref \"$(git -C ..\\wycheproof-upstream log -1 --format='%H %cs')\""
+   }
+  ],
+  "codeLanguage": "python",
+  "code": "\"\"\"Run Project Wycheproof-format vectors against OUR wrappers (the code we wrote around pyca/cryptography).\nThe library already passes; wrapper conveniences are where bugs hide. The two wrappers below are lenient on purpose.\"\"\"\nimport json\nfrom pathlib import Path\n\nfrom cryptography.exceptions import InvalidSignature, InvalidTag\nfrom cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey\nfrom cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes\n\nVECTORS = Path(__file__).resolve().parent / \"vectors\"\nL = 2**252 + 27742317777372353535851937790883648493  # Ed25519 group order (RFC 8032)\n\n\n# ---- wrappers under test: \"convenient\", i.e. lenient (the fault) ----\ndef aead_open(key: bytes, iv: bytes, ct: bytes, tag: bytes, aad: bytes) -> bytes:\n    \"\"\"AES-GCM open. BUG: accepts whatever tag length arrives (>= 4 bytes) instead of exactly 16.\"\"\"\n    dec = Cipher(algorithms.AES(key), modes.GCM(iv, tag, min_tag_length=max(4, len(tag)))).decryptor()\n    dec.authenticate_additional_data(aad)\n    return dec.update(ct) + dec.finalize()  # raises InvalidTag if the (possibly short) tag is wrong\n\n\ndef sig_verify(pk: bytes, msg: bytes, sig: bytes) -> bool:\n    \"\"\"Ed25519 verify. BUG: ignores bytes after 64 and 'fixes' S >= L with a compatibility shim.\"\"\"\n    r, s = sig[:32], int.from_bytes(sig[32:64], \"little\") % L  # non-canonical S silently reduced\n    try:\n        Ed25519PublicKey.from_public_bytes(pk).verify(r + s.to_bytes(32, \"little\"), msg)\n        return True\n    except InvalidSignature:\n        return False\n\n\n# ---- harness: the same loop works for any Wycheproof file of these types ----\ndef load(name: str) -> dict:\n    return json.loads((VECTORS / name).read_text(encoding=\"utf-8\"))\n\n\ndef aead_cases():\n    for g in load(\"aes_gcm_subset.json\")[\"testGroups\"]:\n        for t in g[\"tests\"]:\n            yield \"aes_gcm_subset.json\", t\n    for t in load(\"derived_vectors.json\")[\"aead\"]:\n        yield \"derived_vectors.json\", t\n\n\ndef eddsa_cases():\n    for g in load(\"ed25519_subset.json\")[\"testGroups\"]:\n        for t in g[\"tests\"]:\n            yield \"ed25519_subset.json\", {**t, \"pk\": g[\"publicKey\"][\"pk\"]}\n    pk = load(\"ed25519_subset.json\")[\"testGroups\"][0][\"publicKey\"][\"pk\"]  # derived from tcId 1 of that group\n    for t in load(\"derived_vectors.json\")[\"eddsa\"]:\n        yield \"derived_vectors.json\", {**t, \"pk\": pk}\n\n\ndef run(aead_open=aead_open, sig_verify=sig_verify) -> list:\n    \"\"\"Returns one row per test: (file, tcId, flags, expected, got). 'acceptable' would pass either way.\"\"\"\n    rows = []\n    for f, t in aead_cases():\n        h = {k: bytes.fromhex(t[k]) for k in (\"key\", \"iv\", \"aad\", \"msg\", \"ct\", \"tag\")}\n        try:\n            got = \"valid\" if aead_open(h[\"key\"], h[\"iv\"], h[\"ct\"], h[\"tag\"], h[\"aad\"]) == h[\"msg\"] else \"wrong plaintext\"\n        except (InvalidTag, ValueError):  # a strict wrapper may refuse bad sizes with ValueError\n            got = \"invalid\"\n        rows.append((f, t[\"tcId\"], t[\"flags\"], t[\"result\"], got))\n    for f, t in eddsa_cases():\n        ok = sig_verify(bytes.fromhex(t[\"pk\"]), bytes.fromhex(t[\"msg\"]), bytes.fromhex(t[\"sig\"]))\n        rows.append((f, t[\"tcId\"], t[\"flags\"], t[\"result\"], \"valid\" if ok else \"invalid\"))\n    return rows\n\n\ndef failures(rows) -> list:\n    return [r for r in rows if r[3] != \"acceptable\" and r[3] != r[4]]\n\n\ndef report(rows) -> None:\n    for f in dict.fromkeys(r[0] for r in rows):\n        mine = [r for r in rows if r[0] == f]\n        print(f\"{f:<22} {len(mine) - len(failures(mine))}/{len(mine)} pass\")\n    for f, tc, flags, want, got in failures(rows):\n        print(f\"  FAIL tcId {tc} {flags}: expected {want}, wrapper said {got}\")\n\n\nif __name__ == \"__main__\":\n    report(run())\n",
+  "codeWalkthrough": [
+   {
+    "title": "aead_open (the bug)",
+    "detail": "Low-level Cipher(AES, GCM(iv, tag, min_tag_length=max(4, len(tag)))): the tag length follows the input, so a 4- or 8-byte prefix of the real tag is accepted."
+   },
+   {
+    "title": "sig_verify (the bug)",
+    "detail": "Ignores bytes after 64 and reduces S mod L as a 'compatibility shim', so an appended byte or S + L verifies. The library itself rejects S + L; the shim re-opens it."
+   },
+   {
+    "title": "load / aead_cases / eddsa_cases",
+    "detail": "Read the vendored JSON with Wycheproof field names; the same loops work on full upstream files of these types."
+   },
+   {
+    "title": "run()",
+    "detail": "Hex-decodes inputs, calls the wrapper, maps any InvalidTag/ValueError to 'invalid', and records (file, tcId, flags, expected, got)."
+   },
+   {
+    "title": "failures / report",
+    "detail": "A test fails when got != result (acceptable passes either way); report prints pass counts per file and each failing tcId with its flags."
+   },
+   {
+    "title": "Fix (solution_strict.py)",
+    "detail": "Exactly 16-byte tag and 12-byte IV through the high-level AESGCM API; exactly 64 signature bytes and S < L before verify."
+   },
+   {
+    "title": "Helpers",
+    "detail": "timing_demo.py (seeded secret, interleaved medians, ratio) and nonce_guard.py (GuardedAESGCM tripwire + scan_for_reuse over stored nonce||ct blobs)."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L300/15-testable-misuse/README.md",
+    "purpose": "observed output"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/nonce_guard.py",
+    "purpose": "nonce-reuse tripwire + offline scan"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/solution_strict.py",
+    "purpose": "build solution (strict wrappers)"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/test_build_task.py",
+    "purpose": "failure-lab proof (fails before / passes after)"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/test_upstream_diff.py",
+    "purpose": "offline test of the provenance checker (fake upstream folder)"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/test_wycheproof_check.py",
+    "purpose": "tests (harness, timing, nonce)"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/timing_demo.py",
+    "purpose": "timing leak demo"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/tool_check.py",
+    "purpose": "values for the CyberChef check"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/try_it.py",
+    "purpose": "tryIt"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/upstream_diff.py",
+    "purpose": "provenance check: finds every vendored case by content in an upstream testvectors_v1/ checkout (CI job wycheproof-upstream)"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/vectors/LICENSE-APACHE-2.0.txt",
+    "purpose": "Apache License 2.0 text"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/vectors/NOTICE.md",
+    "purpose": "provenance + licence notice"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/vectors/aes_gcm_subset.json",
+    "purpose": "vendored Wycheproof AES-GCM tests (Apache-2.0)"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/vectors/derived_vectors.json",
+    "purpose": "lab-derived attack vectors (not Wycheproof)"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/vectors/ed25519_subset.json",
+    "purpose": "vendored Wycheproof Ed25519 tests (Apache-2.0)"
+   },
+   {
+    "path": "labs/L300/15-testable-misuse/wycheproof_check.py",
+    "purpose": "main lab (harness + lenient wrappers)"
+   }
+  ],
+  "expectedResults": [
+   "aes_gcm_subset.json    5/5 pass",
+   "derived_vectors.json   1/5 pass",
+   "ed25519_subset.json    11/11 pass",
+   "  FAIL tcId 9001 ['TruncatedTag']: expected invalid, wrapper said valid",
+   "  FAIL tcId 9002 ['TruncatedTag']: expected invalid, wrapper said valid",
+   "  FAIL tcId 9101 ['TrailingBytes']: expected invalid, wrapper said valid",
+   "  FAIL tcId 9102 ['NonCanonicalS']: expected invalid, wrapper said valid"
+  ],
+  "testCases": [
+   {
+    "action": "Wycheproof subsets through the lenient wrappers",
+    "expected": "16/16 pass (the library is correct)"
+   },
+   {
+    "action": "Derived vectors through the lenient wrappers",
+    "expected": "tcIds 9001, 9002, 9101, 9102 fail"
+   },
+   {
+    "action": "Seeded PRNG nonces over two restarts",
+    "expected": "offline scan finds 2 reused nonces; os.urandom finds 0"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "ValueError: min_tag_length must be >= 4",
+    "action": "pyca/cryptography refuses tags under 4 bytes even in the low-level API."
+   },
+   {
+    "symptom": "Timing ratio about 1 for the naive loop",
+    "action": "Too few repetitions or a very noisy machine; raise reps/rounds. Never treat a small ratio as proof of safety."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Feed the lenient AES-GCM wrapper a tag cut to 4 bytes.",
+    "predict": "Accepted; forgery odds 1 in 2^32 per try.",
+    "expected": "1) 4-byte tag accepted by lenient wrapper: True | forgery odds per try: 1 in 4,294,967,296 (16-byte tag: 1 in 2**128)"
+   },
+   {
+    "task": "Time the naive loop for guesses wrong at byte 0, 8, 16 and 31.",
+    "predict": "Time grows with the matching prefix.",
+    "expected": "2) naive loop, wrong at byte 0/8/16/31: 567 ns < 730 ns < 897 ns < 1187 ns | increasing: True (ns values vary per run and machine)"
+   }
+  ],
+  "buildTask": {
+   "task": "Strict wrappers: aead_open demands a 16-byte tag and 12-byte IV and uses AESGCM; sig_verify demands exactly 64 bytes and S < L before verifying.",
+   "hints": [
+    "Check sizes before calling the library; raise ValueError or return False.",
+    "int.from_bytes(sig[32:], 'little') >= L detects a non-canonical S."
+   ],
+   "solution": "labs/L300/15-testable-misuse/solution_strict.py",
+   "check": "test_build_task.py (3 tests: all 21 vectors pass, truncated tags rejected, non-canonical signatures rejected)"
+  },
+  "failureLab": {
+   "fault": "Lenient wrappers (tag length follows the input; signature trailing bytes ignored and S reduced mod L), exercised by deterministic derived vectors (tcIds 9001-9003, 9101-9102).",
+   "symptom": "derived_vectors.json   1/5 pass /   FAIL tcId 9001 ['TruncatedTag']: expected invalid, wrapper said valid /   FAIL tcId 9002 ['TruncatedTag']: expected invalid, wrapper said valid /   FAIL tcId 9101 ['TrailingBytes']: expected invalid, wrapper said valid /   FAIL tcId 9102 ['NonCanonicalS']: expected invalid, wrapper said valid",
+   "fix": "Strict checks: exact tag/IV/signature sizes, canonical S, high-level AESGCM API.",
+   "proof": "test_build_task.py: against wycheproof_check.py Ran 3 tests in 0.157s | FAILED (failures=3); against solution_strict.py Ran 3 tests in 0.095s | OK"
+  },
+  "tradeOffs": [
+   {
+    "option": "Vendor a small, licensed subset",
+    "gains": "Fast, offline, reviewable tests in the repo",
+    "costs": "Misses new upstream vectors",
+    "chooseWhen": "Unit tests for your own wrappers"
+   },
+   {
+    "option": "Git submodule of the full Wycheproof repo",
+    "gains": "All current vectors and schemas",
+    "costs": "Larger checkout; schema changes can break the harness",
+    "chooseWhen": "CI jobs for libraries or crypto-heavy services"
+   },
+   {
+    "option": "Timing tests in CI",
+    "gains": "Catch gross leaks like early-exit compares",
+    "costs": "Noise makes them flaky; absence of a signal proves nothing",
+    "chooseWhen": "Only for large structural effects, with generous thresholds; prefer code review + compare_digest"
+   }
+  ],
+  "equivalents": [
+   "Same idea in Go: the Wycheproof repo exposes an embed.FS (testvectors.go) for Go test harnesses",
+   "Same idea with the Testing Handbook (appsec.guide) Python harness for AES-GCM (pytest-based)",
+   "Same idea for timing: dudect-style statistical tests (Welch's t-test on two input classes)",
+   "Nonce-misuse resistance: AES-GCM-SIV (RFC 8452) only leaks equality of messages if a nonce repeats"
+  ],
+  "learningTools": [
+   {
+    "name": "CyberChef",
+    "role": "CHECK",
+    "licence": "Apache-2.0 (OSI)",
+    "url": "https://github.com/gchq/CyberChef",
+    "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+    "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+    "exercise": "Run `python tool_check.py`. In CyberChef AES Decrypt: Key, IV, GCM Tag and Additional Authenticated Data (hex) as printed, Mode GCM, Input = ct (hex). Then paste only the first 8 tag bytes (the printed truncated tag).",
+    "expected": "Should match the lab's printed value: output dfc61a20df8505b53e3cd59f25770d5018add3d6 (Wycheproof aes_gcm tcId 10). How CyberChef treats the 8-byte tag was not checked - compare it with the strict wrapper, which rejects it. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's tool_check.py output."
+   }
+  ],
+  "caution": "Learning code: the lenient wrappers are bugs on purpose. Timing results are statistical and machine-dependent; never ship a timing test as a security guarantee. Keep the Apache-2.0 notice with vendored vectors.",
+  "checkpoint": "PASS if the Wycheproof subsets pass, the derived vectors expose the four wrapper bugs, timing_demo shows a ratio well above 1 only for the naive loop, the nonce scan finds reuse only for seeded nonces, and test_build_task passes against your wrappers.",
+  "checkYourself": [
+   {
+    "q": "pyca/cryptography already passes Wycheproof. Why test again?",
+    "a": "Your wrapper adds parsing, sizes and shims; that code is where the accepted-truncated-tag bug lives."
+   },
+   {
+    "q": "Why do the timing tests use medians and interleaved rounds?",
+    "a": "Scheduler spikes and CPU frequency changes would otherwise dominate; interleaving spreads noise across both guesses."
+   },
+   {
+    "q": "Why can an in-process nonce tripwire miss reuse?",
+    "a": "A restart resets its memory while a seeded PRNG repeats the same nonces; only an offline scan of stored ciphertexts sees both runs."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Project Wycheproof (C2SP) – repository and README",
+    "url": "https://github.com/C2SP/wycheproof"
+   },
+   {
+    "title": "Project Wycheproof – testvectors_v1 (upstream aes_gcm_test.json and ed25519_test.json that the vendored cases must match; checked by upstream_diff.py in CI)",
+    "url": "https://github.com/C2SP/wycheproof/tree/main/testvectors_v1"
+   },
+   {
+    "title": "Wycheproof – doc/files.md (AeadTest result semantics)",
+    "url": "https://github.com/C2SP/wycheproof/blob/master/doc/files.md"
+   },
+   {
+    "title": "Python – hmac.compare_digest",
+    "url": "https://docs.python.org/3/library/hmac.html"
+   },
+   {
+    "title": "NIST SP 800-38D – GCM (IV uniqueness)",
+    "url": "https://csrc.nist.gov/pubs/sp/800/38/d/final"
+   },
+   {
+    "title": "RFC 8452 – AES-GCM-SIV (nonce misuse resistance)",
+    "url": "https://www.rfc-editor.org/rfc/rfc8452"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran wycheproof_check.py, solution_strict.py, timing_demo.py, nonce_guard.py, try_it.py, tool_check.py, upstream_diff.py (offline) and 12 unittests (7 + 3 build task + 2 provenance checker) locally, the timing test 3x. Every vendored Wycheproof value was checked against cryptography 50.0.2, but the cases come from downstream copies (pycryptodome 3.7.2 file via a package mirror; BoringSSL copies), not from upstream C2SP: upstream raw files could not be fetched here (KNOWN-GAPS 47). test_build_task observed FAILED (failures=3) against wycheproof_check.py and OK against solution_strict.py. tryIt expected = observed output; timing numbers vary per run.",
+   "pendingCi": [
+    "Timing assertion (ratio > 1.3) on shared macOS/Windows runners",
+    "upstream_diff.py against a real C2SP/wycheproof checkout (CI job wycheproof-upstream; until it passes, the vendored cases are unverified copies)",
+    "Harness against the full upstream testvectors_v1 files",
+    "CyberChef exercise (manual)"
+   ]
+  },
+  "conceptNote": "content/concepts/L300/15-misuse-you-can-test.md",
+  "conceptSummary": "Known-answer vectors such as Project Wycheproof test the code you wrote around a crypto library, where truncated tags and non-canonical signatures slip in. Timing leaks and nonce reuse are testable too, as long as the tests are seeded, statistical and honest about noise.",
+  "inRealSystems": [
+   "Wycheproof vectors are used by OpenSSL, BoringSSL, Go cryptography, pyca/cryptography and others.",
+   "NIST SP 800-38D: GCM must keep the probability of a repeated IV under the same key at most 2^-32."
+  ],
+  "useWhen": "Use vendored or submoduled Wycheproof vectors for every wrapper you write around AEAD or signatures; avoid timing tests as proofs - use them only to catch gross leaks.",
+  "next": "L300 #16 Secrets handling in applications",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "seeAlso": [
+   "cryptography L100 #4 Authenticated encryption: AES-256-GCM and ChaCha20-Poly1305: the AEAD API and nonce-reuse leak these tests guard.",
+   "cryptography L200 #11 Tokens done right: signed JWT-style tokens: where compare_digest first appeared in this topic.",
+   "cryptography L400 #21 Threat modelling cryptographic systems: STRIDE, attack trees and tests: controls in the threat model point at tests like these."
+  ]
+ },
+ {
+  "id": "secrets-handling-in-applications",
+  "number": 16,
+  "level": "L300",
+  "title": "Secrets handling in applications",
+  "phase": "Operations",
+  "category": "Secrets",
+  "description": "Load secrets from files or env, keep them out of repr, emit JSON logs, catch a seeded leak with a deterministic scanner, fix it with a redaction filter, rotate an API key with a dual-validity window, and let a local agent review logs behind a secret gate.",
+  "outcome": "You can load a secret the safer way, prove with a test that no secret reaches your logs, redact at the log handler, rotate an API key without downtime and know when the old key can go, and use an agent for log review without sending it secrets.",
+  "environment": "Python 3.12 (3.9+), cryptography==50.0.2, stdlib only otherwise (no new packages); agent assist: vendored fake model server (tests) or Ollama via LOCAL_MODEL_URL / LOCAL_MODEL",
+  "estimatedTime": "50-70 minutes",
+  "overview": [
+   "A service loads its API key correctly, but one seeded debug path logs the outgoing headers. A scanner over the JSON log finds the key; a handler-level redaction filter and a test that scans logs make the fix permanent."
+  ],
+  "prerequisites": [
+   "L100 lesson 3 (secrets module)",
+   "L200 lesson 11 (tokens, compare_digest)",
+   "L200 lesson 9 agent assist (secret gate)"
+  ],
+  "glossary": [
+   {
+    "term": "NAME_FILE convention",
+    "meaning": "The secret's path is in an env var; the value is in a mounted file (e.g. /run/secrets/<name>)."
+   },
+   {
+    "term": "Redaction filter",
+    "meaning": "A logging.Filter on the handler that masks secrets before formatting."
+   },
+   {
+    "term": "Dual-validity window",
+    "meaning": "After rotation the previous key keeps working until grace_until, so clients can switch without downtime."
+   },
+   {
+    "term": "Secret gate",
+    "meaning": "Deterministic check that refuses to send secret-like text to a model (lesson 9's SECRET regex + this scanner)."
+   }
+  ],
+  "concepts": [
+   "Files over env vars; fail closed when missing.",
+   "Redact at the handler; prove it with a test that scans emitted logs.",
+   "Rotate with overlap and measure use of the old key.",
+   "Agents see redacted text only; code decides what is a leak."
+  ],
+  "steps": [
+   {
+    "title": "Run the lab",
+    "detail": "python secrets_app.py - loads a demo key from a file, sends 5 requests (one seeded debug path), scans the JSON log",
+    "expected": "loaded from file: Secret('***') | length 40 / 6 JSON log lines / line 1: BEARER, KNOWN_SECRET, SENSITIVE_KEY (Authorization)",
+    "ifNot": "No findings? The seeded debug request did not run: keep SEED=16."
+   },
+   {
+    "title": "Load from a file on your machine",
+    "detail": "Write a demo key to a file and point ORDERS_API_KEY_FILE at it; load_secret prefers it over ORDERS_API_KEY.",
+    "expected": "python -c \"import secrets_app as a; print(a.load_secret('ORDERS_API_KEY'))\" -> Secret('***')",
+    "ifNot": "KeyError: neither variable is set (fail closed by design).",
+    "mac": "printf 'sk_demo_123' > orders_api_key && chmod 600 orders_api_key\nexport ORDERS_API_KEY_FILE=\"$PWD/orders_api_key\"",
+    "windows": "Set-Content -NoNewline -Encoding utf8 orders_api_key 'sk_demo_123'\n$env:ORDERS_API_KEY_FILE = \"$PWD\\orders_api_key\""
+   },
+   {
+    "title": "Rotate an API key with a dual-validity window",
+    "detail": "ApiKeys.rotate(new, now, grace_s) keeps the previous hash valid until grace_until; check() returns 'current', 'previous' or None (test_dual_validity_rotation).",
+    "expected": "old key: 'previous' inside the window, None one second after it",
+    "ifNot": "Compare hashes with hmac.compare_digest, never ==."
+   },
+   {
+    "title": "Build task (the hardening change)",
+    "detail": "Fix the fault in your copy, then run the failure-lab proof against it. Without the fix it fails on purpose.",
+    "expected": "Reference solution: Ran 2 tests in 0.002s | OK. Your unfixed file: FAILED (the 'fails before'); your fixed file: OK.",
+    "ifNot": "Read the failing assertion: it names the case your code still accepts.",
+    "mac": "BUILD_IMPL=secrets_app python -m unittest -v test_build_task",
+    "windows": "$env:BUILD_IMPL=\"secrets_app\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_IMPL"
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v (lab + build task + agent assist with the fake model server)",
+    "expected": "Ran 11 tests in 1.095s | OK",
+    "ifNot": "Read the failing assertion."
+   },
+   {
+    "title": "Agent assist: review a log for leaks",
+    "detail": "python agent_assist.py - scan, redact, gate, ask the model, judge every claim with scan_log",
+    "expected": "line 2: MISSED by agent (scanner found it) / line 3: CONFIRMED - agent explains: a credential appears to be logged here; remove it or log a / line 4: REJECTED (scanner: no leak) / line 6: MISSED by agent (scanner found it) / LEAKS = [2, 3, 6] (decided by scan_log); the agent only proposes and explains.",
+    "ifNot": "'refusing to send': secret-like text survived redaction - extend redact(), never weaken the gate."
+   }
+  ],
+  "codeLanguage": "python",
+  "code": "\"\"\"Secrets in an application: load from a file (or env), keep out of repr, JSON logs, a log scanner,\nand API-key rotation with a dual-validity window. The request handler below leaks a secret into a log (the fault).\"\"\"\nimport hashlib\nimport hmac\nimport io\nimport json\nimport logging\nimport os\nimport random\nimport re\nimport tempfile\nfrom pathlib import Path\n\nSEED = 16\nSENSITIVE_KEY = re.compile(r\"(?i)(password|passwd|secret|token|api[_-]?key|authorization|cookie)$\")  # key names\nPATTERNS = {\"BEARER\": re.compile(r\"Bearer\\s+[A-Za-z0-9._~+/-]{16,}=*\"),\n            \"PRIVATE_KEY\": re.compile(r\"-----BEGIN [A-Z ]*PRIVATE KEY-----\"),\n            \"URL_CREDENTIALS\": re.compile(r\"://[^/\\s:@]+:[^/\\s@]+@\")}  # user:password@host\n\n\nclass Secret:\n    \"\"\"Holds a secret in a bytearray; repr/str never show it. Python may still keep other copies (see README).\"\"\"\n\n    def __init__(self, value: str):\n        self._buf = bytearray(value.encode())\n\n    def reveal(self) -> str:\n        return self._buf.decode()\n\n    def wipe(self) -> None:\n        self._buf[:] = bytes(len(self._buf))  # best effort: overwrites THIS buffer only\n\n    def __repr__(self):\n        return \"Secret('***')\"\n\n    __str__ = __repr__\n\n\ndef load_secret(name: str, env=os.environ) -> Secret:\n    \"\"\"NAME_FILE (a mounted file, e.g. /run/secrets/...) wins over NAME (an env var, visible to child processes).\"\"\"\n    if env.get(f\"{name}_FILE\"):\n        return Secret(Path(env[f\"{name}_FILE\"]).read_text(encoding=\"utf-8\").strip())\n    if env.get(name):\n        return Secret(env[name])\n    raise KeyError(f\"secret {name} not configured\")  # fail closed: no default secret in code\n\n\nclass JsonFormatter(logging.Formatter):\n    def format(self, record):  # one JSON object per line: easy to ship, query and scan\n        return json.dumps({\"level\": record.levelname, \"msg\": record.getMessage(), **getattr(record, \"ctx\", {})}, sort_keys=True)\n\n\ndef json_logger(stream, name=\"orders\") -> logging.Logger:\n    log = logging.getLogger(name)\n    log.handlers, log.propagate = [], False\n    handler = logging.StreamHandler(stream)\n    handler.setFormatter(JsonFormatter())\n    log.addHandler(handler)\n    log.setLevel(logging.DEBUG)\n    return log\n\n\ndef handle_request(log, api_key: Secret, order_id: int, debug: bool) -> None:\n    headers = {\"Authorization\": f\"Bearer {api_key.reveal()}\", \"Accept\": \"application/json\"}\n    if debug:  # BUG on purpose: a debug line dumps the outgoing headers, Authorization included\n        log.debug(\"upstream request\", extra={\"ctx\": {\"order\": order_id, \"headers\": headers}})\n    log.info(\"order sent\", extra={\"ctx\": {\"order\": order_id, \"status\": 200}})\n\n\ndef scan_log(text: str, known=()) -> list:\n    \"\"\"Deterministic leak scanner: [(line_no, kind, detail)]. Tests and the agent-assist lab trust THIS, not a model.\"\"\"\n    found = []\n    for n, line in enumerate(text.splitlines(), start=1):\n        found += [(n, \"KNOWN_SECRET\", \"value of a configured secret\") for s in known if s and s in line]\n        found += [(n, kind, \"pattern\") for kind, rx in PATTERNS.items() if rx.search(line)]\n        for key, value in re.findall(r'\"?([\\w-]+)\"?\\s*[:=]\\s*\"?([^\",}\\s]+)', line):\n            if SENSITIVE_KEY.search(key) and value not in (\"[REDACTED]\", \"null\", \"\") and not value.isdigit():\n                found.append((n, \"SENSITIVE_KEY\", key))\n    return sorted(set(found))\n\n\nclass ApiKeys:\n    \"\"\"Server side of a rotation: stores only SHA-256 hashes; the previous key works until grace_until.\"\"\"\n\n    def __init__(self, key: str):\n        self.current, self.previous, self.grace_until = self._h(key), None, 0\n\n    @staticmethod\n    def _h(key: str) -> bytes:\n        return hashlib.sha256(key.encode()).digest()\n\n    def rotate(self, new_key: str, now: float, grace_s: float) -> None:\n        self.previous, self.current, self.grace_until = self.current, self._h(new_key), now + grace_s\n\n    def check(self, presented: str, now: float):\n        h = self._h(presented)\n        if hmac.compare_digest(h, self.current):  # constant-time compare of fixed-length hashes\n            return \"current\"\n        if self.previous and now <= self.grace_until and hmac.compare_digest(h, self.previous):\n            return \"previous\"  # log this: when it drops to zero, clients have migrated\n        return None\n\n\nif __name__ == \"__main__\":\n    rng = random.Random(SEED)\n    with tempfile.TemporaryDirectory() as tmp:\n        f = Path(tmp) / \"orders_api_key\"\n        f.write_text(\"sk_demo_\" + \"\".join(rng.choice(\"abcdef0123456789\") for _ in range(32)) + \"\\n\", encoding=\"utf-8\")\n        key = load_secret(\"ORDERS_API_KEY\", env={\"ORDERS_API_KEY_FILE\": str(f)})\n    print(\"loaded from file:\", key, \"| length\", len(key.reveal()))\n    buf = io.StringIO()\n    log = json_logger(buf)\n    debug_order = rng.randint(1, 5)  # seeded fault: the same request takes the debug path on every run\n    for order in range(1, 6):\n        handle_request(log, key, order, debug=order == debug_order)\n    lines = buf.getvalue().splitlines()\n    print(f\"{len(lines)} JSON log lines, e.g. {lines[0]}\")\n    print(\"scanner findings:\")\n    for n, kind, detail in scan_log(buf.getvalue(), known=[key.reveal()]):\n        print(f\"  line {n}: {kind} ({detail})\")\n",
+  "codeWalkthrough": [
+   {
+    "title": "Secret",
+    "detail": "Holds the value in a bytearray, hides it in repr/str and can wipe that buffer. Python may keep other copies (env string, decoded str): damage reduction, not a guarantee."
+   },
+   {
+    "title": "load_secret",
+    "detail": "NAME_FILE (mounted file) wins over NAME (env var); strips the trailing newline; raises KeyError when neither is set - no default secret in code."
+   },
+   {
+    "title": "JsonFormatter / json_logger",
+    "detail": "One JSON object per line (level, msg, plus the ctx dict passed via extra) on a dedicated handler."
+   },
+   {
+    "title": "handle_request (the bug)",
+    "detail": "The debug path logs the outgoing headers, Authorization included; the seeded run takes it for one order."
+   },
+   {
+    "title": "scan_log",
+    "detail": "Deterministic leak scanner over text: exact known secret values, Bearer / PEM private key / user:password@ URL patterns, and sensitive key names (…password, …token, api_key, authorization) with non-redacted, non-numeric values."
+   },
+   {
+    "title": "ApiKeys",
+    "detail": "Stores SHA-256 hashes of current and previous key; previous is accepted until grace_until; constant-time comparison; the return value tells you which key clients still use."
+   },
+   {
+    "title": "Fix (solution_redact.py)",
+    "detail": "RedactingFilter on every handler: merges args into the message, masks known values and patterns, replaces values under sensitive keys in a deep copy of ctx."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L300/16-secrets-handling/README.md",
+    "purpose": "observed output"
+   },
+   {
+    "path": "labs/L300/16-secrets-handling/agent_assist.py",
+    "purpose": "agent assist (scan -> redact -> gate -> model -> judge)"
+   },
+   {
+    "path": "labs/L300/16-secrets-handling/review_me.log",
+    "purpose": "sample log/config with FAKE leaked values"
+   },
+   {
+    "path": "labs/L300/16-secrets-handling/secrets_app.py",
+    "purpose": "main lab"
+   },
+   {
+    "path": "labs/L300/16-secrets-handling/solution_redact.py",
+    "purpose": "build solution (redaction filter)"
+   },
+   {
+    "path": "labs/L300/16-secrets-handling/test_agent_assist.py",
+    "purpose": "agent-assist tests (fake model server only)"
+   },
+   {
+    "path": "labs/L300/16-secrets-handling/test_build_task.py",
+    "purpose": "failure-lab proof (fails before / passes after)"
+   },
+   {
+    "path": "labs/L300/16-secrets-handling/test_secrets_app.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L300/16-secrets-handling/tool_check.py",
+    "purpose": "base64 value for the CyberChef check"
+   },
+   {
+    "path": "labs/L300/16-secrets-handling/try_it.py",
+    "purpose": "tryIt"
+   }
+  ],
+  "expectedResults": [
+   "loaded from file: Secret('***') | length 40",
+   "  line 1: BEARER (pattern)",
+   "  line 1: KNOWN_SECRET (value of a configured secret)",
+   "  line 1: SENSITIVE_KEY (Authorization)",
+   "scanner findings after the fix: []"
+  ],
+  "testCases": [
+   {
+    "action": "debug request with the unfixed logger",
+    "expected": "scan_log finds BEARER, KNOWN_SECRET, SENSITIVE_KEY"
+   },
+   {
+    "action": "token_ttl_seconds: 3600 / db_password: \"[REDACTED]\"",
+    "expected": "no findings (no false positives)"
+   },
+   {
+    "action": "old key 1 s after grace_until",
+    "expected": "None"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Scanner still finds the key after adding a filter",
+    "action": "The filter sits on the logger (child loggers bypass it) or ignores args / nested dicts: put it on the handler."
+   },
+   {
+    "symptom": "KeyError: secret ORDERS_API_KEY not configured",
+    "action": "Set ORDERS_API_KEY_FILE (preferred) or ORDERS_API_KEY."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Print a config dict holding the key as a plain str and as a Secret.",
+    "predict": "The str shows the key; Secret shows ***.",
+    "expected": "1) plain str : {'service': 'orders', 'api_key': 'sk_demo_c0ffeec0ffeec0ffeec0ffeec0ffee'} | 1) Secret    : {'service': 'orders', 'api_key': Secret('***')}"
+   },
+   {
+    "task": "Log the key base64-encoded (as in a Kubernetes Secret manifest) and scan with known=[key], then with its base64 too.",
+    "predict": "Missed by an exact-value scanner until you add the encoding.",
+    "expected": "2) scan with known=[key]:           [] | 2) scan with known=[key, b64(key)]: [(1, 'KNOWN_SECRET', 'value of a configured secret')]"
+   }
+  ],
+  "buildTask": {
+   "task": "Redaction filter: a logging.Filter on the handler that masks sensitive key names, known secret values and token patterns in the message, args and nested extra fields; scan_log over emitted logs must return [].",
+   "hints": [
+    "Merge args first with record.getMessage(), then set record.args = None.",
+    "Deep-copy record.ctx before masking so the caller's dict is unchanged."
+   ],
+   "solution": "labs/L300/16-secrets-handling/solution_redact.py",
+   "check": "test_build_task.py (2 tests: seeded 20-request mix leaves clean logs, message args and nested fields redacted while useful fields stay)"
+  },
+  "failureLab": {
+   "fault": "handle_request() has a debug path that logs outgoing headers; random.Random(16) picks which request takes it.",
+   "symptom": "The first JSON log line contains the Bearer token; scan_log reports line 1: BEARER, KNOWN_SECRET, SENSITIVE_KEY (Authorization).",
+   "fix": "RedactingFilter on the log handler + a test that scans the emitted logs for known values, patterns and sensitive keys.",
+   "proof": "test_build_task.py: against secrets_app.py Ran 2 tests in 0.004s | FAILED (failures=2); against solution_redact.py Ran 2 tests in 0.002s | OK"
+  },
+  "tradeOffs": [
+   {
+    "option": "Secret store (OpenBao, cloud secret manager) fetched at start-up",
+    "gains": "Central rotation, audit, short-lived credentials possible",
+    "costs": "Another dependency at start-up; caching and renewal logic",
+    "chooseWhen": "Production services, shared credentials"
+   },
+   {
+    "option": "Mounted file (Docker/Kubernetes secrets, NAME_FILE)",
+    "gains": "Not inherited by child processes like env vars; Kubernetes updates mounted files",
+    "costs": "File permissions to get right; Kubernetes Secrets unencrypted in etcd by default",
+    "chooseWhen": "Containers and orchestrators"
+   },
+   {
+    "option": "Environment variable",
+    "gains": "Simplest; works everywhere",
+    "costs": "Visible to child processes, crash dumps and debug endpoints (OWASP: not recommended unless nothing else works)",
+    "chooseWhen": "Local development with demo secrets only"
+   }
+  ],
+  "equivalents": [
+   "Same idea with secret scanners: Gitleaks v8.30.1 (MIT; learningTools) or Yelp detect-secrets (Apache-2.0) scan repos and logs for credential patterns",
+   "Same idea with structlog: a processor that redacts keys before rendering JSON",
+   "Same idea in Kubernetes/Docker: secrets mounted as files under /run/secrets/<name> (vendor equivalent: https://docs.docker.com/engine/swarm/secrets/)",
+   "Same idea for rotation: OpenBao dynamic secrets issue short-lived credentials so grace windows shrink"
+  ],
+  "learningTools": [
+   {
+    "name": "CyberChef",
+    "role": "CHECK",
+    "licence": "Apache-2.0 (OSI)",
+    "url": "https://github.com/gchq/CyberChef",
+    "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+    "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+    "exercise": "Run `python tool_check.py` and paste the printed base64 string into CyberChef From Base64.",
+    "expected": "Should match the lab's printed value: the 38-character demo value starting sk_demo_ appears - base64 in a manifest is an encoding, not protection. Demo value only; never paste a real secret into a web tool. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's tool_check.py output."
+   },
+   {
+    "name": "Gitleaks",
+    "role": "CHECK",
+    "licence": "MIT (OSI)",
+    "url": "https://github.com/gitleaks/gitleaks/releases",
+    "mac": "brew install gitleaks (or gitleaks_8.30.1_darwin_arm64.tar.gz)",
+    "windows": "gitleaks_8.30.1_windows_x64.zip / windows_arm64.zip from the GitHub releases",
+    "exercise": "gitleaks dir review_me.log -v; then pipe tryIt 2's base64 line into the stdin scanner with decoding: zsh echo '{\"data\": \"c2tfZGVtb19jMGZmZWVjMGZmZWVjMGZmZWVjMGZmZWVjMGZmZWU=\"}' | gitleaks stdin --max-decode-depth=2 -v; PowerShell '{\"data\": \"c2tfZGVtb19jMGZmZWVjMGZmZWVjMGZmZWVjMGZmZWVjMGZmZWU=\"}' | gitleaks stdin --max-decode-depth=2 -v. Compare both with the lab's scan_log.",
+    "expected": "The lab's scanner decides LEAKS = [2, 3, 6] for review_me.log, and its exact-value scan gives 'scan with known=[key]: []' until b64(key) is added. Whether Gitleaks' default rules flag the low-entropy demo values (db_password demo-only-s3cr3t, sk_demo_c0ffee…) is unverified - record what it finds. Demo values only. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab README."
+   }
+  ],
+  "agentAssist": {
+   "task": "A local model reviews a log/config file for leaked credentials; the deterministic scanner decides which lines leak.",
+   "prompt": "System: You review application logs and config for leaked credentials. Values are already redacted. For each line that leaked a credential answer 'LEAK line N: reason'. User: [[SECRET-REVIEW]] Review this: <log>REDACTED text</log>",
+   "check": "scan_log() gives the ground truth (lines 2, 3, 6 in review_me.log). redact() masks values, then gate() refuses the text if scan_log or lesson 9's SECRET regex (PEM keys, long hex, base64/base64url keys, JWK private members) still matches. Each agent claim is CONFIRMED only if the scanner flags that line; others are REJECTED; scanner lines the agent missed are listed as MISSED.",
+   "expected": "sent to the model (redacted):\n  {\"level\": \"INFO\", \"msg\": \"service start\", \"config\": \"/etc/orders/app.yaml\"}\n  {\"headers\": {\"Authorization\": \"[REDACTED]\"}, \"level\": \"DEBUG\", \"msg\": \"upstream request\"}\n  db_password: \"[REDACTED]\"\n  token_ttl_seconds: 3600\n  {\"level\": \"INFO\", \"msg\": \"order sent\", \"status\": 200}\n  smtp_url: smtp://[REDACTED]@mail.local:587\nline 2: MISSED by agent (scanner found it)\nline 3: CONFIRMED - agent explains: a credential appears to be logged here; remove it or log a\nline 4: REJECTED (scanner: no leak)\nline 6: MISSED by agent (scanner found it)\nLEAKS = [2, 3, 6] (decided by scan_log); the agent only proposes and explains.",
+   "realModelNote": "--real uses Ollama (default qwen2.5:1.5b; Metal on the Mac mini, CUDA/CPU on Windows); wording and line picks will vary, verdicts still come from scan_log. Not run in the sandbox (no model)."
+  },
+  "caution": "Never send real secrets or unredacted logs to a model, a ticket or a web tool; the gate is a backstop, not permission. review_me.log contains FAKE values only. The Secret class reduces exposure but cannot erase every copy Python makes.",
+  "checkpoint": "PASS if the seeded debug line is caught by scan_log, your redaction filter makes test_build_task pass, the old API key works only inside the grace window, and agent_assist confirms only scanner-backed lines.",
+  "checkYourself": [
+   {
+    "q": "Why put the redaction filter on the handler, not the logger?",
+    "a": "Logger filters only see records logged on that logger; records from child loggers reach the handler without passing it."
+   },
+   {
+    "q": "When can you end the dual-validity window?",
+    "a": "When logs show no successful auth with the 'previous' key for a while (and the window has passed)."
+   },
+   {
+    "q": "Why does the agent never decide what is a leak?",
+    "a": "Its answers vary and can be wrong (here: one false positive, two misses); the deterministic scanner is reproducible and tested."
+   }
+  ],
+  "sources": [
+   {
+    "title": "OWASP – Secrets Management Cheat Sheet",
+    "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+   },
+   {
+    "title": "OWASP – Logging Cheat Sheet (data to exclude)",
+    "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html"
+   },
+   {
+    "title": "Python – logging (Filter objects)",
+    "url": "https://docs.python.org/3/library/logging.html"
+   },
+   {
+    "title": "Kubernetes – Secrets",
+    "url": "https://kubernetes.io/docs/concepts/configuration/secret/"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran secrets_app.py, solution_redact.py, agent_assist.py (fake model server), try_it.py, tool_check.py and 11 unittests (5 lab + 4 agent assist + 2 build task) locally. test_build_task observed FAILED (failures=2) against secrets_app.py and OK against solution_redact.py. tryIt and agentAssist expected = observed output (the sandbox console masks token-like strings; files hold the real values).",
+   "pendingCi": [
+    "agent_assist.py --real (real local model)",
+    "ORDERS_API_KEY_FILE commands on macOS/Windows shells",
+    "CyberChef and Gitleaks learning-tool exercises (manual)"
+   ]
+  },
+  "conceptNote": "content/concepts/L300/16-secrets-in-applications.md",
+  "conceptSummary": "Most secret leaks come from logs, dumps and environments, not broken crypto. Load secrets from files or a store, keep them out of string output, redact at the log handler and prove it with a test that scans logs, rotate with an overlap window, and give agents only redacted text.",
+  "inRealSystems": [
+   "Kubernetes and Docker mount secrets as files; Kubernetes Secrets are unencrypted in etcd unless encryption at rest is configured.",
+   "GitHub secret scanning and gitleaks look for the same patterns this scanner uses."
+  ],
+  "useWhen": "Use file- or store-based secrets, handler-level redaction with a log-scanning test, and overlapping key rotation in every service; avoid env vars for production secrets and never log request headers.",
+  "next": "L400 #17 Crypto agility: versioned envelopes, negotiation and dual signing: name algorithms in the data, decide in a registry and policy, and dual-sign without a flag day.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "seeAlso": [
+   "cryptography L200 #9 A local certificate authority: the agent-assist pattern and the SECRET gate reused here.",
+   "cryptography L200 #11 Tokens done right: signed JWT-style tokens: tokens are secrets too - never log them.",
+   "ai-agents L300 #16 Red-teaming prompt injection: the same idea one layer up - a policy layer in code filters secrets and links out of model output, as this lesson's redaction + gate keeps secrets out of model input.",
+   "cryptography L400 #19 Keys in hardware-style storage: PKCS#11, non-exportable keys and key ceremonies: the token PIN is a secret handled the way this lesson teaches."
+  ]
+ }
+]

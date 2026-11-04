@@ -1,0 +1,127 @@
+# Runs every L100, L200, L300 and L400 lab test (and the L400 capstone) on Linux, Apple-silicon macOS and Windows.
+# L200 needs no new packages. L300 main labs are numpy-only (density-matrix simulator in labs/_shared/qsim);
+# their SDK paths need labs/L300/requirements.txt (= L100 pins + scipy) and, in a separate job,
+# labs/L300/requirements-extras.txt (Mitiq, PennyLane). L400 main labs + capstone need numpy and cryptography
+# (labs/L400/requirements.txt); their Qiskit paths use labs/L400/requirements-sdk.txt; the QDK resource
+# estimator runs in its own job (labs/L400/requirements-qdk.txt). L500 (theory) adds numpy-only theorem checks in labs/L500
+# plus research/l500_checks.py, research/check_l500_qbank.py and research/qbank_checks.py, all run by tools/run_labs.py.
+# Assumes this domain folder (quantum-computing/) is the repository root.
+# If the repo root is higher up, move this file to <root>/.github/workflows/ and add `working-directory`.
+# One cross-platform runner (tools/run_labs.py: sys.executable + pathlib) replaces per-OS shell loops.
+name: quantum-computing-labs
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.12"
+  PYTHONUTF8: "1"          # Windows: UTF-8 stdout when piped (Qiskit text drawings use box characters)
+
+jobs:
+  crosscheck:
+    # numpy cross-checks, L300 numpy labs, try_it, build-task solutions, agent assist (fake model server); SDK tests skip by design.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]   # macos-latest = Apple silicon (arm64)
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: python -m pip install -r labs/L100/requirements-crosscheck.txt -r labs/L400/requirements.txt
+      - run: python tools/run_labs.py
+
+  sdk-labs:
+    # Full labs with pinned Qiskit / Qiskit Aer / Cirq / scipy. Skipped SDK tests are turned into failures.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      REQUIRE_QUANTUM_SDKS: "1"
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: python -m pip install -r labs/L400/requirements-sdk.txt
+      - name: Record resolved versions
+        shell: bash
+        run: python -m pip freeze | tee pip-freeze.txt
+      - name: Run each lab script, try_it, agent assist, then its tests
+        run: python tools/run_labs.py --sdk
+      - name: Upload observed outputs (paste into lab READMEs to promote to validated / tested-ci)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: observed-lab-outputs-${{ matrix.os }}
+          path: |
+            pip-freeze.txt
+            labs/L100/*/observed-*.txt
+            labs/L200/*/observed-*.txt
+            labs/L300/*/observed-*.txt
+            labs/L300/*/logs/*.jsonl
+            labs/L400/*/observed-*.txt
+            labs/L500/*/observed-*.txt
+            labs/L100/05-openqasm-portability/bell.qasm
+
+  l300-extras:
+    # L300 Mitiq (lab 13) and PennyLane (lab 16) paths in their own environment (Mitiq brings its own Cirq).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      REQUIRE_L300_EXTRAS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: python -m pip install -r labs/L300/requirements-extras.txt
+      - name: Record resolved versions
+        shell: bash
+        run: python -m pip freeze | tee pip-freeze-extras.txt
+      - run: python tools/run_labs.py --level L300 --extras
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: observed-l300-extras-${{ matrix.os }}
+          path: |
+            pip-freeze-extras.txt
+            labs/L300/*/observed-*.txt
+
+  l400-qdk:
+    # L400 lesson 19: Microsoft QDK resource estimator (qdk.qre) on the lab's QAOA program, in its own environment.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      REQUIRE_QDK: "1"
+      QDK_PYTHON_TELEMETRY: none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: python -m pip install -r labs/L400/requirements-qdk.txt
+      - name: Record resolved versions
+        shell: bash
+        run: python -m pip freeze | tee pip-freeze-qdk.txt
+      - run: python tools/run_labs.py --level L400 --qdk
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: observed-l400-qdk-${{ matrix.os }}
+          path: |
+            pip-freeze-qdk.txt
+            labs/L400/*/observed-*.txt

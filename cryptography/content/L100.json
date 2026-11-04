@@ -1,0 +1,1343 @@
+[
+  {
+    "id": "setup-crypto-workbench",
+    "number": 1,
+    "level": "Setup",
+    "title": "Set up your crypto workbench",
+    "phase": "Foundations",
+    "category": "setup",
+    "description": "Install a pinned pyca/cryptography and prove each primitive used later works.",
+    "outcome": "You have a venv with cryptography==50.0.2 and a sanity check that prints WORKBENCH OK.",
+    "environment": "Apple-silicon Mac mini (macOS, zsh, Homebrew) or Windows 11 PC (PowerShell, winget); Python 3.12 (3.9+ supported), cryptography==50.0.2 (wheel bundles OpenSSL 4.0.3 on macOS, Windows and Linux), stdlib hashlib/hmac/secrets/base64; optional: OpenSSL CLI, Ollama (agent assist in lesson 6), PyNaCl/libsodium, Node.js 24. Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+    "estimatedTime": "15-20 minutes",
+    "overview": [
+      "One virtual environment, one pinned library, one script that runs a known-answer test for hashing, randomness, AEAD and Argon2id."
+    ],
+    "prerequisites": [
+      "macOS with Homebrew, or Windows 11 with winget (App Installer)",
+      "A terminal (zsh or PowerShell)"
+    ],
+    "glossary": [
+      {
+        "term": "pyca/cryptography",
+        "meaning": "Maintained Python library exposing vetted primitives (backed by OpenSSL/Rust)."
+      },
+      {
+        "term": "hazmat",
+        "meaning": "Low-level layer of pyca/cryptography; powerful but easy to misuse."
+      },
+      {
+        "term": "known-answer test (KAT)",
+        "meaning": "Run an algorithm on a published input and compare with the published output."
+      },
+      {
+        "term": "wheel",
+        "meaning": "Pre-built Python package; cryptography wheels bundle their own OpenSSL."
+      }
+    ],
+    "concepts": [
+      "Pin the crypto library version so results and APIs are reproducible.",
+      "Check versions at runtime: library and bundled OpenSSL are what actually execute.",
+      "A KAT proves the install computes correct answers, not just that it imports."
+    ],
+    "steps": [
+      {
+        "title": "Install Python 3.12 and create a venv",
+        "detail": "Install Python 3.12, create a virtual environment in the KB folder and activate it. Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+        "mac": "brew install python@3.12\npython3.12 -m venv .venv && source .venv/bin/activate",
+        "windows": "winget install -e --id Python.Python.3.12\npy -3.12 -m venv .venv; .venv\\Scripts\\Activate.ps1\n$env:PYTHONUTF8 = \"1\"   # UTF-8 output for the labs",
+        "expected": "Prompt shows (.venv); python --version prints 3.12.x",
+        "ifNot": "Windows: if Activate.ps1 is blocked, run Set-ExecutionPolicy -Scope CurrentUser RemoteSigned and reopen PowerShell. macOS: Homebrew installs the versioned name python3.12."
+      },
+      {
+        "title": "Install pinned deps",
+        "detail": "Install requirements.txt (cryptography==50.0.2) inside the venv; the wheel brings its own OpenSSL, no system OpenSSL needed.",
+        "mac": "python -m pip install -U pip\npython -m pip install -r requirements.txt",
+        "windows": "python -m pip install -U pip\npython -m pip install -r requirements.txt",
+        "expected": "Successfully installed cryptography-50.0.2",
+        "ifNot": "Upgrade pip first so a binary wheel (macOS arm64 / Windows x64) is used instead of a source build that needs Rust + OpenSSL."
+      },
+      {
+        "title": "Run the sanity check",
+        "detail": "Run sanity_check.py in the lab folder.",
+        "mac": "cd labs/L100/01-setup-workbench\npython sanity_check.py",
+        "windows": "cd labs\\L100\\01-setup-workbench\npython sanity_check.py",
+        "expected": "Every check True, machine shows Darwin arm64 (Mac mini) or Windows AMD64, final line WORKBENCH OK",
+        "ifNot": "Read the first False line; see troubleshooting."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "Run the unittest suite.",
+        "mac": "python -m unittest -v",
+        "windows": "python -m unittest -v",
+        "expected": "Ran 3 tests ... OK",
+        "ifNot": "A failing pinned-version test means a different cryptography is on sys.path; check python -m pip show cryptography."
+      },
+      {
+        "title": "Optional: OpenSSL CLI / OS hashing tool",
+        "detail": "Compare SHA-256('abc') with an OS tool. macOS ships LibreSSL as /usr/bin/openssl; Windows has no openssl.exe (use Get-FileHash, or install OpenSSL).",
+        "mac": "printf abc | shasum -a 256\nbrew install openssl@3   # optional, keg-only\n\"$(brew --prefix openssl@3)/bin/openssl\" version\nprintf abc | \"$(brew --prefix openssl@3)/bin/openssl\" dgst -sha256",
+        "windows": "Set-Content -NoNewline abc.txt abc\nGet-FileHash abc.txt          # SHA256 by default, upper-case hex\nwinget install -e --id ShiningLight.OpenSSL.Light   # optional\nwhere.exe openssl              # add C:\\Program Files\\OpenSSL-Win64\\bin to PATH if empty",
+        "expected": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad (Get-FileHash prints it upper-case)",
+        "ifNot": "Optional step; skip it. A different digest means a trailing newline was hashed (echo/pipe adds one)."
+      },
+      {
+        "title": "Optional: local model for agent assist (lesson 6)",
+        "detail": "Install Ollama, start its server, pull a small model and set LOCAL_MODEL_URL / LOCAL_MODEL; lessons 6 and 9 work without it (fake server).",
+        "mac": "brew install ollama\nbrew services start ollama\nollama pull qwen2.5:1.5b\nexport LOCAL_MODEL_URL=http://localhost:11434/v1\nexport LOCAL_MODEL=qwen2.5:1.5b",
+        "windows": "# install with OllamaSetup.exe from https://ollama.com/download (winget Ollama.Ollama lags behind)\nollama pull qwen2.5:1.5b\n$env:LOCAL_MODEL_URL=\"http://localhost:11434/v1\"\n$env:LOCAL_MODEL=\"qwen2.5:1.5b\"",
+        "expected": "ollama list shows qwen2.5:1.5b (986 MB); http://localhost:11434/v1 answers",
+        "ifNot": "The server must be running before ollama pull (Mac: brew services start ollama; Windows: start the Ollama app). Or skip: python agent_assist.py uses the deterministic fake server by default."
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"Crypto workbench sanity check: versions + one known-answer test per building block.\"\"\"\nimport hashlib\nimport platform\nimport secrets\nimport sys\n\nimport cryptography\nfrom cryptography.hazmat.backends.openssl import backend\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\n\nPINNED = \"50.0.2\"  # version pinning: keep in sync with ../../../requirements.txt\n# NIST FIPS 180 example: SHA-256(\"abc\")\nNIST_ABC = \"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"\n\n\ndef argon2id_available() -> bool:\n    try:\n        from cryptography.hazmat.primitives.kdf.argon2 import Argon2id  # noqa: F401\n    except ImportError:\n        return False\n    # backend feature check: needs OpenSSL >= 3.2 under the hood; a tiny derive proves it works.\n    try:\n        Argon2id(salt=b\"0\" * 16, length=32, iterations=1, lanes=1, memory_cost=8).derive(b\"x\")\n        return True\n    except Exception:\n        return False\n\n\ndef run_checks() -> dict:\n    key = AESGCM.generate_key(bit_length=256)\n    nonce = secrets.token_bytes(12)\n    ct = AESGCM(key).encrypt(nonce, b\"hello\", None)\n    return {\n        \"python\": platform.python_version(),\n        \"machine\": f\"{platform.system()} {platform.machine()}\",  # e.g. Darwin arm64 / Windows AMD64\n        \"cryptography\": cryptography.__version__,\n        \"cryptography_pinned\": cryptography.__version__ == PINNED,\n        \"openssl\": backend.openssl_version_text(),  # bundled engine, not the system openssl CLI\n        \"sha256_known_answer\": hashlib.sha256(b\"abc\").hexdigest() == NIST_ABC,  # KAT: published in == published out\n        \"secrets_token_len\": len(secrets.token_bytes(32)),\n        \"aesgcm_roundtrip\": AESGCM(key).decrypt(nonce, ct, None) == b\"hello\",\n        \"argon2id_available\": argon2id_available(),\n    }\n\n\nif __name__ == \"__main__\":\n    results = run_checks()\n    for name, value in results.items():\n        print(f\"{name:22} {value}\")\n    ok = all(v for k, v in results.items() if isinstance(v, bool))\n    print(\"WORKBENCH OK\" if ok else \"WORKBENCH NOT READY\")\n    sys.exit(0 if ok else 1)\n",
+    "projectFiles": [
+      {
+        "path": "labs/L100/01-setup-workbench/sanity_check.py",
+        "purpose": "prints versions and runs KATs"
+      },
+      {
+        "path": "labs/L100/01-setup-workbench/test_sanity_check.py",
+        "purpose": "unittest suite (python -m unittest)"
+      },
+      {
+        "path": "labs/L100/01-setup-workbench/README.md",
+        "purpose": "run command + observed output"
+      },
+      {
+        "path": "labs/L100/01-setup-workbench/try_it.py",
+        "purpose": "runs the two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "cryptography 50.0.2, OpenSSL 4.0.3 (bundled)",
+      "machine: Linux x86_64 in the sandbox; Darwin arm64 on the Mac mini, Windows AMD64 on the PC (expected)",
+      "sha256_known_answer True, aesgcm_roundtrip True, argon2id_available True",
+      "WORKBENCH OK"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "3 tests OK"
+      },
+      {
+        "action": "pip install cryptography==44.0.0 then rerun",
+        "expected": "test_pinned_version fails (pin is enforced)"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "cryptography_pinned False",
+        "action": "python -m pip install --force-reinstall cryptography==50.0.2 inside the venv."
+      },
+      {
+        "symptom": "argon2id_available False",
+        "action": "Source build linked to OpenSSL < 3.2 (or Apple's LibreSSL); install the official wheel."
+      },
+      {
+        "symptom": "Windows: Activate.ps1 cannot be loaded",
+        "action": "Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, then reopen PowerShell."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Set `lab.PINNED = \"49.0.0\"` and re-run the checks.",
+        "predict": "Only the pin check fails, and the workbench is not ready.",
+        "expected": "1) PINNED=49.0.0 -> cryptography_pinned: False | WORKBENCH NOT READY"
+      },
+      {
+        "task": "Hash `abc\\n` (what `echo abc` sends) and compare with the NIST `abc` answer.",
+        "predict": "Different digest; the KAT fails.",
+        "expected": "2) sha256('abc\\n') = edeaaff3f1774ad2888673770c6d64097e391bc362d7d6fb34982ddf0efd18cb | matches NIST 'abc': False"
+      }
+    ],
+    "equivalents": [
+      "Same idea in libsodium/PyNaCl: pip install pynacl; libsodium bundles its own primitives.",
+      "Same idea in OpenSSL CLI: openssl version; openssl dgst -sha256 file (macOS /usr/bin/openssl is LibreSSL; Homebrew openssl@3 or winget ShiningLight.OpenSSL.Light give OpenSSL)",
+      "Same idea in Node.js: built-in node:crypto (process.versions.openssl shows the linked OpenSSL).",
+      "Same idea in Go: standard library crypto/* plus golang.org/x/crypto, pinned in go.mod.",
+      "Same idea in Java: JCA/JCE providers (javax.crypto), version = JDK release.",
+      "Same idea in PowerShell: Get-FileHash file (SHA256 default); certutil -hashfile file SHA256"
+    ],
+    "caution": "Do not invent your own crypto: use vetted libraries (pyca/cryptography, libsodium, platform crypto) and their high-level APIs; these labs show primitives for learning, not a protocol design.",
+    "checkpoint": "PASS if sanity_check.py prints WORKBENCH OK and 3 tests pass; otherwise FAIL.",
+    "checkYourself": [
+      {
+        "q": "Why can two machines with `cryptography` installed disagree about Argon2id support?",
+        "a": "Argon2id needs cryptography 44.0.0+ and an OpenSSL backend 3.2+; an old version or a source build against an old OpenSSL lacks it."
+      },
+      {
+        "q": "What does a known-answer test prove that a successful import doesn't?",
+        "a": "That the whole stack computes the published correct output, not just that the module loads."
+      }
+    ],
+    "sources": [
+      {
+        "title": "PyPI – cryptography",
+        "url": "https://pypi.org/project/cryptography/"
+      },
+      {
+        "title": "pyca/cryptography – Installation",
+        "url": "https://cryptography.io/en/latest/installation/"
+      },
+      {
+        "title": "pyca/cryptography – Changelog",
+        "url": "https://cryptography.io/en/latest/changelog/"
+      },
+      {
+        "title": "pyca/cryptography – Key derivation functions",
+        "url": "https://cryptography.io/en/latest/hazmat/primitives/key-derivation-functions/"
+      },
+      {
+        "title": "NIST – SHA-256 example (\"abc\")",
+        "url": "https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Standards-and-Guidelines/documents/examples/SHA256.pdf"
+      },
+      {
+        "title": "pip – Secure installs",
+        "url": "https://pip.pypa.io/en/stable/topics/secure-installs/"
+      },
+      {
+        "title": "Homebrew – openssl@3",
+        "url": "https://formulae.brew.sh/formula/openssl@3"
+      },
+      {
+        "title": "Homebrew – python@3.12",
+        "url": "https://formulae.brew.sh/formula/python@3.12"
+      },
+      {
+        "title": "Python docs – venv (activation per shell, ExecutionPolicy)",
+        "url": "https://docs.python.org/3/library/venv.html"
+      },
+      {
+        "title": "winget-pkgs – Python.Python.3.12 manifests",
+        "url": "https://github.com/microsoft/winget-pkgs/tree/master/manifests/p/Python/Python/3/12"
+      },
+      {
+        "title": "Microsoft Learn – Get-FileHash",
+        "url": "https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/get-filehash"
+      },
+      {
+        "title": "winget-pkgs - ShiningLight.OpenSSL.Light manifests",
+        "url": "https://github.com/microsoft/winget-pkgs/tree/master/manifests/s/ShiningLight/OpenSSL/Light"
+      },
+      {
+        "title": "Homebrew - ollama formula (brew services start ollama)",
+        "url": "https://formulae.brew.sh/formula/ollama"
+      },
+      {
+        "title": "Ollama - download for Windows",
+        "url": "https://ollama.com/download/windows"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran sanity_check.py and python -m unittest in the sandbox (Python 3.12.15, cryptography 50.0.2, OpenSSL 4.0.3): WORKBENCH OK, 3 tests OK. OpenSSL CLI and PyNaCl are not installed in the sandbox, so the optional equivalents were not run. tryIt: both experiments run locally with `python try_it.py` (cryptography 50.0.2); `expected` is the observed output. Platform pass (2026-10-28): re-ran after adding the `machine` line (Linux x86_64 in the sandbox). The mac/windows commands were checked against Homebrew, winget-pkgs, Python venv and Microsoft Learn docs but not executed here (Linux sandbox) -> platforms 'expected' until the macos-latest/windows-latest CI jobs run.",
+      "pendingCi": [
+        "Step 5 optional OpenSSL CLI / Get-FileHash commands",
+        "Step 6 Ollama install + real local model"
+      ]
+    },
+    "conceptNote": "content/concepts/01-setup-crypto-workbench.md",
+    "conceptSummary": "Your code talks to pyca/cryptography or the stdlib, which call a compiled engine (the OpenSSL 4.0.3 bundled in the 50.0.2 wheel), so pin the version and print what actually runs. A known-answer test such as SHA-256(\"abc\") proves the whole stack computes correct results, not just that it imports.",
+    "inRealSystems": "pip hash-checking mode needs `==` pins, and pyca ships statically linked wheels so every OS runs the same bundled OpenSSL.",
+    "useWhen": "Use at the start of every crypto project (pin, print versions, run a KAT); avoid trusting the system `openssl` version.",
+    "next": "L200 #7 Digital signatures with Ed25519: verify what you install by checking a release signature, not only a hash.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "hashing-and-integrity",
+    "number": 2,
+    "level": "L100",
+    "title": "Hashing and integrity: SHA-256 and HMAC",
+    "phase": "Integrity",
+    "category": "hashing",
+    "description": "Hash strings and files, detect tampering, and authenticate data with HMAC.",
+    "outcome": "You can publish/verify a file checksum, and protect a message with HMAC-SHA-256 verified via compare_digest.",
+    "environment": "Python 3.12 (3.9+ supported), cryptography==50.0.2 (wheel bundles OpenSSL 4.0.3), stdlib hashlib/hmac/secrets/base64; OS hashing tool for comparison: sha256sum (Linux/Git Bash), shasum -a 256 (macOS), certutil -hashfile (Windows)",
+    "estimatedTime": "20-30 minutes",
+    "overview": [
+      "A hash detects accidental or unkeyed changes; an HMAC adds a secret key so only key holders can produce a valid tag."
+    ],
+    "prerequisites": [
+      "Lesson 1 workbench"
+    ],
+    "glossary": [
+      {
+        "term": "SHA-256",
+        "meaning": "Hash function with a 32-byte (64 hex) digest (FIPS 180)."
+      },
+      {
+        "term": "digest",
+        "meaning": "The fixed-size output of a hash."
+      },
+      {
+        "term": "HMAC",
+        "meaning": "Keyed hash (RFC 2104) giving a message authentication tag."
+      },
+      {
+        "term": "constant-time compare",
+        "meaning": "Comparison whose duration does not reveal where values differ."
+      }
+    ],
+    "concepts": [
+      "Same input -> same digest; one flipped byte -> completely different digest.",
+      "Hash large files in chunks (streaming) so memory stays constant.",
+      "A plain hash is not authentication: anyone can recompute it; use HMAC with a secret key.",
+      "Compare tags with hmac.compare_digest, never ==."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "cd labs/L100/02-hashing-integrity && python hash_and_hmac.py",
+        "expected": "sha256('abc') ends in ...f20015ad True",
+        "ifNot": "Make sure you hash bytes of exactly 'abc' (no newline)."
+      },
+      {
+        "title": "Compare with the OS hashing tool",
+        "detail": "Lines 'file (python)', 'file (OS tool)' and 'stdlib file_digest' must match; the script uses sha256sum, shasum -a 256 or certutil, whichever the OS has",
+        "expected": "Three identical digests (… via sha256sum / shasum / certutil)",
+        "ifNot": "'None via None' means no OS tool was found; compare manually with Get-FileHash (PowerShell) or shasum -a 256 (macOS)."
+      },
+      {
+        "title": "Observe tamper detection",
+        "detail": "The script flips one byte in the middle of a 1 MB file",
+        "expected": "after 1-byte tamper ... MISMATCH -> tampered",
+        "ifNot": "Check the file was reopened in r+b mode."
+      },
+      {
+        "title": "Check HMAC vector",
+        "detail": "HMAC-SHA-256(key='Jefe', 'what do ya want for nothing?')",
+        "expected": "5bdcc146...64ec3843 True (RFC 4231 TC2)",
+        "ifNot": "Pass the digest as hashlib.sha256 (or 'sha256'), not sha1."
+      },
+      {
+        "title": "Verify tags",
+        "detail": "verify_hmac uses hmac.compare_digest",
+        "expected": "good True, edited False, wrong key False",
+        "ifNot": "Ensure both arguments are the same type (both str hex or both bytes)."
+      },
+      {
+        "title": "Run tests",
+        "detail": "python -m unittest -v",
+        "expected": "4 tests OK",
+        "ifNot": "Read the failing assertion; vectors are official."
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"SHA-256 of strings and files, tamper detection, and HMAC with constant-time compare.\"\"\"\nimport hashlib\nimport hmac\nimport os\nimport re\nimport shutil\nimport subprocess\nimport tempfile\nfrom pathlib import Path\n\n# Known-answer vectors: NIST FIPS 180 example (\"abc\") and RFC 4231 test case 2 (HMAC-SHA-256)\nNIST_ABC = \"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"\nEMPTY = \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"\nRFC4231_TC2 = \"5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843\"\n# The OS's own SHA-256 tool: Linux coreutils, macOS shasum, Windows certutil (first one found wins)\nOS_TOOLS = ([\"sha256sum\"], [\"shasum\", \"-a\", \"256\"], [\"certutil\", \"-hashfile\", \"{path}\", \"SHA256\"])\n\n\ndef sha256_text(text: str) -> str:\n    return hashlib.sha256(text.encode(\"utf-8\")).hexdigest()  # fixed output: any input -> 32 bytes (64 hex)\n\n\ndef sha256_file(path, chunk_size: int = 64 * 1024) -> str:\n    h = hashlib.sha256()\n    with open(path, \"rb\") as f:\n        for chunk in iter(lambda: f.read(chunk_size), b\"\"):  # streaming: constant memory\n            h.update(chunk)\n    return h.hexdigest()\n\n\ndef os_sha256(path):\n    \"\"\"Return (tool, digest) from the OS's own hashing tool, or (None, None) if none is installed.\"\"\"\n    for tool in OS_TOOLS:\n        if shutil.which(tool[0]):\n            cmd = [str(path) if a == \"{path}\" else a for a in tool]\n            if \"{path}\" not in tool:\n                cmd.append(str(path))\n            # explicit encoding + timeout: Windows would otherwise decode with the ANSI code page; never hang\n            out = subprocess.run(cmd, capture_output=True, encoding=\"utf-8\", errors=\"replace\",\n                                 timeout=30, check=True).stdout\n            m = re.search(r\"\\b[0-9a-fA-F]{64}\\b\", out)  # each tool prints a different layout/case\n            return tool[0], (m.group(0).lower() if m else None)\n    return None, None\n\n\ndef hmac_sha256(key: bytes, msg: bytes) -> str:\n    return hmac.new(key, msg, hashlib.sha256).hexdigest()  # HMAC: secret key mixed in -> only key holders can tag\n\n\ndef verify_hmac(key: bytes, msg: bytes, tag_hex: str) -> bool:\n    # constant-time compare: never use == for secrets/tags; compare_digest avoids content-based early exit.\n    return hmac.compare_digest(hmac_sha256(key, msg), tag_hex)\n\n\nif __name__ == \"__main__\":\n    print(\"sha256('abc')       \", sha256_text(\"abc\"), sha256_text(\"abc\") == NIST_ABC)\n    print(\"sha256('')          \", sha256_text(\"\"), sha256_text(\"\") == EMPTY)\n\n    with tempfile.TemporaryDirectory() as d:\n        path = Path(d) / \"release.bin\"\n        path.write_bytes(b\"A\" * 1_000_000)\n        published = sha256_file(path)\n        print(\"file (python)       \", published)\n        tool, digest = os_sha256(path)\n        print(\"file (OS tool)      \", digest, \"via\", tool)\n        with open(path, \"rb\") as f:  # Python 3.11+ helper, same result\n            print(\"stdlib file_digest  \", hashlib.file_digest(f, \"sha256\").hexdigest())\n        with open(path, \"r+b\") as f:  # attacker flips one byte\n            f.seek(500_000)\n            f.write(b\"B\")  # avalanche: one changed byte -> completely different digest\n        print(\"after 1-byte tamper \", sha256_file(path), \"MATCH\" if sha256_file(path) == published else \"MISMATCH -> tampered\")\n\n    tag = hmac_sha256(b\"Jefe\", b\"what do ya want for nothing?\")\n    print(\"HMAC RFC4231 TC2    \", tag, tag == RFC4231_TC2)\n    key = os.urandom(32)\n    t = hmac_sha256(key, b\"amount=100\")\n    print(\"verify good msg     \", verify_hmac(key, b\"amount=100\", t))\n    print(\"verify edited msg   \", verify_hmac(key, b\"amount=900\", t))\n    print(\"verify wrong key    \", verify_hmac(os.urandom(32), b\"amount=100\", t))\n",
+    "projectFiles": [
+      {
+        "path": "labs/L100/02-hashing-integrity/hash_and_hmac.py",
+        "purpose": "SHA-256 of text/files, tamper demo, HMAC"
+      },
+      {
+        "path": "labs/L100/02-hashing-integrity/test_hash_and_hmac.py",
+        "purpose": "unittest suite (python -m unittest)"
+      },
+      {
+        "path": "labs/L100/02-hashing-integrity/README.md",
+        "purpose": "run command + observed output"
+      },
+      {
+        "path": "labs/L100/02-hashing-integrity/try_it.py",
+        "purpose": "runs the two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "sha256('abc') = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad (NIST)",
+      "Python streaming hash == OS tool (sha256sum/shasum/certutil) == hashlib.file_digest",
+      "1-byte change -> MISMATCH",
+      "HMAC RFC 4231 TC2 = 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+    ],
+    "testCases": [
+      {
+        "action": "Hash 'abc' and ''",
+        "expected": "NIST/known digests"
+      },
+      {
+        "action": "Stream-hash a random 300 kB file with 4 kB chunks",
+        "expected": "Equals one-shot hashlib.sha256 and the OS tool's digest"
+      },
+      {
+        "action": "Verify HMAC of changed message",
+        "expected": "False"
+      },
+      {
+        "action": "Parse sha256sum (Git Bash escaped path), shasum and certutil (upper-case) output layouts",
+        "expected": "Same lower-case digest for all three"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Your digest differs from another tool",
+        "action": "Check encoding and trailing newline (echo adds \\n; use printf in zsh/bash, Set-Content -NoNewline in PowerShell)."
+      },
+      {
+        "symptom": "TypeError in compare_digest",
+        "action": "Pass two str (ASCII) or two bytes-like values, not a mix."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Hash the same 1 MB file with `chunk_size` 7, 4096 and 65536.",
+        "predict": "Same digest every time.",
+        "expected": "1) chunk sizes [7, 4096, 65536] -> distinct digests: 1 | digest: e23c0cda5bcdecdd..."
+      },
+      {
+        "task": "Change the HMAC key `Jefe` -> `jefe` and verify the original tag.",
+        "predict": "Fails; about half the tag bits change.",
+        "expected": "2) jefe tag: f5886a2776d40a67... | verifies against Jefe tag: False | bits differing: 136 of 256"
+      }
+    ],
+    "equivalents": [
+      "Same idea in OpenSSL CLI: openssl dgst -sha256 file; openssl dgst -sha256 -hmac KEY file (openssl mac preferred)",
+      "Same idea in OS tools: sha256sum file (Linux) / shasum -a 256 file (macOS) / Get-FileHash file or certutil -hashfile file SHA256 (Windows)",
+      "Same idea in libsodium/PyNaCl: crypto_generichash (BLAKE2b) and crypto_auth (HMAC-SHA-512-256)",
+      "Same idea in Node.js: crypto.createHash('sha256'), crypto.createHmac('sha256', key), crypto.timingSafeEqual",
+      "Same idea in Go: crypto/sha256, crypto/hmac with hmac.Equal",
+      "Same idea in Java: MessageDigest.getInstance(\"SHA-256\"), Mac.getInstance(\"HmacSHA256\"), MessageDigest.isEqual"
+    ],
+    "learningTools": [
+      {
+        "name": "CyberChef",
+        "role": "CHECK",
+        "exercise": "Input `abc` -> SHA2 (Size 256); then input `what do ya want for nothing?` -> HMAC (Key `Jefe` UTF8, Hashing function SHA256). Compare with the lab's `sha256('abc')` and `HMAC RFC4231 TC2` lines.",
+        "expected": "Should match the lab's printed values: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad and 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843. A different SHA-256 usually means a trailing newline in the input pane. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+        "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+        "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+        "licence": "Apache-2.0 (OSI)",
+        "url": "https://github.com/gchq/CyberChef"
+      }
+    ],
+    "caution": "Do not invent your own crypto: use vetted libraries (pyca/cryptography, libsodium, platform crypto) and their high-level APIs; these labs show primitives for learning, not a protocol design. A bare hash next to a download only helps if the hash comes over a more trusted channel than the file.",
+    "checkpoint": "PASS if both official vectors print True, tamper shows MISMATCH and the edited-message HMAC verifies False.",
+    "checkYourself": [
+      {
+        "q": "Why doesn't a SHA-256 checksum next to a download stop a malicious mirror?",
+        "a": "The mirror can replace the file and its checksum; anyone can compute SHA-256. Get the checksum over a more trusted channel, or use a MAC or signature."
+      },
+      {
+        "q": "What does an HMAC prove that a hash doesn't?",
+        "a": "That the tag was made by someone holding the secret key, and that the message hasn't changed since."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Python docs – hashlib",
+        "url": "https://docs.python.org/3/library/hashlib.html"
+      },
+      {
+        "title": "Python docs – hmac",
+        "url": "https://docs.python.org/3/library/hmac.html"
+      },
+      {
+        "title": "NIST – SHA-256 example (\"abc\")",
+        "url": "https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Standards-and-Guidelines/documents/examples/SHA256.pdf"
+      },
+      {
+        "title": "RFC 4231 – HMAC-SHA-2 test vectors",
+        "url": "https://www.rfc-editor.org/rfc/rfc4231.html"
+      },
+      {
+        "title": "OpenSSL – openssl-dgst(1)",
+        "url": "https://docs.openssl.org/master/man1/openssl-dgst/"
+      },
+      {
+        "title": "RFC 7518 §3.2 – HS256",
+        "url": "https://www.rfc-editor.org/rfc/rfc7518.html"
+      },
+      {
+        "title": "Microsoft Learn – Get-FileHash",
+        "url": "https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/get-filehash"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran hash_and_hmac.py and 4 unittests in the sandbox; os_sha256 found sha256sum (GNU coreutils 9.4) and it matched the Python digest; the shasum (macOS) and certutil (Windows) branches are covered by a parser unittest with their output layouts and run for real only in CI (macos-latest/windows-latest). Output pasted in README. tryIt: both experiments run locally with `python try_it.py` (cryptography 50.0.2); `expected` is the observed output. learningTools: expected values computed from the lab code (research/learning_tools_expected.py); the GUI/CLI tools themselves were not run (manual).",
+      "pendingCi": [
+        "hash_and_hmac.py os_sha256(): shasum (macOS) and certutil (Windows) branches - only parser-tested with recorded output layouts"
+      ]
+    },
+    "conceptNote": "content/concepts/02-hashing-and-integrity.md",
+    "conceptSummary": "A hash is a public fingerprint: one changed letter flips about half of SHA-256's 256 output bits, but anyone can recompute it. HMAC adds a secret key so only key holders can produce a valid tag, and tags must be compared in constant time.",
+    "inRealSystems": "pip `--hash=sha256:` pins use plain hashes; JWT `HS256` and the TLS 1.3 Finished message use HMAC with a constant-time check.",
+    "useWhen": "Hash to detect corruption or pin artifacts, HMAC when both sides share a secret; avoid bare hashes for authenticity or passwords.",
+    "next": "L200 #7 Digital signatures with Ed25519: authenticity without a shared secret (HMAC needs one).",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "secure-randomness",
+    "number": 3,
+    "level": "L100",
+    "title": "Secure randomness: secrets vs random",
+    "phase": "Keys and randomness",
+    "category": "randomness",
+    "description": "Generate tokens, keys and nonces from the OS CSPRNG and see a predictable token get cracked.",
+    "outcome": "You use secrets/os.urandom for anything security-related and can explain why random.* is unsafe.",
+    "environment": "Python 3.12 (3.9+ supported), cryptography==50.0.2 (wheel bundles OpenSSL 4.0.3), stdlib hashlib/hmac/secrets/base64",
+    "estimatedTime": "15-20 minutes",
+    "overview": [
+      "random is a deterministic Mersenne Twister for simulations; secrets reads the OS CSPRNG and is the module for tokens, keys and nonces."
+    ],
+    "prerequisites": [
+      "Lesson 1 workbench"
+    ],
+    "glossary": [
+      {
+        "term": "CSPRNG",
+        "meaning": "Cryptographically secure pseudo-random generator (OS-provided: getrandom, BCryptGenRandom...)."
+      },
+      {
+        "term": "seed",
+        "meaning": "Starting value of a PRNG; same seed -> same sequence."
+      },
+      {
+        "term": "nonce",
+        "meaning": "Number used once, e.g. the 12-byte AEAD input."
+      },
+      {
+        "term": "entropy",
+        "meaning": "Unpredictability, measured in bits (32 bytes = 256 bits)."
+      }
+    ],
+    "concepts": [
+      "random is completely unsuitable for cryptographic purposes (Python docs).",
+      "secrets.token_bytes/hex/urlsafe for tokens; the Python docs call 32 bytes (256 bits) sufficient for the typical use case.",
+      "If an attacker can guess the seed, they can regenerate every 'random' value."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "cd labs/L100/03-secure-randomness && python randomness.py",
+        "expected": "5 lines of secure material (values differ every run)",
+        "ifNot": "Python < 3.6 lacks secrets; upgrade."
+      },
+      {
+        "title": "Check sizes",
+        "detail": "aes256_key = 64 hex chars (32 B), gcm_nonce = 24 hex chars (12 B)",
+        "expected": "Lengths match",
+        "ifNot": "You passed bits instead of bytes to token_bytes."
+      },
+      {
+        "title": "Watch the attack",
+        "detail": "A reset token is generated with random.Random(unix_time); attacker scans +/-1 h",
+        "expected": "attacker found seed ... == issued_at: True",
+        "ifNot": "Clock jumped during run; re-run."
+      },
+      {
+        "title": "Confirm determinism",
+        "detail": "Same seed gives the same token; secrets never repeats",
+        "expected": "same seed same token True / secrets differs True",
+        "ifNot": "-"
+      },
+      {
+        "title": "Run tests",
+        "detail": "python -m unittest -v",
+        "expected": "3 tests OK",
+        "ifNot": "Read the failing assertion."
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"secrets vs random: generate tokens/keys/nonces, then break a predictable token.\"\"\"\nimport random\nimport secrets\nimport time\n\n\ndef secure_material() -> dict:\n    return {\n        \"api_token_urlsafe\": secrets.token_urlsafe(32),  # CSPRNG: 32 OS-random bytes = 256 bits -> ~43 chars\n        \"session_id_hex\": secrets.token_hex(16),\n        \"aes256_key\": secrets.token_bytes(32),\n        \"gcm_nonce\": secrets.token_bytes(12),  # 96-bit nonce for AES-GCM / ChaCha20-Poly1305\n        \"pin_6_digits\": f\"{secrets.randbelow(10**6):06d}\",\n    }\n\n\ndef insecure_reset_token(now: int) -> str:\n    # ANTI-PATTERN: deterministic PRNG (Mersenne Twister) seeded with a guessable value (the clock).\n    rng = random.Random(now)\n    return \"%032x\" % rng.getrandbits(128)\n\n\ndef attacker_recovers(token: str, around: int, window: int = 3600):\n    # search space: attacker knows roughly when the token was issued and replays every candidate seed.\n    for t in range(around - window, around + window + 1):\n        if insecure_reset_token(t) == token:\n            return t\n    return None\n\n\nif __name__ == \"__main__\":\n    for name, value in secure_material().items():\n        shown = value.hex() if isinstance(value, bytes) else value\n        print(f\"{name:18} {shown}\")\n\n    issued_at = int(time.time()) - 1234  # victim requested a reset ~20 min ago\n    leaked = insecure_reset_token(issued_at)\n    start = time.perf_counter()\n    seed = attacker_recovers(leaked, around=int(time.time()))\n    print(\"insecure token      \", leaked)\n    print(\"attacker found seed \", seed, \"== issued_at:\", seed == issued_at,\n          f\"({time.perf_counter() - start:.3f}s)\")\n    print(\"attacker can mint   \", insecure_reset_token(seed) == leaked)\n    print(\"same seed same token\", insecure_reset_token(42) == insecure_reset_token(42))\n    print(\"secrets differs     \", secrets.token_hex(16) != secrets.token_hex(16))\n",
+    "projectFiles": [
+      {
+        "path": "labs/L100/03-secure-randomness/randomness.py",
+        "purpose": "secure material + predictable-RNG attack"
+      },
+      {
+        "path": "labs/L100/03-secure-randomness/test_randomness.py",
+        "purpose": "unittest suite (python -m unittest)"
+      },
+      {
+        "path": "labs/L100/03-secure-randomness/README.md",
+        "purpose": "run command + observed output"
+      },
+      {
+        "path": "labs/L100/03-secure-randomness/try_it.py",
+        "purpose": "runs the two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "Secure token/key/nonce printed with correct lengths",
+      "Clock-seeded token recovered in < 1 s",
+      "attacker can mint True"
+    ],
+    "testCases": [
+      {
+        "action": "Generate 100 keys with secrets",
+        "expected": "100 distinct values"
+      },
+      {
+        "action": "Recover a token seeded 500 s ago with a +/-600 s window",
+        "expected": "Exact seed found"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "attacker found seed None",
+        "action": "System clock changed mid-run; re-run."
+      },
+      {
+        "symptom": "Linter warns about random in tests/simulations",
+        "action": "Fine for simulations; use secrets only for security values."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Issue the token 2 h ago with a ±1 h scan, then widen the scan to ±3 h.",
+        "predict": "±1 h misses, ±3 h finds it.",
+        "expected": "1) token issued 2 h ago, window +/-1 h -> attacker finds: None / same token, window +/-3 h -> attacker finds seed == issued_at: True"
+      },
+      {
+        "task": "Use `secrets.token_hex(16)` as the token and run the same scan.",
+        "predict": "No seed reproduces it.",
+        "expected": "2) secrets.token_hex(16) scanned over 7,201 seeds -> attacker finds: None"
+      }
+    ],
+    "equivalents": [
+      "Same idea in libsodium/PyNaCl: randombytes_buf / nacl.utils.random(n)",
+      "Same idea in OpenSSL CLI: openssl rand -hex 32",
+      "Same idea in Node.js: crypto.randomBytes(32), crypto.randomInt, crypto.randomUUID",
+      "Same idea in Go: crypto/rand (never math/rand for secrets)",
+      "Same idea in Java: java.security.SecureRandom (never java.util.Random)"
+    ],
+    "caution": "Do not invent your own crypto: use vetted libraries (pyca/cryptography, libsodium, platform crypto) and their high-level APIs; these labs show primitives for learning, not a protocol design. Never seed a PRNG with time, PID or user IDs for security values.",
+    "checkpoint": "PASS if the attacker recovers the clock-seeded token and all 3 tests pass.",
+    "checkYourself": [
+      {
+        "q": "Why does hashing `time.time()` with SHA-256 not make a secure token?",
+        "a": "The attacker hashes every candidate time too; the search space is still a few thousand values."
+      },
+      {
+        "q": "Is `random` ever the right choice?",
+        "a": "Yes: simulations, games and reproducible tests, where predictability is a feature."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Python docs – secrets",
+        "url": "https://docs.python.org/3/library/secrets.html"
+      },
+      {
+        "title": "Python docs – random",
+        "url": "https://docs.python.org/3/library/random.html"
+      },
+      {
+        "title": "RFC 8439 – ChaCha20 and Poly1305 for IETF Protocols",
+        "url": "https://www.rfc-editor.org/rfc/rfc8439.html"
+      },
+      {
+        "title": "Node.js – crypto",
+        "url": "https://nodejs.org/api/crypto.html"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran randomness.py and 3 unittests in the sandbox; seed recovered in 0.078 s over a 7,201-seed window. Output pasted in README (token values vary per run). tryIt: both experiments run locally with `python try_it.py` (cryptography 50.0.2); `expected` is the observed output."
+    },
+    "conceptNote": "content/concepts/03-secure-randomness.md",
+    "conceptSummary": "random is a deterministic music box: the same or a guessable seed replays the same 'random' output, so a clock-seeded token falls to a 7,201-seed search. Keys, nonces, salts and tokens must come from the OS CSPRNG via secrets, with 32 bytes (256 bits) as the typical size.",
+    "inRealSystems": "TLS 1.3 `ClientHello.random` and WireGuard ephemeral keys and cookie nonces come from a secure random source; Node's equivalent is `crypto.randomBytes`.",
+    "useWhen": "Use `secrets` for keys, nonces, salts and tokens, seeded `random` only for reproducible simulations; never seed security values from time or IDs.",
+    "next": "L200 #8 Key exchange and hybrid encryption (X25519 + HKDF + AEAD): fresh ephemeral keys from the OS CSPRNG on every message.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "authenticated-encryption-aead",
+    "number": 4,
+    "level": "L100",
+    "title": "Authenticated encryption: AES-256-GCM and ChaCha20-Poly1305",
+    "phase": "Confidentiality",
+    "category": "AEAD",
+    "description": "Encrypt/decrypt with AEAD, bind associated data, detect tampering, and see why nonces must never repeat.",
+    "outcome": "You can seal and open messages with AESGCM/ChaCha20Poly1305 and handle InvalidTag correctly.",
+    "environment": "Python 3.12 (3.9+ supported), cryptography==50.0.2 (wheel bundles OpenSSL 4.0.3), stdlib hashlib/hmac/secrets/base64",
+    "estimatedTime": "25-30 minutes",
+    "overview": [
+      "AEAD gives confidentiality and integrity in one call; decrypt either returns the exact plaintext or raises InvalidTag."
+    ],
+    "prerequisites": [
+      "Lessons 1 and 3"
+    ],
+    "glossary": [
+      {
+        "term": "AEAD",
+        "meaning": "Authenticated Encryption with Associated Data."
+      },
+      {
+        "term": "AAD",
+        "meaning": "Associated data: authenticated but not encrypted (headers, IDs, versions)."
+      },
+      {
+        "term": "tag",
+        "meaning": "16-byte authenticator appended to the ciphertext by pyca/cryptography."
+      },
+      {
+        "term": "nonce",
+        "meaning": "12-byte per-message value; must never repeat for the same key."
+      }
+    ],
+    "concepts": [
+      "Output = ciphertext || 16-byte tag; store/send the nonce alongside.",
+      "Any change to ciphertext, nonce, key or AAD -> InvalidTag.",
+      "Reusing a nonce with the same key reveals XOR of plaintexts (and breaks GCM authenticity).",
+      "Random 96-bit nonces are fine per key up to about 2^32 messages (Go docs guidance)."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "cd labs/L100/04-authenticated-encryption && python aead_demo.py",
+        "expected": "Both official vectors True",
+        "ifNot": "Check nonce = 07000000 || 4041424344454647 for RFC 8439."
+      },
+      {
+        "title": "Round-trip with AAD",
+        "detail": "seal() prefixes a fresh 12-byte nonce; open_() splits it off",
+        "expected": "decrypt ok card=4111-1111 for both ciphers",
+        "ifNot": "Use the same AAD on both sides."
+      },
+      {
+        "title": "Tamper",
+        "detail": "One ciphertext bit is flipped",
+        "expected": "InvalidTag (rejected)",
+        "ifNot": "If plaintext comes back you are not using an AEAD API."
+      },
+      {
+        "title": "Change AAD",
+        "detail": "user_id=42 -> 43",
+        "expected": "InvalidTag (rejected)",
+        "ifNot": "-"
+      },
+      {
+        "title": "Nonce reuse demo",
+        "detail": "Two messages under the same key+nonce",
+        "expected": "nonce reuse leaks p1^p2: True; p2 recovered",
+        "ifNot": "-"
+      },
+      {
+        "title": "Run tests",
+        "detail": "python -m unittest -v",
+        "expected": "5 tests OK",
+        "ifNot": "Read the failing assertion."
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"AEAD with pyca/cryptography: AES-256-GCM and ChaCha20-Poly1305, AAD, tamper detection, nonce reuse.\"\"\"\nimport os\n\nfrom cryptography.exceptions import InvalidTag\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305\n\n# RFC 8439 section 2.8.2 test vector (AEAD_CHACHA20_POLY1305)\nRFC8439 = {\n    \"key\": bytes(range(0x80, 0xA0)),\n    \"nonce\": bytes.fromhex(\"07000000\") + bytes.fromhex(\"4041424344454647\"),  # constant || IV\n    \"aad\": bytes.fromhex(\"50515253c0c1c2c3c4c5c6c7\"),\n    \"pt\": b\"Ladies and Gentlemen of the class of '99: If I could offer you only one tip \"\n          b\"for the future, sunscreen would be it.\",\n    \"ct\": bytes.fromhex(\n        \"d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d6\"\n        \"3dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b36\"\n        \"92ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc\"\n        \"3ff4def08e4b7a9de576d26586cec64b6116\"),\n    \"tag\": bytes.fromhex(\"1ae10b594f09e26a7e902ecbd0600691\"),\n}\n# GCM spec (McGrew & Viega) Test Case 14: AES-256, zero key/IV, one zero block\nGCM_TC14 = {\"key\": bytes(32), \"nonce\": bytes(12), \"pt\": bytes(16),\n            \"ct\": bytes.fromhex(\"cea7403d4d606b6e074ec5d3baf39d18\"),\n            \"tag\": bytes.fromhex(\"d0d1c8a799996bf0265b98b5d48ab919\")}\n\n\ndef seal(aead, plaintext: bytes, aad: bytes) -> bytes:\n    nonce = os.urandom(12)  # nonce = number used once: fresh random 96-bit nonce per message\n    return nonce + aead.encrypt(nonce, plaintext, aad)  # AEAD output: ciphertext || 16-byte tag; ship nonce with it\n\n\ndef open_(aead, blob: bytes, aad: bytes) -> bytes:\n    return aead.decrypt(blob[:12], blob[12:], aad)  # all-or-nothing decrypt: InvalidTag on any change\n\n\ndef try_open(aead, blob, aad) -> str:\n    try:\n        return open_(aead, blob, aad).decode()\n    except InvalidTag:\n        return \"InvalidTag (rejected)\"\n\n\nif __name__ == \"__main__\":\n    v = RFC8439\n    out = ChaCha20Poly1305(v[\"key\"]).encrypt(v[\"nonce\"], v[\"pt\"], v[\"aad\"])\n    print(\"RFC 8439 2.8.2 ChaCha20-Poly1305 vector:\", out == v[\"ct\"] + v[\"tag\"])\n    g = GCM_TC14\n    print(\"GCM spec TC14 AES-256-GCM vector:       \",\n          AESGCM(g[\"key\"]).encrypt(g[\"nonce\"], g[\"pt\"], None) == g[\"ct\"] + g[\"tag\"])\n\n    aad = b\"user_id=42;v=1\"  # AAD: authenticated, not encrypted\n    for name, aead in [(\"AES-256-GCM\", AESGCM(AESGCM.generate_key(bit_length=256))),\n                       (\"ChaCha20-Poly1305\", ChaCha20Poly1305(ChaCha20Poly1305.generate_key()))]:\n        blob = seal(aead, b\"card=4111-1111\", aad)\n        flipped = bytearray(blob)\n        flipped[15] ^= 0x01\n        print(f\"--- {name} (blob {len(blob)} bytes = 12 nonce + 14 ct + 16 tag)\")\n        print(\"  decrypt ok        \", try_open(aead, blob, aad))\n        print(\"  1 bit flipped     \", try_open(aead, bytes(flipped), aad))\n        print(\"  AAD changed       \", try_open(aead, blob, b\"user_id=43;v=1\"))\n\n    # Nonce reuse: same key+nonce => XOR of ciphertexts equals XOR of plaintexts.\n    k, n = AESGCM.generate_key(bit_length=256), os.urandom(12)\n    p1, p2 = b\"attack at dawn!!\", b\"retreat at dusk!\"\n    c1, c2 = AESGCM(k).encrypt(n, p1, None)[:16], AESGCM(k).encrypt(n, p2, None)[:16]\n    leak = bytes(a ^ b for a, b in zip(c1, c2))\n    print(\"nonce reuse leaks p1^p2:\", leak == bytes(a ^ b for a, b in zip(p1, p2)))\n    print(\"attacker who knows p1 recovers p2:\", bytes(a ^ b for a, b in zip(leak, p1)))\n",
+    "projectFiles": [
+      {
+        "path": "labs/L100/04-authenticated-encryption/aead_demo.py",
+        "purpose": "AEAD vectors, AAD, tamper, nonce reuse"
+      },
+      {
+        "path": "labs/L100/04-authenticated-encryption/test_aead_demo.py",
+        "purpose": "unittest suite (python -m unittest)"
+      },
+      {
+        "path": "labs/L100/04-authenticated-encryption/README.md",
+        "purpose": "run command + observed output"
+      },
+      {
+        "path": "labs/L100/04-authenticated-encryption/try_it.py",
+        "purpose": "runs the two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "RFC 8439 §2.8.2 ChaCha20-Poly1305 vector: True",
+      "GCM spec TC14 AES-256-GCM vector: True",
+      "Bit flip / AAD change -> InvalidTag",
+      "Nonce reuse leaks XOR of plaintexts"
+    ],
+    "testCases": [
+      {
+        "action": "Encrypt RFC 8439 §2.8.2 inputs",
+        "expected": "ct || tag 1ae10b594f09e26a7e902ecbd0600691"
+      },
+      {
+        "action": "Flip last byte of blob",
+        "expected": "InvalidTag"
+      },
+      {
+        "action": "Seal 1000 messages",
+        "expected": "1000 distinct nonces"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "InvalidTag on a message you just encrypted",
+        "action": "Same key, nonce (first 12 bytes) and AAD must be used to decrypt."
+      },
+      {
+        "symptom": "Need AES-GCM in `openssl enc`",
+        "action": "Not supported by design; use openssl cms or a library."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Flip one bit of the stored nonce (blob byte 0) and decrypt.",
+        "predict": "InvalidTag, though ciphertext and tag are untouched.",
+        "expected": "1) nonce bit flipped -> InvalidTag (rejected)"
+      },
+      {
+        "task": "Seal 0, 14 and 1000-byte plaintexts and compare blob sizes.",
+        "predict": "Always plaintext + 28 B (12 nonce + 16 tag).",
+        "expected": "2) plaintext 0 B -> blob 28 B; 14 B -> 42 B; 1000 B -> 1028 B (overhead 28 B each time)"
+      }
+    ],
+    "equivalents": [
+      "Same idea in libsodium/PyNaCl: nacl.secret.SecretBox with nacl.utils.random(SecretBox.NONCE_SIZE) nonces",
+      "Same idea in OpenSSL CLI: openssl enc does NOT support GCM/CCM; use openssl cms for files",
+      "Same idea in Node.js: crypto.createCipheriv('aes-256-gcm'|'chacha20-poly1305', key, iv) + setAAD/getAuthTag/setAuthTag",
+      "Same idea in Go: cipher.NewGCM(aes.NewCipher(key)).Seal/Open; golang.org/x/crypto/chacha20poly1305",
+      "Same idea in Java: Cipher.getInstance(\"AES/GCM/NoPadding\") with GCMParameterSpec, updateAAD, AEADBadTagException"
+    ],
+    "learningTools": [
+      {
+        "name": "CyberChef",
+        "role": "CHECK",
+        "exercise": "AES Decrypt on the lab's GCM TC14 vector: Key = 64 zero hex chars (Hex), IV = 24 zero hex chars (Hex), Mode GCM, Input `cea7403d4d606b6e074ec5d3baf39d18` (Hex), GCM Tag `d0d1c8a799996bf0265b98b5d48ab919` (Hex), output Hex. Then change the first input byte to `cf` and run again.",
+        "expected": "Should match the lab's `GCM spec TC14 AES-256-GCM vector: True` line: plaintext 00000000000000000000000000000000 (16 zero bytes). After the 1-byte change CyberChef reports an error instead of plaintext, like the lab's `1 bit flipped  InvalidTag (rejected)`. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+        "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+        "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+        "licence": "Apache-2.0 (OSI)",
+        "url": "https://github.com/gchq/CyberChef"
+      },
+      {
+        "name": "CrypTool 2",
+        "role": "SEE",
+        "exercise": "Before the lab, open the AES ECB-vs-CBC template and encrypt input with repeated blocks in both modes.",
+        "expected": "ECB output repeats where the input repeats; CBC output does not. Windows PC only. This is why the lab uses only AEAD modes (GCM, ChaCha20-Poly1305) with a fresh 12-byte nonce. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+        "mac": "Not available on macOS (Windows/.NET WPF only): use the Windows PC",
+        "windows": "EXE installer or ZIP from https://www.cryptool.org/en/ct2/downloads/ (no admin needed)",
+        "licence": "Apache-2.0 (OSI)",
+        "url": "https://www.cryptool.org/en/ct2/downloads/"
+      }
+    ],
+    "caution": "Do not invent your own crypto: use vetted libraries (pyca/cryptography, libsodium, platform crypto) and their high-level APIs; these labs show primitives for learning, not a protocol design. Never reuse a (key, nonce) pair; never use the plaintext before decrypt() succeeds.",
+    "checkpoint": "PASS if both vectors print True, both tamper cases raise InvalidTag and 5 tests pass.",
+    "checkYourself": [
+      {
+        "q": "What does an eavesdropper learn when a nonce is reused?",
+        "a": "The XOR of the two plaintexts; knowing one reveals the other. For GCM, tags can also be forged."
+      },
+      {
+        "q": "Where should a database row's `user_id` go: plaintext or AAD?",
+        "a": "AAD: it stays readable, but moving the ciphertext to another user makes decryption fail."
+      }
+    ],
+    "sources": [
+      {
+        "title": "pyca/cryptography – Authenticated encryption",
+        "url": "https://cryptography.io/en/latest/hazmat/primitives/aead/"
+      },
+      {
+        "title": "RFC 8439 – ChaCha20 and Poly1305 for IETF Protocols",
+        "url": "https://www.rfc-editor.org/rfc/rfc8439.html"
+      },
+      {
+        "title": "NIST SP 800-38D – Galois/Counter Mode (GCM) and GMAC",
+        "url": "https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf"
+      },
+      {
+        "title": "Go – crypto/cipher",
+        "url": "https://pkg.go.dev/crypto/cipher"
+      },
+      {
+        "title": "Java SE 21 – javax.crypto.Cipher",
+        "url": "https://docs.oracle.com/en/java/javase/21/docs/api/java.base/javax/crypto/Cipher.html"
+      },
+      {
+        "title": "OpenSSL – openssl-enc(1)",
+        "url": "https://docs.openssl.org/master/man1/openssl-enc/"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran aead_demo.py and 5 unittests in the sandbox; RFC 8439 §2.8.2 and GCM TC14 outputs matched byte-for-byte. Output pasted in README. tryIt: both experiments run locally with `python try_it.py` (cryptography 50.0.2); `expected` is the observed output. learningTools: expected values computed from the lab code (research/learning_tools_expected.py); the GUI/CLI tools themselves were not run (manual)."
+    },
+    "conceptNote": "content/concepts/04-authenticated-encryption-aead.md",
+    "conceptSummary": "AEAD is a tamper-evident sealed envelope: ciphertext plus a 16-byte tag, with readable-but-bound AAD, and decrypt returns the exact plaintext or raises InvalidTag. The nonce must never repeat under a key, because reuse leaks the XOR of plaintexts (and enables GCM forgeries).",
+    "inRealSystems": "TLS 1.3 allows only AEAD for records, and WireGuard uses ChaCha20-Poly1305 with a 64-bit counter nonce that is never reused.",
+    "useWhen": "Use AEAD for records, files and messages, with metadata in AAD; avoid it without a unique-nonce guarantee, and avoid unauthenticated CBC/CTR.",
+    "next": "L200 #8 Key exchange and hybrid encryption (X25519 + HKDF + AEAD): the same AEAD, with a key agreed by public-key crypto.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "password-storage",
+    "number": 5,
+    "level": "L100",
+    "title": "Password storage: Argon2id (and scrypt fallback)",
+    "phase": "Passwords",
+    "category": "password hashing",
+    "description": "Hash and verify passwords with Argon2id PHC strings using OWASP minimum parameters.",
+    "outcome": "You can store $argon2id$... strings, verify logins, and fall back to scrypt with documented parameters.",
+    "environment": "Python 3.12 (3.9+ supported), cryptography==50.0.2 (wheel bundles OpenSSL 4.0.3), stdlib hashlib/hmac/secrets/base64; Argon2id needs cryptography >= 44 on OpenSSL >= 3.2 (wheel: OpenSSL 4.0.3)",
+    "estimatedTime": "25-30 minutes",
+    "overview": [
+      "Passwords are hashed with a slow, memory-hard, salted function; the PHC string stores algorithm, parameters, salt and hash together."
+    ],
+    "prerequisites": [
+      "Lessons 1-3"
+    ],
+    "glossary": [
+      {
+        "term": "Argon2id",
+        "meaning": "Memory-hard password hash (RFC 9106), PHC winner; OWASP's first choice."
+      },
+      {
+        "term": "salt",
+        "meaning": "Unique random value per password (16 bytes) so equal passwords hash differently."
+      },
+      {
+        "term": "PHC string",
+        "meaning": "$argon2id$v=19$m=..,t=..,p=..$salt$hash self-describing format."
+      },
+      {
+        "term": "m / t / p",
+        "meaning": "Memory in KiB / passes (iterations) / lanes (parallelism)."
+      }
+    ],
+    "concepts": [
+      "Never store passwords with plain SHA-256 or reversible encryption.",
+      "OWASP minimum Argon2id: m=19 MiB, t=2, p=1 (or an equivalent row); scrypt N=2^17, r=8, p=1 if Argon2id is unavailable.",
+      "Store parameters with the hash so you can raise cost later and rehash on next login."
+    ],
+    "steps": [
+      {
+        "title": "Confirm Argon2id exists",
+        "detail": "python -c \"from cryptography.hazmat.primitives.kdf.argon2 import Argon2id\"",
+        "expected": "No error (verified on 50.0.2)",
+        "ifNot": "Upgrade to the wheel; source builds need OpenSSL >= 3.2."
+      },
+      {
+        "title": "Run the lab",
+        "detail": "cd labs/L100/05-password-storage && python passwords.py",
+        "expected": "RFC 9106 tag 0d640df5...6b01e659",
+        "ifNot": "Check ad/secret/lanes=4/memory_cost=32/iterations=3."
+      },
+      {
+        "title": "Inspect the PHC string",
+        "detail": "Look at $argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>",
+        "expected": "Parameters visible; second hash of same password differs",
+        "ifNot": "You reused a salt."
+      },
+      {
+        "title": "Verify logins",
+        "detail": "verify_password uses Argon2id.verify_phc_encoded",
+        "expected": "right True, wrong False",
+        "ifNot": "Catch InvalidKey, not a generic Exception."
+      },
+      {
+        "title": "Scrypt fallback",
+        "detail": "scrypt_hash/scrypt_verify with N=2^17 r=8 p=1",
+        "expected": "scrypt$131072$8$1$...; verify True/False",
+        "ifNot": "Needs ~128 MiB RAM; see troubleshooting."
+      },
+      {
+        "title": "Run tests",
+        "detail": "python -m unittest -v",
+        "expected": "3 tests OK (about 5 s)",
+        "ifNot": "Read the failing assertion."
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"Password storage: Argon2id (PHC string) with OWASP minimums, scrypt as fallback.\"\"\"\nimport base64\nimport os\nimport time\n\nfrom cryptography.exceptions import InvalidKey\nfrom cryptography.hazmat.primitives.kdf.argon2 import Argon2id\nfrom cryptography.hazmat.primitives.kdf.scrypt import Scrypt\n\n# OWASP Password Storage Cheat Sheet minimums (checked 2026-10-28)\nARGON2ID = {\"memory_cost\": 19456, \"iterations\": 2, \"lanes\": 1}  # slow + memory-hard: m=19 MiB, t=2, p=1\nSCRYPT = {\"n\": 2**17, \"r\": 8, \"p\": 1}                            # 128 MiB\nSALT_BYTES = 16                                                  # unique salt per password; RFC 9106: 16 B\n\n\ndef hash_password(password: str) -> str:\n    kdf = Argon2id(salt=os.urandom(SALT_BYTES), length=32, **ARGON2ID)\n    return kdf.derive_phc_encoded(password.encode())  # self-describing PHC string: $argon2id$v=19$m=..,t=..,p=..$salt$hash\n\n\ndef verify_password(password: str, stored: str) -> bool:\n    try:\n        Argon2id.verify_phc_encoded(password.encode(), stored)  # params+salt read from the string\n        return True\n    except InvalidKey:\n        return False\n\n\ndef scrypt_hash(password: str) -> str:\n    salt = os.urandom(SALT_BYTES)\n    dk = Scrypt(salt=salt, length=32, **SCRYPT).derive(password.encode())\n    b64 = lambda b: base64.b64encode(b).decode()\n    return f\"scrypt${SCRYPT['n']}${SCRYPT['r']}${SCRYPT['p']}${b64(salt)}${b64(dk)}\"\n\n\ndef scrypt_verify(password: str, stored: str) -> bool:\n    _, n, r, p, salt, dk = stored.split(\"$\")\n    try:\n        Scrypt(salt=base64.b64decode(salt), length=32, n=int(n), r=int(r), p=int(p)).verify(\n            password.encode(), base64.b64decode(dk))  # constant-time comparison inside\n        return True\n    except InvalidKey:\n        return False\n\n\ndef rfc9106_argon2id_vector() -> str:\n    # RFC 9106 section 5.3 inputs (tiny parameters: test only, never production)\n    kdf = Argon2id(salt=b\"\\x02\" * 16, length=32, iterations=3, lanes=4, memory_cost=32,\n                   ad=b\"\\x04\" * 12, secret=b\"\\x03\" * 8)\n    return kdf.derive(b\"\\x01\" * 32).hex()\n\n\ndef rfc7914_scrypt_vector() -> str:\n    return Scrypt(salt=b\"NaCl\", length=64, n=1024, r=8, p=16).derive(b\"password\").hex()\n\n\nif __name__ == \"__main__\":\n    print(\"RFC 9106 Argon2id tag:\", rfc9106_argon2id_vector())\n    print(\"RFC 7914 scrypt  dk  :\", rfc7914_scrypt_vector()[:32], \"...\")\n    t = time.perf_counter()\n    h1 = hash_password(\"correct horse battery staple\")\n    print(f\"argon2id hash ({time.perf_counter() - t:.3f}s):\", h1)\n    h2 = hash_password(\"correct horse battery staple\")\n    print(\"same password, new salt -> different hash:\", h1 != h2)\n    print(\"verify right password:\", verify_password(\"correct horse battery staple\", h1))\n    print(\"verify wrong password:\", verify_password(\"Correct horse battery staple\", h1))\n    t = time.perf_counter()\n    s = scrypt_hash(\"hunter2\")\n    print(f\"scrypt fallback ({time.perf_counter() - t:.3f}s):\", s)\n    print(\"scrypt verify right/wrong:\", scrypt_verify(\"hunter2\", s), scrypt_verify(\"hunter3\", s))\n",
+    "projectFiles": [
+      {
+        "path": "labs/L100/05-password-storage/passwords.py",
+        "purpose": "Argon2id PHC hash/verify, scrypt fallback, RFC vectors"
+      },
+      {
+        "path": "labs/L100/05-password-storage/test_passwords.py",
+        "purpose": "unittest suite (python -m unittest)"
+      },
+      {
+        "path": "labs/L100/05-password-storage/README.md",
+        "purpose": "run command + observed output"
+      },
+      {
+        "path": "labs/L100/05-password-storage/try_it.py",
+        "purpose": "runs the two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "RFC 9106 §5.3 Argon2id tag 0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659",
+      "RFC 7914 scrypt(password, NaCl, 1024, 8, 16) starts fdbabe1c9d347200...",
+      "Argon2id hash ~0.1 s on the sandbox; verify right True / wrong False"
+    ],
+    "testCases": [
+      {
+        "action": "Derive RFC 9106 and RFC 7914 vectors",
+        "expected": "Exact published outputs"
+      },
+      {
+        "action": "Hash same password twice",
+        "expected": "Different PHC strings, both verify"
+      },
+      {
+        "action": "Verify 'pW' against hash of 'pw'",
+        "expected": "False"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "MemoryError or very slow scrypt",
+        "action": "Box has little RAM; use Argon2id or another OWASP-equivalent parameter row."
+      },
+      {
+        "symptom": "Login takes > 1 s under load",
+        "action": "Benchmark; pick an equivalent lower-memory OWASP row, do not drop below the minimum."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Double `memory_cost` to 38912, hash, then verify an old m=19456 hash.",
+        "predict": "Noticeably slower (exact factor depends on your machine); the old hash still verifies because its parameters are stored in the PHC string.",
+        "expected": "1) new PHC prefix: $argon2id$v=19$m=38912,t=2,p=1$; hashing is noticeably slower (1.4x-5.4x across 4 sandbox runs, machine-dependent); old m=19456 hash still verifies: True"
+      },
+      {
+        "task": "Verify `'hunter2 '` (trailing space) and `'Hunter2'`.",
+        "predict": "Both rejected; no fuzzy match.",
+        "expected": "2) verify 'hunter2' -> True; 'hunter2 ' -> False; 'Hunter2' -> False"
+      }
+    ],
+    "equivalents": [
+      "Same idea in libsodium/PyNaCl: nacl.pwhash.argon2id.str / nacl.pwhash.verify (crypto_pwhash_str)",
+      "Same idea in Node.js: crypto.argon2 / crypto.scrypt (node:crypto)",
+      "Same idea in Go: golang.org/x/crypto/argon2.IDKey (store salt+params yourself)",
+      "Same idea in Java: use a vetted third-party Argon2id library, or JCA PBKDF2WithHmacSHA256 (>= 600,000 iterations per OWASP) when FIPS-140 is required",
+      "Same idea in OpenSSL >= 3.2: provides the Argon2 KDFs that pyca/cryptography calls (CLI usage not validated here)"
+    ],
+    "learningTools": [
+      {
+        "name": "CyberChef",
+        "role": "CHECK",
+        "exercise": "Argon2 operation: input `correct horse battery staple`, Salt `somesalt` (UTF8), Iterations 2, Memory 19456 KiB, Parallelism 1, Hash length 32, Type Argon2id, Output Encoded hash (the lab's ARGON2ID parameters). In the lab folder run `python`, then `import passwords` and `passwords.verify_password(\"correct horse battery staple\", \"<paste>\")`.",
+        "expected": "Should be exactly $argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$BEgDDWX7pgCNo3fdhJ9D6jhZx/7hPUPNRayzBg5LHRM, and verify_password returns True, like the lab's `verify right password: True`. The salt is fixed here only so both sides match; the lab uses a random 16-byte salt. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+        "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+        "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+        "licence": "Apache-2.0 (OSI)",
+        "url": "https://github.com/gchq/CyberChef"
+      }
+    ],
+    "caution": "Do not invent your own crypto: use vetted libraries (pyca/cryptography, libsodium, platform crypto) and their high-level APIs; these labs show primitives for learning, not a protocol design. Do not lower parameters below the OWASP minimums; benchmark on production hardware.",
+    "checkpoint": "PASS if both RFC vectors match, PHC strings start with $argon2id$v=19$m=19456,t=2,p=1$ and 3 tests pass.",
+    "checkYourself": [
+      {
+        "q": "Two users pick `hunter2`. Why do their stored strings differ?",
+        "a": "Each has a unique random salt, so the outputs are unrelated."
+      },
+      {
+        "q": "Why is a slow hash good for defenders when it is slow for them too?",
+        "a": "A defender pays once per login; an attacker pays the same cost for each of billions of guesses."
+      }
+    ],
+    "sources": [
+      {
+        "title": "pyca/cryptography – Key derivation functions",
+        "url": "https://cryptography.io/en/latest/hazmat/primitives/key-derivation-functions/"
+      },
+      {
+        "title": "OWASP Password Storage Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+      },
+      {
+        "title": "RFC 9106 – Argon2",
+        "url": "https://www.rfc-editor.org/rfc/rfc9106.html"
+      },
+      {
+        "title": "RFC 7914 – scrypt",
+        "url": "https://www.rfc-editor.org/rfc/rfc7914.html"
+      },
+      {
+        "title": "pyca/cryptography – Changelog",
+        "url": "https://cryptography.io/en/latest/changelog/"
+      },
+      {
+        "title": "PyNaCl – Password hashing",
+        "url": "https://pynacl.readthedocs.io/en/latest/password_hashing/"
+      },
+      {
+        "title": "Go – golang.org/x/crypto/argon2",
+        "url": "https://pkg.go.dev/golang.org/x/crypto/argon2"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Checked docs (Argon2id added 44.0.0, PHC helpers 45.0.0) and locally imported Argon2id from cryptography 50.0.2; ran passwords.py and 3 unittests (4.6 s). RFC 9106 §5.3 and RFC 7914 §12 vectors matched. Output pasted in README. tryIt: both experiments run locally with `python try_it.py` (cryptography 50.0.2); `expected` is the observed output. learningTools: expected values computed from the lab code (research/learning_tools_expected.py); the GUI/CLI tools themselves were not run (manual)."
+    },
+    "conceptNote": "content/concepts/05-password-storage.md",
+    "conceptSummary": "Passwords are hashed, not encrypted, with a slow, memory-hard, uniquely salted function: Argon2id at OWASP's m=19 MiB, t=2, p=1 minimum, stored as a self-describing PHC string. On the sandbox this made each guess roughly 22,000 times more expensive than SHA-256.",
+    "inRealSystems": "libsodium/PyNaCl `pwhash.str()` defaults to Argon2id PHC strings, Node has `crypto.argon2`/`scrypt`, and FIPS setups use PBKDF2-HMAC-SHA256 with 600,000+ iterations.",
+    "useWhen": "Use for human-chosen secrets (passwords, PINs), tuned under about 1 s; avoid for high-entropy tokens and below OWASP minimums.",
+    "next": "L200 #11 Tokens done right: signed JWT-style tokens: what a service issues after the password check.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "encoding-vs-hashing-vs-encryption",
+    "number": 6,
+    "level": "L100",
+    "title": "Encoding vs hashing vs encryption",
+    "phase": "Foundations",
+    "category": "concepts lab",
+    "description": "Side-by-side lab showing reversibility, keys and purpose of base64/hex, SHA-256 and AES-GCM.",
+    "outcome": "You can pick the right tool and spot 'base64 as security' and 'hash as encryption' mistakes.",
+    "environment": "Python 3.12 (3.9+ supported), cryptography==50.0.2 (wheel bundles OpenSSL 4.0.3), stdlib hashlib/hmac/secrets/base64",
+    "estimatedTime": "15-20 minutes",
+    "overview": [
+      "Encoding changes representation (anyone can reverse it), hashing is one-way, encryption is reversible only with the key."
+    ],
+    "prerequisites": [
+      "Lessons 2 and 4"
+    ],
+    "glossary": [
+      {
+        "term": "encoding",
+        "meaning": "Reversible, keyless representation change (base64, hex) for transport."
+      },
+      {
+        "term": "hashing",
+        "meaning": "One-way fixed-size fingerprint."
+      },
+      {
+        "term": "encryption",
+        "meaning": "Reversible transformation that needs a secret key."
+      },
+      {
+        "term": "base64url",
+        "meaning": "URL-safe base64 alphabet using - and _ (RFC 4648 §5)."
+      }
+    ],
+    "concepts": [
+      "Base encoding gives no computational confidentiality (RFC 4648 §12).",
+      "Hashing is for comparing/fingerprinting, not for hiding recoverable data.",
+      "Encryption (AEAD) when you need the data back and only key holders may read it."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "cd labs/L100/06-encoding-hashing-encryption && python compare.py",
+        "expected": "4-row table: base64/hex 'yes, by anyone', SHA-256 'no (one-way)', AES-GCM 'only with key'",
+        "ifNot": "-"
+      },
+      {
+        "title": "Decode the 'secret' yourself",
+        "detail": "echo ZGJfcGFzc3dvcmQ9U3VwM3JTM2NyZXQ= | python -m base64 -d   (same in zsh and PowerShell)",
+        "expected": "db_password=Sup3rS3cret",
+        "ifNot": "Use python -m base64 -d rather than the OS base64 tool (flags differ between macOS and GNU)."
+      },
+      {
+        "title": "Try the wrong key",
+        "detail": "Script decrypts with a fresh random key",
+        "expected": "InvalidTag",
+        "ifNot": "-"
+      },
+      {
+        "title": "Compare determinism",
+        "detail": "Hash twice vs encrypt twice",
+        "expected": "hash equal True, ciphertexts differ True",
+        "ifNot": "If ciphertexts are equal you reused a nonce."
+      },
+      {
+        "title": "Agent assist: review code for crypto misuse",
+        "detail": "python misuse_lint.py; then python agent_assist.py (fake server) or python agent_assist.py --real (Ollama)",
+        "expected": "Linter: CRY001 line 9, CRY002 line 21, CRY003 line 13; agent claims sorted into CONFIRMED / MISSED / REJECTED; VERDICT ... FAIL - 3 misuse(s)",
+        "ifNot": "--real: check Ollama is running (ollama list) and LOCAL_MODEL_URL/LOCAL_MODEL; without --real nothing is downloaded."
+      },
+      {
+        "title": "Run tests",
+        "detail": "python -m unittest -v",
+        "expected": "12 tests OK (4 compare incl. RFC 4648 vectors + 8 agent assist)",
+        "ifNot": "Read the failing assertion."
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"Side-by-side: encoding (base64/hex) vs hashing (SHA-256) vs encryption (AES-256-GCM).\"\"\"\nimport base64\nimport hashlib\nimport os\n\nfrom cryptography.exceptions import InvalidTag\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\n\nSECRET = b\"db_password=Sup3rS3cret\"\n\n\ndef encode(data: bytes) -> dict:\n    return {\"base64\": base64.b64encode(data).decode(), \"hex\": data.hex()}  # encoding: new alphabet, no key, no secrecy\n\n\ndef hash_(data: bytes) -> str:\n    return hashlib.sha256(data).hexdigest()  # hashing: deterministic, one-way\n\n\ndef encrypt(data: bytes, key: bytes) -> bytes:\n    nonce = os.urandom(12)  # encryption: key + fresh nonce -> randomised, reversible only with the key\n    return nonce + AESGCM(key).encrypt(nonce, data, None)\n\n\ndef decrypt(blob: bytes, key: bytes) -> bytes:\n    return AESGCM(key).decrypt(blob[:12], blob[12:], None)\n\n\nif __name__ == \"__main__\":\n    key = AESGCM.generate_key(bit_length=256)\n    enc = encode(SECRET)\n    blob = encrypt(SECRET, key)\n    rows = [\n        (\"encoding/base64\", enc[\"base64\"], \"none\",\n         \"yes, by anyone\" if base64.b64decode(enc[\"base64\"]) == SECRET else \"?\"),\n        (\"encoding/hex\", enc[\"hex\"], \"none\", \"yes, by anyone\" if bytes.fromhex(enc[\"hex\"]) == SECRET else \"?\"),\n        (\"hash/SHA-256\", hash_(SECRET), \"none\", \"no (one-way)\"),\n        (\"encrypt/AES-GCM\", base64.b64encode(blob).decode(), \"secret\",\n         \"only with key\" if decrypt(blob, key) == SECRET else \"?\"),\n    ]\n    print(f\"{'technique':16} {'key':7} {'reversible?':15} output (truncated)\")\n    for name, out, k, rev in rows:\n        print(f\"{name:16} {k:7} {rev:15} {out[:44]}\")\n\n    try:\n        decrypt(blob, AESGCM.generate_key(bit_length=256))\n    except InvalidTag:\n        print(\"decrypt with wrong key -> InvalidTag\")\n    print(\"hash is deterministic  ->\", hash_(SECRET) == hash_(SECRET))\n    print(\"encryption randomised  ->\", encrypt(SECRET, key) != encrypt(SECRET, key))\n    print(\"RFC 4648 vectors       ->\", base64.b64encode(b\"foobar\") == b\"Zm9vYmFy\",\n          base64.b16encode(b\"foobar\") == b\"666F6F626172\")\n    print(\"Common mistakes:\")\n    print(\" - 'encrypting' with base64 in config files / HTTP Basic auth without TLS\")\n    print(\" - storing passwords with SHA-256 or encryption instead of Argon2id\")\n    print(\" - using a hash where a keyed MAC (HMAC) or AEAD is needed\")\n",
+    "projectFiles": [
+      {
+        "path": "labs/L100/06-encoding-hashing-encryption/compare.py",
+        "purpose": "side-by-side table + mistakes list"
+      },
+      {
+        "path": "labs/L100/06-encoding-hashing-encryption/test_compare.py",
+        "purpose": "unittest suite (python -m unittest)"
+      },
+      {
+        "path": "labs/L100/06-encoding-hashing-encryption/README.md",
+        "purpose": "run command + observed output"
+      },
+      {
+        "path": "labs/L100/06-encoding-hashing-encryption/try_it.py",
+        "purpose": "runs the two tryIt experiments"
+      },
+      {
+        "path": "labs/L100/06-encoding-hashing-encryption/review_me.txt",
+        "purpose": "snippet with 3 planted misuses (read as text, never run)"
+      },
+      {
+        "path": "labs/L100/06-encoding-hashing-encryption/misuse_lint.py",
+        "purpose": "deterministic AST linter = the judge (CRY001-003)"
+      },
+      {
+        "path": "labs/L100/06-encoding-hashing-encryption/agent_assist.py",
+        "purpose": "asks a local model, checks every claim against the linter"
+      },
+      {
+        "path": "labs/L100/06-encoding-hashing-encryption/test_agent_assist.py",
+        "purpose": "unittests (fake model server only)"
+      },
+      {
+        "path": "labs/_shared/local_agent/",
+        "purpose": "vendored local-agent helper (client.py, fake_model_server.py + one documented [[CRYPTO-REVIEW]] rule)"
+      }
+    ],
+    "expectedResults": [
+      "base64('foobar') = Zm9vYmFy, base16('foobar') = 666F6F626172 (RFC 4648)",
+      "Wrong key -> InvalidTag",
+      "Hash deterministic, encryption randomised"
+    ],
+    "testCases": [
+      {
+        "action": "RFC 4648 §10 vectors",
+        "expected": "Exact match"
+      },
+      {
+        "action": "Decrypt with another key",
+        "expected": "InvalidTag"
+      },
+      {
+        "action": "Lint review_me.txt / a fixed version (secrets.token_urlsafe, os.urandom nonce)",
+        "expected": "3 findings / none"
+      },
+      {
+        "action": "Fake agent review judged by the linter",
+        "expected": "confirmed CRY001@9, CRY003@13; missed CRY002@21; rejected CRY003@17"
+      },
+      {
+        "action": "Snippet containing a PEM private-key header",
+        "expected": "ValueError before any request is sent"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "binascii.Error: Incorrect padding",
+        "action": "Input truncated or base64url; use base64.urlsafe_b64decode."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Run the three tools on `b\"Hi\"` instead of SECRET.",
+        "predict": "Encodings shrink, hash stays 64 hex chars, blob is 2 + 28 B.",
+        "expected": "1) base64: SGk= | hex: 4869 | sha256 hex chars: 64 | AES-GCM blob bytes: 30"
+      },
+      {
+        "task": "Change SECRET's last character; count changed output characters.",
+        "predict": "Base64 changes locally, the hash almost everywhere.",
+        "expected": "2) base64 chars changed: 1 of 32 | sha256 hex chars changed: 56 of 64"
+      }
+    ],
+    "equivalents": [
+      "Same idea in OpenSSL CLI: openssl base64 (encoding) / openssl dgst -sha256 (hash) / openssl cms (encryption)",
+      "Same idea in libsodium/PyNaCl: sodium_bin2base64 / crypto_generichash / crypto_secretbox",
+      "Same idea in Node.js: Buffer.toString('base64'|'hex') / crypto.createHash / createCipheriv('aes-256-gcm')",
+      "Same idea in Go: encoding/base64, encoding/hex / crypto/sha256 / crypto/cipher GCM",
+      "Same idea in Java: java.util.Base64, HexFormat / MessageDigest / Cipher AES/GCM/NoPadding"
+    ],
+    "learningTools": [
+      {
+        "name": "CyberChef",
+        "role": "CHECK",
+        "exercise": "Input `db_password=Sup3rS3cret`: recipe To Base64; in a second tab SHA2 (Size 256); then From Base64 on the lab's base64 output (no key needed).",
+        "expected": "Should match the lab's printed rows: base64 ZGJfcGFzc3dvcmQ9U3VwM3JTM2NyZXQ= and SHA-256 df1e2c750bcd0e95ed602232da343dcc1aa20b09e655ef7c68799d01efa0daf2 (the lab prints the first 44 chars). From Base64 gives the secret back: encoding is not encryption. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+        "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+        "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+        "licence": "Apache-2.0 (OSI)",
+        "url": "https://github.com/gchq/CyberChef"
+      }
+    ],
+    "caution": "Do not invent your own crypto: use vetted libraries (pyca/cryptography, libsodium, platform crypto) and their high-level APIs; these labs show primitives for learning, not a protocol design. Base64 in config files, tokens or logs is plaintext to anyone who sees it. Agent assist: the model only proposes and explains; it never decides pass/fail or edits code - the deterministic linter does. Never paste real keys, passwords, tokens or production code containing secrets into a model prompt, even a local one.",
+    "checkpoint": "PASS if you can decode the base64 'secret' without a key, decryption with a wrong key fails, and 4 tests pass.",
+    "checkYourself": [
+      {
+        "q": "Why can't you \"decrypt\" a SHA-256 digest?",
+        "a": "Hashing is one-way: no key and no inverse. You can only guess inputs and compare digests."
+      },
+      {
+        "q": "A home address must be shown on a profile and protected at rest. Which tool fits?",
+        "a": "Encryption (AEAD), because the value must come back."
+      }
+    ],
+    "sources": [
+      {
+        "title": "RFC 4648 – Base16/32/64 encodings",
+        "url": "https://www.rfc-editor.org/rfc/rfc4648.html"
+      },
+      {
+        "title": "Python docs – base64",
+        "url": "https://docs.python.org/3/library/base64.html"
+      },
+      {
+        "title": "OWASP Password Storage Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+      },
+      {
+        "title": "pyca/cryptography – Authenticated encryption",
+        "url": "https://cryptography.io/en/latest/hazmat/primitives/aead/"
+      },
+      {
+        "title": "RFC 7617 – HTTP Basic authentication",
+        "url": "https://www.rfc-editor.org/rfc/rfc7617.html"
+      },
+      {
+        "title": "Ollama – OpenAI compatibility (/v1/chat/completions)",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      },
+      {
+        "title": "Python docs – secrets",
+        "url": "https://docs.python.org/3/library/secrets.html"
+      },
+      {
+        "title": "Python docs – ast",
+        "url": "https://docs.python.org/3/library/ast.html"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran compare.py and 12 unittests (4 compare + 8 agent assist, incl. the base64/base64url/JWK secret-guard tests) in the sandbox; also ran the python -m base64 -d one-liner. Output pasted in README. tryIt: both experiments run locally with `python try_it.py` (cryptography 50.0.2); `expected` is the observed output. Agent assist: misuse_lint.py and agent_assist.py run against the vendored fake model server only; `agentAssist.expected` is the observed output. Not run with a real model (sandbox has none). learningTools: expected values computed from the lab code (research/learning_tools_expected.py); the GUI/CLI tools themselves were not run (manual).",
+      "pendingCi": [
+        "agent_assist.py --real (real local model)"
+      ]
+    },
+    "conceptNote": "content/concepts/06-encoding-vs-hashing-vs-encryption.md",
+    "conceptSummary": "Encoding (base64, hex) is a keyless change of alphabet that anyone can reverse, hashing is one-way, and encryption is reversible only with the key. Pick by the question: need it back (encrypt), only compare (hash), or just fit bytes into text (encode, with zero protection).",
+    "inRealSystems": "HTTP Basic auth sends base64 credentials, JWT payloads are base64url and readable by anyone, and PEM files are base64-wrapped DER.",
+    "useWhen": "Encode to carry bytes as text, hash to compare, encrypt (AEAD) what you need back; never encode to hide or hash what you must recover.",
+    "next": "L200 #9 A local certificate authority: PEM/DER formats for real keys and certificates.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "agentAssist": {
+      "task": "A local model reviews review_me.txt (token from random.choice, MD5 password hash, SHA-256 file fingerprint, constant AES-GCM nonce) and lists misuses with line numbers.",
+      "prompt": "System: You review Python code for cryptography misuse. Report only these rules: CRY001 = random module used for a token/secret; CRY002 = AEAD nonce constant or reused; CRY003 = fast hash (MD5/SHA-x) used to store a password. Output one line per finding, exactly: CRYxxx line N: reason. If none, output: No findings. | User: [[CRYPTO-REVIEW]] Review this code (line numbers on the left): <code>…numbered snippet…</code>",
+      "check": "misuse_lint.py (AST, deterministic) is the judge: each 'CRYxxx line N' claim is CONFIRMED only if the linter reports the same rule on the same line; linter-only findings are MISSED, agent-only claims are REJECTED. The verdict comes from the linter, never from the agent. find_secrets() refuses to send text that looks like a key/secret (PEM private key, long hex, base64 or base64url such as a 32-byte key, JWK private members, AWS key id).",
+      "expected": "CONFIRMED CRY001 line 9   agent explains: the random module is a predictable PRNG; use secrets.token_urlsafe() or secrets.token_hex() for tokens.\nCONFIRMED CRY003 line 13  agent explains: fast hash applied to a secret; store passwords with Argon2id (or scrypt), never MD5/SHA-x.\nMISSED    CRY002 line 21  linter: AEAD nonce is a constant (reused per key) (agent did not report it)\nREJECTED  CRY003 line 17  agent claim not backed by the linter: fast hash applied to a secret; store passwords with Argon2id (or scrypt), never MD5/SHA-x.\nVERDICT (from linter, not agent): FAIL - 3 misuse(s)",
+      "realModelNote": "With --real (Ollama, default qwen2.5:1.5b; Metal on the Mac mini, CUDA/Vulkan or CPU on the Windows PC) wording and findings vary by model and run, and line numbers may be off by one (counted as MISSED + REJECTED); the linter verdict is identical. Not run in the sandbox (no model)."
+    }
+  }
+]

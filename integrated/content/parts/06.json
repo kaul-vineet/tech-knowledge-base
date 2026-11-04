@@ -1,0 +1,691 @@
+{
+ "id": "06-signed-science-data",
+ "number": 6,
+ "level": "L600",
+ "title": "A verifiable, replicated science-data release pipeline",
+ "phase": "Integrate it",
+ "category": "Integrated project",
+ "combines": [
+  "astronomy",
+  "cryptography",
+  "distributed-systems"
+ ],
+ "description": "Process Gaia-like astrometry into distances, publish it as a canonical, Merkle-hashed, dual-signed release, replicate it to 4 mirrors by anti-entropy, and let an untrusting client verify signatures, hashes, licence, log proofs and freshness.",
+ "outcome": "You can build a release pipeline where any mirror may lag or lie and a client still gets the newest authentic data or a clear refusal - and you can name, test and fix the four seams where the three topics meet.",
+ "environment": "Python 3.12 (validated on 3.12, Linux x86_64) + numpy + cryptography 50.0.2 (Ed25519, ML-DSA-65, SHA-256); stdlib unittest; imports astronomy L100 #4 + L400 #21, cryptography L200 #7 + L300 #14 + L400 #17 and distributed-systems L400 #17 via _kb.py. Optional: minisign 0.12, CyberChef (manual checks).",
+ "estimatedTime": "4-6 hours",
+ "overview": [
+  "A science release is only useful if anyone can prove, years later and from any mirror, that the bytes are the ones the team signed, under the licence the inputs require, and that nothing newer was hidden. This project wires an astronomy processing step to a cryptographic release format and a gossiping mirror network, then breaks the joints on purpose: a mirror that re-serialises floats, a rotation that forgets old keys, a client that trusts stale mirrors, a builder that drops Gaia's NonCommercial term."
+ ],
+ "prerequisites": [
+  "Astronomy L100 #4 (parallax, distance modulus) and L400 #21 (licences, citation, manifests)",
+  "Cryptography L200 #7 (Ed25519), L300 #14 (signed manifests) and L400 #17 (dual signing, registry)",
+  "Distributed systems L400 #17 (seeded event simulation, staleness) and L400 #18 (merge laws)"
+ ],
+ "buildsOn": [
+  {
+   "topic": "astronomy",
+   "lesson": 4,
+   "title": "Units and scales: AU, light-year, parsec, magnitudes and distance modulus",
+   "uses": "units.parallax_distance_pc() and distance_modulus() for distance and absolute magnitude (imported)"
+  },
+  {
+   "topic": "astronomy",
+   "lesson": 21,
+   "title": "Open data and science software practice: VO standards, licences, citation and validation",
+   "uses": "inputs.rows() and the real Gaia/MAST credit texts; solution release_licence() (keep NC) and citation_cff(); the shipped release_licence() is the licence-drop fault (imported)"
+  },
+  {
+   "topic": "cryptography",
+   "lesson": 7,
+   "title": "Digital signatures with Ed25519",
+   "uses": "RFC 8032 TEST 1 vector checked in M3 (imported)"
+  },
+  {
+   "topic": "cryptography",
+   "lesson": 14,
+   "title": "Signing the software supply chain",
+   "uses": "Rejected exception and the manifest-of-digests pattern; key ids as SHA-256 of the raw public key (imported)"
+  },
+  {
+   "topic": "cryptography",
+   "lesson": 17,
+   "title": "Crypto agility: versioned envelopes, negotiation and dual signing",
+   "uses": "registry.sign/verify and the 'transition' phase requiring Ed25519 + ML-DSA-65 (imported)"
+  },
+  {
+   "topic": "distributed-systems",
+   "lesson": 17,
+   "title": "Consistency models in practice: quorums (N, R, W), staleness and PACELC",
+   "uses": "helpers.Sim seeded event loop drives the gossip rounds (imported)"
+  },
+  {
+   "topic": "distributed-systems",
+   "lesson": 18,
+   "title": "CRDTs for local-first collaboration: counters, OR-Set, LWW-Register and property tests",
+   "uses": "the join rule (union of immutable blobs, max-version timestamp register) and order-independence test (idea; not imported)"
+  }
+ ],
+ "designBrief": {
+  "context": "A small team publishes a derived catalogue (synthetic Gaia-like astrometry -> distances) every 20 minutes of simulated time. Four volunteer mirrors serve it; one stores uploads in a JSON document store, one is regularly partitioned. Users verify with their own tools, in several languages, and cite exact versions for years.",
+  "constraints": [
+   "any single-byte change in any release object is detected: 100 % of 15,586 single-bit flips",
+   "4 mirrors converge within 4 gossip rounds of 60 s after the last one becomes reachable",
+   "a client never accepts a release older than the newest it has seen, nor an expired timestamp",
+   "old releases still verify after a key rotation; a retired key cannot sign a new version",
+   "Gaia's CC BY-NC 3.0 IGO terms and credit survive: release CC-BY-NC-4.0, credit verbatim and signed",
+   "runs offline in minutes with seeded data and a fake clock; no secrets leave the machine"
+  ],
+  "question": "Where must the boundaries between the science code, the crypto and the mirror network be made explicit - and how do we test each one?"
+ },
+ "architecture": {
+  "diagram": "labs/L600/06-signed-science-data/architecture.mmd",
+  "summary": "science.py turns astronomy L400 #21 rows into distances (inverse parallax only when parallax/error >= 5). publisher.py runs the licence gate, writes 5 files as RFC 8785 (JCS) bytes, builds a manifest with SHA-256 + length per file and an RFC 9162 Merkle root, signs it with Ed25519 + ML-DSA-65 (crypto L400 #17 registry), appends its hash to a transparency log and issues a 1-hour timestamp. Only mirror m0 receives the upload; mirrors.py spreads it by push-pull gossip that compares a Merkle tree over 16 key buckets (distributed L400 #17's Sim drives the rounds). client.py trusts one root.json, follows the root chain, checks timestamp expiry and version monotonicity, the release signatures inside each key's validity window, every file, the Merkle root, the licence and attribution, and the log's inclusion and consistency proofs."
+ },
+ "milestones": [
+  {
+   "title": "M1 Process",
+   "deliverable": "science.py: distance_pc and abs_mag_t for 28 rows (10 needs-prior); identical bytes on re-run",
+   "test": "labs/L600/06-signed-science-data/tests/test_m1_process.py"
+  },
+  {
+   "title": "M2 Content-addressed release",
+   "deliverable": "publisher.py manifest (5 files, SHA-256 + length) with RFC 9162 Merkle root; merkle.py proofs",
+   "test": "labs/L600/06-signed-science-data/tests/test_m2_release.py"
+  },
+  {
+   "title": "M3 Signed with rotation",
+   "deliverable": "trust.py: Ed25519 + ML-DSA-65 release signatures, root v1 -> v2, retired-key windows",
+   "test": "labs/L600/06-signed-science-data/tests/test_m3_signing.py"
+  },
+  {
+   "title": "M4 Replicated",
+   "deliverable": "mirrors.py: 4 mirrors, Merkle-bucket push-pull anti-entropy, no conflicts",
+   "test": "labs/L600/06-signed-science-data/tests/test_m4_replication.py"
+  },
+  {
+   "title": "M5 Verified by an untrusting client",
+   "deliverable": "client.py + tlog.py: timestamp, signatures, hashes, licence, log inclusion and consistency",
+   "test": "labs/L600/06-signed-science-data/tests/test_m5_client.py"
+  }
+ ],
+ "rubric": [
+  {
+   "criterion": "Science step is honest",
+   "measure": "rows with parallax/error < 5 published without a distance",
+   "pass": "all of them (10 of 28 in v4); others equal 1/parallax exactly"
+  },
+  {
+   "criterion": "Bytes are canonical",
+   "measure": "dumps(loads(x)) == x for every release; RFC 8785 vectors",
+   "pass": "4/4 releases; section 3.2.4 bytes and Appendix B samples match"
+  },
+  {
+   "criterion": "Tamper evidence",
+   "measure": "single-bit flips rejected",
+   "pass": "15,586 / 15,586"
+  },
+  {
+   "criterion": "Replication",
+   "measure": "worst rounds to converge over 100 seeds",
+   "pass": "<= 4 (observed 3; 1 after a 3-round partition)"
+  },
+  {
+   "criterion": "Freshness",
+   "measure": "lagging, frozen and replayed v1-v3 offers",
+   "pass": "all refused; failover returns v4"
+  },
+  {
+   "criterion": "Licence survives",
+   "measure": "release licence and credit lines",
+   "pass": "CC-BY-NC-4.0, credits verbatim, stripped mirror refused"
+  }
+ ],
+ "fitnessFunctions": [
+  {
+   "what": "Any single-byte tamper in a release object is detected",
+   "test": "labs/L600/06-signed-science-data/tests/test_fitness.py::Fitness::test_f1_every_single_byte_tamper_is_detected",
+   "threshold": "100 % (15,586 / 15,586 bit flips over the 6 v4 objects)"
+  },
+  {
+   "what": "Mirrors converge after anti-entropy",
+   "test": "labs/L600/06-signed-science-data/tests/test_fitness.py::Fitness::test_f2_mirrors_converge_within_bound",
+   "threshold": "<= 4 rounds over 100 seeds, all up and with m3 down for 3 rounds (observed worst 3 and 1)"
+  },
+  {
+   "what": "Client rejects a release older than the newest seen",
+   "test": "labs/L600/06-signed-science-data/tests/test_fitness.py::Fitness::test_f3_older_release_rejected",
+   "threshold": "3/3 replayed older versions refused"
+  }
+ ],
+ "decisionRecords": [
+  "labs/L600/06-signed-science-data/decisions/0001-canonical-encoding-jcs.md",
+  "labs/L600/06-signed-science-data/decisions/0002-log-and-freshness.md",
+  "labs/L600/06-signed-science-data/decisions/0003-rotation-windows.md"
+ ],
+ "seams": [
+  {
+   "between": "astronomy ↔ cryptography",
+   "contract": "Hashes and signatures cover RFC 8785 (JCS) bytes of the catalogue; every re-serialisation is idempotent; the client parses strictly (bytes must equal the JCS form of their content).",
+   "risk": "A stack that writes doubles with '%.17g' (or Python's 5.0 / 2.5e-05 layout) produces the same values in different bytes: hashes differ, mirrors never converge, cross-language verifiers fail.",
+   "test": "labs/L600/06-signed-science-data/tests/test_seam_canonical.py"
+  },
+  {
+   "between": "cryptography ↔ distributed-systems",
+   "contract": "Mirrors keep every old release forever, so root.json keeps retired release keys with valid_through_version; root N+1 needs signatures from root N and N+1.",
+   "risk": "A rotation that drops old keys makes every mirrored v1-v3 unverifiable; keeping them fully trusted lets a stolen retired key sign v5.",
+   "test": "labs/L600/06-signed-science-data/tests/test_seam_rotation.py"
+  },
+  {
+   "between": "distributed-systems ↔ cryptography",
+   "contract": "A timestamp (version + expiry, TTL 3600 s) pins the newest release; the client never goes below the highest version seen; TTL > re-sign interval + replication lag + skew.",
+   "risk": "A lagging or frozen mirror serves validly signed but old data (rollback / freeze); a TTL shorter than the lag makes honest mirrors unusable.",
+   "test": "labs/L600/06-signed-science-data/tests/test_seam_freshness.py"
+  },
+  {
+   "between": "astronomy ↔ cryptography",
+   "contract": "The licence gate (astronomy L400 #21 rule: keep NC) runs before signing; licence and attribution_sha256 are inside the signed manifest; credit lines are verbatim.",
+   "risk": "A builder update relicenses Gaia-derived data as CC-BY-4.0, or a mirror strips the acknowledgement - both silently, unless the gate and the signature cover them.",
+   "test": "labs/L600/06-signed-science-data/tests/test_seam_licence.py"
+  }
+ ],
+ "failureLab": {
+  "inject": "python run_project.py --inject float-format: mirror m2 'normalises' every JSON upload through a stack that prints doubles with '%.17g' (what Python's repr did before 3.1, and printf-based writers still do). Only appears because science floats (astronomy), byte-exact hashes (cryptography) and re-serialising replicas (distributed systems) meet.",
+  "symptom": "Scorecard FAIL 9/12: M4 rounds {1: null, 2: null, 3: null, 4: null} with conflicts on releases/v1..v3/catalogue.json; M5 rejects m2 ('v4: catalogue.json missing or changed'); S1 mirrors_agree false (JCS 6,536 bytes vs 7,901).",
+  "diagnose": "The diagnose line shows the first differing bytes of v1: m0 '\"dec\":-3.94153' vs m2 '\"dec\":-3.9415300000000002' at offset 168 - the same double, a longer digit string. Not packet loss (the file grew), not clocks (timestamps agree).",
+  "fix": "Canonical bytes everywhere: the producer, manifests, timestamps and log entries use RFC 8785 JCS; mirrors store bytes verbatim, and a re-encoding mirror must use JCS (idempotent: dumps(loads(x)) == x); clients parse with loads_strict. The number formatter is the build task.",
+  "test": "labs/L600/06-signed-science-data/tests/test_failure_lab.py (fault reproduces; fixed world converges) and labs/L600/06-signed-science-data/tests/test_build_task.py: BUILD_TARGET=mine on the shipped repr() formatter -> FAILED (failures=3); solution -> OK"
+ },
+ "buildTask": {
+  "task": "Implement number(x) in build_task/jcs_number.py so doubles are written as ECMAScript Number::toString (RFC 8785 3.2.2.3): shortest round-trip digits, no '.0' on integral values, plain decimals for 1e-6 <= |x| < 1e21, exponent form 'de+N'/'d.ddde-N' otherwise, -0 -> 0, NaN/Infinity/booleans refused.",
+  "hints": [
+   "Python's repr() already gives the shortest digits; extract digits and the decimal exponent, then lay them out with the 4 ECMA-262 cases.",
+   "Test against RFC 8785 Appendix B, not against your own output."
+  ],
+  "acceptance": "BUILD_TARGET=mine python -m unittest tests.test_build_task -> Ran 5 tests, OK (shipped file: FAILED (failures=3)).",
+  "solution": "labs/L600/06-signed-science-data/solution/jcs_number.py"
+ },
+ "scalingLimits": [
+  "Full-catalogue releases: Gaia DR3 has ~1.8 billion sources; one JSON file per release stops working long before that. Signal: release build time and mirror transfer grow linearly with every version. Move to chunked files (one leaf per chunk) so the Merkle manifest and anti-entropy work per chunk.",
+  "Gossip with 16 buckets: with millions of objects every differing bucket ships its full key list. Signal: anti-entropy bytes per round approach the delta size times bucket fan-out; deepen the bucket tree (Dynamo-style per key range).",
+  "Freshness at scale: thousands of clients behind slow mirrors hit expiry when lag approaches TTL. Signal: rising 'timestamp expired' refusals correlated with gossip rounds (tryIt 2). Re-sign more often or add a CDN-served timestamp; a single log also needs witnesses before clients can detect split views."
+ ],
+ "glossary": [
+  {
+   "term": "Canonical encoding (JCS)",
+   "meaning": "RFC 8785: one byte form for a JSON value - sorted keys (UTF-16 order), no whitespace, ECMAScript number layout."
+  },
+  {
+   "term": "Content addressing",
+   "meaning": "Naming or checking data by its hash; any changed byte gives a different address."
+  },
+  {
+   "term": "Merkle tree hash",
+   "meaning": "RFC 9162: leaf = SHA-256(0x00||d), node = SHA-256(0x01||l||r); one root commits to an ordered list."
+  },
+  {
+   "term": "Inclusion / consistency proof",
+   "meaning": "log2-sized hash paths proving an entry is in a tree, or that a newer tree extends an older one."
+  },
+  {
+   "term": "Anti-entropy",
+   "meaning": "Background replica repair: compare summaries (Merkle roots), then exchange only differences."
+  },
+  {
+   "term": "Rollback / freeze attack",
+   "meaning": "Serving validly signed but older data / the same outdated data forever (TUF)."
+  },
+  {
+   "term": "Retired-key window",
+   "meaning": "valid_through_version: a rotated key still counts for the releases it signed, never for new ones."
+  },
+  {
+   "term": "Hybrid signature",
+   "meaning": "Two signatures (Ed25519 + ML-DSA-65) both required; secure if either scheme holds."
+  }
+ ],
+ "steps": [
+  {
+   "title": "Run the scorecard",
+   "detail": "Builds 4 releases, rotates keys, gossips to 4 mirrors and runs 12 checks.",
+   "mac": "cd integrated/labs/L600/06-signed-science-data\npython3 run_project.py",
+   "windows": "cd integrated\\labs\\L600\\06-signed-science-data\npy -3.12 run_project.py",
+   "expected": "12 JSON lines with pass true, then {\"scorecard\": \"PASS\", \"passed\": 12, \"total\": 12, ...}; exit code 0.",
+   "ifNot": "ModuleNotFoundError: run from the lab folder; the astronomy, cryptography and distributed-systems folders must sit next to integrated/ (paths in _kb.py)."
+  },
+  {
+   "title": "Reproduce the failure lab",
+   "detail": "Mirror m2 re-serialises JSON with '%.17g' doubles.",
+   "mac": "python3 run_project.py --inject float-format; echo $?",
+   "windows": "py -3.12 run_project.py --inject float-format; $LASTEXITCODE",
+   "expected": "M4, M5 and S1 fail; diagnose shows -3.94153 vs -3.9415300000000002; scorecard FAIL 9/12; exit 1.",
+   "ifNot": "If everything passes, check that the inject flag reached World (world.py chooses the encoder)."
+  },
+  {
+   "title": "Do the build task",
+   "detail": "Write ECMAScript number layout in build_task/jcs_number.py and run its tests against your file.",
+   "mac": "BUILD_TARGET=mine python3 -m unittest tests.test_build_task -v",
+   "windows": "$env:BUILD_TARGET = \"mine\"; py -3.12 -m unittest tests.test_build_task -v; Remove-Item Env:BUILD_TARGET",
+   "expected": "Shipped file: FAILED (failures=3). After your fix: Ran 5 tests ... OK.",
+   "ifNot": "Compare your output with the failing Appendix B row printed by the test; 1e-6 is plain (0.000001), 1e-7 is exponent (1e-7)."
+  },
+  {
+   "title": "Run the test suite",
+   "detail": "Milestones, seams, fitness functions, failure lab (worlds are cached per process).",
+   "mac": "python3 -m unittest discover -s tests -t tests",
+   "windows": "py -3.12 -m unittest discover -s tests -t tests",
+   "expected": "Ran 44 tests ... OK",
+   "ifNot": "A seam test failing alone usually means a shared default changed (TTL, SPACING, MIN_PARALLAX_SNR) - read the assertion message."
+  },
+  {
+   "title": "Try the other seams",
+   "detail": "Each fault breaks exactly one seam.",
+   "mac": "for f in drop-old-key no-freshness licence-drop; do python3 run_project.py --inject $f | grep '\"pass\": false'; done",
+   "windows": "foreach ($f in 'drop-old-key','no-freshness','licence-drop') { py -3.12 run_project.py --inject $f | Select-String '\"pass\": false' }",
+   "expected": "drop-old-key: S2 (old_releases_verify [4]); no-freshness: S3 and F3 (ACCEPTED); licence-drop: S4 (drops the NC condition).",
+   "ifNot": "Run one inject at a time and read its scorecard line."
+  },
+  {
+   "title": "tryIt",
+   "detail": "Python's json as m2's encoder, and a 120 s TTL.",
+   "mac": "python3 try_it/try_1_python_json.py\npython3 try_it/try_2_short_ttl.py",
+   "windows": "py -3.12 try_it\\try_1_python_json.py\npy -3.12 try_it\\try_2_short_ttl.py",
+   "expected": "1) converged True ... differ: 3 of 5; 2) TTL 120 s: usable mirrors none.",
+   "ifNot": "Both scripts patch module globals; run each in a fresh process."
+  }
+ ],
+ "code": "\"\"\"L600 #06 - a verifiable, replicated science-data release pipeline (astronomy x cryptography x distributed systems).\n\npython run_project.py                       -> scorecard as JSON lines; exit 0 only if every check passes\npython run_project.py --inject float-format -> the failure lab: mirror m2 re-serialises JSON with '%.17g' doubles\nother seeded faults: drop-old-key (rotation forgets old keys), no-freshness (client skips expiry/version checks),\nlicence-drop (builder uses astronomy L400 #21's unfixed licence function)\n\nFlow: science.py (process) -> publisher.py (licence gate, files, Merkle manifest, Ed25519 + ML-DSA-65 signatures,\ntransparency log, timestamp) -> mirrors.py (upload to m0, anti-entropy to m1-m3) -> client.py (verify everything).\nworld.py runs that story once; checks.py holds every milestone, seam and fitness check (tests call the same code).\n\"\"\"\nimport argparse\nimport json\nimport sys\nimport time\n\nimport checks\nfrom world import World\n\nFAULTS = [\"float-format\", \"drop-old-key\", \"no-freshness\", \"licence-drop\"]\n\n\ndef diagnose(w):\n    \"\"\"Failure-lab helper: show the first differing bytes of the catalogue between m0 and m2.\"\"\"\n    a = w.mirrors[0].objects.get(\"releases/v1/catalogue.json\", b\"\")\n    b = w.mirrors[2].objects.get(\"releases/v1/catalogue.json\", b\"\")\n    i = next((k for k in range(min(len(a), len(b))) if a[k] != b[k]), None)\n    if i is None:\n        return None\n    start = a.rfind(b\",\", 0, i) + 1\n    return {\"m0\": a[start:start + 34].decode(), \"m2\": b[start:start + 34].decode(), \"offset\": i}\n\n\ndef main(inject=None, only=None):\n    t0 = time.perf_counter()\n    w = World(inject)\n    results = []\n    for kind, cid, title, fn in checks.CHECKS:\n        if only and cid not in only:\n            continue\n        ok, detail = fn(w)\n        results.append(ok)\n        print(json.dumps({\"kind\": kind, \"id\": cid, \"title\": title, \"pass\": ok, **detail}))\n    if inject == \"float-format\":\n        print(json.dumps({\"kind\": \"diagnose\", \"first_difference_v1_catalogue\": diagnose(w)}))\n    print(json.dumps({\"scorecard\": \"PASS\" if all(results) else \"FAIL\", \"passed\": sum(results), \"total\": len(results),\n                      \"inject\": inject, \"seconds\": round(time.perf_counter() - t0, 1)}))\n    return all(results)\n\n\nif __name__ == \"__main__\":\n    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])\n    ap.add_argument(\"--inject\", choices=FAULTS, help=\"reproduce a seeded fault\")\n    ap.add_argument(\"--only\", nargs=\"*\", help=\"run only these check ids, e.g. --only S1 F2\")\n    args = ap.parse_args()\n    sys.exit(0 if main(args.inject, args.only) else 1)\n",
+ "codeLanguage": "python",
+ "codeWalkthrough": [
+  {
+   "title": "science.py",
+   "detail": "Rows from astronomy L400 #21 get a seeded parallax error; inverse parallax (L100 #4 units) only when parallax/error >= 5, else distance null and method needs-prior. Full double precision on purpose - the floats are what stress the seam."
+  },
+  {
+   "title": "canonical.py",
+   "detail": "JCS: keys sorted by UTF-16 code units, JSON.stringify string escapes, numbers via jcs_number (solution or BUILD_TARGET=mine). loads_strict refuses duplicates and any bytes that are not their own JCS form. platform_dumps is the '%.17g' fault."
+  },
+  {
+   "title": "merkle.py + tlog.py",
+   "detail": "RFC 9162 MTH with 0x00/0x01 domain separation, recursive PATH/PROOF generation and the iterative verifiers from 2.1.3.2 and 2.1.4.2; the log signs tree heads with its own key."
+  },
+  {
+   "title": "trust.py + publisher.py",
+   "detail": "Signed envelopes over JCS; release role needs every algorithm of the registry's transition phase (Ed25519 + ML-DSA-65) from a key valid for that version; root N+1 signed by N and N+1. Publisher: licence gate -> files -> manifest -> release.json -> log entry -> timestamp."
+  },
+  {
+   "title": "mirrors.py",
+   "detail": "Immutable objects (first write wins, conflicts recorded), a max-version timestamp register, 16 bucket hashes under a Merkle root, synchronous push-pull rounds scheduled on distributed L400 #17's Sim."
+  },
+  {
+   "title": "client.py",
+   "detail": "TUF order: timestamp signature, expiry (freeze), version (rollback), release hash, signatures, files, Merkle root, licence, then STH signature, inclusion proof and consistency with the last tree head; fetch_any fails over to the next mirror."
+  },
+  {
+   "title": "world.py, checks.py, run_project.py",
+   "detail": "One seeded story (4 releases, rotation before v4, m3 partitioned), every check as a function used by both the scorecard and the tests, and --inject switches for the four faults."
+  }
+ ],
+ "projectFiles": [
+  {
+   "path": "labs/L600/06-signed-science-data/run_project.py",
+   "purpose": "scorecard (JSON lines), --inject faults"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/world.py",
+   "purpose": "the seeded end-to-end story"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/checks.py",
+   "purpose": "milestone, seam and fitness checks"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/science.py",
+   "purpose": "parallax -> distance"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/canonical.py",
+   "purpose": "RFC 8785 encoder, strict parser, platform fault"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/merkle.py",
+   "purpose": "RFC 9162 tree and proofs"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/trust.py",
+   "purpose": "signatures, root of trust, rotation windows"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/publisher.py",
+   "purpose": "licence gate, manifest, release, timestamp"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/tlog.py",
+   "purpose": "transparency log"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/mirrors.py",
+   "purpose": "mirrors and anti-entropy"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/client.py",
+   "purpose": "verifying client"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/_kb.py",
+   "purpose": "imports from the source topics' labs"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/build_task/jcs_number.py",
+   "purpose": "build task (shipped, unfixed)"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/solution/jcs_number.py",
+   "purpose": "build task solution"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/tests/",
+   "purpose": "12 test files + _world.py fixture, 44 tests"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/try_it/try_1_python_json.py",
+   "purpose": "tryIt 1"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/try_it/try_2_short_ttl.py",
+   "purpose": "tryIt 2"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/architecture.mmd",
+   "purpose": "architecture diagram"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/decisions/0001-canonical-encoding-jcs.md",
+   "purpose": "ADR"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/decisions/0002-log-and-freshness.md",
+   "purpose": "ADR"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/decisions/0003-rotation-windows.md",
+   "purpose": "ADR"
+  },
+  {
+   "path": "labs/L600/06-signed-science-data/README.md",
+   "purpose": "run commands and real output"
+  }
+ ],
+ "expectedResults": [
+  "Scorecard PASS 12/12 (5 milestones, 4 seams, 3 fitness functions)",
+  "v4: 28 rows, 10 needs-prior; licence CC-BY-NC-4.0; signatures 64 + 3,309 bytes; Merkle root 3b45768398c20ed6...",
+  "F1 15,586 / 15,586 bit flips caught; F2 worst 3 rounds (mean 2.04), 1 round after a 3-round partition; F3 v1-v3 refused",
+  "--inject float-format: FAIL 9/12, mirrors never converge, m2 rejected, -3.94153 vs -3.9415300000000002"
+ ],
+ "testCases": [
+  {
+   "action": "python run_project.py",
+   "expected": "{\"scorecard\": \"PASS\", \"passed\": 12, \"total\": 12, \"inject\": null, ...}"
+  },
+  {
+   "action": "python run_project.py --inject float-format",
+   "expected": "{\"scorecard\": \"FAIL\", \"passed\": 9, \"total\": 12, \"inject\": \"float-format\", ...}, exit 1"
+  },
+  {
+   "action": "python -m unittest discover -s tests -t tests",
+   "expected": "Ran 44 tests ... OK"
+  },
+  {
+   "action": "BUILD_TARGET=mine python -m unittest tests.test_build_task",
+   "expected": "shipped: FAILED (failures=3); after the fix: OK"
+  }
+ ],
+ "tryIt": [
+  {
+   "task": "Give mirror m2 Python's json.dumps(sort_keys=True, separators=(',', ':')) instead of the '%.17g' writer (try_it/try_1_python_json.py).",
+   "predict": "Do the mirrors converge? Would they with a 2.5e-05 flux or a producer that writes 5.0?",
+   "expected": "1) m2 = json.dumps: converged True | rounds {1: 2, 2: 2, 3: 2, 4: 4} | conflicts [] | 1) json.dumps: ['5.0', '2.5e-05', '1e-07', '1e+21', '270.70193010476163'] | 1) JCS       : ['5', '0.000025', '1e-7', '1e+21', '270.70193010476163'] | differ: 3 of 5"
+  },
+  {
+   "task": "Shorten the timestamp TTL from 3600 s to 120 s; the client checks 300 s after the v4 publish (try_it/try_2_short_ttl.py).",
+   "predict": "How many of the 4 honest mirrors can the client use?",
+   "expected": "2) TTL 3600 s: usable mirrors ['m0', 'm1', 'm2', 'm3'] | 2) TTL  120 s: usable mirrors none | timestamp expired at 3720 (freeze attack or stale mirror)"
+  }
+ ],
+ "troubleshooting": [
+  {
+   "symptom": "Mirrors never converge; conflicts on *.json keys",
+   "action": "Something re-encodes JSON. Diff the first differing bytes (run_project.diagnose); store objects as opaque bytes or re-encode with JCS."
+  },
+  {
+   "symptom": "release vN: no valid Ed25519 signature from a key trusted for vN (old versions only)",
+   "action": "The root dropped retired keys; restore them with valid_through_version (ADR 0003)."
+  },
+  {
+   "symptom": "Every mirror: timestamp expired",
+   "action": "TTL is shorter than re-sign interval + replication lag, or the client clock is ahead (tryIt 2)."
+  },
+  {
+   "symptom": "Refused: licence ... drops the NC condition",
+   "action": "The builder's licence function changed; Gaia-derived data must stay NonCommercial. A human reviews before any relicensing."
+  },
+  {
+   "symptom": "Slow first run (minutes)",
+   "action": "Module loading from network storage dominates; CPU time is ~25 s. Tests cache the seeded worlds per process."
+  }
+ ],
+ "learningTools": [
+  {
+   "name": "minisign",
+   "role": "CHECK",
+   "licence": "ISC (OSI)",
+   "url": "https://github.com/jedisct1/minisign/releases",
+   "mac": "brew install minisign",
+   "windows": "Win64 zip from the GitHub releases (precompiled Win64 binaries since 0.10)",
+   "exercise": "Export v4: python -c \"from pathlib import Path; from world import World; w = World(); d = Path('release_demo'); d.mkdir(exist_ok=True); [(d / k.split('/')[-1]).write_bytes(v) for k, v in w.objects.items()]\". Then in release_demo: minisign -G -W -p ms.pub -s ms.key; minisign -S -s ms.key -m catalogue.json; minisign -V -p ms.pub -m catalogue.json. Change -3.94153 to -3.9415300000000002 in catalogue.json and verify again.",
+   "expected": "First verify passes, the second fails - the same value in different bytes, like the failure lab's 'v4: catalogue.json missing or changed'. Demo key only; delete release_demo afterwards. Pending a manual run: the tool was not run in the sandbox."
+  },
+  {
+   "name": "CyberChef",
+   "role": "CHECK",
+   "licence": "Apache-2.0 (OSI)",
+   "url": "https://github.com/gchq/CyberChef",
+   "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+   "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+   "exercise": "SHA2 (Size 256) of the JCS bytes {\"a\":[1e-7,0.000025],\"b\":5} and of Python's json.dumps form {\"a\":[1e-07,2.5e-05],\"b\":5.0} (no trailing newline).",
+   "expected": "Should match hashlib in the lab: b599ec35493709057db5e098bad6c959297a94fdb7e36d7e0d99dce4593b9f7c (JCS) vs 66f1ed9f286f835e9307d6e69cf01f2f69b8dd1fef7bbf181227aafb10fa4160 (json.dumps) - equal values, different digests. Pending a manual run: the tool was not run in the sandbox."
+  }
+ ],
+ "inRealSystems": [
+  "The Update Framework (TUF), a framework for securing software update systems, defines the root/timestamp roles, rollback and freeze protection and the root rotation rules this client follows.",
+  "Certificate Transparency (RFC 6962, now RFC 9162) logs use the same Merkle tree, inclusion and consistency proofs to keep public append-only logs of TLS certificates.",
+  "Amazon's Dynamo synchronises divergent replicas in the background with Merkle-tree anti-entropy (section 4.7 of the paper).",
+  "Gaia DR3 (more than 1.8 billion sources) is served by the Gaia Archive and partner data centres under CC BY-NC 3.0 IGO, so every derived release has to carry that term forward."
+ ],
+ "useWhen": "Use this shape whenever data is produced once, served by parties you do not control, and must stay verifiable and attributable for years: data releases, ML datasets, firmware, model weights.",
+ "simulatorVsReal": "Mirrors, network and clock are simulated (seeded Sim rounds, fake seconds); keys are derived from fixed seeds; the log is in-process. Real deployments need real mirrors (HTTP), an offline root key and HSM-held release keys, a monitored public log with witnesses, and trustworthy clocks.",
+ "caution": "Demo keys derived from fixed seeds - never do this with real keys, and never paste a real key into a web tool. Licence rules are conservative defaults from astronomy L400 #21, not legal advice; commercial use of Gaia data needs ESA's terms and a human decision. Rows are synthetic; do not cite them as Gaia measurements.",
+ "checkpoint": "PASS: run_project.py prints PASS 12/12 and exits 0; --inject float-format prints FAIL 9/12; python -m unittest discover -s tests -t tests passes (44 tests).",
+ "checkYourself": [
+  {
+   "q": "Why can't the client just re-canonicalise whatever bytes a mirror sends and verify that?",
+   "a": "Then 'equivalent' edits (E for e, spaces, 17-digit floats) would pass; F1 requires that any changed byte is refused, so bytes must already be canonical."
+  },
+  {
+   "q": "What makes a retired key safe to keep in root.json?",
+   "a": "Its valid_through_version: it counts only for releases it signed (v1-v3), so a thief cannot sign v5 with it."
+  },
+  {
+   "q": "Why is F2 (convergence <= 4 rounds) a security property, not only a performance one?",
+   "a": "Timestamps expire; if mirrors take longer than TTL minus the re-sign interval to converge, honest mirrors look frozen and clients cannot update."
+  },
+  {
+   "q": "Which seam does the licence gate protect, and why before signing?",
+   "a": "Astronomy's licence terms meeting the signed release: once signed, a wrongly licensed release is valid forever on every mirror."
+  }
+ ],
+ "sources": [
+  {
+   "title": "RFC 8785: JSON Canonicalization Scheme (JCS)",
+   "url": "https://www.rfc-editor.org/rfc/rfc8785"
+  },
+  {
+   "title": "RFC 9162: Certificate Transparency Version 2.0 (Merkle trees, proofs)",
+   "url": "https://www.rfc-editor.org/rfc/rfc9162"
+  },
+  {
+   "title": "RFC 6962: Certificate Transparency",
+   "url": "https://www.rfc-editor.org/rfc/rfc6962"
+  },
+  {
+   "title": "The Update Framework specification (rollback, freeze, root rotation)",
+   "url": "https://theupdateframework.github.io/specification/latest/"
+  },
+  {
+   "title": "RFC 8032: Edwards-Curve Digital Signature Algorithm (EdDSA)",
+   "url": "https://www.rfc-editor.org/rfc/rfc8032"
+  },
+  {
+   "title": "FIPS 204: Module-Lattice-Based Digital Signature Standard (ML-DSA)",
+   "url": "https://csrc.nist.gov/pubs/fips/204/final"
+  },
+  {
+   "title": "DeCandia et al. 2007, Dynamo (anti-entropy with Merkle trees)",
+   "url": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf"
+  },
+  {
+   "title": "Demers et al. 1987, Epidemic algorithms for replicated database maintenance (PODC; course copy)",
+   "url": "https://www.cis.upenn.edu/~bcpierce/courses/dd/papers/demers-epidemic.pdf"
+  },
+  {
+   "title": "Gaia data licence (CC BY-NC 3.0 IGO)",
+   "url": "https://www.cosmos.esa.int/web/gaia-users/license"
+  },
+  {
+   "title": "ESA: Gaia Data Release 3 contents summary",
+   "url": "https://www.cosmos.esa.int/web/gaia/dr3"
+  },
+  {
+   "title": "Bailer-Jones 2015, Estimating distances from parallaxes",
+   "url": "https://arxiv.org/abs/1507.02105"
+  },
+  {
+   "title": "What's New in Python 3.1 (shortest float repr; '.17g' before)",
+   "url": "https://docs.python.org/3/whatsnew/3.1.html"
+  }
+ ],
+ "next": "Extend: chunk the catalogue (one Merkle leaf per chunk) and add a witness that cross-checks the log's tree heads; see research/06-evidence.md for open items.",
+ "validation": {
+  "status": "validated-local",
+  "how": "Ran here on Linux, Python 3.12, numpy, cryptography 50.0.2: run_project.py -> PASS 12/12 (exit 0); each --inject (float-format 9/12, drop-old-key 11/12, no-freshness 10/12, licence-drop 11/12) -> FAIL, exit 1; python -m unittest discover -s tests -t tests -> Ran 44 tests OK, 3 runs (fake clock only; no wall-clock assertions); BUILD_TARGET=mine test_build_task -> FAILED (failures=3), solution -> OK; both tryIt scripts printed the expected lines; research/checks_06.py recomputes every lesson and qbank number and exits 0. JCS checked against RFC 8785 section 3.2.4 bytes, property-sorting vector and all Appendix B samples; Merkle proofs against RFC 9162 section 2.1.5 shapes.",
+  "pendingCi": [
+   "macOS (arm64) and Windows 11 runs of run_project.py and the tests (matrix)",
+   "minisign and CyberChef learning-tool exercises (manual)",
+   "cross-language check: verify a release with a non-Python JCS implementation (e.g. the npm 'canonicalize' package listed in RFC 8785 Appendix G) - not installable here"
+  ]
+ },
+ "platforms": {
+  "mac": "expected",
+  "windows": "expected"
+ },
+ "conceptNote": "content/concepts/L600/06-signed-science-data.md",
+ "conceptSummary": "Integration fails at the joints: floats must become canonical bytes before they are hashed, rotated keys must keep old releases verifiable, mirror lag must fit inside the freshness window, and licence terms must be inside the signature. Make each joint a contract with a test, then inject the fault that breaks it.",
+ "macMini": {
+  "gains": "Mirrors become separate processes serving HTTP on 127.0.0.1, with anti-entropy over real requests, a SIGKILLed mirror recovering from its own disk and the unchanged client verifying every release over the network; the Mac's RAM and cores take the manifest pipeline from 10^4 to 10^7 rows; and Node gives a second, independent RFC 8785 implementation to compare the signed bytes with.",
+  "needs": {
+   "minRamGB": 16,
+   "tools": [
+    {
+     "name": "Python 3.12",
+     "licence": "PSF-2.0",
+     "install": "brew install python@3.12 (or the python.org macOS installer: https://www.python.org/downloads/macos/)"
+    },
+    {
+     "name": "cryptography 50.0.2",
+     "licence": "Apache-2.0 OR BSD-3-Clause",
+     "install": "python3.12 -m pip install cryptography==50.0.2 numpy (inside the venv of shared/WORKSTATION-SETUP.md)"
+    },
+    {
+     "name": "numpy 2.5.3",
+     "licence": "BSD-3-Clause",
+     "install": "python3.12 -m pip install numpy==2.5.3"
+    },
+    {
+     "name": "Node.js 24",
+     "licence": "MIT",
+     "install": "brew install node@24 (keg-only: add $(brew --prefix node@24)/bin to PATH), or the macOS installer from https://nodejs.org"
+    },
+    {
+     "name": "canonicalize 5.1.0 (npm)",
+     "licence": "Apache-2.0",
+     "install": "cd integrated/labs/L600/06-signed-science-data/mac_mini/jcs_node && npm install"
+    }
+   ]
+  },
+  "experiments": [
+   {
+    "title": "Mirrors over real HTTP, with a crash",
+    "why": "In the lab, gossip copies dictionaries between objects. Over HTTP every exchange is a request (roots, then 16 bucket hashes, then only missing keys), mirrors can die mid-release, and the client must verify bytes that came over a socket.",
+    "steps": [
+     {
+      "title": "8 mirrors, 40 releases",
+      "detail": "http_world.py starts mirror_server.py processes, publishes each release to m0 over HTTP, runs seeded push-pull rounds, SIGKILLs the last mirror before the final release, restarts it from disk and keeps it down 2 rounds, then verifies with client.Client over HTTP.",
+      "mac": "cd integrated/labs/L600/06-signed-science-data\npython mac_mini/http_world.py --mirrors 8 --releases 40 --out ~/kb-runs/06-http.jsonl",
+      "expected": "H1, H2, H3 pass; rounds_per_release around log2(8) + 1-2 (sandbox with 4 mirrors: 2, 2, 2, 3); bytes_moved close to (mirrors - 1) x release size per release."
+     },
+     {
+      "title": "The failure lab over HTTP",
+      "detail": "--inject float-format: m2 re-serialises JSON with '%.17g' doubles on ingest.",
+      "mac": "python mac_mini/http_world.py --here --inject float-format; echo $?",
+      "expected": "H1 fails (no release converges, conflicts on catalogue.json), H2 rejects only m2 ('catalogue.json missing or changed'), exit 1; bytes_moved about 28x the healthy run (sandbox 4,839,263 vs 174,951)."
+     }
+    ],
+    "measure": "rounds_per_release, http_requests, bytes_moved, recovered_on_restart",
+    "decides": "If rounds grow with the release number or bytes_moved approaches mirrors x archive size, the bucket comparison (16 buckets, mirrors.BUCKETS) is too coarse for the archive: ADR 0002 gets a bucket-count or Merkle-depth change."
+   },
+   {
+    "title": "Merkle build, sign and verify for 10^5-10^7 rows",
+    "why": "The lab's catalogue has 16-28 rows. A real release has millions; the manifest pipeline must stay within the Mac's RAM and a night's time.",
+    "steps": [
+     {
+      "title": "Three sizes in memory",
+      "detail": "science.process -> canonical.dumps per row -> RFC 9162 leaves -> bottom-up tree (same root as merkle.mth, checked up to 20,000 rows) -> Ed25519 + ML-DSA-65 over the root -> 100 inclusion proofs.",
+      "mac": "cd integrated/labs/L600/06-signed-science-data\npython mac_mini/scale_bench.py --rows 1e5 1e6 1e7 --out ~/kb-runs/06-scale.jsonl",
+      "expected": "canonicalise is the slowest step by far (sandbox 5,600-9,900 rows/s); sign_ms stays a few ms at every size; proof_hashes_max 17, 20, 24; the wall line (reliable from 10^5 rows) gives max_rows_by_ram_GB."
+     },
+     {
+      "title": "The streaming tree",
+      "detail": "--streaming keeps only an O(log n) stack of perfect subtrees: same root, no proofs from memory.",
+      "mac": "python mac_mini/scale_bench.py --rows 1e7 --streaming",
+      "expected": "The same root prefix as the in-memory 10^7 run and a much smaller rss_growth_B."
+     }
+    ],
+    "measure": "rows/s per step, rss_B_per_row, max rows by RAM, sign/verify ms, proof verify us",
+    "decides": "If max_rows_by_ram_GB for this Mac is below the catalogue size, the publisher builds the manifest tree streaming and keeps levels on disk for proofs (ADR 0002 addendum); what is signed does not change."
+   },
+   {
+    "title": "Two languages, the same signed bytes",
+    "why": "A signature over JCS bytes only works across implementations if they produce identical bytes. RFC 8785 is defined via ECMAScript's JSON.stringify, so JavaScript is the natural second implementation.",
+    "steps": [
+     {
+      "title": "Node's built-in recipe and the npm package",
+      "detail": "Vectors: the 4 release catalogues, a release manifest, the RFC 8785 sample, number edge cases and UTF-16 key-order cases, given to Node as non-canonical text.",
+      "mac": "cd integrated/labs/L600/06-signed-science-data\n(cd mac_mini/jcs_node && npm install)\npython mac_mini/jcs_crosscheck.py",
+      "expected": "Two cross_language lines (builtin and canonicalize), each identical 8 of 8 and platform_dumps_vectors_that_differ 6; exit 0."
+     }
+    ],
+    "measure": "identical / different vectors per implementation",
+    "decides": "Any differing vector blocks multi-language publishing: the canonical form (ADR 0001) is only portable if two independent implementations agree on every vector."
+   }
+  ],
+  "overnight": "python mac_mini/http_world.py --mirrors 8 --releases 40, then scale_bench.py --rows 1e5 1e6 1e7 (and --streaming): the two costs that grow with the archive - gossip traffic per release and the time and memory of a manifest for a big catalogue.",
+  "validation": {
+   "here": "Ran in the Linux sandbox (Python 3.12.15, cryptography 50.0.2, Node v24.7.0, 2026-11-02): http_world.py --here (4 mirror processes, rounds 2/2/2/3, H1-H3 pass, exit 0) and --inject float-format (H1 and H2 fail, exit 1); scale_bench.py --here (10,000 rows, root equal to merkle.mth and to the streaming root, 100 proofs valid); jcs_crosscheck.py --here (Node built-in recipe: 8/8 identical, RFC 8785 sample reproduced); mac_mini/tests: 7 tests OK; research/checks_06_mac.py OK.",
+   "pendingMac": [
+    "http_world.py with 8 mirrors and 40 releases (overnight)",
+    "scale_bench.py at 10^5, 10^6, 10^7 rows and --streaming",
+    "jcs_crosscheck.py with the npm package canonicalize 5.1.0 (npm install needs the network)"
+   ]
+  }
+ }
+}

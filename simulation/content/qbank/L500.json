@@ -1,0 +1,830 @@
+[
+  {
+    "id": "sim-L500-001",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The Chebyshev proof of the weak law of large numbers needs Var(sample mean) = sigma^2 / n. Which assumption about the draws does that step actually use?",
+    "options": [
+      "A sample mean that is normally distributed for every n",
+      "Draws with a finite third moment, as in Berry-Esseen",
+      "Draws that all come from one exponential distribution",
+      "Pairwise uncorrelated draws with a common finite variance"
+    ],
+    "answer": 3,
+    "explanation": "Var of a sum is the sum of variances plus covariances; uncorrelated draws make the covariances vanish, giving sigma^2/n. Normality is the CLT's conclusion, not an input to this proof.",
+    "source": "Lesson 23, Theorem 23.1"
+  },
+  {
+    "id": "sim-L500-002",
+    "level": "L500",
+    "lesson": 23,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Service times have variance 1 min^2. Using Chebyshev's inequality only, what sample size guarantees P(|mean - mu| >= 0.1) <= 0.05?",
+    "options": [
+      "2,000 samples",
+      "385 samples",
+      "200 samples",
+      "20,000 samples"
+    ],
+    "answer": 0,
+    "explanation": "Need sigma^2/(n eps^2) <= 0.05, so n >= 1/(0.05 x 0.01) = 2,000. 385 is the CLT-based answer, which assumes an approximately normal mean; Chebyshev holds for every distribution and so asks for more.",
+    "source": "Lesson 23, problem 23-P2"
+  },
+  {
+    "id": "sim-L500-003",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does the central limit theorem guarantee for iid draws with finite variance?",
+    "options": [
+      "The error of the sample mean shrinks like 1/n",
+      "The sample mean equals the true mean once n exceeds 30",
+      "The standardised sample mean approaches a standard normal distribution",
+      "The individual observations become normally distributed for large n"
+    ],
+    "answer": 2,
+    "explanation": "The CLT is about the distribution of the (standardised) mean; the data keep their own shape. The error shrinks like 1/sqrt(n), not 1/n, and there is no magic n = 30.",
+    "source": "Lesson 23, Theorem 23.2"
+  },
+  {
+    "id": "sim-L500-004",
+    "level": "L500",
+    "lesson": 23,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Response times follow a Pareto distribution with tail index alpha = 1.5 (finite mean, infinite variance). A report gives 'mean 312 ms +/- 9 ms (95% CI, 50 runs)'. What is the best critique?",
+    "options": [
+      "The interval is fine because 50 runs is more than 30",
+      "Infinite variance: the s/sqrt(n) interval has no CLT basis",
+      "Drop the largest values as outliers and recompute the interval",
+      "The interval should use a z quantile instead of a t quantile"
+    ],
+    "answer": 1,
+    "explanation": "The CLT needs finite variance; with alpha = 1.5 the sample SD is unstable and understates the uncertainty. Removing large values hides exactly the tail that drives the mean.",
+    "source": "Lesson 23, problem 23-P9"
+  },
+  {
+    "id": "sim-L500-005",
+    "level": "L500",
+    "lesson": 23,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "Calls arrive as a Poisson process at 3 per minute. What is the probability of no call in a 40-second window?",
+    "options": [
+      "0.3679",
+      "0.0498",
+      "0.1353",
+      "0.2636"
+    ],
+    "answer": 2,
+    "explanation": "lam t = 3 x 40/60 = 2, and P(N = 0) = exp(-2) = 0.1353. 0.0498 = exp(-3) uses a full minute instead of 40 seconds.",
+    "source": "Lesson 23, Theorem 23.3"
+  },
+  {
+    "id": "sim-L500-006",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Buses arrive at a stop as a Poisson process with rate 4 per hour. You have already waited 20 minutes. What is your expected additional wait?",
+    "options": [
+      "Zero: a bus is overdue after 15 minutes",
+      "About 35 minutes: 20 plus the mean gap of 15",
+      "Still 15 minutes: exponential gaps are memoryless",
+      "About 5 minutes: 15 minus the time already waited"
+    ],
+    "answer": 2,
+    "explanation": "P(T > s + t | T > s) = P(T > t) for exponential gaps, so the remaining wait is again Exponential with mean 60/4 = 15 min. 'Overdue' reasoning assumes regular, not Poisson, arrivals.",
+    "source": "Lesson 23, Theorem 23.3"
+  },
+  {
+    "id": "sim-L500-007",
+    "level": "L500",
+    "lesson": 23,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "import numpy as np\nP = np.array([[0.9, 0.1], [0.5, 0.5]])\nprint(np.round(np.linalg.matrix_power(P, 50)[0], 4))",
+    "options": [
+      "[0.9 0.1]",
+      "[0.6667 0.3333]",
+      "[0.8333 0.1667]",
+      "[0.5 0.5]"
+    ],
+    "answer": 2,
+    "explanation": "Rows of P^n converge to the stationary distribution: 0.1 pi_0 = 0.5 pi_1 gives pi = (5/6, 1/6). [0.9 0.1] is just the first row of P itself.",
+    "source": "Lesson 23, Theorem 23.4(a)"
+  },
+  {
+    "id": "sim-L500-008",
+    "level": "L500",
+    "lesson": 23,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "An M/M/1 queue has rho = 0.9. What does this print?",
+    "code": "rho = 0.9\ntail = sum((1 - rho) * rho**n for n in range(5, 2000))\nprint(round(tail, 4))",
+    "options": [
+      "0.5905",
+      "0.9000",
+      "0.0656",
+      "0.4095"
+    ],
+    "answer": 0,
+    "explanation": "pi_n = (1 - rho) rho^n, so P(N >= 5) = rho^5 = 0.5905. 0.4095 is P(N <= 4) and 0.0656 is pi_5 alone.",
+    "source": "Lesson 23, Theorem 23.4(b)"
+  },
+  {
+    "id": "sim-L500-009",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "For an M/M/c queue in a state n >= c (all servers busy), which equation does cut balance between n and n + 1 give?",
+    "options": [
+      "lam pi_n = c mu pi_(n+1)",
+      "lam pi_n = mu pi_(n+1)",
+      "lam pi_(n+1) = c mu pi_n",
+      "lam pi_n = (n + 1) mu pi_(n+1)"
+    ],
+    "answer": 0,
+    "explanation": "Upward flow is lam pi_n; downward flow from n + 1 is c mu pi_(n+1) because only c servers work. (n + 1) mu applies only while n + 1 <= c.",
+    "source": "Lesson 23, Theorem 23.4; L200 #8"
+  },
+  {
+    "id": "sim-L500-010",
+    "level": "L500",
+    "lesson": 23,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "This is meant to simulate arrivals at a rate of 3 per minute, but the arrivals come far too rarely. Why?",
+    "code": "import numpy as np\nrng = np.random.default_rng(1)\nrate, t, times = 3.0, 0.0, []\nwhile t < 60:\n    t += rng.exponential(rate)\n    times.append(t)\nprint(len(times))",
+    "options": [
+      "exponential() takes the mean 1/rate, so gaps average 3 min instead of 20 s",
+      "The seed 1 produces too few small numbers to sample short gaps",
+      "A while loop on floating-point time skips arrivals that are too close",
+      "Poisson gaps should be drawn from a uniform distribution, not an exponential"
+    ],
+    "answer": 0,
+    "explanation": "NumPy's exponential(scale) uses the mean; pass 1/rate. The exponential is the correct gap distribution (Theorem 23.3), so swapping distributions would be wrong.",
+    "source": "Lesson 23, Theorem 23.3"
+  },
+  {
+    "id": "sim-L500-011",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is explicit Euler's global error O(h) when its local truncation error is O(h^2)?",
+    "options": [
+      "Round-off doubles every local error, which costs one order",
+      "The Lipschitz constant cancels one power of h at each step",
+      "About T/h steps each add an O(h^2) error, which sums to O(h)",
+      "Local errors are always negligible next to the initial-value error"
+    ],
+    "answer": 2,
+    "explanation": "Global error is the accumulation of T/h local errors, each propagated by at most exp(L T) (Theorem 24.1). Round-off is a separate, much smaller effect at ordinary step sizes.",
+    "source": "Lesson 24, Theorem 24.1"
+  },
+  {
+    "id": "sim-L500-012",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Explicit Euler has global error 0.242 at h = 0.1 on a smooth problem. What do you expect at h = 0.05?",
+    "options": [
+      "About the same, because the error is dominated by round-off",
+      "About a sixteenth: roughly 0.015, as for RK4",
+      "About a quarter: roughly 0.06, because the local error is O(h^2)",
+      "About half: roughly 0.12, because Euler is first order"
+    ],
+    "answer": 3,
+    "explanation": "First-order global error halves with h; the check measured 0.1275 (ratio 1.90). Quartering is the local-error ratio, not the global one.",
+    "source": "Lesson 24, Theorem 24.1"
+  },
+  {
+    "id": "sim-L500-013",
+    "level": "L500",
+    "lesson": 24,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "RK4 gives a global error of 6.990e-06 at h = 0.1 on a smooth problem. Using its order, predict the error at h = 0.05.",
+    "options": [
+      "3.50e-06",
+      "8.74e-07",
+      "4.37e-07",
+      "2.18e-07"
+    ],
+    "answer": 2,
+    "explanation": "Fourth order: halving h divides the error by 2^4 = 16, giving 4.37e-07 (the check measured 4.421e-07). Dividing by 32 uses the local order by mistake.",
+    "source": "Lesson 24, Theorem 24.2"
+  },
+  {
+    "id": "sim-L500-014",
+    "level": "L500",
+    "lesson": 24,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "For y' = -250 y, what is the largest step size for which explicit Euler does not grow?",
+    "options": [
+      "0.0004",
+      "0.016",
+      "0.004",
+      "0.008"
+    ],
+    "answer": 3,
+    "explanation": "|1 + h lam| <= 1 requires h <= 2/|lam| = 2/250 = 0.008. 0.004 = 1/250 confuses the bound with the time constant.",
+    "source": "Lesson 24, Theorem 24.3"
+  },
+  {
+    "id": "sim-L500-015",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which statement best defines a stiff problem?",
+    "options": [
+      "Its Jacobian is singular, so implicit methods cannot be applied",
+      "Its solution changes rapidly everywhere, so every method needs small steps",
+      "Its right-hand side is not differentiable, so the order drops",
+      "Its step size is limited by stability rather than by accuracy"
+    ],
+    "answer": 3,
+    "explanation": "Stiff problems often have smooth solutions; fast-decaying modes force explicit methods to tiny steps for stability. A solution that is rapid everywhere needs small steps for accuracy, which is not stiffness.",
+    "source": "Lesson 24, Theorem 24.3"
+  },
+  {
+    "id": "sim-L500-016",
+    "level": "L500",
+    "lesson": 24,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "An adaptive explicit RK45 solver takes millions of tiny steps on a chemical kinetics model whose concentrations change slowly. What should the engineer do?",
+    "options": [
+      "Switch to classical RK4 with a fixed step equal to the median step",
+      "Switch to an implicit stiff solver such as BDF or Radau",
+      "Use float32 so that each of the many steps runs faster",
+      "Tighten the tolerance so that the error controller becomes more stable"
+    ],
+    "answer": 1,
+    "explanation": "The problem is stiff; implicit methods have large stability regions and let accuracy set the step (L200 #9). A tighter tolerance only makes the explicit solver take even smaller steps.",
+    "source": "Lesson 24, problem 24-P8"
+  },
+  {
+    "id": "sim-L500-017",
+    "level": "L500",
+    "lesson": 24,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "What does this print?",
+    "code": "import math\nprint(0.1 + 0.2 == 0.3, math.isclose(0.1 + 0.2, 0.3))",
+    "options": [
+      "False False",
+      "True False",
+      "False True",
+      "True True"
+    ],
+    "answer": 2,
+    "explanation": "0.1 and 0.2 have no exact binary representation, so the rounded sum differs from the rounded 0.3 in the last bit; math.isclose uses a relative tolerance and says True.",
+    "source": "Lesson 24, Theorem 24.4"
+  },
+  {
+    "id": "sim-L500-018",
+    "level": "L500",
+    "lesson": 24,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "What does this print?",
+    "code": "import math\nx = 1e-8\nprint((1 - math.cos(x)) / x**2)",
+    "options": [
+      "nan",
+      "1e-16",
+      "0.5",
+      "0.0"
+    ],
+    "answer": 3,
+    "explanation": "cos(1e-8) = 1 - 5e-17 rounds to exactly 1.0 in binary64, so the numerator is 0 (catastrophic cancellation). The mathematically correct 0.5 needs a rewrite such as 2 sin^2(x/2)/x^2.",
+    "source": "Lesson 24, Theorem 24.4"
+  },
+  {
+    "id": "sim-L500-019",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Implicit Euler is A-stable. What does that guarantee?",
+    "options": [
+      "Its global error does not depend on the step size h",
+      "It is second-order accurate on every stiff problem it meets",
+      "It never has to solve an equation at any of its steps",
+      "For Re(lam) < 0 its y' = lam y solution decays for any h"
+    ],
+    "answer": 3,
+    "explanation": "A-stability is about decay, not accuracy: implicit Euler is still first order and must solve an (here linear) equation per step.",
+    "source": "Lesson 24, problem 24-P5"
+  },
+  {
+    "id": "sim-L500-020",
+    "level": "L500",
+    "lesson": 24,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "lam, h = -50.0, 0.041\nprint(f\"{abs(1 + h * lam):.2f}\")",
+    "options": [
+      "0.95",
+      "2.05",
+      "0.05",
+      "1.05"
+    ],
+    "answer": 3,
+    "explanation": "1 + 0.041 x (-50) = -1.05, so |R| = 1.05 > 1: each step multiplies the error by 1.05 and the solution grows (1.7e4 after 200 steps in the check). 0.95 is the stable h = 0.039 case.",
+    "source": "Lesson 24, Theorem 24.3"
+  },
+  {
+    "id": "sim-L500-021",
+    "level": "L500",
+    "lesson": 24,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Tested on a smooth problem, this RK4 step's error falls only 4x per halving of h (second order) instead of 16x. Which line is wrong?",
+    "code": "def rk4_step(f, t, y, h):\n    k1 = f(t, y)\n    k2 = f(t + h / 2, y + h / 2 * k1)\n    k3 = f(t + h / 2, y + h / 2 * k1)\n    k4 = f(t + h, y + h * k3)\n    return y + h / 6 * (k1 + 2 * k2 + 2 * k3 + k4)",
+    "options": [
+      "k3 must use k2, not k1: as written the order conditions fail",
+      "The weights must be 1/4 each instead of 1/6, 1/3, 1/3, 1/6",
+      "k1 must be evaluated at t + h / 2",
+      "k4 must use h / 2 instead of h"
+    ],
+    "answer": 0,
+    "explanation": "With k3 built from k1, stage 4 sees Ac = 1/2 only through k3 and b.Ac = 1/12 instead of 1/6, so a third-order condition fails and the method drops to order 2 (measured ratio 4.00). Theorem 24.2 checks all eight conditions for the correct tableau; the 1/6, 1/3, 1/3, 1/6 weights are correct.",
+    "source": "Lesson 24, Theorem 24.2"
+  },
+  {
+    "id": "sim-L500-022",
+    "level": "L500",
+    "lesson": 25,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "def period(a, c, m, x=0):\n    seen, k = {}, 0\n    while x not in seen:\n        seen[x] = k\n        x, k = (a * x + c) % m, k + 1\n    return k - seen[x]\nprint(period(5, 3, 16), period(3, 3, 16))",
+    "options": [
+      "16 16",
+      "8 16",
+      "4 8",
+      "16 8"
+    ],
+    "answer": 3,
+    "explanation": "a = 5, c = 3, m = 16 meets Hull-Dobell (c odd, 4 | a - 1) so the period is 16; a = 3 fails the 4 | a - 1 condition, giving period 8.",
+    "source": "Lesson 25, Theorem 25.1"
+  },
+  {
+    "id": "sim-L500-023",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "RANDU passes a 1-D chi-square test and a KS test but fails a 3-D cell test badly. Why?",
+    "options": [
+      "Its consecutive triples lie on just 15 planes in the cube",
+      "Its period of 2^29 is too short for 100,000 draws",
+      "Its outputs are not uniform on [0, 1) one at a time",
+      "The 3-D test has too many cells to be reliable"
+    ],
+    "answer": 0,
+    "explanation": "a^2 = 6a - 9 (mod 2^31) forces 9u_k - 6u_(k+1) + u_(k+2) to be an integer: structure only higher-dimensional tests see. The period is far longer than the sample.",
+    "source": "Lesson 25, Theorems 25.1-25.2"
+  },
+  {
+    "id": "sim-L500-024",
+    "level": "L500",
+    "lesson": 25,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "counts = [112, 95, 88, 104, 99, 91, 118, 97, 100, 96]\nexpected = sum(counts) / len(counts)\nx2 = sum((c - expected) ** 2 / expected for c in counts)\nprint(round(x2, 2), len(counts) - 1)",
+    "options": [
+      "76.0 10",
+      "0.76 9",
+      "7.6 10",
+      "7.6 9"
+    ],
+    "answer": 3,
+    "explanation": "Expected 100 per cell; squared deviations sum to 760, divided by 100 gives 7.6 on k - 1 = 9 degrees of freedom (p = 0.575). Using k instead of k - 1 is the classic slip.",
+    "source": "Lesson 25, problem 25-P4"
+  },
+  {
+    "id": "sim-L500-025",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "A generator test with k = 100 cells repeatedly gives X^2 values near 2 (on 99 degrees of freedom). What should you conclude?",
+    "options": [
+      "Suspicious: E[X^2] = 99, so the counts are too uniform",
+      "The test is broken: X^2 can never fall below k - 1",
+      "Excellent: the smaller X^2 is, the better the generator is",
+      "Nothing: only large values of X^2 carry any information"
+    ],
+    "answer": 0,
+    "explanation": "Under H0, E[X^2] = k - 1 exactly; counts that hug their expectations are as unlikely as counts that stray (both tails matter). X^2 below k - 1 is common, just not near 2.",
+    "source": "Lesson 25, Theorem 25.2"
+  },
+  {
+    "id": "sim-L500-026",
+    "level": "L500",
+    "lesson": 25,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "A plain Monte Carlo estimate from 10,000 samples has a 95% half-width of 0.02. How many samples give a half-width of 0.01?",
+    "options": [
+      "20,000 samples",
+      "14,142 samples",
+      "40,000 samples",
+      "100,000 samples"
+    ],
+    "answer": 2,
+    "explanation": "The half-width scales as 1/sqrt(N), so halving it needs 4x the samples. 20,000 assumes 1/N scaling.",
+    "source": "Lesson 25, Theorem 25.3(a)"
+  },
+  {
+    "id": "sim-L500-027",
+    "level": "L500",
+    "lesson": 25,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Antithetic pairs have correlation rho = -0.75 between f(U) and f(1 - U). What variance reduction factor do they give at equal cost?",
+    "options": [
+      "1.33x",
+      "1.75x",
+      "4.00x",
+      "0.57x"
+    ],
+    "answer": 2,
+    "explanation": "The gain is 1/(1 + rho) = 1/0.25 = 4.00x. 1.75x is 1 - rho, a common mis-derivation.",
+    "source": "Lesson 25, Theorem 25.4"
+  },
+  {
+    "id": "sim-L500-028",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "An importance-sampling proposal q has lighter tails than f(x) p(x). What is the main risk?",
+    "options": [
+      "The samples become correlated with each other",
+      "The weights p/q are unbounded, so the variance can be infinite",
+      "The method reduces to plain Monte Carlo with no gain or loss",
+      "The estimator becomes biased because q is not a density"
+    ],
+    "answer": 1,
+    "explanation": "Var depends on the integral of f^2 p^2/q, which can diverge where q is tiny; estimates look stable until a huge weight arrives. The estimator stays unbiased as long as q > 0 where f p is non-zero.",
+    "source": "Lesson 25, Theorem 25.3(b)"
+  },
+  {
+    "id": "sim-L500-029",
+    "level": "L500",
+    "lesson": 25,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "import math\nx = 4.5\nw = math.exp(-x * x / 2) / math.exp(-(x - 4) ** 2 / 2)\nprint(round(w, 6), round(math.exp(8 - 4 * x), 6))",
+    "options": [
+      "1.0 1.0",
+      "4.5e-05 0.000123",
+      "22026.465795 4.5e-05",
+      "4.5e-05 4.5e-05"
+    ],
+    "answer": 3,
+    "explanation": "The ratio phi(x)/phi(x - 4) simplifies to exp(8 - 4x) (the normalising constants cancel); at x = 4.5 both equal e^-10 = 4.5e-05. The tiny weight compensates for sampling the tail far more often than N(0, 1) would.",
+    "source": "Lesson 25, Theorem 25.3(b)"
+  },
+  {
+    "id": "sim-L500-030",
+    "level": "L500",
+    "lesson": 25,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "You must run 1,000 replications in parallel and be able to re-run any single replication later. How should you seed them?",
+    "options": [
+      "Seed replication i with seed = i, which is unique and simple",
+      "Spawn one child SeedSequence (or Philox key) per replication index",
+      "Seed every worker with the same seed and rely on scheduling to differ",
+      "Seed each replication from the system clock at start-up"
+    ],
+    "answer": 1,
+    "explanation": "SeedSequence.spawn gives statistically independent, position-free streams; Philox keys do the same structurally. Seeds i, i+1 offer no independence guarantee, and the clock is not reproducible.",
+    "source": "Lesson 25; L300 #16; L400 #20"
+  },
+  {
+    "id": "sim-L500-031",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What makes Philox a counter-based generator?",
+    "options": [
+      "It discards outputs that fail a running chi-square counter",
+      "It mixes a counter into a 128-bit LCG state after every output",
+      "It counts how many numbers were drawn and reseeds every 2^64 draws",
+      "Output n is a keyed bijection of counter n: no sequential state"
+    ],
+    "answer": 3,
+    "explanation": "Philox applies rounds of a keyed bijection to the counter value; there is no sequential state, so streams are addressed by key and counter (Salmon et al. 2011). Mixing into an LCG describes PCG-like designs.",
+    "source": "Lesson 25 concepts"
+  },
+  {
+    "id": "sim-L500-032",
+    "level": "L500",
+    "lesson": 25,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "This antithetic estimator gives almost no variance reduction for the increasing integrand f. What is wrong?",
+    "code": "import numpy as np\ndef f(u):\n    return np.exp(u)\ndef antithetic(n, seed):\n    out = []\n    for i in range(n):\n        u1 = np.random.default_rng(seed + 2 * i).random()\n        u2 = 1 - np.random.default_rng(seed + 2 * i + 1).random()\n        out.append((f(u1) + f(u2)) / 2)\n    return np.mean(out)",
+    "options": [
+      "np.exp is not monotone, so antithetics cannot help here",
+      "u2 must be 1 - u1; two separately seeded draws are independent",
+      "The seeds must be odd for the generator to be antithetic",
+      "The pair mean must be f(u1) + f(u2), not divided by 2"
+    ],
+    "answer": 1,
+    "explanation": "Antithetics work only because f(U) and f(1 - U) are negatively correlated (rho = -0.968 here); drawing u2 from another stream makes rho = 0 - the L300 #12 fault. e^u is monotone, so the theorem applies once the pairing is fixed.",
+    "source": "Lesson 25, Theorem 25.4; L300 #12"
+  },
+  {
+    "id": "sim-L500-033",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A grading model reproduces last year's national grade distribution exactly. What does that show about individual students?",
+    "options": [
+      "That any individual error is at most one grade",
+      "That every student received the grade they would have earned",
+      "Little: many individuals can still get a different grade",
+      "That errors cancel, so individual accuracy is irrelevant"
+    ],
+    "answer": 2,
+    "explanation": "In the lesson's synthetic simulation the distribution error is 0.0000 yet only 40.0% of students match the exam grade. Aggregate validation cannot establish individual accuracy.",
+    "source": "Lesson 26, aggregate_vs_individual.py"
+  },
+  {
+    "id": "sim-L500-034",
+    "level": "L500",
+    "lesson": 26,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "96.4% of calculated grades were the same as, or within one grade of, the teacher grade. If the rest applied to 718,276 A level entries, how many entries would differ by two or more grades?",
+    "options": [
+      "2,586 entries",
+      "692,418 entries",
+      "25,858 entries",
+      "71,828 entries"
+    ],
+    "answer": 2,
+    "explanation": "(1 - 0.964) x 718,276 = 25,858. Reporting the count beside the percentage makes the individual stakes visible to decision makers.",
+    "source": "Lesson 26, problem 26-P2; Ofqual interim report (2020)"
+  },
+  {
+    "id": "sim-L500-035",
+    "level": "L500",
+    "lesson": 26,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Under the 2025 AQuA Book, which role must be held by someone other than the analyst who built the model?",
+    "options": [
+      "The assurer",
+      "The end user",
+      "The data owner",
+      "The commissioner"
+    ],
+    "answer": 0,
+    "explanation": "The AQuA Book's four roles are commissioner, analyst, assurer and approver, and the analyst and assurer must be separate. Data owner and end user are not AQuA roles.",
+    "source": "Lesson 26; AQuA Book (2025)"
+  },
+  {
+    "id": "sim-L500-036",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which ACM Code (2018) principle most directly requires a modeller to report the risks of a model's use?",
+    "options": [
+      "3.7: recognise when a system is integrated into society",
+      "2.5: give comprehensive and thorough evaluations, including possible risks",
+      "1.6: respect privacy, by limiting the data the model holds",
+      "2.2: maintain high standards of professional competence"
+    ],
+    "answer": 1,
+    "explanation": "Principle 2.5 asks for comprehensive and thorough evaluations of computer systems and their impacts, including analysis of possible risks. The others are real principles but are not the direct duty here.",
+    "source": "Lesson 26; ACM Code of Ethics (2018)"
+  },
+  {
+    "id": "sim-L500-037",
+    "level": "L500",
+    "lesson": 26,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Which uncertainty statement is most useful to students receiving model-calculated grades?",
+    "options": [
+      "The model achieves a predictive accuracy above 0.9 at +/- 1 grade in testing",
+      "Tested on 2019: about 9 in 10 got within one grade; yours may differ - here is how to appeal",
+      "The model is highly accurate and it has been validated by independent experts",
+      "Grades are statistically standardised so that national standards are maintained"
+    ],
+    "answer": 1,
+    "explanation": "It states what was tested, uses natural frequencies, gives the individual implication and a route to act - the elements OSR found missing. The others are true-sounding but not actionable.",
+    "source": "Lesson 26, problem 26-P3; OSR (2021)"
+  },
+  {
+    "id": "sim-L500-038",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Robodebt averaged annual income evenly across fortnights. Which kind of validity failed?",
+    "options": [
+      "Conceptual and data validity: even income is false for irregular earners",
+      "Operational validity only: annual totals did not match the tax data",
+      "Computerized model verification: the averaging code contained a bug",
+      "None: averaging is unbiased, so every individual debt was correct"
+    ],
+    "answer": 0,
+    "explanation": "The code did what it was told; the assumption (even income) was false for exactly the people moving on and off benefits. Annual totals matched, so aggregate checks would pass.",
+    "source": "Lesson 26, problem 26-P4"
+  },
+  {
+    "id": "sim-L500-039",
+    "level": "L500",
+    "lesson": 26,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "CovidSim's code was released and independently re-run with the published outputs reproduced. What does that establish?",
+    "options": [
+      "Calibration: the parameters were re-estimated from new data",
+      "Verification: code reproduces the numbers; validity is not shown",
+      "Validation: the projections were shown to be accurate for policy",
+      "Nothing: re-running someone else's code has no evidential value"
+    ],
+    "answer": 1,
+    "explanation": "Reproduction checks that published code and inputs give published outputs - a verification property. Validity for a policy purpose needs comparison with data, sensitivity analysis and an accuracy requirement.",
+    "source": "Lesson 26, problem 26-P6"
+  },
+  {
+    "id": "sim-L500-040",
+    "level": "L500",
+    "lesson": 26,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A centre's top-grade share (true p = 0.26) is estimated from 3 past years of 8 students (24 students). What is the standard deviation of that estimate?",
+    "options": [
+      "0.155",
+      "0.008",
+      "0.090",
+      "0.026"
+    ],
+    "answer": 2,
+    "explanation": "sqrt(p(1 - p)/n) = sqrt(0.26 x 0.74/24) = 0.090, a 34% relative error. 0.155 uses only one year of 8 students.",
+    "source": "Lesson 26, aggregate_vs_individual.py; Theorem 23.1"
+  },
+  {
+    "id": "sim-L500-041",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What is the central idea of Metropolis and Ulam's 1949 paper?",
+    "options": [
+      "Solve neutron transport exactly by iterating probability matrices to convergence",
+      "Follow many random single chains of events and read answers off as frequencies",
+      "Fit a normal distribution to experimental neutron counts",
+      "Replace random numbers with a fine deterministic grid of quadrature points"
+    ],
+    "answer": 1,
+    "explanation": "They propose a statistical approach: sample individual histories with (pseudo-)random numbers instead of computing the multiple integrations or matrix products of the exact method.",
+    "source": "Lesson 27, reading 1"
+  },
+  {
+    "id": "sim-L500-042",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which question do Metropolis and Ulam explicitly leave open?",
+    "options": [
+      "A precise estimate of the error from a finite sample",
+      "Whether averages of independent trials converge",
+      "Whether computing machines can generate any random numbers",
+      "Whether the method applies to neutron diffusion at all"
+    ],
+    "answer": 0,
+    "explanation": "They note the finite-sample error question is still open; sigma/sqrt(N) and the CLT interval (Theorems 23.2, 25.3) now answer it. Convergence of averages (the LLN) was long established.",
+    "source": "Lesson 27, reading 1"
+  },
+  {
+    "id": "sim-L500-043",
+    "level": "L500",
+    "lesson": 27,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A branching process has Poisson(1.5) offspring. What is its extinction probability (smallest root of q = exp(1.5(q - 1)))?",
+    "options": [
+      "0.4172",
+      "0.6667",
+      "0.2032",
+      "0.6863"
+    ],
+    "answer": 0,
+    "explanation": "Iterating q <- exp(1.5(q - 1)) from 0 converges to 0.4172. 0.6863 is the m = 1.2 case; 0.6667 = 1/1.5 is a tempting but wrong shortcut.",
+    "source": "Lesson 27, problem 27-P2"
+  },
+  {
+    "id": "sim-L500-044",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In Sargent (2010), what is model validation?",
+    "options": [
+      "Satisfactory accuracy for the intended use, within its domain",
+      "Showing the program implements the conceptual model correctly",
+      "Showing that users find the model's animation convincing",
+      "Showing the model reproduces every historical observation exactly"
+    ],
+    "answer": 0,
+    "explanation": "Validation is substantiating that the model, within its domain of applicability, has a satisfactory range of accuracy for the intended application. Correct implementation is verification; face validity is only one technique.",
+    "source": "Lesson 27, reading 2"
+  },
+  {
+    "id": "sim-L500-045",
+    "level": "L500",
+    "lesson": 27,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "When should the acceptable range of accuracy for a model be fixed, according to Sargent's procedure?",
+    "options": [
+      "Only if the model fails its first comparison with data",
+      "After the runs, once the achievable accuracy is known",
+      "At the end, by the users who liked the results",
+      "Before validation testing begins, from the model's intended purpose"
+    ],
+    "answer": 3,
+    "explanation": "Specifying the required accuracy is an early step of his procedure; choosing it afterwards lets the results set the bar (L400 #21: the envelope shrinks from 0.85 to 0.5 when the requirement tightens from 10% to 5%).",
+    "source": "Lesson 27, reading 2; L400 #21"
+  },
+  {
+    "id": "sim-L500-046",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which way of deciding whether a model is valid does Sargent (2010) discourage?",
+    "options": [
+      "Having users heavily involved with the development team",
+      "A scoring model that turns subjective ratings into one number",
+      "Independent verification and validation by a third party",
+      "Having the development team decide on the basis of tests"
+    ],
+    "answer": 1,
+    "explanation": "He notes scoring models are seldom used and argues against them because subjective weights can hide a failing aspect behind a passing total. The other three are approaches he describes as used.",
+    "source": "Lesson 27, reading 2"
+  },
+  {
+    "id": "sim-L500-047",
+    "level": "L500",
+    "lesson": 27,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "You set the arrival rate of a queueing simulation to zero and check that no customer ever waits. Which of Sargent's techniques is this?",
+    "options": [
+      "Event validity",
+      "A degenerate test",
+      "Historical data validation",
+      "A Turing test"
+    ],
+    "answer": 1,
+    "explanation": "Degenerate tests check model behaviour for degenerate input values (here no arrivals). Historical data validation compares with real data; a Turing test asks experts to tell model output from system output.",
+    "source": "Lesson 27, reading 2; L100 #6"
+  },
+  {
+    "id": "sim-L500-048",
+    "level": "L500",
+    "lesson": 27,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "import math\nq = 0.0\nfor _ in range(200):\n    q = math.exp(2.0 * (q - 1))\nprint(round(q, 4))",
+    "options": [
+      "0.1353",
+      "0.2032",
+      "0.5",
+      "1.0"
+    ],
+    "answer": 1,
+    "explanation": "Fixed-point iteration from 0 converges to the smallest root of q = exp(2(q - 1)), the extinction probability 0.2032 for Poisson(2) offspring. 1.0 is the other root, which iteration from 0 never reaches when m > 1.",
+    "source": "Lesson 27, problem 27-P3"
+  }
+]

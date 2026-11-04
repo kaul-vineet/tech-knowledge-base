@@ -1,0 +1,20 @@
+%% Capstone architecture (Mermaid). Render: any Mermaid viewer, e.g. GitHub markdown or mermaid.live (paste the text).
+flowchart LR
+    C[Client\nidempotency key + trace root] -->|order, traceparent| G[Gateway\nbounded queue max_queue\n503 + Retry-After]
+    G --> W[Workers x3]
+    W --> O[Saga orchestrator\ncreate -> charge -> ship\ncompensate in reverse\nrecover from saga log]
+    O --> OS[(orders DB\n+ outbox)]
+    O --> PS[(payments DB\n+ outbox)]
+    O --> SS[(shipping DB\n+ outbox)]
+    OS & PS & SS --> R[Relay\npublish then mark sent]
+    R -->|at-least-once| B{{Bus}}
+    B --> E[Email consumer\nprocessed ids]
+    B --> V[Revenue consumer\nprocessed ids]
+    subgraph Config[Replicated config]
+        N1((n1)) --- N2((n2)) --- N3((n3))
+    end
+    OP[Operator\nversioned config change] -->|propose until committed| Config
+    Config -->|committed max_queue| G
+    X[[Chaos campaign\n10% cohort faults + infra faults]] -.-> G & O & R & B & Config
+    K[[checks.py + run_capstone.py\ncode decides pass/fail]] -.-> OS & PS & SS & E & V & Config
+    A[[Local model\nexplains results only]] -.->|claims checked by code| K

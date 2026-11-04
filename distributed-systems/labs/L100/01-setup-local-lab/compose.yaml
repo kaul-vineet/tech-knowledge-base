@@ -1,0 +1,27 @@
+# OPTIONAL: the same 3 nodes as containers. Works with any Compose-spec runner:
+#   podman compose up -d      (Podman / Podman Desktop on macOS or Windows; needs podman-compose or docker-compose)
+#   docker compose up -d      (Colima or Rancher Desktop [moby engine] with the docker CLI; Docker Desktop)
+#   nerdctl compose up -d     (Rancher Desktop [containerd engine])
+# then: curl http://127.0.0.1:8001/health ; ... compose down
+# Status: pending-ci (no container runtime where these labs were validated).
+# Image is fully qualified (docker.io/library/...) so Podman's short-name policy never has to guess
+# a registry; the python image is multi-arch, so Apple-silicon pulls arm64 and Windows/WSL2 amd64.
+x-node: &node
+  image: docker.io/library/python:3.12.16-slim
+  working_dir: /app
+  volumes:
+    - ./node.py:/app/node.py:ro   # keep the lab folder under your home folder (Colima/Podman share it)
+
+services:
+  node1:
+    <<: *node
+    command: ["python", "node.py", "--name", "node1", "--host", "0.0.0.0", "--port", "8001"]
+    ports: ["127.0.0.1:8001:8001"]
+  node2:
+    <<: *node
+    command: ["python", "node.py", "--name", "node2", "--host", "0.0.0.0", "--port", "8002"]
+    ports: ["127.0.0.1:8002:8002"]
+  node3:
+    <<: *node
+    command: ["python", "node.py", "--name", "node3", "--host", "0.0.0.0", "--port", "8003"]
+    ports: ["127.0.0.1:8003:8003"]

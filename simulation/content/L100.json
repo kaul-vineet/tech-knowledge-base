@@ -1,0 +1,1223 @@
+[
+  {
+    "id": "setup-simulation-workbench",
+    "number": 1,
+    "level": "Setup",
+    "title": "Set up your simulation workbench",
+    "phase": "Setup",
+    "category": "toolchain",
+    "description": "Check Python 3.12 + numpy, see the pinned SimPy/SciPy/Mesa versions CI installs, and prove a seed makes randomness repeatable.",
+    "outcome": "You know which labs run locally vs in CI and can reproduce a random stream from a seed.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64; macOS arm64 + Windows x64 pending CI) + numpy 2.5.3; CI adds simpy 4.1.2, scipy 1.18.1, mesa 3.5.1; optional Ollama for lessons 6-7 (LOCAL_MODEL_URL / LOCAL_MODEL); Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+    "estimatedTime": "15 minutes",
+    "overview": [
+      "Main labs use Python + numpy; SimPy, SciPy and Mesa equivalents run in CI."
+    ],
+    "prerequisites": [
+      "Python 3.12+",
+      "A terminal"
+    ],
+    "glossary": [
+      {
+        "term": "seed",
+        "meaning": "Fixes a generator's start state: same seed, same numbers."
+      },
+      {
+        "term": "pin",
+        "meaning": "Exact version (==)."
+      }
+    ],
+    "concepts": [
+      "Local labs need only Python 3.12 + numpy.",
+      "Library equivalents are pinned and run in CI.",
+      "Every lab seeds its randomness."
+    ],
+    "steps": [
+      {
+        "title": "Install Python 3.12",
+        "detail": "Any 3.12+ works; labs were validated on 3.12.15. Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+        "mac": "brew install python@3.12",
+        "windows": "winget install -e --id Python.Python.3.12",
+        "expected": "`python3.12 --version` (Mac) or `py -3.12 --version` (Windows) prints Python 3.12.x.",
+        "ifNot": "Open a new terminal so PATH is refreshed."
+      },
+      {
+        "title": "Create and activate a venv",
+        "detail": "In the repository root.",
+        "mac": "python3.12 -m venv .venv && source .venv/bin/activate",
+        "windows": "py -3.12 -m venv .venv; .venv\\Scripts\\Activate.ps1\n$env:PYTHONUTF8 = \"1\"   # UTF-8 output",
+        "expected": "Prompt starts with (.venv); `python --version` is 3.12.x.",
+        "ifNot": "Windows 'running scripts is disabled': `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then activate again."
+      },
+      {
+        "title": "Install the pins (online)",
+        "detail": "`--only-binary=:all:` refuses source builds, so a missing wheel fails fast.",
+        "mac": "python -m pip install --only-binary=:all: -r labs/L100/01-setup-workbench/requirements.txt",
+        "windows": "python -m pip install --only-binary=:all: -r labs\\L100\\01-setup-workbench\\requirements.txt",
+        "expected": "numpy, scipy, simpy, mesa install from wheels, no compiler needed.",
+        "ifNot": "'No matching distribution': check `python -c \"import platform; print(platform.machine())\"` (see HARDWARE.md)."
+      },
+      {
+        "title": "Check the toolchain",
+        "detail": "`python check_env.py`",
+        "mac": "cd labs/L100/01-setup-workbench\npython check_env.py",
+        "windows": "cd labs\\L100\\01-setup-workbench\npython check_env.py",
+        "expected": "First line names the machine (Darwin arm64 / Windows AMD64), numpy 2.5.3 installed, READY.",
+        "ifNot": "Activate the venv; install numpy==2.5.3."
+      },
+      {
+        "title": "See a seed at work",
+        "detail": "Read the two 'seed 42' lines.",
+        "mac": "python check_env.py",
+        "windows": "python check_env.py",
+        "expected": "Both [0.773956, 0.438878, 0.858598] on every OS.",
+        "ifNot": "Check numpy is 2.5.x."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "mac": "python -m unittest -v",
+        "windows": "python -m unittest -v",
+        "expected": "Ran 5 tests ... OK",
+        "ifNot": "Read the failing test name."
+      },
+      {
+        "title": "Optional: local model for lessons 6 and 7",
+        "detail": "Ollama + qwen2.5:1.5b (986 MB). The server must be running before `ollama pull`. Lessons 6 and 7 also run with `--fake`. Same commands as ../shared/WORKSTATION-SETUP.md.",
+        "mac": "brew install ollama\nbrew services start ollama\nollama pull qwen2.5:1.5b\nexport LOCAL_MODEL_URL=http://localhost:11434/v1\nexport LOCAL_MODEL=qwen2.5:1.5b",
+        "windows": "# install OllamaSetup.exe from https://ollama.com/download (winget Ollama.Ollama lags behind)\nollama pull qwen2.5:1.5b\n$env:LOCAL_MODEL_URL=\"http://localhost:11434/v1\"\n$env:LOCAL_MODEL=\"qwen2.5:1.5b\"",
+        "expected": "`ollama list` shows qwen2.5:1.5b.",
+        "ifNot": "Skip it: all tests use the fake server. Mac alternative: brew install --cask ollama-app, then open Ollama.app once."
+      }
+    ],
+    "code": "\"\"\"Setup check for the simulation workbench: what is installed, and is randomness reproducible?\n\npython check_env.py\n\"\"\"\nimport importlib.metadata as md\nimport os\nimport platform\nimport sys\nfrom pathlib import Path\n\n\ndef parse_pins(text):\n    # splitlines + strip: the file may have Windows CRLF line endings after a git checkout\n    return dict(line.strip().split(\"==\") for line in text.splitlines() if line.strip() and not line.startswith(\"#\"))\n\n\nPINS = parse_pins(Path(__file__).with_name(\"requirements.txt\").read_text(encoding=\"utf-8\"))\n\n\ndef installed(pkg):\n    try:\n        return md.version(pkg)\n    except md.PackageNotFoundError:\n        return None\n\n\ndef seeded_draws(seed):\n    import numpy as np\n    return np.random.default_rng(seed).random(3).round(6).tolist()  # same seed -> same numbers, every run\n\n\ndef main():\n    # machine: arm64 = Apple-silicon Mac, AMD64 = x64 Windows, x86_64 = Intel/AMD Linux or Mac\n    print(f\"Python {platform.python_version()} on {platform.system()} {platform.machine()} | CPU cores: {os.cpu_count()}\")\n    ok = sys.version_info >= (3, 12)\n    for pkg, pin in PINS.items():\n        have = installed(pkg)\n        where = \"local\" if pkg == \"numpy\" else \"CI\"\n        status = f\"installed {have}\" + (\"\" if have == pin else f\" (pin {pin})\") if have else f\"not installed -> runs in {where}\"\n        print(f\"  {pkg:<6} pin {pin:<7} {status}\")\n        ok &= bool(have) or pkg != \"numpy\"  # numpy is the only package the local labs need\n    print(\"seed 42 ->\", seeded_draws(42))\n    print(\"seed 42 ->\", seeded_draws(42), \"(identical = reproducible)\")\n    print(\"READY for local labs\" if ok else \"NOT READY: need Python 3.12+ and numpy\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/01-setup-workbench/check_env.py",
+        "purpose": "main lab code"
+      },
+      {
+        "path": "labs/L100/01-setup-workbench/requirements.txt",
+        "purpose": "pins: numpy, simpy, scipy, mesa"
+      },
+      {
+        "path": "labs/L100/01-setup-workbench/test_setup.py",
+        "purpose": "version, numpy, pins (incl. CRLF), seeding"
+      },
+      {
+        "path": "labs/L100/01-setup-workbench/try_it.py",
+        "purpose": "tryIt script"
+      }
+    ],
+    "expectedResults": [
+      "Python 3.12+, numpy 2.5.3",
+      "Pins for simpy, scipy, mesa",
+      "Identical seeded draws"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "5 pass"
+      },
+      {
+        "action": "Pin numpy as '2.5'",
+        "expected": "test_pins_are_exact fails"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "No module named numpy",
+        "action": "`pip install numpy==2.5.3` for this interpreter."
+      },
+      {
+        "symptom": "Activate.ps1 cannot be loaded",
+        "action": "`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Compare two unseeded numpy generators.",
+        "predict": "Equal?",
+        "expected": "unseeded equal? False"
+      },
+      {
+        "task": "Seed random.Random and default_rng with 42.",
+        "predict": "Same first number?",
+        "expected": "random.Random(42): 0.639427 | numpy default_rng(42): 0.773956"
+      }
+    ],
+    "equivalents": [
+      "SimPy 4.1.2 (MIT): process-based discrete-event simulation - lesson 3.",
+      "Mesa 3.5.1 (Apache-2.0): agent-based modelling - lesson 5.",
+      "SciPy solve_ivp: adaptive ODE solvers (RK45, Radau, BDF, LSODA) - lesson 4.",
+      "NetLogo: free agent-based modelling environment with a models library.",
+      "Modelica / OpenModelica 1.27.1: equation-based modelling of physical systems.",
+      "FMI / FMPy 0.3.32: exchange models as FMUs and simulate them in Python.",
+      "Julia DifferentialEquations.jl: ODE/SDE/DAE solvers, also callable from Python (diffeqpy)."
+    ],
+    "inRealSystems": "Reproducible pipelines store versions and seeds with every result.",
+    "useWhen": "Pin and seed whenever a result feeds a decision.",
+    "caution": "Seeded generators are for simulation, never for security tokens (use `secrets`).",
+    "checkpoint": "PASS: READY printed and 5 tests pass.",
+    "checkYourself": [
+      {
+        "q": "Which labs need SimPy, SciPy or Mesa?",
+        "a": "Only the equivalents in lessons 3-5."
+      },
+      {
+        "q": "Why do random.Random(42) and default_rng(42) differ?",
+        "a": "Different generators (Mersenne Twister vs PCG64)."
+      }
+    ],
+    "sources": [
+      {
+        "title": "PyPI: simpy 4.1.2",
+        "url": "https://pypi.org/project/simpy/"
+      },
+      {
+        "title": "PyPI: scipy 1.18.1",
+        "url": "https://pypi.org/project/scipy/"
+      },
+      {
+        "title": "PyPI: Mesa 3.5.1",
+        "url": "https://pypi.org/project/Mesa/"
+      },
+      {
+        "title": "NumPy v2.5 manual: Random Generator",
+        "url": "https://numpy.org/doc/stable/reference/random/generator.html"
+      },
+      {
+        "title": "Homebrew formula: python@3.12",
+        "url": "https://formulae.brew.sh/formula/python@3.12"
+      },
+      {
+        "title": "winget-pkgs manifests: Python.Python.3.12",
+        "url": "https://github.com/microsoft/winget-pkgs/tree/master/manifests/p/Python/Python/3/12"
+      },
+      {
+        "title": "Python docs: venv (activation, ExecutionPolicy)",
+        "url": "https://docs.python.org/3/library/venv.html"
+      },
+      {
+        "title": "Ollama download (Windows installer OllamaSetup.exe)",
+        "url": "https://ollama.com/download"
+      }
+    ],
+    "next": "L200 #7 Input modelling: fit service times and check the fit",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran check_env.py, try_it.py and 5 unittests on Python 3.12.15 + numpy 2.5.3 (Linux x86_64); outputs in lab README. Mac/Windows install commands verified against Homebrew, winget-pkgs and Python docs but not run: CI matrix runs macos-latest and windows-latest.",
+      "pendingCi": [
+        "requirements.txt install of simpy 4.1.2, scipy 1.18.1, mesa 3.5.1 (not installed here)"
+      ]
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "conceptNote": "content/concepts/01-setup-simulation-workbench.md",
+    "conceptSummary": "A simulation workbench is an interpreter, a seeded random generator and a few pinned libraries, each matching one modelling style. Pin versions and seeds so any result can be rerun exactly."
+  },
+  {
+    "id": "monte-carlo-estimation",
+    "number": 2,
+    "level": "L100",
+    "title": "Monte Carlo: estimate a project's completion time",
+    "phase": "Randomness",
+    "category": "monte-carlo",
+    "description": "Sample three uncertain task durations up to 100,000 times; report mean, 95% CI and P(done in 20 days).",
+    "outcome": "You can turn uncertain inputs into an outcome distribution with a confidence interval.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux) + numpy 2.5.3",
+    "estimatedTime": "20 minutes",
+    "overview": [
+      "Sample every uncertain input many times and read the answer off the results."
+    ],
+    "prerequisites": [
+      "Lesson 1"
+    ],
+    "glossary": [
+      {
+        "term": "triangular",
+        "meaning": "Distribution from (min, most likely, max)."
+      },
+      {
+        "term": "95% CI",
+        "meaning": "mean +/- 1.96 s / sqrt(N)."
+      }
+    ],
+    "concepts": [
+      "Run the model many times with random inputs.",
+      "Error shrinks like 1/sqrt(N).",
+      "Report probabilities, not just the mean."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "`python monte_carlo.py`",
+        "expected": "Exact mean 17.333; N=100,000: 17.334 +/- 0.015, P(<= 20 days) 0.857.",
+        "ifNot": "Check seed 42 and numpy 2.x."
+      },
+      {
+        "title": "Compare with the formula",
+        "detail": "Line 1 sums (min+mode+max)/3.",
+        "expected": "Sampled means approach 17.333.",
+        "ifNot": "Check rng.triangular(left, mode, right) order."
+      },
+      {
+        "title": "Watch convergence",
+        "detail": "Read the half-width column.",
+        "expected": "0.436 -> 0.150 -> 0.047 -> 0.015: ~sqrt(10) per 10x samples.",
+        "ifNot": "Each N must draw fresh samples."
+      },
+      {
+        "title": "Answer the question",
+        "detail": "Read the last line.",
+        "expected": "P50 17.23, P90 20.56 days: 20 days is met ~86% of the time.",
+        "ifNot": "Percentiles use the 100,000 run."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 5 tests ... OK",
+        "ifNot": "A changed seed can move the ratio test."
+      }
+    ],
+    "code": "\"\"\"L100 Monte Carlo: how long will a 3-task release take, and how sure are we?\n\nTasks run one after another; each duration is uncertain (triangular: min, most likely, max days).\nWe sample many possible projects, then report the mean, a 95% confidence interval and P(done <= 20 days).\n\npython monte_carlo.py\n\"\"\"\nimport numpy as np\n\nTASKS = {\"design\": (2, 4, 8), \"build\": (5, 8, 14), \"test\": (2, 3, 6)}  # (min, mode, max) days\nDEADLINE = 20.0\n\n\ndef sample_totals(n, seed):\n    rng = np.random.default_rng(seed)  # seeded generator: same seed -> same samples -> same answer\n    totals = np.zeros(n)\n    for low, mode, high in TASKS.values():\n        totals += rng.triangular(low, mode, high, size=n)  # random sampling of each uncertain input\n    return totals\n\n\ndef summarise(totals):\n    n = len(totals)\n    mean = totals.mean()\n    half_width = 1.96 * totals.std(ddof=1) / np.sqrt(n)  # 95% CI half-width shrinks like 1/sqrt(N)\n    return mean, half_width, (totals <= DEADLINE).mean()\n\n\ndef exact_mean():\n    return sum((a + b + c) / 3 for a, b, c in TASKS.values())  # mean of a triangular = (min+mode+max)/3\n\n\ndef main(seed=42):\n    print(f\"exact mean (from formula): {exact_mean():.3f} days\")\n    print(\"       N    mean   95% CI half-width   P(<= 20 days)\")\n    for n in (100, 1_000, 10_000, 100_000):  # convergence: 100x more samples -> ~10x narrower CI\n        mean, hw, p = summarise(sample_totals(n, seed))\n        print(f\"{n:>8} {mean:7.3f}   +/- {hw:.3f}            {p:.3f}\")\n    totals = sample_totals(100_000, seed)\n    print(\"P50 / P90 completion (days):\", np.round(np.percentile(totals, [50, 90]), 2))\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/02-monte-carlo/monte_carlo.py",
+        "purpose": "main lab code"
+      },
+      {
+        "path": "labs/L100/02-monte-carlo/test_monte_carlo.py",
+        "purpose": "seeding, bounds, CI checks"
+      },
+      {
+        "path": "labs/L100/02-monte-carlo/try_it.py",
+        "purpose": "tryIt script (+ pi bonus)"
+      },
+      {
+        "path": "labs/L100/02-monte-carlo/export_csv.py",
+        "purpose": "writes mc_totals.csv for KNIME / marimo (learning tools)"
+      },
+      {
+        "path": "labs/L100/02-monte-carlo/test_export_csv.py",
+        "purpose": "checks the CSV equals the lab's samples and P50/P90"
+      }
+    ],
+    "expectedResults": [
+      "Mean -> 17.333 days",
+      "Half-width ~1/sqrt(N)",
+      "P(<= 20 days) ~0.857"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "5 pass"
+      },
+      {
+        "action": "Run twice",
+        "expected": "Identical output"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Answers change every run",
+        "action": "Pass a seed to default_rng."
+      },
+      {
+        "symptom": "P(<= 20) looks wrong",
+        "action": "Check DEADLINE and the sum."
+      },
+      {
+        "symptom": "Numbers differ from the README in the 3rd decimal",
+        "action": "Check numpy is 2.5.x and seed=42: generator streams can change between numpy versions (HARDWARE.md)."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Use seed 7 instead of 42.",
+        "predict": "Do N=100 and N=100,000 means move equally?",
+        "expected": "seed 42: N=100 mean 17.196 | N=100000 mean 17.334 +/- 0.015 | seed 7: N=100 mean 17.401 | N=100000 mean 17.338 +/- 0.015"
+      },
+      {
+        "task": "Raise 'build' max from 14 to 20 days.",
+        "predict": "Does P(<= 20 days) drop a little or a lot?",
+        "expected": "build max 20 d: mean 19.332 +/- 0.022, P(<= 20 days) 0.602"
+      }
+    ],
+    "equivalents": [
+      "Python stdlib: random.Random(seed).triangular(low, high, mode) - argument order differs from numpy.",
+      "Julia DifferentialEquations.jl: ensemble simulations run many randomised solves."
+    ],
+    "learningTools": [
+      {
+        "name": "marimo 0.25.2",
+        "role": "CHECK",
+        "exercise": "In a marimo notebook in this lab folder, import sample_totals and summarise from monte_carlo.py; put the 'build' task's max (14) in its own cell and P50/P90 + P(<= 20 days) in a cell below. Change 14 to 20.",
+        "expected": "With 14 the cells must show P50 / P90 = 17.23 / 20.56 days and P(<= 20) 0.857 (seed 42, N=100,000; the lab's own output). With 20 they should re-run to mean 19.332 and P(<= 20) 0.602, as try_it.py printed. Pending a manual run in marimo.",
+        "mac": "pip install marimo, then marimo tutorial intro to learn the UI",
+        "windows": "pip install marimo, then marimo tutorial intro",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://pypi.org/project/marimo/"
+      },
+      {
+        "name": "KNIME Analytics Platform 5.12",
+        "role": "CHECK",
+        "exercise": "Run `python export_csv.py` (writes mc_totals.csv: the lab's 100,000 seeded totals). In KNIME read it with a CSV Reader node and compute the 50th and 90th percentiles of total_days with a statistics node.",
+        "expected": "Should match the lab's printed values: P50 17.23, P90 20.56 days (export_csv.py prints the same). A last-digit difference can come from the node's percentile interpolation. Pending a manual run; KNIME node names were not re-verified in the catalogue.",
+        "mac": "brew install --cask knime",
+        "windows": "Installer from https://www.knime.com/downloads",
+        "licence": "GPL-3.0 + KNIME additional permissions (OSI: yes); paid Hub tiers not needed",
+        "url": "https://www.knime.com/downloads"
+      }
+    ],
+    "inRealSystems": "Schedule-risk and capacity tools report P50/P90 dates this way.",
+    "useWhen": "Use when inputs are uncertain and one sample is cheap; skip when an exact formula is cheap.",
+    "caution": "Precise output from guessed input ranges is still guesswork.",
+    "checkpoint": "PASS: the N=100,000 interval contains 17.333; 5 tests pass.",
+    "checkYourself": [
+      {
+        "q": "N=1,000 gives +/-0.150. Which N gives +/-0.015?",
+        "a": "About 100,000 (error ~ 1/sqrt(N))."
+      },
+      {
+        "q": "Why also report P(<= 20 days)?",
+        "a": "The deadline question needs the tail, not the mean."
+      }
+    ],
+    "sources": [
+      {
+        "title": "NumPy v2.5 manual: Random Generator",
+        "url": "https://numpy.org/doc/stable/reference/random/generator.html"
+      },
+      {
+        "title": "Owen, Monte Carlo theory, methods and examples, ch. 1-2",
+        "url": "https://artowen.su.domains/mc/Ch-intro.pdf"
+      },
+      {
+        "title": "NIST/SEMATECH e-Handbook: Confidence limits for the mean",
+        "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda352.htm"
+      }
+    ],
+    "next": "L200 #7 Input modelling: fit service times and check the fit",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran monte_carlo.py (twice, identical md5), try_it.py and 5 unittests on Python 3.12.15 + numpy 2.5.3; outputs in lab README."
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "conceptNote": "content/concepts/02-monte-carlo-estimation.md",
+    "conceptSummary": "Monte Carlo answers 'how likely?' by running a cheap model many times with randomly sampled inputs. Its error shrinks like 1/sqrt(N), so a confidence interval tells you when you have sampled enough."
+  },
+  {
+    "id": "discrete-event-queue",
+    "number": 3,
+    "level": "L100",
+    "title": "Discrete-event simulation: a single-server queue",
+    "phase": "Event-driven",
+    "category": "discrete-event",
+    "description": "Coffee shop or API worker: heap-based event list, clock jumps between events, mean wait vs the M/M/1 formula.",
+    "outcome": "You can write an event-list simulator and check it against Wq = lam/(mu(mu-lam)).",
+    "environment": "Python 3.12 (validated on 3.12.15), stdlib heapq + random; SimPy 4.1.2 in CI",
+    "estimatedTime": "30 minutes",
+    "overview": [
+      "Compute only the moments when something changes and jump the clock to the next one."
+    ],
+    "prerequisites": [
+      "Lesson 2"
+    ],
+    "glossary": [
+      {
+        "term": "event list",
+        "meaning": "Future events ordered by time (a heap)."
+      },
+      {
+        "term": "M/M/1",
+        "meaning": "Random arrivals, exponential service, one server."
+      },
+      {
+        "term": "Wq",
+        "meaning": "Mean wait before service starts."
+      }
+    ],
+    "concepts": [
+      "The clock jumps from event to event.",
+      "Events schedule future events.",
+      "Check against a known formula first."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "`python des_queue.py`",
+        "expected": "Event trace, then simulated 3.871 min vs formula 4.000 min (-3.2%).",
+        "ifNot": "Check seed 1, LAM, MU."
+      },
+      {
+        "title": "Read the trace",
+        "detail": "Look at the t= column.",
+        "expected": "Times jump 0.180 -> 1.623 -> 2.531; customer 2 waits until 3.215.",
+        "ifNot": "Times must never go backwards."
+      },
+      {
+        "title": "Compare with the formula",
+        "detail": "Wq = 0.8 / (1.0 * 0.2) = 4.0 min.",
+        "expected": "Within a few % of 4.0.",
+        "ifNot": "Gap > 10%: check where waits are measured."
+      },
+      {
+        "title": "SimPy version (CI)",
+        "detail": "`python simpy_queue.py`",
+        "expected": "Mean wait near 4.0 min.",
+        "ifNot": "ModuleNotFoundError locally is expected."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 6 tests ... OK (skipped=1)",
+        "ifNot": "The skip is SimPy."
+      }
+    ],
+    "code": "\"\"\"L100 discrete-event simulation: one barista (or one API worker), customers arrive at random.\n\nArrivals: Poisson, rate LAM per minute. Service: exponential, rate MU per minute. One server, FIFO.\nThis is an M/M/1 queue, so we can compare the simulated mean wait with the formula Wq = lam / (mu (mu - lam)).\n\npython des_queue.py\n\"\"\"\nimport heapq\nimport random\nfrom collections import deque\n\nLAM, MU = 0.8, 1.0  # 0.8 customers/min arrive; barista serves 1.0/min on average (utilisation 80%)\n\n\ndef simulate(n_customers, seed, lam=LAM, mu=MU, trace=0):\n    rng = random.Random(seed)  # seeded: reruns give identical event sequences\n    events = []  # event list: (time, seq, kind, customer) kept as a min-heap ordered by time\n    seq = 0\n\n    def schedule(time, kind, cust):\n        nonlocal seq\n        heapq.heappush(events, (time, seq, kind, cust))  # seq breaks ties so equal times stay FIFO\n        seq += 1\n\n    clock, busy, queue = 0.0, False, deque()\n    arrival_time, waits = {}, []\n    schedule(rng.expovariate(lam), \"arrive\", 0)\n    while events:\n        clock, _, kind, cust = heapq.heappop(events)  # clock JUMPS to the next event; nothing happens in between\n        if trace and len(waits) < trace and kind == \"arrive\":\n            print(f\"t={clock:7.3f}  arrive  customer {cust}  queue={len(queue)} busy={busy}\")\n        if kind == \"arrive\":\n            arrival_time[cust] = clock\n            if cust + 1 < n_customers:\n                schedule(clock + rng.expovariate(lam), \"arrive\", cust + 1)  # each event schedules future events\n            if busy:\n                queue.append(cust)\n            else:\n                busy = True\n                waits.append(0.0)\n                schedule(clock + rng.expovariate(mu), \"depart\", cust)\n        else:  # depart: free the server, start the next customer in line\n            if trace and len(waits) <= trace:\n                print(f\"t={clock:7.3f}  depart  customer {cust}  queue={len(queue)}\")\n            if queue:\n                nxt = queue.popleft()\n                waits.append(clock - arrival_time[nxt])  # time in queue = service start - arrival\n                schedule(clock + rng.expovariate(mu), \"depart\", nxt)\n            else:\n                busy = False\n    return waits, clock\n\n\ndef mm1_wq(lam=LAM, mu=MU):\n    return lam / (mu * (mu - lam))  # analytic mean wait in queue for M/M/1\n\n\ndef main(seed=1):\n    print(\"first events (clock jumps from event to event):\")\n    simulate(5, seed, trace=4)\n    waits, end = simulate(200_000, seed)\n    sim = sum(waits) / len(waits)\n    print(f\"customers={len(waits)}  simulated time={end:,.0f} min\")\n    print(f\"simulated mean wait = {sim:.3f} min | M/M/1 formula Wq = {mm1_wq():.3f} min | diff {100 * (sim - mm1_wq()) / mm1_wq():+.1f}%\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/03-discrete-event-queue/des_queue.py",
+        "purpose": "main lab code"
+      },
+      {
+        "path": "labs/L100/03-discrete-event-queue/simpy_queue.py",
+        "purpose": "SimPy 4.1.2 equivalent (pending-ci)"
+      },
+      {
+        "path": "labs/L100/03-discrete-event-queue/test_des_queue.py",
+        "purpose": "tests; SimPy test skipped locally"
+      },
+      {
+        "path": "labs/L100/03-discrete-event-queue/try_it.py",
+        "purpose": "tryIt script"
+      }
+    ],
+    "expectedResults": [
+      "Trace shows clock jumps",
+      "3.871 vs 4.000 min",
+      "SimPy near 4.0 (CI)"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "5 pass, 1 skipped (6 in CI)"
+      },
+      {
+        "action": "lam=0.2",
+        "expected": "Mean wait < 0.5 min"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "TypeError in heapq",
+        "action": "Keep the seq tie-breaker."
+      },
+      {
+        "symptom": "Wait grows with N",
+        "action": "lam >= mu: unstable queue."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Raise lam from 0.8 to 0.88.",
+        "predict": "Wait +10%?",
+        "expected": "lam=0.8: simulated Wq=3.87 min, formula Wq=4.00 min | lam=0.88: simulated Wq=7.08 min, formula Wq=7.33 min"
+      },
+      {
+        "task": "Run 200 customers, seeds 1-3.",
+        "predict": "How close to 4.0?",
+        "expected": "200 customers, seed 1: mean wait 4.19 min | 200 customers, seed 2: mean wait 2.31 min | 200 customers, seed 3: mean wait 7.71 min"
+      }
+    ],
+    "equivalents": [
+      "SimPy 4.1.2: Resource(env, capacity=1) + generator processes.",
+      "SimPy-style ports: SimSharp (C#), ConcurrentSim (Julia), simmer (R).",
+      "Python random docs: multiserver-queue recipe with heapq."
+    ],
+    "learningTools": [
+      {
+        "name": "JaamSim 2026-07",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Drag Generator -> Queue -> Server -> Sink. Inter-arrival time exponential, mean 1.25 min (lam = 0.8/min); service time exponential, mean 1.0 min. Run about 250,000 simulated minutes and read the queue's average wait.",
+        "expected": "Should be close to the lab's 3.871 min and the M/M/1 formula 4.000 min (a few % off, like the lab's -3.2%), not identical: JaamSim draws its own random numbers. Pending a manual run.",
+        "mac": "java -jar JaamSim2026-07.jar   # Universal JAR from the releases page; Java 17+, OpenGL 2.1+; no native Mac build (partial)",
+        "windows": "Run the self-contained JaamSim2026-07.exe from https://jaamsim.com/downloads.html",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://github.com/jaamsim/jaamsim/releases"
+      },
+      {
+        "name": "SimPy 4.1.2",
+        "role": "CHECK",
+        "exercise": "Install the pins, then run `python simpy_queue.py`: the same queue (lam 0.8, mu 1.0, 200,000 customers, seed 1) with simpy.Resource(capacity=1). Compare its mean wait with des_queue.py.",
+        "expected": "des_queue.py printed 3.871 min vs formula 4.000. SimPy should land within 10% of 4.000 (what test_simpy_matches_formula checks), not on 3.871 exactly: event order and draws differ. Pending-ci: SimPy is not installed here.",
+        "mac": "pip install simpy   # pinned as simpy==4.1.2 in labs/L100/01-setup-workbench/requirements.txt",
+        "windows": "pip install simpy   # same pin",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://pypi.org/project/simpy/"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L100 #3 Timeouts: fail fast instead of hanging: queueing explains latency - waits grow sharply as utilisation nears 1 (this lab: 4.00 min at 80% load, 7.33 at 88%), so a timeout must cover the queue, not just the service time."
+    ],
+    "inRealSystems": "Call centres, checkouts and worker pools are sized with event-driven queue models.",
+    "useWhen": "Use when state changes at discrete moments; not for continuous physics.",
+    "caution": "M/M/1 assumes exponential, independent times; real orders may differ.",
+    "checkpoint": "PASS: within 10% of 4.0 min; tests pass.",
+    "checkYourself": [
+      {
+        "q": "Why no fixed 1-minute ticks?",
+        "a": "Nothing changes between events; jumping is exact and faster."
+      },
+      {
+        "q": "lam 0.8 -> 0.88 (+10%). Wq?",
+        "a": "+83%: 4.0 -> 7.33 min."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Python docs: heapq (scheduler / priority-queue notes)",
+        "url": "https://docs.python.org/3/library/heapq.html"
+      },
+      {
+        "title": "MIT OCW 2.854 (Fall 2016): M/M/1 queue notes",
+        "url": "https://ocw.mit.edu/courses/2-854-introduction-to-manufacturing-systems-fall-2016/927056a1af54772a587fd84ad4951e71_MIT2_854F16_Mm1Queue.pdf"
+      },
+      {
+        "title": "SimPy docs: Shared Resources",
+        "url": "https://simpy.readthedocs.io/en/latest/topical_guides/resources.html"
+      },
+      {
+        "title": "PyPI: simpy 4.1.2",
+        "url": "https://pypi.org/project/simpy/"
+      }
+    ],
+    "next": "L200 #8 Resources and queues: c desks, one line, Erlang C",
+    "validation": {
+      "status": "validated-local",
+      "how": "des_queue.py, try_it.py and 5 unittests ran locally (stdlib, Python 3.12.15); outputs pasted. simpy_queue.py follows the SimPy 4.1.2 Resource docs but SimPy is not installed offline: pending-ci.",
+      "pendingCi": [
+        "labs/L100/03-discrete-event-queue/simpy_queue.py",
+        "test_des_queue.py: TestSimPyEquivalent.test_simpy_matches_formula"
+      ]
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "conceptNote": "content/concepts/03-discrete-event-queue.md",
+    "conceptSummary": "A discrete-event simulation keeps a time-ordered list of future events and jumps the clock from one to the next. Checking it against the M/M/1 formula catches bugs before you trust it on harder cases."
+  },
+  {
+    "id": "time-stepped-physics",
+    "number": 4,
+    "level": "L100",
+    "title": "Time-stepped physics: a parcel dropped from a drone",
+    "phase": "Continuous",
+    "category": "time-stepped",
+    "description": "Step a falling 2 kg parcel with explicit Euler, semi-implicit Euler and RK4; compare with y = h - g t^2/2, then add drag.",
+    "outcome": "You can write a fixed-step integrator and measure its error against an exact solution.",
+    "environment": "Python 3.12 (validated on 3.12.15), stdlib math; SciPy 1.18.1 in CI",
+    "estimatedTime": "30 minutes",
+    "overview": [
+      "Advance state by small steps dt using its rates of change; method and dt set the error."
+    ],
+    "prerequisites": [
+      "Lesson 1"
+    ],
+    "glossary": [
+      {
+        "term": "explicit Euler",
+        "meaning": "new = old + dt * rate(old)."
+      },
+      {
+        "term": "RK4",
+        "meaning": "4 slope samples per step; error ~ dt^4."
+      },
+      {
+        "term": "terminal velocity",
+        "meaning": "sqrt(2 m g / (Cd rho A))."
+      }
+    ],
+    "concepts": [
+      "State + rates + dt = time-stepped simulation.",
+      "Euler error ~ dt; RK4 far smaller.",
+      "Validate on an exact case first."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "`python falling.py`",
+        "expected": "Error table; terminal velocity 18.40 m/s; fall 4.52 s (no drag) vs 6.74 s (drag).",
+        "ifNot": "Check MASS, CD, AREA, RHO."
+      },
+      {
+        "title": "Read the error table",
+        "detail": "err = simulated - exact height at 3 s.",
+        "expected": "Euler +1.47 / +0.147 / +0.0147 m: 10x smaller dt, 10x smaller error.",
+        "ifNot": "Check round(t_end/dt) steps."
+      },
+      {
+        "title": "Compare methods",
+        "detail": "Same dt, three columns.",
+        "expected": "Semi-implicit -1.47 m (opposite sign); RK4 ~1e-13 (round-off).",
+        "ifNot": "Semi-implicit must use v_new."
+      },
+      {
+        "title": "Add drag",
+        "detail": "Read the last lines.",
+        "expected": "Impact 18.37 m/s, just under 18.40 m/s; 2.2 s slower.",
+        "ifNot": "Drag must oppose motion (v*abs(v))."
+      },
+      {
+        "title": "SciPy version (CI)",
+        "detail": "`python falling_scipy.py`",
+        "expected": "Ground time matches RK4 within 0.002 s.",
+        "ifNot": "ModuleNotFoundError locally is expected."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 6 tests ... OK (skipped=1)",
+        "ifNot": "The skip is SciPy."
+      }
+    ],
+    "code": "\"\"\"L100 time-stepped simulation: a parcel dropped from a delivery drone hovering at 100 m.\n\nPart 1 (no drag): compare explicit Euler, semi-implicit Euler and RK4 with the exact answer y = h - g t^2 / 2.\nPart 2 (with drag): D = 0.5 * Cd * rho * A * v^2 slows the parcel towards terminal velocity.\n\npython falling.py\n\"\"\"\nimport math\n\nG, H0 = 9.8, 100.0  # m/s^2, drop height in m\nMASS, CD, AREA, RHO = 2.0, 1.05, 0.09, 1.225  # 2 kg box, 30 cm x 30 cm face, sea-level air\n\n\ndef accel(v, drag=True):\n    # state is (height y, velocity v), v < 0 when falling; drag always opposes motion\n    d = 0.5 * CD * RHO * AREA * v * abs(v) / MASS if drag else 0.0\n    return -G - d\n\n\ndef step_euler(y, v, dt, drag):\n    return y + v * dt, v + accel(v, drag) * dt  # explicit Euler: both updates use the OLD velocity\n\n\ndef step_semi_implicit(y, v, dt, drag):\n    v_new = v + accel(v, drag) * dt\n    return y + v_new * dt, v_new  # semi-implicit (symplectic) Euler: position uses the NEW velocity\n\n\ndef step_rk4(y, v, dt, drag):\n    # RK4: four slope samples per step, weighted 1-2-2-1\n    k1y, k1v = v, accel(v, drag)\n    k2y, k2v = v + 0.5 * dt * k1v, accel(v + 0.5 * dt * k1v, drag)\n    k3y, k3v = v + 0.5 * dt * k2v, accel(v + 0.5 * dt * k2v, drag)\n    k4y, k4v = v + dt * k3v, accel(v + dt * k3v, drag)\n    return (y + dt / 6 * (k1y + 2 * k2y + 2 * k3y + k4y),\n            v + dt / 6 * (k1v + 2 * k2v + 2 * k3v + k4v))\n\n\ndef run(stepper, dt, t_end, drag):\n    y, v, t = H0, 0.0, 0.0\n    for _ in range(round(t_end / dt)):  # fixed time step: advance the state dt seconds at a time\n        y, v = stepper(y, v, dt, drag)\n        t += dt\n    return y, v\n\n\ndef time_to_ground(stepper, dt, drag):\n    y, v, t = H0, 0.0, 0.0\n    while y > 0:\n        y, v = stepper(y, v, dt, drag)\n        t += dt\n    return t, v\n\n\ndef terminal_velocity():\n    return math.sqrt(2 * MASS * G / (CD * RHO * AREA))  # drag = weight\n\n\ndef main():\n    t_end = 3.0\n    exact = H0 - 0.5 * G * t_end ** 2\n    print(f\"No drag, height at t={t_end:.0f} s. Exact = {exact:.4f} m\")\n    print(\"    dt   explicit Euler err   semi-implicit err   RK4 err   (err = simulated - exact)\")\n    for dt in (0.1, 0.01, 0.001):  # step size vs error: 10x smaller dt -> Euler error 10x smaller\n        errs = [run(s, dt, t_end, False)[0] - exact for s in (step_euler, step_semi_implicit, step_rk4)]\n        print(f\"{dt:6}   {errs[0]:+18.6f}   {errs[1]:+17.6f}   {errs[2]:+.1e}\")\n    vt = terminal_velocity()\n    t_free, _ = time_to_ground(step_rk4, 0.001, False)\n    t_drag, v_drag = time_to_ground(step_rk4, 0.001, True)\n    print(f\"With drag: terminal velocity = {vt:.2f} m/s\")\n    print(f\"Time to fall {H0:.0f} m: no drag {t_free:.2f} s (exact {math.sqrt(2 * H0 / G):.2f} s), with drag {t_drag:.2f} s, impact {abs(v_drag):.2f} m/s\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/04-time-stepped-physics/falling.py",
+        "purpose": "main lab code"
+      },
+      {
+        "path": "labs/L100/04-time-stepped-physics/falling_scipy.py",
+        "purpose": "SciPy 1.18.1 solve_ivp equivalent (pending-ci)"
+      },
+      {
+        "path": "labs/L100/04-time-stepped-physics/test_falling.py",
+        "purpose": "tests incl. tanh cross-check; SciPy test skipped locally"
+      },
+      {
+        "path": "labs/L100/04-time-stepped-physics/try_it.py",
+        "purpose": "tryIt script"
+      }
+    ],
+    "expectedResults": [
+      "Euler error 1.47 / 0.147 / 0.0147 m",
+      "RK4 ~1e-13",
+      "Vt 18.40 m/s; 6.74 s with drag"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "5 pass, 1 skipped"
+      },
+      {
+        "action": "RK4 drag speed at 2 s vs Vt*tanh(g t/Vt)",
+        "expected": "Equal to 6 decimals"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Speed exceeds Vt",
+        "action": "Fix the drag sign."
+      },
+      {
+        "symptom": "Ground time jumps by dt",
+        "action": "Smaller dt, or a solver event."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "With drag: Euler dt=0.5 vs RK4 dt=0.001.",
+        "predict": "Close fall times?",
+        "expected": "Euler dt=0.5: ground at 7.00 s, impact 18.40 m/s | RK4 dt=0.001: ground at 6.74 s, impact 18.37 m/s"
+      },
+      {
+        "task": "Double the mass to 4 kg.",
+        "predict": "Vt x2, x1.41 or same?",
+        "expected": "4 kg parcel: terminal velocity 26.02 m/s (x1.41), ground at 5.65 s"
+      }
+    ],
+    "equivalents": [
+      "SciPy solve_ivp: adaptive RK45 with a terminal ground event.",
+      "Julia DifferentialEquations.jl: ODEProblem + solve with callbacks.",
+      "Modelica / OpenModelica: write der(v) = ... equations; the tool picks the solver.",
+      "FMI / FMPy: export the model as an FMU and run fmpy.simulate_fmu."
+    ],
+    "learningTools": [
+      {
+        "name": "Scilab 2027.0.0 + Xcos",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Build the parcel drop as two chained integrator blocks (a = -g -> v -> y; v0 = 0, y0 = 100 m) with a scope on y. Then add drag: an extra acceleration g*(v/Vt)^2 against the motion, Vt = 18.40 m/s.",
+        "expected": "No drag: y(3 s) = 55.90 m (exact; falling.py's RK4 error is ~1e-13). With drag: ground at about 6.74 s, impact about 18.37 m/s, as falling.py printed. Xcos solver and tolerance settings were not checked. Pending a manual run.",
+        "mac": "Native macOS ARM64 .dmg from https://www.scilab.org/download, then type xcos in the Scilab console",
+        "windows": "64-bit Windows .exe from https://www.scilab.org/download, then type xcos in the Scilab console",
+        "licence": "GPL-2.0 (OSI: yes)",
+        "url": "https://www.scilab.org/software/xcos"
+      }
+    ],
+    "inRealSystems": "Game and robotics engines step physics each frame; engineering tools use adaptive solvers.",
+    "useWhen": "Use for continuous change; avoid big fixed steps when forces change fast.",
+    "caution": "Toy model: constant g, air density and Cd.",
+    "checkpoint": "PASS: Euler error ~10x smaller per 10x dt, RK4 ~exact, tests pass.",
+    "checkYourself": [
+      {
+        "q": "Euler error 1.47 m at dt=0.1. At dt=0.05?",
+        "a": "About 0.735 m (error ~ dt)."
+      },
+      {
+        "q": "Why test no-drag first?",
+        "a": "It has an exact answer, so errors are the method's or code's."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Python Numerical Methods (UC Berkeley), 22.3 The Euler Method",
+        "url": "https://pythonnumericalmethods.berkeley.edu/notebooks/chapter22.03-The-Euler-Method.html"
+      },
+      {
+        "title": "Python Numerical Methods (UC Berkeley), 22.5 Predictor-Corrector and Runge-Kutta",
+        "url": "https://pythonnumericalmethods.berkeley.edu/notebooks/chapter22.05-Predictor-Corrector-Methods.html"
+      },
+      {
+        "title": "NASA Glenn: Falling object with air resistance",
+        "url": "https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/falling-object-with-air-resistance/"
+      },
+      {
+        "title": "NASA Glenn: Flight equations with drag (terminal velocity)",
+        "url": "https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/flight-equations-with-drag/"
+      }
+    ],
+    "next": "L200 #9 ODE solvers in practice: adaptive steps, tolerances, stiffness",
+    "validation": {
+      "status": "validated-local",
+      "how": "falling.py, try_it.py and 5 unittests (incl. independent tanh closed-form check) ran locally on Python 3.12.15; outputs pasted. falling_scipy.py follows the SciPy 1.18 solve_ivp docs but SciPy is not installed offline: pending-ci.",
+      "pendingCi": [
+        "labs/L100/04-time-stepped-physics/falling_scipy.py",
+        "test_falling.py: test_solve_ivp_agrees_with_rk4"
+      ]
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "conceptNote": "content/concepts/04-time-stepped-physics.md",
+    "conceptSummary": "A time-stepped simulation advances state by small steps using its rates of change. Error depends on the method and step size, so measure it against an exact case first."
+  },
+  {
+    "id": "agent-based-schelling",
+    "number": 5,
+    "level": "L100",
+    "title": "Agent-based modelling: Schelling's neighbourhood model",
+    "phase": "Agents",
+    "category": "agent-based",
+    "description": "810 agents on a 30x30 grid want >= 30% similar neighbours; unhappy ones move. Similarity climbs from 50% to ~75%.",
+    "outcome": "You can write local agent rules with numpy and measure an emergent pattern.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux) + numpy 2.5.3; Mesa 3.5.1 in CI",
+    "estimatedTime": "30 minutes",
+    "overview": [
+      "Give individuals simple local rules; the global pattern emerges."
+    ],
+    "prerequisites": [
+      "Lesson 2"
+    ],
+    "glossary": [
+      {
+        "term": "agent",
+        "meaning": "Individual with state and a rule."
+      },
+      {
+        "term": "emergence",
+        "meaning": "Global pattern in no agent's rule."
+      },
+      {
+        "term": "torus",
+        "meaning": "Grid whose edges wrap."
+      }
+    ],
+    "concepts": [
+      "Local rules, no global plan.",
+      "30% preference -> ~75% similarity.",
+      "Random setup: compare seeds."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "`python schelling.py`",
+        "expected": "% similar 50.2 -> 75.4 at step 17, 0% unhappy, clustered map.",
+        "ifNot": "Check seed 42, SIZE, WANT."
+      },
+      {
+        "title": "Find the agent rule",
+        "detail": "step(): similarity < WANT -> move to a random empty cell.",
+        "expected": "No agent knows about clusters.",
+        "ifNot": "If happy agents move too, check the < WANT test."
+      },
+      {
+        "title": "Watch emergence",
+        "detail": "Follow '% similar'.",
+        "expected": "62.2 after step 1, 73.9 by step 5, 75.4 at the end.",
+        "ifNot": "Near 50: agents are not moving."
+      },
+      {
+        "title": "Mesa version (CI)",
+        "detail": "`python schelling_mesa.py`",
+        "expected": "Same rule via Mesa's grid and shuffle_do; well above 60%.",
+        "ifNot": "ModuleNotFoundError locally is expected."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 5 tests ... OK (skipped=1)",
+        "ifNot": "The skip is Mesa."
+      }
+    ],
+    "code": "\"\"\"L100 agent-based model: Schelling's neighbourhood model on a 30x30 grid (numpy only).\n\nEach agent (type 1 or 2) is happy if at least WANT of its occupied neighbours are its own type.\nUnhappy agents move to a random empty cell. Watch \"% similar neighbours\" rise far above WANT.\n\npython schelling.py\n\"\"\"\nimport numpy as np\n\nSIZE, EMPTY_FRAC, WANT = 30, 0.10, 0.30  # 30% similar wanted, like NetLogo's default slider example\n\n\ndef make_grid(rng):\n    cells = SIZE * SIZE\n    n_empty = int(cells * EMPTY_FRAC)\n    n_each = (cells - n_empty) // 2\n    flat = np.array([0] * (cells - 2 * n_each) + [1] * n_each + [2] * n_each)\n    rng.shuffle(flat)  # agents start randomly mixed\n    return flat.reshape(SIZE, SIZE)\n\n\ndef neighbour_counts(grid, kind):\n    # count same-kind neighbours in the 8-cell Moore neighbourhood; np.roll wraps edges (torus, like NetLogo)\n    mask = (grid == kind).astype(int)\n    return sum(np.roll(np.roll(mask, dy, 0), dx, 1)\n               for dy in (-1, 0, 1) for dx in (-1, 0, 1) if (dy, dx) != (0, 0))\n\n\ndef similarity(grid):\n    same = np.where(grid == 1, neighbour_counts(grid, 1), neighbour_counts(grid, 2))\n    occupied = neighbour_counts(grid, 1) + neighbour_counts(grid, 2)\n    with np.errstate(invalid=\"ignore\", divide=\"ignore\"):\n        frac = np.where(occupied > 0, same / occupied, 1.0)  # no neighbours -> treated as happy\n    return np.where(grid > 0, frac, np.nan)\n\n\ndef step(grid, rng):\n    frac = similarity(grid)\n    unhappy = np.argwhere(frac < WANT)  # agent rule: local, simple, no global plan\n    rng.shuffle(unhappy)  # random activation order\n    for y, x in unhappy:\n        empties = np.argwhere(grid == 0)\n        ey, ex = empties[rng.integers(len(empties))]\n        grid[ey, ex], grid[y, x] = grid[y, x], 0  # move to a random empty cell\n    return len(unhappy)\n\n\ndef stats(grid):\n    frac = similarity(grid)\n    agents = ~np.isnan(frac)\n    return 100 * np.nanmean(frac), 100 * (frac[agents] < WANT).mean()\n\n\ndef run(seed=42, max_steps=50, verbose=False):\n    rng = np.random.default_rng(seed)  # one seeded generator drives setup AND moves\n    grid = make_grid(rng)\n    history = [stats(grid)]\n    for i in range(1, max_steps + 1):\n        moved = step(grid, rng)\n        history.append(stats(grid))\n        if verbose and (i <= 3 or i % 5 == 0 or history[-1][1] == 0):\n            print(f\"step {i:2}: moved {moved:3}  % similar {history[-1][0]:5.1f}  % unhappy {history[-1][1]:5.1f}\")\n        if history[-1][1] == 0:  # stop when everyone is happy\n            break\n    return grid, history\n\n\ndef main():\n    grid, history = run(verbose=True)\n    print(f\"start: % similar {history[0][0]:.1f} -> end: {history[-1][0]:.1f} (each agent only wanted {100 * WANT:.0f}%)\")\n    print(\"top-left 10x10 corner at the end (. empty, x / o agent types):\")\n    for row in grid[:10, :10]:\n        print(\" \".join(\".xo\"[c] for c in row))\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/05-agent-based-schelling/schelling.py",
+        "purpose": "main lab code"
+      },
+      {
+        "path": "labs/L100/05-agent-based-schelling/schelling_mesa.py",
+        "purpose": "Mesa 3.5.1 equivalent (pending-ci)"
+      },
+      {
+        "path": "labs/L100/05-agent-based-schelling/test_schelling.py",
+        "purpose": "tests; Mesa test skipped locally"
+      },
+      {
+        "path": "labs/L100/05-agent-based-schelling/try_it.py",
+        "purpose": "tryIt script"
+      }
+    ],
+    "expectedResults": [
+      "50.2% -> 75.4% in 17 steps",
+      "0% unhappy",
+      "Visible clusters"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "4 pass, 1 skipped"
+      },
+      {
+        "action": "3x3 grid [[1,1,0],[2,1,0],[0,0,0]]",
+        "expected": "Centre similarity 2/3"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Agent count changes",
+        "action": "Swap agent and empty cell; never overwrite."
+      },
+      {
+        "symptom": "Never settles",
+        "action": "High WANT; stops at max_steps."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Raise WANT from 30% to 50%.",
+        "predict": "More segregation? More steps?",
+        "expected": "want 30%: end % similar 75.4, % unhappy 0.0, steps 17 | want 50%: end % similar 87.6, % unhappy 0.0, steps 13"
+      },
+      {
+        "task": "Run seeds 1-5 at 30%.",
+        "predict": "How much variation?",
+        "expected": "seeds 1-5 end % similar: [72.3, 76.3, 75.1, 74.7, 73.1]"
+      }
+    ],
+    "equivalents": [
+      "Mesa 3.5.1: CellAgent + OrthogonalMooreGrid + agents.shuffle_do('step').",
+      "NetLogo: Segregation model in the Models Library."
+    ],
+    "learningTools": [
+      {
+        "name": "NetLogo 7.0.4",
+        "role": "SEE",
+        "exercise": "Open Sample Models > Social Science > Segregation. Set %-SIMILAR-WANTED to 30, run until nobody moves and read % similar; repeat at 50 (optionally sweep 30 -> 80).",
+        "expected": "Lab (numpy, 30x30 wrapping grid, random moves): 30% -> 75.4% similar, 50% -> 87.6%. NetLogo's info page reports about 70% at 30%. Expect the same effect (far more similar than anyone asked for), not identical numbers: NetLogo moves agents locally and uses another density. Pending a manual run.",
+        "mac": "brew install --cask netlogo   # Apple-silicon build, bundles Java 17",
+        "windows": "Installer from https://github.com/NetLogo/NetLogo/releases (bundles Java 17)",
+        "licence": "GPL-2.0-or-later (OSI: yes); the Segregation model itself is CC BY-NC-SA 3.0",
+        "url": "https://ccl.northwestern.edu/netlogo/models/Segregation"
+      },
+      {
+        "name": "Mesa 3.5.1 (SolaraViz)",
+        "role": "SEE",
+        "exercise": "Run Mesa's Schelling example in SolaraViz (Mesa examples page), set the similarity threshold to 30% and press play; then run `python schelling_mesa.py` in this lab.",
+        "expected": "% similar at convergence should land near the lab's 75.4% (seeds 1-5 gave 72.3-76.3%). Pending: Mesa is not installed here; CI runs schelling_mesa.py only. Whether SolaraViz needs extra packages was not checked.",
+        "mac": "pip install \"mesa>=3.5,<4\"   # Python >= 3.12; the lab pins mesa==3.5.1 in requirements.txt",
+        "windows": "pip install \"mesa>=3.5,<4\"   # same pin as macOS",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://mesa.readthedocs.io/latest/examples.html"
+      }
+    ],
+    "inRealSystems": "Used for evacuation, traffic, epidemic and market studies.",
+    "useWhen": "Use when individuals differ and interact locally.",
+    "caution": "A toy, not evidence about real cities.",
+    "checkpoint": "PASS: > 60% similar, 0% unhappy, tests pass.",
+    "checkYourself": [
+      {
+        "q": "Agents want 30%. Why ~75%?",
+        "a": "Each move changes neighbours and triggers more moves."
+      },
+      {
+        "q": "Why several seeds?",
+        "a": "One run is one sample: seeds 1-5 end at 72.3-76.3%."
+      }
+    ],
+    "sources": [
+      {
+        "title": "NetLogo Models Library: Segregation",
+        "url": "https://ccl.northwestern.edu/netlogo/models/Segregation"
+      },
+      {
+        "title": "Mesa docs: Schelling Segregation Model example",
+        "url": "https://mesa.readthedocs.io/stable/examples/basic/schelling.html"
+      },
+      {
+        "title": "Mesa docs: Creating Your First Model",
+        "url": "https://mesa.readthedocs.io/stable/tutorials/0_first_model.html"
+      },
+      {
+        "title": "PyPI: Mesa 3.5.1",
+        "url": "https://pypi.org/project/Mesa/"
+      }
+    ],
+    "next": "L200 #10 Warm-up, replications and confidence (replicate any stochastic model; an agent-based L200 lesson is an L300 candidate)",
+    "validation": {
+      "status": "validated-local",
+      "how": "schelling.py, try_it.py and 4 unittests ran locally on Python 3.12.15 + numpy 2.5.3; outputs pasted. schelling_mesa.py follows the Mesa 3.5.1 stable docs but Mesa is not installed offline: pending-ci.",
+      "pendingCi": [
+        "labs/L100/05-agent-based-schelling/schelling_mesa.py",
+        "test_schelling.py: test_mesa_shows_same_emergence"
+      ]
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "conceptNote": "content/concepts/05-agent-based-schelling.md",
+    "conceptSummary": "An agent-based model gives individuals simple local rules and measures the global pattern that emerges. Because setup and order are random, results must be read across several seeds."
+  },
+  {
+    "id": "verification-validation",
+    "number": 6,
+    "level": "L100",
+    "title": "Is the model right? Verification vs validation",
+    "phase": "Trust",
+    "category": "v-and-v",
+    "description": "Unit-test a queue model's rule, validate it with replications against M/M/1, and sweep one parameter.",
+    "outcome": "You can separate 'is the code right?' from 'is the model right?' with runnable checks.",
+    "environment": "Python 3.12 (validated on 3.12.15), stdlib only; optional local model (Ollama) for agent assist",
+    "estimatedTime": "30 minutes",
+    "overview": [
+      "Verification checks the code; validation checks the outputs against a trusted reference."
+    ],
+    "prerequisites": [
+      "Lessons 2 and 3"
+    ],
+    "glossary": [
+      {
+        "term": "verification",
+        "meaning": "Code implements the model correctly."
+      },
+      {
+        "term": "validation",
+        "meaning": "Model output accurate enough for its use."
+      },
+      {
+        "term": "replication",
+        "meaning": "Independent run with its own seed."
+      }
+    ],
+    "concepts": [
+      "Verify rules; validate outputs.",
+      "Same seed, same result.",
+      "Replications + CI for comparison."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "`python vv.py`",
+        "expected": "Three sections ending in a sensitivity table.",
+        "ifNot": "Takes a few seconds."
+      },
+      {
+        "title": "Reproducibility",
+        "detail": "Section 1 hashes 1,000 waits.",
+        "expected": "seed 1 -> ef34cf71198d twice; seed 2 -> ac9c300ece80 (same on every OS).",
+        "ifNot": "Hidden unseeded randomness."
+      },
+      {
+        "title": "Validate",
+        "detail": "Section 2: 10 replications, warm-up 5,000, 95% t-interval.",
+        "expected": "4.046 +/- 0.195 vs 4.000 -> PASS.",
+        "ifNot": "Check model, warm-up, CI."
+      },
+      {
+        "title": "Sensitivity",
+        "detail": "Section 3 sweeps lam.",
+        "expected": "1.003 ... 8.952 min, each near its formula value; steep near lam = 1.",
+        "ifNot": "Non-monotonic = bug."
+      },
+      {
+        "title": "Verification tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 14 tests ... OK (skipped=1); hand cases next_wait(0,3,1)=2, next_wait(2,1,5)=0.",
+        "ifNot": "The skip is the SciPy t-quantile check."
+      },
+      {
+        "title": "Agent assist (optional)",
+        "detail": "`python agent_assist.py --fake` (drop --fake to use local Ollama).",
+        "expected": "lam=1.2 rejected by code; 3-row table; 0.95 and 19.0 flagged UNVERIFIED.",
+        "ifNot": "No server: use --fake."
+      }
+    ],
+    "code": "\"\"\"L100 \"Is the model right?\" -- verification and validation of a single-server queue model.\n\nModel: customer waits via Lindley's rule  W[next] = max(0, W + service - gap_to_next_arrival).\n1. Reproducibility: same seed -> identical output.\n2. Validation vs an analytic result: replications + 95% CI must contain the M/M/1 formula.\n3. Sensitivity: vary ONE parameter (arrival rate) and watch the output.\n(Verification of the model rules lives in test_vv.py.)\n\npython vv.py\n\"\"\"\nimport hashlib\nimport random\nimport statistics\n\nMU = 1.0  # service rate per minute\nT_975 = {9: 2.262}  # Student t quantile for a 95% CI with 10 replications (9 degrees of freedom)\n\n\ndef next_wait(w, service, gap):\n    return max(0.0, w + service - gap)  # model rule under test: a wait is never negative\n\n\ndef waits(n, lam, seed, mu=MU, rule=next_wait):\n    rng = random.Random(seed)\n    w, out = 0.0, []\n    for _ in range(n):\n        out.append(w)\n        w = rule(w, rng.expovariate(mu), rng.expovariate(lam))\n    return out\n\n\ndef mean_wait(n, lam, seed, warmup=5_000):\n    return statistics.fmean(waits(n, lam, seed)[warmup:])  # drop the warm-up: the queue starts empty\n\n\ndef formula(lam, mu=MU):\n    return lam / (mu * (mu - lam))\n\n\ndef replicate(lam, reps=10, n=50_000):\n    means = [mean_wait(n, lam, seed) for seed in range(1, reps + 1)]  # independent replications = independent seeds\n    m, s = statistics.fmean(means), statistics.stdev(means)\n    half = T_975[reps - 1] * s / reps ** 0.5\n    return m, half\n\n\ndef main():\n    # hash values rounded to 9 decimals: a last-bit libm difference (macOS / Windows / Linux) must not change it\n    digest = lambda seed: hashlib.sha256(repr([round(w, 9) for w in waits(1000, 0.8, seed)]).encode()).hexdigest()[:12]\n    print(f\"1. reproducibility: seed 1 -> {digest(1)}, seed 1 again -> {digest(1)}, seed 2 -> {digest(2)}\")\n    m, half = replicate(0.8)\n    ok = abs(m - formula(0.8)) <= half\n    print(f\"2. validation (lam=0.8): simulated {m:.3f} +/- {half:.3f} min vs formula {formula(0.8):.3f} -> {'PASS' if ok else 'FAIL'}\")\n    print(\"3. sensitivity to arrival rate (utilisation = lam/mu):\")\n    for lam in (0.5, 0.6, 0.7, 0.8, 0.9):\n        m, half = replicate(lam)\n        print(f\"   lam={lam:.1f}  simulated {m:6.3f} +/- {half:.3f}   formula {formula(lam):6.3f}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/06-verification-validation/vv.py",
+        "purpose": "main lab code"
+      },
+      {
+        "path": "labs/L100/06-verification-validation/test_vv.py",
+        "purpose": "verification + validation tests"
+      },
+      {
+        "path": "labs/L100/06-verification-validation/try_it.py",
+        "purpose": "tryIt script"
+      },
+      {
+        "path": "labs/L100/06-verification-validation/agent_assist.py",
+        "purpose": "agent proposes sweep; code validates, runs, checks"
+      },
+      {
+        "path": "labs/L100/06-verification-validation/test_agent_assist.py",
+        "purpose": "agent-assist tests (fake server only)"
+      },
+      {
+        "path": "labs/_shared/local_agent/",
+        "purpose": "vendored chat client + fake model server"
+      }
+    ],
+    "expectedResults": [
+      "Same seed, same hash",
+      "4.000 inside 4.046 +/- 0.195",
+      "Monotonic sensitivity"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "13 pass, 1 skipped"
+      },
+      {
+        "action": "Drop max(0, ...)",
+        "expected": "test_waits_never_negative fails"
+      },
+      {
+        "action": "Agent proposes lam=1.2",
+        "expected": "rejected; never simulated"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "FAIL only at lam=0.9",
+        "action": "Longer runs or warm-up first."
+      },
+      {
+        "symptom": "Same seed, different results",
+        "action": "Pass one seeded Random everywhere."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Remove max(0, ...) from the rule.",
+        "predict": "Which test catches it?",
+        "expected": "buggy rule: min wait -5168.4 min, mean wait -2619.9 min  (negative waits are impossible)"
+      },
+      {
+        "task": "Short runs: warm-up 0 vs 500.",
+        "predict": "Which is closer to 4.00?",
+        "expected": "warm-up   0: average of 50 short runs = 3.92 min (formula 4.00) | warm-up 500: average of 50 short runs = 4.02 min (formula 4.00)"
+      }
+    ],
+    "equivalents": [
+      "FMI Reference FMUs + fmusim: test FMUs for validating FMU tools.",
+      "SimPy: own test suite via `python -m tox`.",
+      "Julia DifferentialEquations.jl: swap solvers in one line to compare."
+    ],
+    "inRealSystems": "Teams keep rule tests, fixed-seed regression runs and validation reports.",
+    "useWhen": "Use for any model that informs a decision.",
+    "caution": "Formula agreement validates only the tested conditions; real systems need measured data. Agent assist: the model never runs code or decides what is accepted, and gets no secrets - only parameter names and the results table.",
+    "checkpoint": "PASS: section 2 prints PASS; tests pass.",
+    "checkYourself": [
+      {
+        "q": "Tests pass, predictions are 2x measured. Which problem?",
+        "a": "Validation: the model, not the code."
+      },
+      {
+        "q": "Why 10 replications, not one long run?",
+        "a": "Independent means make the t-interval valid."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Sargent, Verification and Validation of Simulation Models: An Advanced Tutorial (WSC 2020)",
+        "url": "https://www.informs-sim.org/wsc20papers/002.pdf"
+      },
+      {
+        "title": "NIST/SEMATECH e-Handbook: Confidence limits for the mean",
+        "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda352.htm"
+      },
+      {
+        "title": "Python docs: random (3.15.2)",
+        "url": "https://docs.python.org/3/library/random.html"
+      },
+      {
+        "title": "MIT OCW 2.854 (Fall 2016): M/M/1 queue notes",
+        "url": "https://ocw.mit.edu/courses/2-854-introduction-to-manufacturing-systems-fall-2016/927056a1af54772a587fd84ad4951e71_MIT2_854F16_Mm1Queue.pdf"
+      },
+      {
+        "title": "Ollama docs: OpenAI compatibility",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      }
+    ],
+    "next": "L200 #10 Warm-up, replications and confidence",
+    "validation": {
+      "status": "validated-local",
+      "how": "vv.py, try_it.py, agent_assist.py --fake and 13 unittests ran locally on Python 3.12.15; outputs pasted. The SciPy t-quantile test is pending-ci. Agent assist tested against the deterministic fake server only; no real model was run. Validation is against the analytic M/M/1 result only (no field data; see KNOWN-GAPS).",
+      "pendingCi": [
+        "test_vv.py: test_t_975_9_matches_scipy",
+        "agent_assist.py against a real local model (fake server only)"
+      ]
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "agentAssist": {
+      "task": "A local model proposes the lam sweep and explains the results table; code validates the plan, runs vv.replicate() and checks every quoted number.",
+      "prompt": "[[SIM-SWEEP]] A single-server queue model has service rate mu = 1.0 per minute. Propose a sensitivity sweep over the arrival rate. Reply with ONE JSON object only: {\"parameter\": \"lam\", \"values\": [up to 6 arrival rates], \"customers\": integer customers per replication}. Then: Explain this results table in 2-3 sentences ... Quote only numbers that appear in the table.",
+      "check": "validate_plan(): parameter must be 'lam'; values real numbers (not bool, string or NaN) in [0.05, 0.95], no duplicates, at most 6; customers an int in 10,000-100,000. Only accepted values reach the simulator. check_numbers(): each number in the explanation must match a table cell to its shown decimals (or mu, 10, 95, customers), else UNVERIFIED.",
+      "expected": "1. agent proposed: {\"parameter\": \"lam\", \"values\": [0.5, 0.7, 0.9, 1.2], \"customers\": 20000}\n2. code validated: run lam=[0.5, 0.7, 0.9] with 20000 customers; rejected: 1.2: outside [0.05, 0.95] (unstable or trivial queue)\n0.50 | 1.014 | 0.033 | 1.000\n0.70 | 2.396 | 0.105 | 2.333\n0.90 | 9.141 | 1.275 | 9.000\n5. code checked 8 quoted numbers: 6 match the table; UNVERIFIED (treat as the model's guess): 0.95, 19.0",
+      "realModelNote": "`python agent_assist.py` uses LOCAL_MODEL_URL (default http://localhost:11434/v1) and LOCAL_MODEL (default qwen2.5:1.5b). Real replies vary: the plan may be rejected (script stops with the reason) or other numbers flagged. Not run here: no model in the sandbox."
+    },
+    "conceptNote": "content/concepts/06-verification-validation.md",
+    "conceptSummary": "Verification asks whether the code implements the model; validation asks whether the model is accurate enough for its question. Seeds, unit tests, replications with a confidence interval and sensitivity sweeps make both checkable."
+  }
+]

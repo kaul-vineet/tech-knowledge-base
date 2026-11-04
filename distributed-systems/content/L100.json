@@ -1,0 +1,1298 @@
+[
+  {
+    "id": "setup-local-multi-node-lab",
+    "number": 1,
+    "level": "Setup",
+    "title": "Set up your environment: a local multi-node lab",
+    "phase": "Setup",
+    "category": "environment",
+    "description": "Run several Python processes on localhost ports as 'nodes' and start/stop them with one helper.",
+    "outcome": "You can start N independent nodes on 127.0.0.1, health-check them over HTTP, and stop them cleanly.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux; macOS on Apple silicon and Windows 11 expected), stdlib only, installed with the canonical commands in ../shared/WORKSTATION-SETUP.md. No network beyond localhost. Optional containers (Podman first) and a two-machine run: documentation/OPTIONAL-SETUP.md (pending).",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "A 'node' here is just a separate OS process with its own port; that is enough to practise real network calls, failures and timeouts on one laptop."
+    ],
+    "prerequisites": [
+      "Python 3.12+ on PATH (`python --version`)",
+      "A terminal; curl is handy but optional"
+    ],
+    "glossary": [
+      {
+        "term": "node",
+        "meaning": "One independently running process that communicates only by sending messages over the network."
+      },
+      {
+        "term": "health check",
+        "meaning": "A cheap endpoint (here GET /health) that proves the node is up and answering."
+      },
+      {
+        "term": "port",
+        "meaning": "The number that identifies one listening process on a host (8001, 8002, ...)."
+      }
+    ],
+    "concepts": [
+      "Each node = its own process, memory and port; they share nothing but the network.",
+      "Start-up is asynchronous: poll a health endpoint instead of sleeping a fixed time.",
+      "Bind to 127.0.0.1 for local labs; use 0.0.0.0 only inside containers."
+    ],
+    "steps": [
+      {
+        "title": "Install Python 3.12 and get the files",
+        "detail": "Full workstation setup: ../shared/WORKSTATION-SETUP.md. Install Python 3.12, copy labs/L100/01-setup-local-lab into a folder, cd into it and create a virtual environment (no packages to install).",
+        "mac": "brew install python@3.12\ncd 01-setup-local-lab\npython3.12 -m venv .venv && source .venv/bin/activate\npython --version",
+        "windows": "winget install -e --id Python.Python.3.12\ncd 01-setup-local-lab\npy -3.12 -m venv .venv; .venv\\Scripts\\Activate.ps1\n$env:PYTHONUTF8 = \"1\"\npython --version",
+        "expected": "`Python 3.12.x`; the folder lists node.py, lab.py, test_lab.py, try_it.py, compose.yaml.",
+        "ifNot": "Windows: Activate.ps1 blocked → `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. macOS: `python3.12` not found → use `$(brew --prefix)/bin/python3.12`."
+      },
+      {
+        "title": "Run one node by hand",
+        "detail": "Start one node, then fetch http://127.0.0.1:8001/health from a second terminal or a browser; stop it with Ctrl+C.",
+        "mac": "python node.py --name node1 --port 8001\n# 2nd terminal:\ncurl http://127.0.0.1:8001/health",
+        "windows": "python node.py --name node1 --port 8001\n# 2nd terminal (curl.exe, not the PowerShell curl alias):\ncurl.exe http://127.0.0.1:8001/health",
+        "expected": "`{\"node\": \"node1\", \"port\": 8001, \"pid\": ...}`; Ctrl+C stops it on both OSes.",
+        "ifNot": "'Address already in use' (macOS) or `[WinError 10048]` (Windows) → pick another port with --port."
+      },
+      {
+        "title": "Start, check and stop 3 nodes",
+        "detail": "`python lab.py demo 3` starts 3 node processes, polls /health, then terminates and reaps them.",
+        "mac": "python lab.py demo 3",
+        "windows": "python lab.py demo 3",
+        "expected": "Three 'nodeN up on port 800N -> /health OK' lines, then 'stopped 3 nodes'.",
+        "ifNot": "A port is busy → macOS: `LAB_BASE_PORT=18001 python lab.py demo 3`; Windows: `$env:LAB_BASE_PORT=18001; python lab.py demo 3`."
+      },
+      {
+        "title": "Leave nodes running",
+        "detail": "`start` saves the PIDs to .lab_nodes.json; `status` reads them; `stop` (from any terminal) stops them by PID.",
+        "mac": "python lab.py start 3\npython lab.py status\npython lab.py stop",
+        "windows": "python lab.py start 3\npython lab.py status\npython lab.py stop",
+        "expected": "status prints one health JSON per node; stop prints 'stopped 3 nodes'.",
+        "ifNot": "If status fails, a node died: check the port is free and rerun start. On Windows, closing the terminal that ran `start` also ends the nodes."
+      },
+      {
+        "title": "Run the tests and the tryIt script",
+        "detail": "`python -m unittest -v` (4 tests: start/health/stop, stop by saved PID, second bind on the same port fails, health by host), then `python try_it.py`.",
+        "mac": "python -m unittest -v\npython try_it.py",
+        "windows": "python -m unittest -v\npython try_it.py",
+        "expected": "Ran 4 tests ... OK; try_it.py prints the two tryIt results below.",
+        "ifNot": "A firewall or proxy blocking localhost is the usual cause; allow loopback traffic (the labs already bypass proxies)."
+      },
+      {
+        "title": "(Optional) Containers or two machines",
+        "detail": "Only if you want them: the same nodes from compose.yaml with Podman, or one node on the Mac mini and one on the Windows PC. Steps, firewall rules and cautions: documentation/OPTIONAL-SETUP.md.",
+        "expected": "Not needed for any later lab.",
+        "ifNot": "Skip it; both paths are pending (CI / manual run)."
+      }
+    ],
+    "code": "\"\"\"Start/stop N local nodes, each a separate Python process on its own port (macOS/Windows/Linux).\nUsage: python lab.py demo 3 | start 3 | status | stop | remote <host> [port]   (env LAB_BASE_PORT, default 8001)\"\"\"\nimport contextlib, json, os, signal, subprocess, sys, time, urllib.request\nfrom pathlib import Path\n\nHERE = Path(__file__).resolve().parent\nPIDFILE = HERE / \".lab_nodes.json\"  # start saves PIDs here so a later `stop` can find them\nOPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # never proxy localhost\n\n\ndef health(port, host=\"127.0.0.1\", timeout=0.5):  # health check: a cheap GET proves the node answers\n    with OPENER.open(f\"http://{host}:{port}/health\", timeout=timeout) as r:\n        return json.load(r)\n\n\ndef start(ports, wait_s=15.0):\n    nodes = []\n    for i, port in enumerate(ports, 1):  # process = node: own interpreter, own memory, own port\n        proc = subprocess.Popen([sys.executable, str(HERE / \"node.py\"), \"--name\", f\"node{i}\",  # no fork():\n                                 \"--port\", str(port)], stdout=subprocess.DEVNULL)  # works on Windows\n        nodes.append({\"name\": f\"node{i}\", \"port\": port, \"pid\": proc.pid, \"proc\": proc})\n    deadline = time.monotonic() + wait_s\n    for n in nodes:  # readiness by polling /health, not by sleeping a guessed time\n        while True:\n            try:\n                health(n[\"port\"]); break\n            except OSError:\n                if time.monotonic() > deadline:\n                    stop(nodes); raise RuntimeError(f\"{n['name']} did not start\")\n                time.sleep(0.05)\n    return nodes\n\n\ndef stop(nodes, grace_s=5.0):\n    for n in nodes:\n        proc = n.get(\"proc\")\n        if proc is None:  # `python lab.py stop` from a new shell: only the saved PID is known\n            with contextlib.suppress(OSError):  # OSError = already gone (also on Windows)\n                os.kill(n[\"pid\"], signal.SIGTERM)  # POSIX: SIGTERM; Windows: TerminateProcess\n            continue\n        proc.terminate()  # POSIX: SIGTERM; Windows: TerminateProcess (hard stop, no cleanup)\n        try:\n            proc.wait(timeout=grace_s)  # reap it: the port is free once stop() returns\n        except subprocess.TimeoutExpired:\n            proc.kill(); proc.wait()  # POSIX: SIGKILL; Windows: kill() == terminate()\n\n\ndef main(cmd=\"demo\", arg=\"3\", port=\"8001\"):\n    base = int(os.environ.get(\"LAB_BASE_PORT\", \"8001\"))\n    if cmd in (\"start\", \"demo\"):\n        nodes = start(range(base, base + int(arg)))\n        for n in nodes:\n            h = health(n[\"port\"])\n            print(f\"{h['node']} up on port {h['port']} -> /health OK\")\n        if cmd == \"start\":\n            saved = [{k: v for k, v in n.items() if k != \"proc\"} for n in nodes]\n            return PIDFILE.write_text(json.dumps(saved), encoding=\"utf-8\")\n        stop(nodes); print(f\"stopped {len(nodes)} nodes\")\n    elif cmd == \"status\":\n        for n in json.loads(PIDFILE.read_text(encoding=\"utf-8\")):\n            print(n[\"name\"], health(n[\"port\"]))\n    elif cmd == \"stop\":\n        nodes = json.loads(PIDFILE.read_text(encoding=\"utf-8\")); stop(nodes); PIDFILE.unlink()\n        print(f\"stopped {len(nodes)} nodes\")\n    elif cmd == \"remote\":  # optional LAN step: arg = the other machine's IP address\n        print(f\"{arg}:{port} ->\", health(int(port), host=arg, timeout=2.0))\n\n\nif __name__ == \"__main__\":\n    main(*sys.argv[1:])\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/01-setup-local-lab/node.py",
+        "purpose": "One HTTP node with GET /health; exclusive port bind on Windows too"
+      },
+      {
+        "path": "labs/L100/01-setup-local-lab/lab.py",
+        "purpose": "Start/stop/status/remote helper for N nodes (Popen terminate/wait/kill)"
+      },
+      {
+        "path": "labs/L100/01-setup-local-lab/test_lab.py",
+        "purpose": "unittest: start/health/stop, stop by PID, second bind fails, health by host"
+      },
+      {
+        "path": "labs/L100/01-setup-local-lab/compose.yaml",
+        "purpose": "Optional: same 3 nodes as containers (documentation/OPTIONAL-SETUP.md; pending-ci)"
+      },
+      {
+        "path": "labs/L100/01-setup-local-lab/try_it.py",
+        "purpose": "Runs the two tryIt experiments and prints the observed results"
+      }
+    ],
+    "expectedResults": [
+      "node1 up on port 8001 -> /health OK",
+      "node2 up on port 8002 -> /health OK",
+      "node3 up on port 8003 -> /health OK",
+      "stopped 3 nodes"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "Ran 4 tests OK: 3 nodes answer /health with 3 distinct PIDs and are reaped after stop; stop by saved PID works twice; a second node on a used port exits non-zero with OSError; health by host works"
+      },
+      {
+        "action": "python lab.py demo 3 (ports 8001-8003 already used)",
+        "expected": "RuntimeError 'node1 did not start' (the node itself reports address in use); rerun with LAB_BASE_PORT"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Start a second node on the port node1 already uses: `python node.py --name dup --port <node1's port>` (scripted in `python try_it.py`).",
+        "predict": "Does the second node start? Is node1 affected?",
+        "expected": "Observed (Linux): the second node exits with code 1: `OSError: [Errno 98] Address already in use`; node1 is still healthy: True. macOS words it `[Errno 48] Address already in use`; Windows `[WinError 10048]` (WSAEADDRINUSE) — and only because node.py binds exclusively there; with Windows' SO_REUSEADDR the duplicate would start and share the port."
+      },
+      {
+        "task": "Start 3 nodes, stop only node2 (Popen.terminate() + wait()), then health-check all three (scripted in `python try_it.py`).",
+        "predict": "Which nodes answer /health?",
+        "expected": "node1=OK, node2=ConnectionRefusedError, node3=OK — each node fails independently."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "RuntimeError: node1 did not start",
+        "action": "Port taken or Python not found: run `python node.py --port 8001` by hand to see the error; change LAB_BASE_PORT."
+      },
+      {
+        "symptom": "Requests to 127.0.0.1 hang or go to a proxy",
+        "action": "The labs bypass proxies (ProxyHandler({})); for curl use `--noproxy '*'`."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Go: one process per node running `http.ListenAndServe(\":8001\", nil)`.",
+      "Same idea in Node.js: `http.createServer(handler).listen(8001)` per process.",
+      "Same idea with containers: one Compose service per node (compose.yaml, Podman first; Docker Desktop is an equivalent with its own licence terms).",
+      "Process managers (e.g. systemd units, Windows services) do what lab.py does: start, stop and supervise many processes."
+    ],
+    "inRealSystems": "Kubernetes liveness/readiness probes call an HTTP endpoint such as /healthz (200-399 = success); Docker Compose runs one service per node; Go's http.ListenAndServe is the same one-process-one-port pattern.",
+    "useWhen": "Use it to learn failure handling and run fast, dependency-free tests on one machine; avoid it for real network loss, latency or partitions, for performance measurement, and beyond localhost (http.server is not for production).",
+    "simulatorVsReal": "All nodes share one machine (no real loss or partitions). The optional two-machine run (documentation/OPTIONAL-SETUP.md) has not run on real hardware.",
+    "caution": "http.server is not recommended for production (Python docs). Keep nodes bound to 127.0.0.1. The optional container and LAN paths bind 0.0.0.0 — only on a trusted private network: /health has no authentication (documentation/OPTIONAL-SETUP.md).",
+    "checkpoint": "PASS if `python lab.py demo 3` prints three '/health OK' lines and 'stopped 3 nodes', and `python -m unittest` reports OK.",
+    "checkYourself": [
+      {
+        "q": "Why does lab.py poll /health instead of calling time.sleep(1)?",
+        "a": "Start-up time varies; polling waits just long enough and detects nodes that never start."
+      },
+      {
+        "q": "What happens if two nodes are started on port 8001?",
+        "a": "The second bind fails ('Address already in use'); that node never becomes healthy (tryIt 1)."
+      },
+      {
+        "q": "Why must the container version bind 0.0.0.0 but the laptop version 127.0.0.1?",
+        "a": "Inside a container traffic arrives on the container's network interface, not its loopback; on the laptop, loopback-only keeps the demo private."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Python docs: http.server — HTTP servers",
+        "url": "https://docs.python.org/3/library/http.server.html"
+      },
+      {
+        "title": "Python docs: subprocess",
+        "url": "https://docs.python.org/3/library/subprocess.html"
+      },
+      {
+        "title": "Kleppmann, Distributed Systems lecture notes, Univ. of Cambridge 2025/26",
+        "url": "https://www.cl.cam.ac.uk/teaching/2526/ConcDisSys/dist-sys-notes.pdf"
+      },
+      {
+        "title": "Kubernetes: Configure liveness, readiness and startup probes",
+        "url": "https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/"
+      },
+      {
+        "title": "Microsoft Learn: Using SO_REUSEADDR and SO_EXCLUSIVEADDRUSE",
+        "url": "https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse"
+      }
+    ],
+    "next": "L200 #9 Sharding with consistent hashing: virtual nodes, key movement, hot keys — spread keys over the nodes you start here and see what moves when one joins",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python lab.py demo 3` and `python -m unittest -v` in labs/L100/01-setup-local-lab on Python 3.12.15 (Linux); output pasted in the lab README; also ran `lab.py start 2` / `status` / `stop`. The optional compose.yaml was NOT run (no Docker in the sandbox) — it is pending-ci in the `compose-lab` CI job. Rebalance (2026-10-28): lab code refactored (plumbing moved to helpers.py, concept-naming comments added); demo re-run, tests re-run (OK), and `python try_it.py` run; the tryIt `expected` values are its real output. Platform pass (2026-10-28, PLATFORM-AGENT-SPEC): lab.py now stops nodes with Popen.terminate()/wait()/kill() (PID-file path uses os.kill, which Python maps to TerminateProcess on Windows); node.py binds exclusively on Windows (SO_EXCLUSIVEADDRUSE, no SO_REUSEADDR); files read/written with encoding='utf-8'. Re-ran demo, `start 2`/`status`/`stop`, the 4 tests (OK) and try_it.py on Linux: output unchanged. `remote` validated against a node on 0.0.0.0 via the sandbox's 10.253.156.47 address. macOS/Windows: expected, CI matrix pending; the Windows bind path and error wording were not executed. compose.yaml: not run (no container runtime); pending-ci for Docker and Podman. Tools/review pass (2026-10-28, UPDATE-TOOLS-REVIEW-SPEC): optional container/LAN steps moved to documentation/OPTIONAL-SETUP.md (lesson 7 → 6 steps, step 1 uses the WORKSTATION-SETUP commands incl. PYTHONUTF8); test_lab.py/try_it.py subprocess output decoded as UTF-8 (F18). Re-ran demo, the 4 tests (OK) and try_it.py: output unchanged.",
+      "pendingCi": [
+        "labs/L100/01-setup-local-lab/compose.yaml (CI jobs compose-docker, compose-podman)",
+        "two-machine LAN run, documentation/OPTIONAL-SETUP.md (manual)",
+        "node.py Windows exclusive-bind path (windows-latest CI)"
+      ]
+    },
+    "conceptNote": "content/concepts/01-setup-local-multi-node-lab.md",
+    "conceptSummary": "Each node is a separate OS process with its own port that other nodes can reach only over the network. A small helper starts the nodes, polls their health endpoints until they answer, and stops them by PID.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "two-services-talking",
+    "number": 2,
+    "level": "L100",
+    "title": "Two services talking over HTTP",
+    "phase": "Communication",
+    "category": "request-response",
+    "description": "Service A calls service B over HTTP (stdlib http.server + urllib) and measures latency.",
+    "outcome": "You can expose an HTTP endpoint, call it from another service, handle a non-2xx answer, and measure call latency correctly.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only; no network access needed beyond localhost. macOS (Apple silicon) and Windows 11: same commands (install: lesson 1)",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "A remote call looks like a function call but is two messages over a network: a request and a response, either of which can be slow or lost."
+    ],
+    "prerequisites": [
+      "Lesson 1 (setup)"
+    ],
+    "glossary": [
+      {
+        "term": "request/response",
+        "meaning": "Client sends one message, waits, server sends one message back."
+      },
+      {
+        "term": "latency",
+        "meaning": "Time from sending the request to having the full response."
+      },
+      {
+        "term": "RPC",
+        "meaning": "Remote procedure call: code on one node calling a function on another."
+      }
+    ],
+    "concepts": [
+      "Measure durations with a monotonic clock (time.perf_counter), never wall-clock time.",
+      "Non-2xx answers are normal results you must handle (urllib raises HTTPError).",
+      "Every remote call needs a timeout — even this first one passes timeout=2.0."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python two_services.py`",
+        "expected": "5 lines 'A -> B ... -> 200 ...', one '-> 404', and a latency summary.",
+        "ifNot": "ImportError → you are not on Python 3.7+; check `python --version`."
+      },
+      {
+        "title": "Read the latency line",
+        "detail": "Compare min / median / max.",
+        "expected": "Single-digit ms on localhost; the first call is often slowest.",
+        "ifNot": "Hundreds of ms usually means a proxy/VPN or antivirus is inspecting loopback."
+      },
+      {
+        "title": "Call B with curl",
+        "detail": "Run B alone (see README) and `curl \"http://127.0.0.1:8002/price?item=pear\"`.",
+        "expected": "{\"item\": \"pear\", \"price\": 4}",
+        "ifNot": "Connection refused → B is not running or on another port."
+      },
+      {
+        "title": "Add an item",
+        "detail": "Add \"kiwi\": 6 to PRICES and rerun.",
+        "expected": "The kiwi line becomes 200 instead of 404.",
+        "ifNot": "Make sure you edited the copy you are running."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 2 tests ... OK",
+        "ifNot": "Read the assertion: latency must be < 2000 ms and the unknown item must return 404."
+      }
+    ],
+    "code": "\"\"\"L100: service A calls service B over HTTP (request/response) and measures latency.\n\npython two_services.py   # starts B on a free localhost port, A sends 5 requests + 1 bad one\n\"\"\"\nimport json, statistics, time\nfrom urllib.error import HTTPError\nfrom urllib.parse import parse_qs, urlsplit\n\nfrom helpers import OPENER, QuietHandler, serve  # plumbing: quiet handler, reply(), server thread\n\nPRICES = {\"apple\": 3, \"pear\": 4, \"plum\": 5}\n\n\nclass ServiceB(QuietHandler):\n    \"\"\"Service B: GET /price?item=apple -> 200 {\"item\": \"apple\", \"price\": 3}; unknown -> 404.\"\"\"\n    def do_GET(self):  # request message in (method + target) -> one response message out\n        item = parse_qs(urlsplit(self.path).query).get(\"item\", [\"\"])[0]\n        if item in PRICES:\n            self.reply(200, {\"item\": item, \"price\": PRICES[item]})  # 2xx = success\n        else:\n            self.reply(404, {\"error\": f\"unknown item {item!r}\"})  # 4xx = client asked wrongly\n\n\ndef start_b(port=0):  # port 0 = let the OS pick a free port\n    return serve(ServiceB, port)\n\n\ndef call_b(base_url, item, timeout=2.0):\n    \"\"\"Service A's side (the RPC stub): one request, one response. Returns (json, latency_ms).\"\"\"\n    t0 = time.perf_counter()  # latency: monotonic clock, can't jump back like time.time()\n    with OPENER.open(f\"{base_url}/price?item={item}\", timeout=timeout) as resp:  # always a timeout\n        data = json.load(resp)  # marshalling: JSON bytes on the wire -> Python dict\n    return data, (time.perf_counter() - t0) * 1000\n\n\ndef main():\n    b = start_b()\n    url = f\"http://127.0.0.1:{b.server_port}\"\n    print(f\"service B listening on {url}\")\n    latencies = []\n    for item in [\"apple\", \"pear\", \"plum\", \"apple\", \"pear\"]:\n        data, ms = call_b(url, item)\n        latencies.append(ms)\n        print(f\"A -> B  GET /price?item={item:<5} -> 200 {data}  ({ms:.1f} ms)\")\n    try:\n        call_b(url, \"kiwi\")\n    except HTTPError as e:  # errors are results: urllib raises non-2xx; handle 404 as an outcome\n        print(f\"A -> B  GET /price?item=kiwi  -> {e.code} {json.load(e)}\")\n    print(f\"latency ms: min={min(latencies):.1f} median={statistics.median(latencies):.1f} \"\n          f\"max={max(latencies):.1f}\")  # median, not mean: a few slow calls skew the average\n    b.shutdown()\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/02-two-services/two_services.py",
+        "purpose": "Service B (server) + service A (client) + latency measurement"
+      },
+      {
+        "path": "labs/L100/02-two-services/helpers.py",
+        "purpose": "Plumbing: quiet JSON handler (reply/read_body), proxy-free OPENER, background server"
+      },
+      {
+        "path": "labs/L100/02-two-services/test_two_services.py",
+        "purpose": "unittest: 200 path, 404 path, latency bound"
+      },
+      {
+        "path": "labs/L100/02-two-services/try_it.py",
+        "purpose": "Runs the two tryIt experiments and prints the observed results"
+      }
+    ],
+    "expectedResults": [
+      "Five 200 responses with the right prices",
+      "kiwi -> 404 {'error': \"unknown item 'kiwi'\"}",
+      "latency ms: min=... median=... max=... (values vary per machine)"
+    ],
+    "testCases": [
+      {
+        "action": "call_b(url, 'plum')",
+        "expected": "({'item': 'plum', 'price': 5}, latency_ms > 0 and < 2000)"
+      },
+      {
+        "action": "call_b(url, 'kiwi')",
+        "expected": "HTTPError with code 404"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Point A at a localhost port where nothing listens (B is down) and call call_b() (scripted in `python try_it.py`).",
+        "predict": "Which of the three outcomes do you get, and which exception?",
+        "expected": "`URLError -> ConnectionRefusedError: Connection refused` — no response at all. (Linux wording; Windows: `[WinError 10061]` WSAECONNREFUSED, same exception class.)"
+      },
+      {
+        "task": "Make B sleep 50 ms per request (subclass ServiceB, add time.sleep(0.05) in do_GET), then make 3 calls one after another (scripted in `python try_it.py`).",
+        "predict": "How long do the 3 calls take in total?",
+        "expected": "Every call >= 50 ms: True; 3 sequential calls >= 150 ms: True (total 166 ms in the recorded run; the ms value varies)."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "ConnectionRefusedError / URLError",
+        "action": "B is not listening on that port; print b.server_port and use it."
+      },
+      {
+        "symptom": "Latency is much higher than a few ms",
+        "action": "Check for http_proxy env vars or security software; the lab already bypasses proxies."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Go: `http.HandleFunc` + `http.ListenAndServe` for B; `http.Client.Get` for A (a non-2xx status is not an error in Go).",
+      "Same idea in Node.js: `http.createServer` for B; `await fetch(url)` for A.",
+      "Same idea in Python with a third-party client: `requests.get(url, timeout=2)` (recommended by the urllib docs).",
+      "Same idea in gRPC: a unary RPC defined in a .proto file."
+    ],
+    "learningTools": [
+      {
+        "name": "Jaeger",
+        "role": "SEE",
+        "exercise": "Wrap each `call_b()` in two_services.py in a span named `A->B GET /price` (OTel SDK + OTLP/HTTP exporter to http://localhost:4318/v1/traces, set-up code from opentelemetry.io/docs/languages/python/exporters/) with attributes item and http status; run `python two_services.py` and open the trace list for your service.",
+        "expected": "Should show 6 spans, one per printed `A -> B` line, with durations close to the printed ms (3-10 ms in the README run; yours differ) and status 404 on the kiwi call. Pending a manual run (Jaeger and OTel not installed here).",
+        "mac": "jaeger-2.22.0-darwin-arm64.tar.gz or container cr.jaegertracing.io/jaegertracing/jaeger:2.22.0 (`podman run --rm -p 127.0.0.1:16686:16686 -p 127.0.0.1:4318:4318 cr.jaegertracing.io/jaegertracing/jaeger:2.22.0`); open http://localhost:16686; in the venv `pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http`",
+        "windows": "Windows binary or container (same `podman run ...` line); open http://localhost:16686; in the venv `pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http`",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://www.jaegertracing.io/docs/latest/getting-started/"
+      }
+    ],
+    "seeAlso": [
+      "cryptography L200 #10 TLS on localhost: the same request/response wrapped in TLS — what a real service-to-service call adds on top of this lab's plain HTTP"
+    ],
+    "inRealSystems": "HTTP (RFC 9110) frames every exchange as a request answered by a response with a status code; gRPC does the same with Protocol Buffers stubs; Envoy adds x-envoy-upstream-service-time so callers can see where time went.",
+    "useWhen": "Use request/response when the caller needs the answer before continuing; avoid it for fire-and-forget work (use a queue) and for long chains of sequential calls on a hot path, where latencies add up.",
+    "caution": "http.server only implements basic security checks; never expose these demo servers beyond localhost.",
+    "checkpoint": "PASS if the demo prints five 200s, one 404 and a latency summary, and the 2 tests pass.",
+    "checkYourself": [
+      {
+        "q": "Name the three possible outcomes of a request.",
+        "a": "A success response, an error response (4xx/5xx), or no response at all (outcome unknown)."
+      },
+      {
+        "q": "Why use perf_counter() and not time() for latency?",
+        "a": "perf_counter() is monotonic; time() can go backwards when the system clock is set back."
+      },
+      {
+        "q": "B returns 404 for 'kiwi'. Should A retry?",
+        "a": "No — 404 is a fact about the request that won't change by asking again."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Python docs: http.server — HTTP servers",
+        "url": "https://docs.python.org/3/library/http.server.html"
+      },
+      {
+        "title": "Python docs: urllib.request",
+        "url": "https://docs.python.org/3/library/urllib.request.html"
+      },
+      {
+        "title": "Python docs: time (perf_counter, monotonic)",
+        "url": "https://docs.python.org/3/library/time.html"
+      },
+      {
+        "title": "Kleppmann, Distributed Systems lecture notes, Univ. of Cambridge 2025/26",
+        "url": "https://www.cl.cam.ac.uk/teaching/2526/ConcDisSys/dist-sys-notes.pdf"
+      },
+      {
+        "title": "RFC 9110 HTTP Semantics",
+        "url": "https://www.rfc-editor.org/rfc/rfc9110.html"
+      },
+      {
+        "title": "Envoy docs: Router filter (timeouts, retries)",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/router_filter"
+      }
+    ],
+    "next": "L200 #11 Rate limiting: token bucket, per-client limits, 429 and Retry-After — the same A→B pair, now B protects itself and tells A when to come back",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python two_services.py` and `python -m unittest -v` in labs/L100/02-two-services on Python 3.12.15 (Linux); output pasted in the lab README; ports and ms values differ between runs (no randomness used). Rebalance (2026-10-28): lab code refactored (plumbing moved to helpers.py, concept-naming comments added); demo re-run and README output refreshed, tests re-run (OK), and `python try_it.py` run; the tryIt `expected` values are its real output. Tools/review pass (2026-10-28, UPDATE-TOOLS-REVIEW-SPEC): added learningTools (pending manual runs), seeAlso, `next` → a built L200 lesson; tests re-run (OK)."
+    },
+    "conceptNote": "content/concepts/02-two-services-talking.md",
+    "conceptSummary": "A remote call is a request message and a response message, and there are three possible outcomes: success, an error status, or no reply at all (outcome unknown). Measure latency with a monotonic clock and look at the median and the tail, not the average.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "timeouts",
+    "number": 3,
+    "level": "L100",
+    "title": "Timeouts: fail fast instead of hanging",
+    "phase": "Failure handling",
+    "category": "timeouts",
+    "description": "Make B slow; see A wait without a timeout and fail fast with one; pick a timeout from latency percentiles.",
+    "outcome": "You can put a timeout on every remote call, recognise the timeout exception, and choose a value from measured latency.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only; no network access needed beyond localhost. macOS (Apple silicon) and Windows 11: same commands (install: lesson 1)",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "Without a timeout a caller waits as long as the slowest dependency — possibly forever — while holding threads, sockets and memory."
+    ],
+    "prerequisites": [
+      "Lesson 2 (two services)"
+    ],
+    "glossary": [
+      {
+        "term": "timeout",
+        "meaning": "Maximum time a client waits for an operation (a duration)."
+      },
+      {
+        "term": "deadline",
+        "meaning": "A point in time after which the client stops waiting (timeout = deadline - now)."
+      },
+      {
+        "term": "p99.9",
+        "meaning": "Latency that 99.9% of requests beat; 0.1% are slower."
+      }
+    ],
+    "concepts": [
+      "Set a timeout on every remote call: urlopen without one falls back to the global socket default (no timeout unless you set one), and gRPC sets no deadline by default.",
+      "Pick the timeout from the dependency's latency: accept a false-timeout rate (e.g. 0.1%) and use that percentile (p99.9).",
+      "urlopen's timeout is per blocking socket operation, not a total budget for the call."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python timeouts.py`",
+        "expected": "timeout=None waits ~2.0 s and succeeds; timeout=0.5 fails with TimeoutError after ~0.5 s.",
+        "ifNot": "If both lines take 2 s, check you pass timeout to OPENER.open."
+      },
+      {
+        "title": "Make B 'never' answer",
+        "detail": "Change delay=2.0 to delay=60 in main() and rerun.",
+        "expected": "The no-timeout call hangs for a minute; the 0.5 s call still fails in 0.5 s.",
+        "ifNot": "Ctrl+C to stop; restore delay=2.0."
+      },
+      {
+        "title": "Read the chosen timeout",
+        "detail": "Look at the p50/p99/p99.9 line and the suggested timeout.",
+        "expected": "p50=40 ms p99=88 ms p99.9=116 ms; suggested 0.116 s (same every run, seeded).",
+        "ifNot": "Different numbers → the seed or sample count was changed."
+      },
+      {
+        "title": "Try a stricter false-timeout rate",
+        "detail": "In a Python shell: `import timeouts; timeouts.choose_timeout(false_timeout_rate=0.01)`.",
+        "expected": "0.088 (p99) — smaller, so ~1% of normal requests would time out falsely.",
+        "ifNot": "Run it from the lab folder so the import finds timeouts.py."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 3 tests ... OK",
+        "ifNot": "A very slow/overloaded machine can break the 1.5 s bound; rerun on an idle machine."
+      }
+    ],
+    "code": "\"\"\"L100: a slow service B; A without a timeout waits as long as B takes, A with one fails fast.\n\npython timeouts.py\n\"\"\"\nimport math, random, statistics, time\nfrom urllib.error import URLError\nfrom urllib.parse import parse_qs, urlsplit\n\nfrom helpers import OPENER, QuietHandler, serve  # plumbing: quiet handler, reply(), server thread\n\n\nclass SlowB(QuietHandler):\n    \"\"\"GET /work?delay=2.0 -> sleeps `delay` seconds, then answers 200 ok.\"\"\"\n    def do_GET(self):\n        time.sleep(float(parse_qs(urlsplit(self.path).query).get(\"delay\", [\"0\"])[0]))\n        try:  # a client timeout does NOT stop the server: B finishes the work anyway\n            self.reply(200, b\"ok\")\n        except OSError:\n            pass  # client already gave up and closed the socket\n\n\ndef start_b():\n    return serve(SlowB)\n\n\ndef call(url, timeout=None):\n    \"\"\"timeout=None -> no client timeout (blocks until B answers, possibly forever).\"\"\"\n    t0 = time.perf_counter()\n    try:\n        kwargs = {} if timeout is None else {\"timeout\": timeout}  # timeout = max wait per socket op\n        with OPENER.open(url, **kwargs) as r:\n            return f\"{r.status} {r.read().decode()}\", time.perf_counter() - t0\n    except (TimeoutError, URLError) as e:  # fail fast. read: TimeoutError, connect: URLError\n        return f\"FAILED {type(e).__name__}\", time.perf_counter() - t0\n\n\ndef choose_timeout(seed=7, false_timeout_rate=0.001):\n    \"\"\"Pick the value from data: the latency percentile matching an acceptable false-timeout\n    rate (0.1% -> p99.9).\"\"\"\n    rng = random.Random(seed)  # stand-in for B's measured latencies: lognormal around 40 ms\n    samples = [rng.lognormvariate(math.log(0.040), 0.35) for _ in range(10_000)]\n    q = statistics.quantiles(samples, n=1000)  # q[i] = p((i+1)/10), e.g. q[998] = p99.9\n    print(f\"B latency: p50={q[499]*1000:.0f} ms  p99={q[989]*1000:.0f} ms  p99.9={q[998]*1000:.0f} ms\")\n    return round(q[round((1 - false_timeout_rate) * 1000) - 1], 3)\n\n\ndef main():\n    b = start_b()\n    url = f\"http://127.0.0.1:{b.server_port}/work?delay=2.0\"\n    print(\"B takes 2.0 s to answer.\")\n    for timeout in (None, 0.5):\n        result, took = call(url, timeout)\n        print(f\"A timeout={str(timeout):<4} -> {result:<20} after {took:.1f} s\")\n    print(f\"suggested timeout for A->B: {choose_timeout()} s\")\n    b.shutdown()\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/03-timeouts/timeouts.py",
+        "purpose": "Slow B, client with/without timeout, percentile-based timeout chooser"
+      },
+      {
+        "path": "labs/L100/03-timeouts/helpers.py",
+        "purpose": "Plumbing: quiet handler (reply), proxy-free OPENER, background server"
+      },
+      {
+        "path": "labs/L100/03-timeouts/test_timeouts.py",
+        "purpose": "unittest: waits without timeout, fails fast with one, reproducible chooser"
+      },
+      {
+        "path": "labs/L100/03-timeouts/try_it.py",
+        "purpose": "Runs the two tryIt experiments and prints the observed results"
+      }
+    ],
+    "expectedResults": [
+      "A timeout=None -> 200 ok after 2.0 s",
+      "A timeout=0.5 -> FAILED TimeoutError after 0.5 s",
+      "B latency: p50=40 ms  p99=88 ms  p99.9=116 ms",
+      "suggested timeout for A->B: 0.116 s"
+    ],
+    "testCases": [
+      {
+        "action": "call(B with delay 0.6, no timeout)",
+        "expected": "'200 ok' after >= 0.6 s"
+      },
+      {
+        "action": "call(B with delay 3, timeout=0.3)",
+        "expected": "'FAILED ...' in < 1.5 s"
+      },
+      {
+        "action": "choose_timeout() twice",
+        "expected": "Same value both times, between 0.04 and 0.2 s"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Call B with timeout=0.1 when B takes 0.05 s, then when B takes 0.2 s (scripted in `python try_it.py`).",
+        "predict": "Which call fails?",
+        "expected": "delay=0.05 -> 200 ok; delay=0.2 -> FAILED TimeoutError."
+      },
+      {
+        "task": "Share one 0.5 s deadline across two sequential calls that each take 0.3 s: pass `deadline - time.monotonic()` as each call's timeout (scripted in `python try_it.py`).",
+        "predict": "Does call 2 succeed? How long does it wait?",
+        "expected": "Call 1: timeout=0.5 s -> 200 ok after 0.3 s; call 2: timeout=0.2 s -> FAILED TimeoutError after 0.2 s — the total stays within the 0.5 s budget."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Timeout shows up as URLError instead of TimeoutError",
+        "action": "Timeouts while connecting are wrapped in URLError; while reading they raise TimeoutError. Catch both."
+      },
+      {
+        "symptom": "Calls exceed the timeout value",
+        "action": "The timeout is per socket operation; enforce a total deadline yourself if you need one."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Go: `&http.Client{Timeout: 500 * time.Millisecond}` — covers connect, redirects and body read; zero means no timeout.",
+      "Same idea in Node.js: `fetch(url, { signal: AbortSignal.timeout(500) })` rejects with a TimeoutError.",
+      "Same idea in gRPC: set a deadline per call (none by default); expiry fails with DEADLINE_EXCEEDED and deadlines can propagate downstream.",
+      "Same idea in .NET Polly: a Timeout resilience strategy in the pipeline."
+    ],
+    "learningTools": [
+      {
+        "name": "Toxiproxy",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Run B on a fixed port: `python -c \"import time, timeouts; timeouts.serve(timeouts.SlowB, 9003); time.sleep(600)\"`; then `toxiproxy-cli create -l 127.0.0.1:19003 -u 127.0.0.1:9003 lab3`, `toxiproxy-cli toxic add -t timeout -a timeout=0 lab3`, and call through the proxy: `python -c \"import timeouts; print(timeouts.call('http://127.0.0.1:19003/work?delay=0', 0.5))\"`.",
+        "expected": "Should match the lab's printed line `A timeout=0.5 -> FAILED TimeoutError after 0.5 s`: ('FAILED TimeoutError', ~0.50) although B itself answers at once (checked here without the proxy: ('200 ok', 0.001)). After `toxiproxy-cli toxic remove -n timeout_downstream lab3` it returns ('200 ok', a few ms). Pending a manual run (Toxiproxy not installed here).",
+        "mac": "brew tap shopify/shopify && brew install toxiproxy (or ghcr.io/shopify/toxiproxy); run `toxiproxy-server` (API on 127.0.0.1:8474 — unauthenticated, keep it local)",
+        "windows": "toxiproxy-server/cli-windows-amd64.exe from https://github.com/Shopify/toxiproxy/releases; run `.\\toxiproxy-server-windows-amd64.exe` (API on :8474 — unauthenticated, keep it local)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/Shopify/toxiproxy"
+      }
+    ],
+    "seeAlso": [
+      "simulation L100 #3 Discrete-event simulation: a single-server queue: queueing explains latency — waits grow sharply as B gets busy, which moves the p99.9 your timeout is based on"
+    ],
+    "inRealSystems": "gRPC sets no deadline by default, fails expired calls with DEADLINE_EXCEEDED and propagates deadlines (on by default in Java and Go); Envoy's route timeout includes all retries, plus an optional per-try timeout.",
+    "useWhen": "Use a timeout on every call across a process boundary — only the value changes; avoid huge timeouts for long jobs (use async + polling) and never set one below normal latency.",
+    "caution": "A timeout does not cancel work on the server: B keeps sleeping after A gives up. Servers should stop work for cancelled requests where they can.",
+    "checkpoint": "PASS if the no-timeout call takes ~2 s, the 0.5 s call fails in ~0.5 s, and the suggested timeout prints 0.116 s.",
+    "checkYourself": [
+      {
+        "q": "Your dependency's p99.9 is 116 ms. What timeout does a 0.1% false-timeout target suggest?",
+        "a": "About 116 ms (pad it if p99.9 is close to p50)."
+      },
+      {
+        "q": "Why does gRPC send a timeout rather than an absolute deadline to the next server?",
+        "a": "The servers' clocks may disagree; a relative timeout is immune to clock skew."
+      },
+      {
+        "q": "Does urlopen(timeout=0.5) guarantee the whole call finishes in 0.5 s?",
+        "a": "No — it limits each blocking socket operation; a slow trickle of data can exceed 0.5 s overall."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Amazon Builders' Library: Timeouts, retries, and backoff with jitter — background (vendor engineering article)",
+        "url": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/"
+      },
+      {
+        "title": "gRPC docs: Deadlines",
+        "url": "https://grpc.io/docs/guides/deadlines/"
+      },
+      {
+        "title": "Python docs: urllib.request",
+        "url": "https://docs.python.org/3/library/urllib.request.html"
+      },
+      {
+        "title": "Go net/http package docs",
+        "url": "https://pkg.go.dev/net/http"
+      },
+      {
+        "title": "Envoy docs: Router filter (timeouts, retries)",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/router_filter"
+      }
+    ],
+    "next": "L200 #7 Leader election with leases and fencing tokens — a lease is a timeout on leadership",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python timeouts.py` and `python -m unittest -v` in labs/L100/03-timeouts on Python 3.12.15 (Linux); output pasted in the lab README; percentile lines are seeded and identical across runs; elapsed times are rounded to 0.1 s. Rebalance (2026-10-28): lab code refactored (plumbing moved to helpers.py, concept-naming comments added); demo re-run with identical output, tests re-run (OK), and `python try_it.py` run; the tryIt `expected` values are its real output. Tools/review pass (2026-10-28, UPDATE-TOOLS-REVIEW-SPEC): added learningTools (pending manual runs), seeAlso, `next` → a built L200 lesson; tests re-run (OK)."
+    },
+    "conceptNote": "content/concepts/03-timeouts.md",
+    "conceptSummary": "Every remote call needs a time limit, or one hung dependency ties up the caller's threads and takes it down too. Pick the value from the dependency's latency percentiles (e.g. p99.9 for a 0.1% false-timeout rate) and pass the remaining budget downstream as a timeout, not an absolute clock time.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "retries-backoff-jitter",
+    "number": 4,
+    "level": "L100",
+    "title": "Retries with exponential backoff, jitter and a retry budget",
+    "phase": "Failure handling",
+    "category": "retries",
+    "description": "Retry a flaky B (~30% 503) with capped exponential backoff + full jitter, retry only transient errors, and cap retries with a budget.",
+    "outcome": "You can write a bounded retry loop with full-jitter backoff, decide which errors to retry, and stop retry storms with a budget.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only; no network access needed beyond localhost. macOS (Apple silicon) and Windows 11: same commands (install: lesson 1)",
+    "estimatedTime": "30 minutes",
+    "overview": [
+      "Retries hide transient failures but add load; backoff with jitter spreads retries out, and a retry budget stops them when the dependency is really sick."
+    ],
+    "prerequisites": [
+      "Lesson 3 (timeouts)"
+    ],
+    "glossary": [
+      {
+        "term": "capped exponential backoff",
+        "meaning": "Wait base*2^attempt between tries, never more than cap."
+      },
+      {
+        "term": "full jitter",
+        "meaning": "Wait a random time in [0, capped backoff] so clients don't retry in lock-step."
+      },
+      {
+        "term": "retry budget",
+        "meaning": "A limit on retries relative to normal traffic (token bucket or ratio), shared by all calls."
+      },
+      {
+        "term": "load amplification",
+        "meaning": "Attempts sent ÷ requests made; worst case = max attempts."
+      }
+    ],
+    "concepts": [
+      "Retry only transient errors: 429/502/503/504, connection errors, timeouts — not 400/404.",
+      "Full jitter: sleep = uniform(0, min(cap, base * 2^attempt)).",
+      "Bound retries twice: per request (max attempts, e.g. 3-4) and per client (budget).",
+      "Retry at one layer only; retries at every layer multiply."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python retries.py`",
+        "expected": "Phase 1: 8/10 succeed, 17 attempts. Phase 2: 1/10, 10 attempts. Identical every run.",
+        "ifNot": "Different numbers → seeds (42 for B, 7 for jitter) were changed or another client hit B."
+      },
+      {
+        "title": "Read the jitter ceilings",
+        "detail": "First line: [0.02, 0.04, 0.08, 0.16, 0.32, 0.5].",
+        "expected": "Doubles each attempt, capped at 0.5 s; actual sleeps are random below each ceiling.",
+        "ifNot": "Check base=0.02 and cap=0.5 in backoff_full_jitter."
+      },
+      {
+        "title": "See a non-retryable error",
+        "detail": "Look at 'GET /missing'.",
+        "expected": "('gave up (404)', 1): one attempt, no retry, no budget spent.",
+        "ifNot": "If it retried, 404 is in RETRYABLE_STATUS — remove it."
+      },
+      {
+        "title": "Watch the budget",
+        "detail": "Follow the tokens column into phase 2 (B 90% 503).",
+        "expected": "Tokens fall below 5 and requests fail after 1 attempt: load x1.0 instead of up to x4.0.",
+        "ifNot": "Make sure can_retry() is checked before sleeping."
+      },
+      {
+        "title": "Turn the budget off",
+        "detail": "Construct RetryBudget(max_tokens=10**9) and rerun.",
+        "expected": "Phase 2 sends many more attempts (most requests use all 4).",
+        "ifNot": "Restore the default after the experiment."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 4 tests ... OK",
+        "ifNot": "The reproducibility test needs nothing else using FlakyB at the same time."
+      }
+    ],
+    "code": "\"\"\"L100 (python retries.py): retry a flaky B (~30% 503s) with capped exponential backoff + full\njitter, then make B \"sick\" (90% 503s) and watch the retry budget stop a retry storm. Seeded.\"\"\"\nimport random, time\nfrom urllib.error import HTTPError, URLError\n\nfrom helpers import OPENER, FlakyB, serve  # plumbing + the simulated flaky service B\n\nRETRYABLE_STATUS = {429, 502, 503, 504}  # retry only transient errors; 400/404 won't fix themselves\n\n\ndef backoff_full_jitter(attempt, rng, base=0.02, cap=0.5):\n    # capped exponential backoff: ceiling = min(cap, base*2^attempt); full jitter: uniform(0, it)\n    return rng.uniform(0, min(cap, base * 2 ** attempt))\n\n\nclass RetryBudget:  # retry budget (gRPC-style token bucket): failure -1, success +ratio\n    def __init__(self, max_tokens=10, ratio=0.5):\n        self.max, self.ratio, self.tokens = max_tokens, ratio, float(max_tokens)\n\n    def record(self, ok):\n        self.tokens = min(self.max, self.tokens + self.ratio) if ok else max(0.0, self.tokens - 1)\n\n    def can_retry(self):  # only retry while tokens >= max/2: a sick B gets no retry storm\n        return self.tokens >= self.max / 2\n\n\ndef is_retryable(exc):\n    if isinstance(exc, HTTPError):  # check first: HTTPError is a subclass of URLError\n        return exc.code in RETRYABLE_STATUS\n    return isinstance(exc, (URLError, TimeoutError, ConnectionError))\n\n\ndef get_with_retry(url, rng, budget, max_attempts=4, sleep=time.sleep):\n    \"\"\"Returns (outcome, attempts, sleeps). Bounded: never more than max_attempts tries.\"\"\"\n    sleeps = []\n    for attempt in range(max_attempts):\n        try:\n            with OPENER.open(url, timeout=1.0) as r:\n                budget.record(True)\n                return r.status, attempt + 1, sleeps\n        except Exception as exc:\n            if retryable := is_retryable(exc):  # 404 = our bug, not B's health: budget untouched\n                budget.record(False)\n            if not retryable or attempt + 1 == max_attempts:\n                return f\"gave up ({getattr(exc, 'code', type(exc).__name__)})\", attempt + 1, sleeps\n            if not budget.can_retry():\n                return \"gave up (retry budget empty)\", attempt + 1, sleeps\n            sleeps.append(round(backoff_full_jitter(attempt, rng), 3))\n            sleep(sleeps[-1])\n\n\ndef main():\n    rng, budget, srv = random.Random(7), RetryBudget(), serve(FlakyB)\n    url = f\"http://127.0.0.1:{srv.server_port}\"\n    print(\"full-jitter ceilings (s):\", [min(0.5, 0.02 * 2 ** a) for a in range(6)])\n    print(\"GET /missing ->\", get_with_retry(url + \"/missing\", rng, budget)[:2], \"(404: not retried)\")\n    for phase, fail_rate in ((\"B flaky (30% 503)\", 0.3), (\"B sick (90% 503)\", 0.9)):\n        FlakyB.fail_rate, attempts, ok = fail_rate, 0, 0\n        print(f\"--- {phase} ---\")\n        for i in range(1, 11):\n            outcome, n, sleeps = get_with_retry(url + \"/data\", rng, budget)\n            attempts, ok = attempts + n, ok + (outcome == 200)\n            print(f\"req {i:02d}: {str(outcome):<28} attempts={n} sleeps={sleeps} tokens={budget.tokens:.1f}\")\n        print(f\"{ok}/10 succeeded, {attempts} attempts (load x{attempts / 10:.1f}, worst case x4.0)\")\n    srv.shutdown()\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/04-retries-backoff-jitter/retries.py",
+        "purpose": "Flaky B, full-jitter backoff, retryable-error filter, retry budget, demo"
+      },
+      {
+        "path": "labs/L100/04-retries-backoff-jitter/helpers.py",
+        "purpose": "Plumbing + the simulated flaky service B (FlakyB, seeded 503s)"
+      },
+      {
+        "path": "labs/L100/04-retries-backoff-jitter/test_retries.py",
+        "purpose": "unittest: jitter bounds, error classes, budget, reproducible run"
+      },
+      {
+        "path": "labs/L100/04-retries-backoff-jitter/try_it.py",
+        "purpose": "Runs the two tryIt experiments and prints the observed results"
+      },
+      {
+        "path": "labs/L100/04-retries-backoff-jitter/agent_assist.py",
+        "purpose": "Optional agent assist: local model summarizes a retry log; code computes p50/p99/errors and flags wrong numbers"
+      },
+      {
+        "path": "labs/L100/04-retries-backoff-jitter/test_agent_assist.py",
+        "purpose": "unittest (fake model server only): truth vs independent computation, wrong numbers flagged, MISSING detection"
+      },
+      {
+        "path": "labs/_shared/local_agent/",
+        "purpose": "Vendored shared helper: client.chat() + deterministic fake_model_server (+ this topic's [[RETRY-LOG-SUMMARY]] rule)"
+      }
+    ],
+    "expectedResults": [
+      "full-jitter ceilings (s): [0.02, 0.04, 0.08, 0.16, 0.32, 0.5]",
+      "GET /missing -> ('gave up (404)', 1)",
+      "8/10 succeeded, 17 attempts (load x1.7, worst case x4.0)",
+      "1/10 succeeded, 10 attempts (load x1.0, worst case x4.0)"
+    ],
+    "testCases": [
+      {
+        "action": "backoff_full_jitter(attempt, rng) for attempts 0-9",
+        "expected": "Always within [0, min(0.5, 0.02*2^attempt)]"
+      },
+      {
+        "action": "is_retryable(503/429/400/404/URLError/TimeoutError)",
+        "expected": "True/True/False/False/True/True"
+      },
+      {
+        "action": "6 failures on RetryBudget(10, 0.1)",
+        "expected": "can_retry() True at 5 tokens, False at 4"
+      },
+      {
+        "action": "20 requests against seeded FlakyB, twice",
+        "expected": "Identical results; never more than 4 attempts"
+      },
+      {
+        "action": "python agent_assist.py --fake",
+        "expected": "attempts and errors ok; p50_ms and p99_ms flagged WRONG; the code's numbers are reported"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Replay phase 1 (B 30% 503, same seeds 42 and 7) with max_attempts=1, then with the default 4 (scripted in `python try_it.py`).",
+        "predict": "How many of the 10 requests succeed without retries?",
+        "expected": "max_attempts=1: 5/10 succeeded, 10 attempts; max_attempts=4: 8/10 succeeded, 17 attempts — retries rescued 3 requests for 7 extra calls."
+      },
+      {
+        "task": "100 clients fail together and back off after attempt 2 (ceiling 0.08 s): compare a fixed 0.08 s sleep with backoff_full_jitter (scripted in `python try_it.py`).",
+        "predict": "How many retries land in the busiest 10 ms slot in each case?",
+        "expected": "No jitter: 100 of 100 retries in one 10 ms slot; full jitter: at most 17 of 100."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Retries make an outage worse",
+        "action": "Lower max attempts, keep the budget, and retry at only one layer of the call stack."
+      },
+      {
+        "symptom": "Retried POST created duplicates",
+        "action": "Only retry non-idempotent calls when they carry an idempotency key (lesson 5)."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Python tenacity: `@retry(wait=wait_random_exponential(multiplier=1, max=60), stop=stop_after_attempt(4), retry=retry_if_exception_type(IOError))`.",
+      "Same idea in Java Resilience4j: `RetryConfig.custom().maxAttempts(4).intervalFunction(IntervalFunction.ofExponentialBackoff()).retryExceptions(IOException.class)` (default maxAttempts 3).",
+      "Same idea in .NET Polly: `new RetryStrategyOptions { BackoffType = DelayBackoffType.Exponential, UseJitter = true, MaxRetryAttempts = 3, MaxDelay = ... }` (exponential+jitter uses a decorrelated-jitter formula).",
+      "Same idea in gRPC: service-config `retryPolicy` (maxAttempts, initialBackoff, maxBackoff, backoffMultiplier, retryableStatusCodes; ±20% jitter) plus `retryThrottling` (maxTokens, tokenRatio).",
+      "Cloud SDKs: AWS SDK 'standard'/'adaptive' retry modes implement backoff with jitter."
+    ],
+    "learningTools": [
+      {
+        "name": "Toxiproxy",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Run B with no 503s: `python -c \"import time, helpers; helpers.FlakyB.fail_rate = 0; helpers.serve(helpers.FlakyB, 9004); time.sleep(600)\"`; `toxiproxy-cli create -l 127.0.0.1:19004 -u 127.0.0.1:9004 lab4`; add reset_peer with toxicity 0.3 via the HTTP API (POST /proxies/lab4/toxics `{\"type\":\"reset_peer\",\"toxicity\":0.3,\"attributes\":{\"timeout\":0}}`); call `retries.get_with_retry('http://127.0.0.1:19004/data', random.Random(7), retries.RetryBudget())` 10 times.",
+        "expected": "Should show connection resets retried like the lab's 503s (attempts 2-4, never more than 4) and, once tokens drop below 5, `gave up (retry budget empty)` — the same budget rule as the lab's `B flaky` block (8/10 succeeded, 17 attempts). Exact counts vary (toxicity is random). Pending a manual run.",
+        "mac": "brew tap shopify/shopify && brew install toxiproxy (or ghcr.io/shopify/toxiproxy); run `toxiproxy-server` (API on 127.0.0.1:8474 — unauthenticated, keep it local)",
+        "windows": "toxiproxy-server/cli-windows-amd64.exe from https://github.com/Shopify/toxiproxy/releases; run `.\\toxiproxy-server-windows-amd64.exe` (API on :8474 — unauthenticated, keep it local)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/Shopify/toxiproxy"
+      },
+      {
+        "name": "Jaeger",
+        "role": "SEE",
+        "exercise": "In `get_with_retry()` wrap every attempt in a span `attempt N` (OTel SDK + OTLP/HTTP exporter to http://localhost:4318/v1/traces, set-up code from opentelemetry.io/docs/languages/python/exporters/) with attributes outcome and sleep; run `python retries.py`.",
+        "expected": "Should show req 02 as 4 attempt spans whose gaps equal the printed sleeps [0.006, 0.006, 0.052] s (plus a few ms per call), and every `B sick` request as a single span (budget empty). Pending a manual run.",
+        "mac": "jaeger-2.22.0-darwin-arm64.tar.gz or container cr.jaegertracing.io/jaegertracing/jaeger:2.22.0 (`podman run --rm -p 127.0.0.1:16686:16686 -p 127.0.0.1:4318:4318 cr.jaegertracing.io/jaegertracing/jaeger:2.22.0`); open http://localhost:16686; in the venv `pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http`",
+        "windows": "Windows binary or container (same `podman run ...` line); open http://localhost:16686; in the venv `pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http`",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://www.jaegertracing.io/docs/latest/getting-started/"
+      }
+    ],
+    "inRealSystems": "Envoy retries with fully jittered exponential backoff (base 25 ms, max 250 ms) inside a route timeout that includes all retries; gRPC's retryPolicy adds ±20% jitter plus retryThrottling tokens; tenacity, Resilience4j and Polly ship the same building blocks.",
+    "useWhen": "Use retries for transient failures on idempotent (or keyed) operations, at exactly one layer; avoid them for 4xx errors, non-idempotent writes without an idempotency key, and stacks where every layer already retries.",
+    "caution": "Retries are 'selfish': each one spends server capacity. Never retry non-idempotent operations without idempotency keys, and never retry 4xx client errors unchanged. Agent assist: the model only summarizes; it never decides retry settings or alerting — code computes every number. Never put secrets, tokens or customer data from logs into a prompt (redact first), even for a local model.",
+    "checkpoint": "PASS if the demo output matches the README exactly (seeded) and the 4 tests pass.",
+    "checkYourself": [
+      {
+        "q": "Attempt 3, base 20 ms, cap 500 ms — what range can the full-jitter sleep fall in?",
+        "a": "0 to 160 ms."
+      },
+      {
+        "q": "Why add randomness to backoff at all?",
+        "a": "Clients that failed together would retry together, recreating the spike; jitter spreads them out (tryIt 2)."
+      },
+      {
+        "q": "Your client and a proxy both make up to 3 attempts. How many calls can reach B for one user request?",
+        "a": "Up to 3 × 3 = 9."
+      }
+    ],
+    "sources": [
+      {
+        "title": "AWS Architecture Blog: Exponential Backoff and Jitter (Brooker) — background (vendor blog)",
+        "url": "https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/"
+      },
+      {
+        "title": "gRPC docs: Retry",
+        "url": "https://grpc.io/docs/guides/retry/"
+      },
+      {
+        "title": "Google SRE book: Handling Overload",
+        "url": "https://sre.google/sre-book/handling-overload/"
+      },
+      {
+        "title": "Amazon Builders' Library: Timeouts, retries, and backoff with jitter — background (vendor engineering article)",
+        "url": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/"
+      },
+      {
+        "title": "Envoy docs: Router filter (timeouts, retries)",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/router_filter"
+      },
+      {
+        "title": "Ollama docs: OpenAI compatibility",
+        "url": "https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx"
+      }
+    ],
+    "next": "L200 #11 Rate limiting: token bucket, per-client limits, 429 and Retry-After — the server side of a retry storm",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python retries.py` and `python -m unittest -v` in labs/L100/04-retries-backoff-jitter on Python 3.12.15 (Linux); output pasted in the lab README; ran the demo twice and diffed the outputs: identical (seeded RNGs, sequential client). Rebalance (2026-10-28): lab code refactored (plumbing moved to helpers.py, concept-naming comments added); demo re-run with identical output, tests re-run (OK), and `python try_it.py` run; the tryIt `expected` values are its real output. Agent assist (2026-10-28): `python agent_assist.py --fake` and test_agent_assist.py (4 tests) run on Python 3.12.15 Linux against the vendored fake model server only; `python -m unittest -v` now runs 8 tests, OK. No real model was run. Tools/review pass (2026-10-28, UPDATE-TOOLS-REVIEW-SPEC): added learningTools (pending manual runs), seeAlso, `next` → a built L200 lesson; tests re-run (OK).",
+      "pendingCi": [
+        "labs/L100/04-retries-backoff-jitter/agent_assist.py with a real local model (tests use the fake server only)"
+      ]
+    },
+    "conceptNote": "content/concepts/04-retries-backoff-jitter.md",
+    "conceptSummary": "Retry only transient failures, a bounded number of times, waiting a random time up to a capped exponential ceiling (full jitter) so clients don't retry in lock-step. A per-client retry budget and retrying at only one layer stop retries from multiplying load during a real outage.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "agentAssist": {
+      "task": "A local model summarizes a seeded retry/latency log (80 requests, 126 attempt lines); code computes the true attempts, errors, p50 and p99 and flags every number the model got wrong.",
+      "prompt": "system: You summarize service logs for an on-call engineer. Reply with exactly these lines: attempts=<n>, errors=<n>, p50_ms=<n>, p99_ms=<n>, then one line starting 'summary:'. user: [[RETRY-LOG-SUMMARY]] Summarize this retry/latency log. errors = attempts whose status is not 200; p50/p99 = latency percentiles over all attempts. <log> req=01 attempt=1 status=200 latency_ms=... </log>",
+      "check": "true_stats() recomputes attempts, errors (status != 200) and nearest-rank p50/p99 from the log; check() parses the agent's name=value lines and marks each ok (counts exact, latencies within 1 ms), WRONG or MISSING. The numbers you report are always the code's; the agent's sentence is shown as unverified prose.",
+      "expected": "python agent_assist.py --fake → attempts 126/126 ok; errors 46/46 ok; p50_ms agent 32.7 vs code 24.1 WRONG; p99_ms agent 210.6 vs code 141.0 WRONG; flagged: p50_ms, p99_ms (the fake model deliberately reports mean as p50 and max as p99).",
+      "realModelNote": "Ollama on the Mac mini (Metal) or the Windows PC (NVIDIA/AMD GPU or CPU): `ollama pull qwen2.5:1.5b`, then `LOCAL_MODEL=qwen2.5:1.5b python agent_assist.py` (LOCAL_MODEL_URL for another host, default http://localhost:11434/v1). Not run against a real model here; small models often miscount long logs or confuse mean and median, and Ollama's OpenAI endpoint cannot set the context size (use a Modelfile num_ctx) — the checker catches whatever comes back."
+    },
+    "seeAlso": [
+      "ai-agents L300 #14 Reliability: timeouts, retries, budgets and fallbacks: the same timeout + retry budget for model and tool calls; its build task adds a circuit breaker"
+    ]
+  },
+  {
+    "id": "idempotency-keys",
+    "number": 5,
+    "level": "L100",
+    "title": "Idempotency keys: exactly-once effect over at-least-once delivery",
+    "phase": "Failure handling",
+    "category": "idempotency",
+    "description": "Show retries causing duplicate charges, then fix them with an Idempotency-Key header and a server-side dedupe store.",
+    "outcome": "You can make a POST safe to retry: client sends a unique key per operation, server stores key+fingerprint+response and replays it.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only; no network access needed beyond localhost. macOS (Apple silicon) and Windows 11: same commands (install: lesson 1)",
+    "estimatedTime": "30 minutes",
+    "overview": [
+      "When a response is lost the client cannot tell whether the charge happened; it must retry, so the server must recognise the retry."
+    ],
+    "prerequisites": [
+      "Lesson 4 (retries)"
+    ],
+    "glossary": [
+      {
+        "term": "idempotent",
+        "meaning": "Doing it twice has the same effect as doing it once (GET, PUT, DELETE are; POST, PATCH are not)."
+      },
+      {
+        "term": "idempotency key",
+        "meaning": "A unique client-generated value (e.g. UUID) identifying one logical operation across retries."
+      },
+      {
+        "term": "fingerprint",
+        "meaning": "Hash of the request payload, used to detect a key reused for a different request."
+      },
+      {
+        "term": "at-least-once delivery",
+        "meaning": "Keep resending until acknowledged; duplicates are possible."
+      }
+    ],
+    "concepts": [
+      "Same logical operation → same key on every retry; new operation → new key.",
+      "Server: first time → process and store the response; retry after completion → replay stored response; retry while in progress → 409; same key, different payload → 422; missing key → 400.",
+      "At-least-once delivery + deduplication = exactly-once effect."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python idempotency.py`",
+        "expected": "Key OFF: ledger 11 charges, total 110 for 5 orders. Key ON: 5 charges, total 50.",
+        "ifNot": "Different counts → the seeds (3 for lost responses, 1 for keys) were changed."
+      },
+      {
+        "title": "Spot the duplicates",
+        "detail": "In the OFF run, order 4 needed 3 attempts and got charge ch_8.",
+        "expected": "Each lost response produced an extra charge the client never saw.",
+        "ifNot": "Read the ledger line; it counts every charge B committed."
+      },
+      {
+        "title": "See the replay",
+        "detail": "In the ON run, order 1 needed 2 attempts but kept charge_id ch_1.",
+        "expected": "The retry got the stored response; no new charge.",
+        "ifNot": "Check the client reuses the same key inside its retry loop."
+      },
+      {
+        "title": "See the error cases",
+        "detail": "Last two lines of the demo.",
+        "expected": "Same key + amount 99 → 422; no key → 400.",
+        "ifNot": "Check KEY_RE matches a quoted UUID string."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 4 tests ... OK (includes the 409 'in progress' case)",
+        "ifNot": "Tests reset the class-level store; run them without the demo in the same process."
+      }
+    ],
+    "code": "\"\"\"L100 (python idempotency.py): retries + lost responses = duplicate charges. Fix: Idempotency-Key\nheader + server-side dedupe store -> exactly-once *effect* over at-least-once delivery. Seeded.\"\"\"\nimport hashlib, json, random, re, threading, urllib.request, uuid\nfrom urllib.error import HTTPError, URLError\n\nfrom helpers import OPENER, QuietHandler, serve  # plumbing: quiet handler, reply(), server thread\n\nKEY_RE = re.compile(r'^\"([0-9a-f-]{36})\"$')  # our published key format: quoted UUID string\n\n\nclass PaymentB(QuietHandler):\n    enforce = False          # True -> require Idempotency-Key and dedupe\n    ledger, store, lock = [], {}, threading.Lock()  # store = dedupe store: key -> fp/state/response\n    rng, loss_rate = random.Random(3), 0.4  # seeded: which responses get \"lost\" on the network\n\n    def do_POST(self):\n        raw = self.read_body()\n        fingerprint, key = hashlib.sha256(raw).hexdigest(), self.headers.get(\"Idempotency-Key\")\n        if self.enforce:\n            if not (m := KEY_RE.match(key or \"\")):  # key missing/malformed -> 400\n                return self.reply(400, {\"title\": \"Idempotency-Key is missing or malformed\"})\n            key = m.group(1)\n            with self.lock:\n                seen = self.store.get(key)\n                if seen and seen[\"fp\"] != fingerprint:  # same key, different payload -> 422\n                    return self.reply(422, {\"title\": \"Idempotency-Key is already used\"})\n                if seen and seen[\"state\"] == \"in-progress\":  # original still running -> 409\n                    return self.reply(409, {\"title\": \"A request is outstanding for this key\"})\n                if seen:  # retry of a completed request: replay the stored response, no new charge\n                    return self.reply(*seen[\"response\"])\n                self.store[key] = {\"fp\": fingerprint, \"state\": \"in-progress\"}  # first time\n        with self.lock:  # the side effect: money moves\n            self.ledger.append(json.loads(raw)[\"amount\"])\n            response = (201, {\"charge_id\": f\"ch_{len(self.ledger)}\"})\n            if self.enforce:  # same lock as the charge: no window where a crash could duplicate\n                self.store[key].update(state=\"done\", response=response)\n            lose_it = self.rng.random() < self.loss_rate\n        if lose_it:  # lost response: charge committed, client never hears back -> outcome unknown\n            self.close_connection = True\n            return\n        self.reply(*response)\n\n\ndef pay(url, amount, key=None, max_attempts=5):\n    \"\"\"At-least-once client: resend the SAME request (and SAME key) until it gets an answer.\"\"\"\n    headers = {\"Content-Type\": \"application/json\"}\n    if key:  # one key per logical operation, created by the caller BEFORE this retry loop\n        headers[\"Idempotency-Key\"] = f'\"{key}\"'  # sf-string per the IETF draft\n    for attempt in range(1, max_attempts + 1):\n        req = urllib.request.Request(url, json.dumps({\"amount\": amount}).encode(), headers)\n        try:\n            with OPENER.open(req, timeout=2) as r:\n                return r.status, json.load(r), attempt\n        except HTTPError as e:\n            return e.code, json.load(e), attempt\n        except (URLError, ConnectionError):  # no response -> unknown outcome -> retry\n            continue\n    return None, None, max_attempts\n\n\ndef run(enforce, seed=1):\n    PaymentB.enforce, PaymentB.rng = enforce, random.Random(3)\n    PaymentB.ledger.clear(); PaymentB.store.clear()\n    srv = serve(PaymentB)\n    url, keys = f\"http://127.0.0.1:{srv.server_port}/charges\", random.Random(seed)\n    print(f\"--- Idempotency-Key {'ON' if enforce else 'OFF'}: 5 orders x 10 ---\")\n    for order in range(1, 6):\n        # Production: uuid.uuid4(). Seeded here only so the output is reproducible.\n        key = str(uuid.UUID(int=keys.getrandbits(128), version=4)) if enforce else None\n        status, body, attempts = pay(url, 10, key)\n        print(f\"order {order}: {status} {body} after {attempts} attempt(s)\")\n    print(f\"ledger: {len(PaymentB.ledger)} charges, total {sum(PaymentB.ledger)} (expected 50)\")\n    if enforce:\n        print(\"reuse key with amount 99 ->\", pay(url, 99, key)[:2])\n        print(\"no key at all            ->\", pay(url, 10)[:2])\n    srv.shutdown(); srv.server_close()\n\n\nif __name__ == \"__main__\":\n    run(enforce=False)\n    run(enforce=True)\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/05-idempotency-keys/idempotency.py",
+        "purpose": "Payment B with dedupe store and lossy responses; at-least-once client"
+      },
+      {
+        "path": "labs/L100/05-idempotency-keys/helpers.py",
+        "purpose": "Plumbing: quiet JSON handler (reply/read_body), proxy-free OPENER, background server"
+      },
+      {
+        "path": "labs/L100/05-idempotency-keys/test_idempotency.py",
+        "purpose": "unittest: duplicates without keys, exactly-once with keys, replay, 400/409/422"
+      },
+      {
+        "path": "labs/L100/05-idempotency-keys/try_it.py",
+        "purpose": "Runs the two tryIt experiments and prints the observed results"
+      }
+    ],
+    "expectedResults": [
+      "Key OFF: ledger: 11 charges, total 110 (expected 50)",
+      "Key ON: ledger: 5 charges, total 50 (expected 50)",
+      "reuse key with amount 99 -> 422",
+      "no key at all -> 400"
+    ],
+    "testCases": [
+      {
+        "action": "run(enforce=False)",
+        "expected": "More than 5 ledger entries"
+      },
+      {
+        "action": "run(enforce=True)",
+        "expected": "Ledger == [10, 10, 10, 10, 10]"
+      },
+      {
+        "action": "Send the same key 10 times",
+        "expected": "Every answered call returns the same (status, body); 1 charge"
+      },
+      {
+        "action": "Key reused with new amount / no key / key still in progress",
+        "expected": "422 / 400 / 409"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Bug: generate a new uuid4 key on every attempt (inside the retry loop) for the 5 orders, with responses lost as in the demo (scripted in `python try_it.py`).",
+        "predict": "What does the ledger show?",
+        "expected": "ledger 11 charges, total 110 (expected 50) — the same overcharge as sending no key."
+      },
+      {
+        "task": "Set PaymentB.loss_rate = 0 and send the same key 3 times (scripted in `python try_it.py`).",
+        "predict": "How many charges, and which charge_id does each call get?",
+        "expected": "3 × (201, {'charge_id': 'ch_1'}); ledger 1 charge — every repeat gets the stored response."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Duplicates still appear with keys",
+        "action": "The client is generating a new key per attempt; generate it once per operation, outside the retry loop."
+      },
+      {
+        "symptom": "Legitimate second purchase is rejected or replayed",
+        "action": "Each new operation needs a new key; expire stored keys after a published TTL."
+      }
+    ],
+    "equivalents": [
+      "Same idea in HTTP: use PUT with a client-chosen resource ID (PUT is idempotent per RFC 9110).",
+      "Same idea in Django: the django-idempotency-key package (listed in the IETF draft's implementation section).",
+      "Same idea in message queues: consumers dedupe on a message ID to get effectively-once processing.",
+      "Commercial payment APIs (e.g. Stripe, Adyen) accept an Idempotency-Key header, as listed in the IETF draft."
+    ],
+    "learningTools": [
+      {
+        "name": "Jaeger",
+        "role": "SEE",
+        "exercise": "In `pay()` wrap each attempt in a span with attribute `idempotency.key` (OTel SDK + OTLP/HTTP exporter to http://localhost:4318/v1/traces, set-up code from opentelemetry.io/docs/languages/python/exporters/); run `python idempotency.py`.",
+        "expected": "Should show, in the keys-ON run, order 1 as 2 attempt spans carrying the same key while the ledger line still reads `5 charges, total 50`; in the keys-OFF run order 4 has 3 attempts and 3 different charges. Pending a manual run.",
+        "mac": "jaeger-2.22.0-darwin-arm64.tar.gz or container cr.jaegertracing.io/jaegertracing/jaeger:2.22.0 (`podman run --rm -p 127.0.0.1:16686:16686 -p 127.0.0.1:4318:4318 cr.jaegertracing.io/jaegertracing/jaeger:2.22.0`); open http://localhost:16686; in the venv `pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http`",
+        "windows": "Windows binary or container (same `podman run ...` line); open http://localhost:16686; in the venv `pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http`",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://www.jaegertracing.io/docs/latest/getting-started/"
+      }
+    ],
+    "seeAlso": [
+      "application-architecture L200 #9 Event-driven integration: outbox, bus and AsyncAPI: the outbox relays events at least once, so each idempotent consumer dedupes by event id — the same key rule",
+      "distributed-systems L200 #8 At-least-once messaging: ack, visibility timeout, redelivery, dead letters: redelivery creates duplicates; its build task makes the consumer an idempotent consumer"
+    ],
+    "inRealSystems": "RFC 9110 makes GET, HEAD, OPTIONS, PUT and DELETE idempotent but not POST or PATCH, so POST-based payment APIs accept an Idempotency-Key header (IETF draft); Apache Cassandra documents that counter updates are not idempotent, so a retried increment double-counts.",
+    "useWhen": "Use keys for retried non-idempotent writes (payments, orders, emails) whenever clients may time out and resend; skip them for naturally idempotent operations (PUT a full value, DELETE by ID) and don't use them if you can't keep keys as long as clients retry.",
+    "caution": "Validate the key format before using it as a lookup key, use high-entropy keys (UUIDv4 via uuid.uuid4(); the lab seeds them only for reproducible output), and scope stored keys per client to avoid leaking other clients' responses.",
+    "checkpoint": "PASS if the OFF run overcharges (110) and the ON run charges exactly 50, and the 4 tests pass.",
+    "checkYourself": [
+      {
+        "q": "Why must the key be created outside the retry loop?",
+        "a": "All attempts of one operation must carry the same key so the server can recognise them as one (tryIt 1 shows the bug)."
+      },
+      {
+        "q": "A retry arrives while the first request is still processing. What does the draft recommend?",
+        "a": "409 Conflict; the client can retry later without changing the request."
+      },
+      {
+        "q": "Why is 'exactly-once delivery' the wrong name for what you built?",
+        "a": "Messages may still arrive several times; only the effect happens once."
+      }
+    ],
+    "sources": [
+      {
+        "title": "IETF draft-ietf-httpapi-idempotency-key-header-08",
+        "url": "https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/"
+      },
+      {
+        "title": "Amazon Builders' Library: Timeouts, retries, and backoff with jitter — background (vendor engineering article)",
+        "url": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/"
+      },
+      {
+        "title": "Kleppmann, Distributed Systems lecture notes, Univ. of Cambridge 2025/26",
+        "url": "https://www.cl.cam.ac.uk/teaching/2526/ConcDisSys/dist-sys-notes.pdf"
+      },
+      {
+        "title": "Apache Cassandra docs: CQL data manipulation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/dml.html"
+      }
+    ],
+    "next": "L200 #8 At-least-once messaging: ack, visibility timeout, redelivery, dead letters — the same dedupe rule as an idempotent consumer",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python idempotency.py` and `python -m unittest -v` in labs/L100/05-idempotency-keys on Python 3.12.15 (Linux); output pasted in the lab README; ran the demo twice and diffed the outputs: identical (seeded loss pattern and keys). Rebalance (2026-10-28): lab code refactored (plumbing moved to helpers.py, concept-naming comments added); demo re-run with identical output, tests re-run (OK), and `python try_it.py` run; the tryIt `expected` values are its real output. Tools/review pass (2026-10-28, UPDATE-TOOLS-REVIEW-SPEC): added learningTools (pending manual runs), seeAlso, `next` → a built L200 lesson; tests re-run (OK)."
+    },
+    "conceptNote": "content/concepts/05-idempotency-keys.md",
+    "conceptSummary": "A lost response forces a retry that can repeat a side effect. A client-generated Idempotency-Key reused on every retry, plus a server-side store of key, fingerprint and response, turns at-least-once delivery into an exactly-once effect (400/409/422 for the error cases).",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "lamport-clocks",
+    "number": 6,
+    "level": "L100",
+    "title": "Ordering events with Lamport clocks",
+    "phase": "Time and order",
+    "category": "logical clocks",
+    "description": "Three nodes exchange messages with Lamport timestamps; skewed wall clocks mis-order events, Lamport order keeps cause before effect.",
+    "outcome": "You can implement the three Lamport clock rules, attach timestamps to messages, and build a causally consistent total order with a node-id tie-break.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only; no network access needed beyond localhost. macOS (Apple silicon) and Windows 11: same commands (install: lesson 1)",
+    "estimatedTime": "30 minutes",
+    "overview": [
+      "Each node's wall clock is a little wrong, so timestamps from different nodes can put an effect before its cause; a Lamport counter carried on messages cannot."
+    ],
+    "prerequisites": [
+      "Lesson 2 (two services)"
+    ],
+    "glossary": [
+      {
+        "term": "clock skew",
+        "meaning": "Difference between two nodes' wall clocks at the same instant."
+      },
+      {
+        "term": "happened-before (→)",
+        "meaning": "a → b if a is earlier on the same node, or a is a send and b its receive, or via a chain of these."
+      },
+      {
+        "term": "Lamport timestamp",
+        "meaning": "An integer counter per node: tick on every event, send it with messages, on receive take max(local, received)+1."
+      },
+      {
+        "term": "concurrent events",
+        "meaning": "Neither happened-before the other; Lamport order between them is arbitrary."
+      }
+    ],
+    "concepts": [
+      "Rules: local event → clock += 1; send → clock += 1 and attach clock; receive → clock = max(clock, msg_ts) + 1.",
+      "If a → b then L(a) < L(b); the reverse is NOT guaranteed.",
+      "Sort by (Lamport, node id) for a total order consistent with causality."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python lamport.py`",
+        "expected": "Wall-clock order: 2 causality violations. (Lamport, node) order: 0.",
+        "ifNot": "Different output → SKEW_S or the scenario was edited."
+      },
+      {
+        "title": "Find the broken order",
+        "detail": "In the wall-clock list, find B's 'recv create order'.",
+        "expected": "It is listed before A's 'send create order' because B's clock is 80 ms slow.",
+        "ifNot": "Look at the wall= column: B's values are negative."
+      },
+      {
+        "title": "Check the Lamport rules",
+        "detail": "Follow L= for message m1: A sends with L=2, B receives with L=3.",
+        "expected": "Every receive has L = max(local, sent)+1 > sender's L.",
+        "ifNot": "Re-read Node.on_receive: max(self.clock, msg['ts']) + 1."
+      },
+      {
+        "title": "Spot concurrency",
+        "detail": "Two events have L=8 (A's receive, C's audit log).",
+        "expected": "They are concurrent; the node id (A < C) breaks the tie.",
+        "ifNot": "Ties are normal for Lamport clocks."
+      },
+      {
+        "title": "Remove the skew",
+        "detail": "Set all SKEW_S values to 0.0 and rerun.",
+        "expected": "Wall-clock order shows 0 violations — skew caused the problem.",
+        "ifNot": "Restore the skew values afterwards."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 4 tests ... OK",
+        "ifNot": "Tests reset EVENTS and TRUE_TIME; run them in a fresh process."
+      }
+    ],
+    "code": "\"\"\"L100 (python lamport.py): three nodes exchange HTTP messages carrying Lamport timestamps. Wall\nclocks are skewed on purpose: sorting by wall time breaks cause->effect, Lamport order doesn't.\"\"\"\nimport json, threading, urllib.request\n\nfrom helpers import OPENER, QuietHandler, serve, show, violations  # plumbing + log printing\n\nTRUE_TIME = [0.0]                                # simulated \"real\" time, +10 ms per event\nSKEW_S = {\"A\": 0.000, \"B\": -0.080, \"C\": +0.040}  # clock skew: B runs 80 ms slow, C 40 ms fast\nEVENTS = []                                      # (lamport, node, wall, text, msg_id)\n\n\nclass Node:\n    def __init__(self, name):\n        self.name, self.clock, self.lock, node = name, 0, threading.Lock(), self\n\n        class Handler(QuietHandler):\n            def do_POST(self):\n                node.on_receive(json.loads(self.read_body()))\n                self.send_response(204); self.end_headers()\n\n        self.srv = serve(Handler)\n\n    def record(self, text, msg_id=None):\n        TRUE_TIME[0] += 0.010\n        wall = round(TRUE_TIME[0] + SKEW_S[self.name], 3)  # what this node's own wall clock says\n        EVENTS.append((self.clock, self.name, wall, text, msg_id))\n\n    def local(self, text):\n        with self.lock:\n            self.clock += 1  # rule 1, local event: tick\n            self.record(text)\n\n    def send(self, other, text, msg_id):\n        with self.lock:\n            self.clock += 1  # rule 2, send: tick, then attach the timestamp to the message\n            ts = self.clock\n            self.record(f\"send '{text}' to {other.name}\", msg_id)\n        body = json.dumps({\"from\": self.name, \"ts\": ts, \"text\": text, \"id\": msg_id}).encode()\n        OPENER.open(urllib.request.Request(f\"http://127.0.0.1:{other.srv.server_port}/msg\", body,\n                                           {\"Content-Type\": \"application/json\"}), timeout=2).close()\n\n    def on_receive(self, msg):\n        with self.lock:\n            self.clock = max(self.clock, msg[\"ts\"]) + 1  # rule 3, receive: max(local, received) + 1\n            self.record(f\"recv '{msg['text']}' from {msg['from']}\", msg[\"id\"])\n\n\ndef scenario(node_cls=Node):\n    a, b, c = node_cls(\"A\"), node_cls(\"B\"), node_cls(\"C\")\n    a.local(\"user clicks Buy\")\n    a.send(b, \"create order\", \"m1\")\n    b.local(\"reserve stock\")\n    b.send(c, \"charge card\", \"m2\")\n    c.send(a, \"payment ok\", \"m3\")\n    c.local(\"write audit log\")\n    a.local(\"show receipt\")\n    for n in (a, b, c):\n        n.srv.shutdown(); n.srv.server_close()\n    return EVENTS\n\n\nif __name__ == \"__main__\":\n    events = scenario()\n    show(\"sorted by wall clock\", sorted(events, key=lambda e: e[2]))\n    # total order: (Lamport, node id) - consistent with causality; node id breaks ties\n    show(\"sorted by (Lamport, node)\", sorted(events, key=lambda e: (e[0], e[1])))\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/06-lamport-clocks/lamport.py",
+        "purpose": "3 HTTP nodes, Lamport clock rules, skewed wall clocks, ordering comparison"
+      },
+      {
+        "path": "labs/L100/06-lamport-clocks/helpers.py",
+        "purpose": "Plumbing + violations()/show() for checking and printing the event log"
+      },
+      {
+        "path": "labs/L100/06-lamport-clocks/test_lamport.py",
+        "purpose": "unittest: send<receive, wall order violates causality, Lamport order doesn't, total order"
+      },
+      {
+        "path": "labs/L100/06-lamport-clocks/try_it.py",
+        "purpose": "Runs the two tryIt experiments and prints the observed results"
+      }
+    ],
+    "expectedResults": [
+      "--- sorted by wall clock: 2 causality violation(s) ---",
+      "--- sorted by (Lamport, node): 0 causality violation(s) ---",
+      "L=8 appears twice (concurrent events, tie broken by node id)"
+    ],
+    "testCases": [
+      {
+        "action": "Compare Lamport stamps of each send/receive pair",
+        "expected": "send < receive for m1, m2, m3"
+      },
+      {
+        "action": "Sort events by wall clock vs by (Lamport, node)",
+        "expected": ">= 1 violation vs 0 violations"
+      },
+      {
+        "action": "Check (Lamport, node) keys",
+        "expected": "All unique → total order"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Bug: drop max() from Node.on_receive (just `clock += 1`) and rerun the scenario (scripted in `python try_it.py`).",
+        "predict": "What L does B's receive of m1 get? Does (Lamport, node) order still respect causality?",
+        "expected": "m1 send L=2, recv L=1; (Lamport, node) order now has 2 violations."
+      },
+      {
+        "task": "Set C's skew to 0 and B's to only 5 ms slow, then 15 ms slow (events are 10 ms apart) (scripted in `python try_it.py`).",
+        "predict": "How many wall-clock violations each time?",
+        "expected": "B 5 ms slow -> 0 violations; B 15 ms slow -> 1 violation; (Lamport, node) order 0 both times — skew bites once it exceeds the gap between related events."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Receive has a smaller L than its send",
+        "action": "The receiver forgot max(): it must take max(local, received) + 1."
+      },
+      {
+        "symptom": "You need to know if two events are concurrent",
+        "action": "Lamport clocks can't tell you; use vector clocks (next level)."
+      }
+    ],
+    "equivalents": [
+      "Same idea in any language: an integer counter + a mutex per node, sent in a message header (e.g. an HTTP header or message metadata field).",
+      "Vector clocks / version vectors: one counter per node; detect concurrency, not just order.",
+      "gRPC avoids skew for deadlines by propagating a remaining timeout instead of an absolute time."
+    ],
+    "learningTools": [
+      {
+        "name": "Maelstrom (Jepsen)",
+        "role": "CHECK",
+        "exercise": "Write a small Maelstrom broadcast node in Python (stdin/stdout JSON, as in doc/03-broadcast) that keeps lamport.py's rule — tick on send, `max(local, received) + 1` on receive — and puts the clock in each message body; `chmod +x` it and run `./maelstrom test -w broadcast --bin ./lamport_node.py --time-limit 5 --rate 10`, then open store/latest/messages.svg (or `./maelstrom serve`).",
+        "expected": "Should end with `Everything looks good!` (:valid? true), and on every arrow in messages.svg the receiver's clock is larger than the sender's — the property behind the lab's `sorted by (Lamport, node): 0 causality violation(s)`. Pending a manual run (needs JDK 11+, Graphviz, Gnuplot).",
+        "mac": "JDK 11+, Graphviz, Gnuplot; untar the release (maelstrom.tar.bz2) and run ./maelstrom",
+        "windows": "partial — no official statement; WSL2 likely (unverified)",
+        "licence": "EPL-1.0 or later (OSI: yes)",
+        "url": "https://github.com/jepsen-io/maelstrom"
+      }
+    ],
+    "inRealSystems": "Automerge's operation IDs are Lamport timestamps (counter, actor ID), compared by counter then actor ID; Apache Cassandra, by contrast, stamps writes with the coordinator's wall-clock time in microseconds by default, so clock skew matters there.",
+    "useWhen": "Use Lamport clocks when you need an order that never puts an effect before its cause, e.g. merging logs from several nodes; avoid them when you must detect concurrency (use vector clocks) or need real elapsed time (use a monotonic clock locally).",
+    "simulatorVsReal": "Wall clocks and their skew are simulated (a shared simulated 'true time' + fixed per-node offsets) so the output is reproducible; messages are real HTTP calls on localhost.",
+    "caution": "Lamport order is consistent with causality, not with real time: L(a) < L(b) does not mean a happened first or caused b.",
+    "checkpoint": "PASS if wall-clock order shows >= 1 violation, Lamport order shows 0, and the 4 tests pass.",
+    "checkYourself": [
+      {
+        "q": "C's clock is 4 and it receives a message stamped 9. What is C's clock after the receive?",
+        "a": "max(4, 9) + 1 = 10."
+      },
+      {
+        "q": "Two events on different nodes both have L = 8. What can you conclude?",
+        "a": "They are concurrent: if either happened-before the other, its Lamport value would be strictly smaller."
+      },
+      {
+        "q": "Why did sorting by wall clock produce violations in the lab?",
+        "a": "B's wall clock was 80 ms slow, so its receive got an earlier timestamp than A's send."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Lamport (1978) Time, Clocks, and the Ordering of Events in a Distributed System",
+        "url": "https://www.microsoft.com/en-us/research/publication/time-clocks-ordering-events-distributed-system/"
+      },
+      {
+        "title": "Lamport (1978), author's PDF: implementation rules IR1/IR2 and the total-order tie-break",
+        "url": "https://lamport.azurewebsites.net/pubs/time-clocks.pdf"
+      },
+      {
+        "title": "gRPC docs: Deadlines",
+        "url": "https://grpc.io/docs/guides/deadlines/"
+      },
+      {
+        "title": "Python docs: time (perf_counter, monotonic)",
+        "url": "https://docs.python.org/3/library/time.html"
+      },
+      {
+        "title": "Automerge binary format spec (Lamport timestamps)",
+        "url": "https://automerge.org/automerge-binary-format-spec/"
+      },
+      {
+        "title": "Apache Cassandra docs: CQL data manipulation",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/developing/cql/dml.html"
+      }
+    ],
+    "next": "L200 #7 Leader election with leases and fencing tokens — fencing tokens are increasing counters that order writes from old and new leaders",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python lamport.py` and `python -m unittest -v` in labs/L100/06-lamport-clocks on Python 3.12.15 (Linux); output pasted in the lab README; ran the demo twice and diffed the outputs: identical (simulated time, sequential scenario). Rebalance (2026-10-28): lab code refactored (plumbing moved to helpers.py, concept-naming comments added); demo re-run with identical output, tests re-run (OK), and `python try_it.py` run; the tryIt `expected` values are its real output. Tools/review pass (2026-10-28, UPDATE-TOOLS-REVIEW-SPEC): added learningTools (pending manual runs), seeAlso, `next` → a built L200 lesson; tests re-run (OK)."
+    },
+    "conceptNote": "content/concepts/06-lamport-clocks.md",
+    "conceptSummary": "Wall clocks on different machines disagree, so ordering events by timestamp can put an effect before its cause. A Lamport clock (tick per event, carry it on messages, take max(local, received)+1 on receive) gives an order consistent with causality, with ties broken by node id.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  }
+]

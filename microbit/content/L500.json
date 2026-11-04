@@ -1,0 +1,1040 @@
+[
+ {
+  "id": "foundations-digital-electronics-signals",
+  "number": 23,
+  "level": "L500",
+  "title": "Foundations I: digital electronics and signals",
+  "phase": "Theory & rigour",
+  "category": "foundations",
+  "description": "Prove and check the electronics behind the labs: two's complement, Ohm's law and power for LEDs and batteries, ADC quantisation error, and the PWM average voltage.",
+  "outcome": "You can derive each result from definitions, state its assumptions, and verify it numerically against the stub and against lesson 9, 10 and 14 figures.",
+  "estimatedTime": "4-6 hours (reading 1 h, checks 1 h, problem set 2-4 h)",
+  "prerequisites": [
+   "binary arithmetic and modular arithmetic (mod 2^n)",
+   "algebra: solving linear equations; Kirchhoff's voltage law",
+   "calculus: definite integrals of piecewise functions",
+   "probability: uniform distribution, mean and variance",
+   "Fourier series (for the PWM harmonics; optional)",
+   "L200 #9 Pins and PWM on the edge connector",
+   "L300 #14 Power budgeting (modelled, not measured)"
+  ],
+  "learningObjectives": [
+   "Prove that invert-and-add-one negates an n-bit two's-complement number and explain the single exception.",
+   "Derive the series-resistor value and power split for an LED from KVL, and evaluate a battery-life estimate including its averaging window.",
+   "Derive the quantisation-noise variance Delta^2/12 and the 6.02N + 1.76 dB rule, and explain when the uniform-error model fails.",
+   "Derive the average and RMS of a PWM waveform and explain why a load only 'sees' the average after filtering."
+  ],
+  "glossary": [
+   {
+    "term": "Two's complement",
+    "meaning": "n-bit code where the top bit has weight -2^(n-1); arithmetic is mod 2^n."
+   },
+   {
+    "term": "KVL",
+    "meaning": "Kirchhoff's voltage law: voltage rises around a loop equal the drops."
+   },
+   {
+    "term": "Forward voltage (Vf)",
+    "meaning": "Roughly constant voltage across a conducting LED; from its datasheet."
+   },
+   {
+    "term": "E12 series",
+    "meaning": "Standard resistor values 1.0, 1.2, 1.5 ... 8.2 per decade."
+   },
+   {
+    "term": "Quantisation step (Delta)",
+    "meaning": "Vref / 2^N for an ideal N-bit converter."
+   },
+   {
+    "term": "SQNR",
+    "meaning": "Signal-to-quantisation-noise ratio, in dB."
+   },
+   {
+    "term": "Duty cycle (D)",
+    "meaning": "Fraction of a PWM period spent high."
+   }
+  ],
+  "conceptNote": "content/concepts/L500/23-digital-foundations.md",
+  "conceptSummary": "Signed registers are arithmetic mod 2^n; an LED resistor follows from KVL and the battery from the time-average current over a stated window; an ideal ADC adds noise of variance Delta^2/12 for busy inputs; PWM delivers D*V_H on average and sqrt(D)*V_H RMS. Each result is checked in code against the stub and lessons 9, 10 and 14.",
+  "theorems": [
+   {
+    "name": "Two's-complement negation and range",
+    "statement": "For n >= 2, the map v = -b_{n-1} 2^{n-1} + sum_{i<n-1} b_i 2^i is a bijection from n-bit patterns to [-2^{n-1}, 2^{n-1}-1]; for a pattern u of value x != -2^{n-1}, (NOT u) + 1 (mod 2^n) is the pattern of -x; the pattern of -2^{n-1} maps to itself.",
+    "proof": "Value and pattern agree mod 2^n: v = sum b_i 2^i - b_{n-1} 2^n = u - b_{n-1}2^n, so v is congruent to u (mod 2^n). The interval [-2^{n-1}, 2^{n-1}-1] contains exactly 2^n consecutive integers, one per residue class, so the map is a bijection. For negation: every bit of u + NOT u is 1, so u + NOT u = 2^n - 1, hence NOT u + 1 = 2^n - u, which is congruent to -u and therefore to -x (mod 2^n). If x != -2^{n-1}, then -x is in range and, by bijectivity, the pattern is that of -x. If x = -2^{n-1}, then -x = 2^{n-1} is out of range; 2^n - 2^{n-1} = 2^{n-1}, i.e. the same pattern 100...0. Because hardware adds mod 2^n, signed and unsigned addition are the same circuit; overflow is exactly the case where the true sum leaves the interval. QED.",
+    "check": "labs/L500/23-digital-foundations/foundations1.py::check_twos_complement",
+    "checkOutput": "T1 two's complement: n=8,12,16 exhaustive round-trip + invert-and-add-one OK for 69888 values; -2^(n-1) negates to itself; lab 10 decode_temp == 12-bit decode for all 4096 patterns; stub z=-1024 mg -> 0xFC00; 0xFE0C -> -500"
+   },
+   {
+    "name": "LED series resistor, power balance and duty-cycled battery life",
+    "statement": "For supply Vs, LED forward voltage Vf (assumed constant) and current I: R = (Vs - Vf)/I and Vs*I = I^2 R + Vf*I. A load drawing I_on for t_on and I_off for the rest of a window T_w has average current I_avg = (t_on I_on + (T_w - t_on) I_off)/T_w, and a cell of capacity Q lasts about Q / I_avg (constant-capacity model).",
+    "proof": "KVL around the loop supply -> resistor -> LED -> ground: Vs = V_R + Vf with V_R = IR (Ohm), so R = (Vs - Vf)/I. Multiply KVL by I: Vs I = (IR) I + Vf I = I^2 R + Vf I, the supplied power equals the dissipated powers (energy conservation). Choosing the next E12 value UP, R' >= R, gives I' = (Vs - Vf)/R' <= I, so the target is never exceeded. For the battery: charge drawn in the window is integral of i(t) dt = t_on I_on + (T_w - t_on) I_off; dividing by T_w gives the time-average current, and a constant-capacity cell is emptied after Q / I_avg. The result depends on T_w being the window the inputs describe: with 483 wake-ups x 20 ms counted in one hour, T_w must be 3,600,000 ms. Averaging the same 483 wake-ups over 3,607,400 ms adds 7.4 s of extra sleep and moves the 0.05 mA-floor figure from 9,588.4 h to 9,600.5 h - the discrepancy found and fixed in lesson 14. Limits: real Vf varies with current and temperature; real capacity depends on discharge current, cut-off voltage, temperature and self-discharge. QED (for the stated model).",
+    "check": "labs/L500/23-digital-foundations/foundations1.py::check_ohm_power and ::check_against_lesson14",
+    "checkOutput": "T2 Ohm/KVL/power: 3.3 V, Vf 2.0 V, 5 mA -> R 260 ohm -> E12 270 ohm, I 4.815 mA, P_R 6.26 mW, P_LED 9.63 mW, Vs*I = P_R + P_LED; battery 1250 mAh: 2158.3 h (0.5 mA floor), 9588.4 h (0.05 mA), 9600.5 h if the window is stretched to 3,607,400 ms\nT2b lesson 14 cross-check: budget.py life_h 2158.3, range [2158.3, 9588.4] == closed-form t = Q / I_avg"
+   },
+   {
+    "name": "Quantisation noise of an ideal uniform ADC",
+    "statement": "For an ideal rounding N-bit quantiser with step Delta = Vref/2^N and an input whose position within a step is uniformly distributed, the error e = Q(v) - v has mean 0 and variance Delta^2/12; for a full-scale sine the SQNR is 6.02N + 1.76 dB.",
+    "proof": "Rounding to the nearest level gives |e| <= Delta/2. Under the stated assumption e ~ U(-Delta/2, Delta/2), so E[e] = 0 by symmetry and E[e^2] = (1/Delta) * integral_{-Delta/2}^{Delta/2} e^2 de = (1/Delta)(Delta^3/12) = Delta^2/12. A full-scale sine has amplitude A = 2^N Delta / 2 and power A^2/2 = 2^{2N} Delta^2 / 8. SQNR = (2^{2N} Delta^2/8)/(Delta^2/12) = 1.5 * 2^{2N}; in dB 10 log10(1.5) + 20 N log10(2) = 1.76 + 6.02 N. The assumption fails for slowly varying or constant inputs (the error is then deterministic and can be up to Delta/2 with no averaging benefit); dither restores it. A truncating converter has the same variance but mean -Delta/2. QED.",
+    "check": "labs/L500/23-digital-foundations/foundations1.py::check_adc_quantisation",
+    "checkOutput": "T3 ADC: 10-bit, 3.3 V -> step 3.2227 mV, RMS error theory 0.9303 mV, measured var/(step^2/12) = 1.0006; full-scale sine SQNR 61.89 dB vs 6.02N+1.76 = 61.96 dB"
+   },
+   {
+    "name": "Average and RMS of PWM",
+    "statement": "A PWM wave of period T, high level V_H for time DT and 0 V otherwise, has average D*V_H, RMS sqrt(D)*V_H, and harmonics at k/T with amplitude (2 V_H/(k pi)) |sin(k pi D)|.",
+    "proof": "Average: (1/T) integral_0^T v dt = (1/T)(V_H * DT) = D V_H. RMS: (1/T) integral v^2 dt = D V_H^2, so v_rms = sqrt(D) V_H. Fourier coefficient c_k = (1/T) integral_0^{DT} V_H e^{-j 2 pi k t/T} dt = V_H (1 - e^{-j 2 pi k D})/(j 2 pi k), whose magnitude is V_H |sin(pi k D)|/(pi k); the one-sided amplitude is twice that. A first-order low-pass with cut-off f_c << 1/T attenuates harmonic k by about f_c T / k, leaving the DC term D V_H: this is the sense in which write_analog 'outputs a voltage'. Power in a resistive load is proportional to D (not to the average voltage squared). QED.",
+    "check": "labs/L500/23-digital-foundations/foundations1.py::check_pwm_average",
+    "checkOutput": "T4 PWM: write_analog(511), period 20000 us -> D = 0.49951; average 1.6485 V (D*3.3 = 1.6484), RMS 2.3324 V (sqrt(D)*3.3 = 2.3323), first harmonic 2.1008 V (theory 2.1008)"
+   }
+  ],
+  "problemSet": [
+   {
+    "id": "23.1",
+    "type": "calculation",
+    "difficulty": 1,
+    "marks": 4,
+    "problem": "A 16-bit accelerometer register reads 0xFE0C. What value (mg) does it hold? Show the two's-complement decoding.",
+    "solution": "0xFE0C = 65036 unsigned. The top bit is set, so the value is 65036 - 65536 = -500 mg. Check by negation: NOT 0xFE0C = 0x01F3 = 499, plus one = 500, so the original is -500."
+   },
+   {
+    "id": "23.2",
+    "type": "proof",
+    "difficulty": 2,
+    "marks": 6,
+    "problem": "Prove that adding two n-bit two's-complement numbers with an unsigned n-bit adder gives the correct signed result whenever the true sum is in range, and that overflow occurred iff both operands have the same sign and the result has the other sign.",
+    "solution": "Patterns are congruent to values mod 2^n (theorem 1), and an n-bit adder computes the sum mod 2^n. If the true sum s lies in [-2^{n-1}, 2^{n-1}-1], it is the unique in-range representative of its class, so decoding the adder output gives s. Operands of opposite sign give |s| <= max(|x|,|y|), always in range, so overflow needs equal signs. Two non-negatives: s in [0, 2^n - 2]; out of range iff s >= 2^{n-1}, where the decoded result is s - 2^n < 0, i.e. the sign flips. Two negatives: s in [-2^n, -2]; out of range iff s < -2^{n-1}, decoded s + 2^n >= 0. Conversely, if the sum is in range the decoded sign is the true sign, which equals the operands' common sign. QED."
+   },
+   {
+    "id": "23.3",
+    "type": "calculation",
+    "difficulty": 1,
+    "marks": 5,
+    "problem": "A yellow LED (assume Vf = 1.8 V) on a 3.3 V pin should draw at most 8 mA. Find the exact resistor, the E12 value to fit, the resulting current, and the power in the resistor and the LED.",
+    "solution": "R = (3.3 - 1.8)/0.008 = 187.5 ohm. The next E12 value up is 220 ohm (180 would exceed 8 mA). I = 1.5/220 = 6.82 mA. P_R = I^2 R = 10.23 mW; P_LED = 1.8 x 6.82 mA = 12.27 mW; total 3.3 x 6.82 mA = 22.50 mW. Check the pin's current limit in the board documentation before connecting; this is a calculation, not a measured circuit."
+   },
+   {
+    "id": "23.4",
+    "type": "calculation",
+    "difficulty": 2,
+    "marks": 6,
+    "problem": "For the 10-bit read_analog() with a 3.3 V reference, compute the step, the RMS quantisation error and the full-scale SQNR. How many bits would be needed for an RMS error below 0.1 mV?",
+    "solution": "Delta = 3.3/1024 = 3.2227 mV; RMS = Delta/sqrt(12) = 0.9303 mV; SQNR = 6.02 x 10 + 1.76 = 61.96 dB. Need 3.3/(2^N sqrt(12)) < 0.1 mV: N = 13 gives 0.1163 mV, N = 14 gives 0.0581 mV, so 14 bits. (Real converters add their own noise; the ideal model is a lower bound on error.)"
+   },
+   {
+    "id": "23.5",
+    "type": "derivation",
+    "difficulty": 2,
+    "marks": 6,
+    "problem": "Derive the average and RMS voltage of a 3.3 V PWM signal at 25 % duty, and explain why an LED driven by it is not 'at 0.825 V'.",
+    "solution": "Average = D V_H = 0.25 x 3.3 = 0.825 V; RMS = sqrt(0.25) x 3.3 = 1.65 V (theorem 4). At any instant the LED sees 3.3 V (through its resistor) or 0 V. At 0.825 V a red LED would be below its forward voltage and dark; with PWM it carries its full on-current for 25 % of the time, so perceived brightness tracks D, not the average voltage. The average is only a real voltage after a low-pass filter."
+   },
+   {
+    "id": "23.6",
+    "type": "calculation",
+    "difficulty": 2,
+    "marks": 5,
+    "problem": "A logger is awake at 30 mA for 20 ms every 10 s and sleeps at 0.5 mA otherwise. Estimate battery life on 1,250 mAh. State the model's assumptions.",
+    "solution": "Duty = 20/10000 = 0.002. I_avg = 0.002 x 30 + 0.998 x 0.5 = 0.559 mA. Life = 1250 / 0.559 = 2,236.1 h (about 93 days). Assumptions: constant capacity (no rate or temperature effect, no self-discharge), constant currents, the 0.5 mA board floor is an assumption (lesson 14), and the window is exactly one 10 s cycle."
+   },
+   {
+    "id": "23.7",
+    "type": "calculation",
+    "difficulty": 3,
+    "marks": 8,
+    "problem": "Lesson 14's lab once printed a 0.05 mA-floor life of 9,600.5 h for the adaptive design, yet its stated inputs (483 wake-ups x 20 ms at 30 mA in one hour, 1,250 mAh) give a different number. Compute the correct figure, find the window that reproduces 9,600.5 h, and explain the bug.",
+    "solution": "Awake = 483 x 20 = 9,660 ms. Over 3,600,000 ms: I_avg = (9,660 x 30 + 3,590,340 x 0.05)/3,600,000 = 0.13037 mA, life = 1250/0.13037 = 9,588.4 h. Using T_w = 3,607,400 ms gives 9,600.5 h. Cause: the last sample at 3,599,400 ms started an 8,000 ms Deep Sleep that ran the stub clock to 3,607,400 ms, and the model divided by the clock instead of the one-hour window, adding 7.4 s of sleep. Fix (now in budget.py): clip the run to run_ms. The headline also moved, from 2,158.9 h to 2,158.3 h."
+   },
+   {
+    "id": "23.8",
+    "type": "short-answer",
+    "difficulty": 2,
+    "marks": 4,
+    "problem": "A classmate measures a constant 1.000 V with the 10-bit ADC 1,000 times and averages to 'beat the quantisation'. Will the average approach 1.000 V? Explain using the assumptions of theorem 3.",
+    "solution": "No. 1.000 V / 3.2227 mV = 310.3 steps, so every reading rounds to code 310 (0.99902 V) if the input and the converter are noise-free; the error is deterministic (-0.98 mV) and averaging cannot remove it. Theorem 3 assumes a busy input whose position within a step is uniformly distributed. Averaging helps only if noise or deliberate dither of about one step makes successive errors vary."
+   }
+  ],
+  "rubric": [
+   {
+    "criterion": "Correctness of derivations and proofs",
+    "excellent": "Every step justified; assumptions stated where used; edge cases (overflow, saturation, non-preemption, out-of-band energy) handled.",
+    "adequate": "Main argument right; one step asserted without justification or one assumption left implicit.",
+    "inadequate": "Key step wrong or missing; result stated, not derived.",
+    "weight": 40
+   },
+   {
+    "criterion": "Numerical verification",
+    "excellent": "Every numeric answer reproduced by code that runs; output pasted; tolerance justified.",
+    "adequate": "Most answers checked by code; one computed by hand.",
+    "inadequate": "Numbers by hand or copied; no code or code that does not run.",
+    "weight": 25
+   },
+   {
+    "criterion": "Link to the micro:bit labs",
+    "excellent": "Applies each result to a named lab with that lab's real figures and says where the model breaks.",
+    "adequate": "Names the lab but uses generic numbers.",
+    "inadequate": "No connection to the labs.",
+    "weight": 20
+   },
+   {
+    "criterion": "Communication",
+    "excellent": "Clear notation, units on every quantity, concise.",
+    "adequate": "Readable with minor notation slips.",
+    "inadequate": "Hard to follow; units missing.",
+    "weight": 15
+   }
+  ],
+  "sources": [
+   {
+    "title": "MicroPython for micro:bit: pins (write_analog 0-1023, set_analog_period, read_analog)",
+    "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/pin.html"
+   },
+   {
+    "title": "micro:bit tech site: power supply (worst-case 30 mA budget)",
+    "url": "https://tech.microbit.org/hardware/power-supply/"
+   }
+  ],
+  "seeAlso": [
+   "microbit L100 #6 Motion and gestures: accelerometer values are signed",
+   "microbit L200 #9 Pins and PWM on the edge connector: write_analog duty and read_analog steps",
+   "microbit L200 #10 An external sensor over I2C: 12-bit two's-complement decode_temp",
+   "microbit L300 #14 Power budgeting (modelled, not measured): time-average current and the averaging window"
+  ],
+  "next": "L500 #24 Foundations II: sampling and signal processing",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "validation": {
+   "status": "validated-stub",
+   "how": "Ran python foundations1.py and python -m unittest -v in labs/L500/23-digital-foundations: 5 checks OK on CPython 3.12 + numpy (Linux sandbox) using labs/sim_stub; problem-set numbers recomputed by research/l500_checks.py. Nothing measured on a board; the LED Vf and battery figures are labelled assumptions.",
+   "pendingCi": [
+    "labs/L500/2x tests in the CI matrix (ubuntu-latest, macos-latest arm64, windows-latest): added to labs/run_tests.py and labs.yml, not yet run in CI"
+   ]
+  }
+ },
+ {
+  "id": "foundations-sampling-signal-processing",
+  "number": 24,
+  "level": "L500",
+  "title": "Foundations II: sampling and signal processing",
+  "phase": "Theory & rigour",
+  "category": "foundations",
+  "description": "State and prove the sampling theorem, demonstrate aliasing on stub light data, and derive the frequency response, time constant and noise reduction of moving-average and exponential filters.",
+  "outcome": "You can choose a sampling rate and a filter for a micro:bit sensor and justify both with derivations and numbers.",
+  "estimatedTime": "4-6 hours",
+  "prerequisites": [
+   "complex numbers and Euler's formula",
+   "geometric series",
+   "Fourier series/transform (definitions)",
+   "probability: variance of a sum of independent variables",
+   "L100 #5 Sensing temperature and light",
+   "L100 #6 Motion and gestures",
+   "L500 #23 Foundations I"
+  ],
+  "learningObjectives": [
+   "State the sampling theorem precisely and explain its proof via the Fourier series of a band-limited spectrum.",
+   "Predict the apparent frequency of an undersampled component and explain why no post-sampling filter can remove it.",
+   "Derive the frequency response and noise reduction of an N-point moving average.",
+   "Derive the step response, time constant and noise variance ratio of an exponential filter, and evaluate filter choices against a delay requirement."
+  ],
+  "glossary": [
+   {
+    "term": "Nyquist frequency",
+    "meaning": "Half the sampling rate."
+   },
+   {
+    "term": "Band-limited",
+    "meaning": "No spectral content above some frequency W."
+   },
+   {
+    "term": "Alias",
+    "meaning": "A component that, once sampled, looks like a different frequency."
+   },
+   {
+    "term": "Moving average",
+    "meaning": "Mean of the last N samples (FIR filter)."
+   },
+   {
+    "term": "EMA",
+    "meaning": "y += alpha (x - y): first-order IIR low-pass filter."
+   },
+   {
+    "term": "Time constant",
+    "meaning": "Time to reach 1 - 1/e (63 %) of a step."
+   }
+  ],
+  "conceptNote": "content/concepts/L500/24-sampling-filters.md",
+  "conceptSummary": "Samples determine a signal only if it is band-limited below half the sampling rate; otherwise components alias and cannot be separated afterwards. An N-point moving average has nulls at k*fs/N and cuts independent noise by sqrt(N); an exponential filter with alpha = 2/(N+1) matches that noise reduction with one stored value, at the cost of a lag of about Ts/alpha.",
+  "theorems": [
+   {
+    "name": "Sampling theorem and aliasing (Shannon 1949, Theorem 1)",
+    "statement": "If x(t) contains no frequencies above W, it is determined by its samples at spacing 1/(2W), and x(t) = sum_n x(n/(2W)) sinc(2Wt - n). For sampling rate fs, cos(2 pi f n/fs) = cos(2 pi (f - k fs) n/fs) for every integer k, so a component at f appears at |f - round(f/fs) fs|.",
+    "proof": "Let X(f) = 0 for |f| > W. On [-W, W] expand X as a Fourier series in f with period 2W: X(f) = sum_n c_n e^{-j pi n f / W}, c_n = (1/2W) integral_{-W}^{W} X(f) e^{j pi n f/W} df. By the inverse Fourier transform, x(t) = integral X(f) e^{j 2 pi f t} df, so c_n = x(n/2W)/(2W): the samples are the Fourier coefficients and determine X, hence x. Substituting the series into the inverse transform and integrating term by term over [-W, W] gives integral e^{j 2 pi f (t - n/2W)} df = sin(2 pi W (t - n/2W))/(pi (t - n/2W)), i.e. 2W sinc(2Wt - n), which yields the interpolation formula (Shannon 1949, Section II; full rigour needs X in L^2). Aliasing: e^{j 2 pi (f - k fs) n / fs} = e^{j 2 pi f n/fs} e^{-j 2 pi k n} and the last factor is 1 for integer k, n. Taking real parts gives the cosine identity; choosing k = round(f/fs) puts the alias in [0, fs/2]. Because the samples are identical, any processing of the samples treats both the same. QED.",
+    "check": "labs/L500/24-sampling-filters/foundations2.py::check_sampling_theorem",
+    "checkOutput": "T1 sampling: W=4 Hz, fs=10 Hz, sinc reconstruction max error 0.0002 mid-record; 100 Hz sampled at 30 Hz equals 10 Hz to 8.2e-13; stub light FFT peak at 10.0 Hz (predicted |f - round(f/fs)fs| = 10 Hz)"
+   },
+   {
+    "name": "Moving average: frequency response and sqrt(N) noise reduction",
+    "statement": "The N-point moving average has |H(w)| = |sin(N w/2)/(N sin(w/2))| with H(0) = 1 and zeros at w = 2 pi k/N (f = k fs/N, k = 1..N-1). For independent zero-mean noise of variance sigma^2 the output noise variance is sigma^2/N.",
+    "proof": "Input e^{j w n} gives y[n] = (1/N) sum_{k=0}^{N-1} e^{j w (n-k)} = e^{j w n} H(w) with H(w) = (1/N) sum_k e^{-j w k} = (1/N)(1 - e^{-j w N})/(1 - e^{-j w}) for w != 0 (geometric series). Factor e^{-j w N/2}(e^{j w N/2} - e^{-j w N/2}) in the numerator and e^{-j w/2}(e^{j w/2} - e^{-j w/2}) in the denominator: H(w) = e^{-j w (N-1)/2} sin(N w/2)/(N sin(w/2)). The numerator vanishes at w = 2 pi k/N, while the denominator is non-zero for 0 < k < N. For noise, Var(sum w_k / N) = (1/N^2) sum Var(w_k) = N sigma^2 / N^2 = sigma^2/N by independence (covariances vanish). Correlated noise adds 2 sum Cov terms and reduces less. QED.",
+    "check": "labs/L500/24-sampling-filters/foundations2.py::check_moving_average",
+    "checkOutput": "T2 moving average: N=16 closed-form |H| matches direct sum to 5.8e-16; stub accel z noise std ratio 3.98 (sqrt(N) = 4.00); N=3 at 30 Hz nulls 10 Hz: aliased flicker std 70.7 -> 0.00"
+   },
+   {
+    "name": "Exponential filter: step response, time constant, noise ratio",
+    "statement": "For y[n] = y[n-1] + alpha (x[n] - y[n-1]), 0 < alpha <= 1, starting at rest: the unit-step response is 1 - (1-alpha)^{n+1}; the time constant is tau = -Ts / ln(1 - alpha) (about Ts/alpha for small alpha); |H(w)|^2 = alpha^2 / (1 - 2(1-alpha) cos w + (1-alpha)^2); white-noise variance is multiplied by alpha/(2 - alpha), equal to 1/N when alpha = 2/(N+1).",
+    "proof": "Write beta = 1 - alpha. Then y[n] = beta y[n-1] + alpha x[n], so h[n] = alpha beta^n (n >= 0) and H(z) = alpha/(1 - beta z^{-1}). Step: y[n] = sum_{k=0}^{n} alpha beta^k = alpha (1 - beta^{n+1})/(1 - beta) = 1 - beta^{n+1}. Time constant: the remaining error beta^{n} equals e^{-1} when n = -1/ln(beta), i.e. tau = -Ts/ln(1 - alpha); ln(1-alpha) = -alpha - alpha^2/2 - ..., so tau is about Ts/alpha for small alpha. Frequency response: substitute z = e^{jw} and take |.|^2. Noise: Var(y) = sigma^2 sum h[n]^2 = sigma^2 alpha^2 / (1 - beta^2) = sigma^2 alpha^2/(alpha(2 - alpha)) = sigma^2 alpha/(2 - alpha). With alpha = 2/(N+1): alpha/(2 - alpha) = (2/(N+1)) / (2N/(N+1)) = 1/N. QED.",
+    "check": "labs/L500/24-sampling-filters/foundations2.py::check_ema",
+    "checkOutput": "T3 EMA: alpha=0.2, Ts=0.1 s -> step error vs 1-(1-a)^(n+1) 2.2e-16, tau 0.448 s (Ts/alpha = 0.500 s), -3 dB at 0.3566 Hz; stub light noise variance ratio 0.1120 (alpha/(2-alpha) = 0.1111, same as N=9 MA)"
+   }
+  ],
+  "problemSet": [
+   {
+    "id": "24.1",
+    "type": "calculation",
+    "difficulty": 1,
+    "marks": 4,
+    "problem": "A lamp flickers at 100 Hz. Where does the flicker appear if the light sensor is sampled at 30 Hz, 45 Hz and 60 Hz?",
+    "solution": "Apparent frequency = |f - round(f/fs) fs|. 30 Hz: |100 - 3 x 30| = 10 Hz. 45 Hz: |100 - 2 x 45| = 10 Hz. 60 Hz: |100 - 2 x 60| = 20 Hz. Each looks like a slow, real flicker in the log."
+   },
+   {
+    "id": "24.2",
+    "type": "calculation",
+    "difficulty": 1,
+    "marks": 3,
+    "problem": "The accelerometer is polled at 50 Hz. What is the highest frequency it can represent without aliasing, and where does a 40 Hz motor vibration appear?",
+    "solution": "Nyquist frequency = 50/2 = 25 Hz. The 40 Hz vibration appears at |40 - 1 x 50| = 10 Hz."
+   },
+   {
+    "id": "24.3",
+    "type": "derivation",
+    "difficulty": 2,
+    "marks": 6,
+    "problem": "Derive the first null of an N-point moving average and use it to design a filter that removes the 10 Hz alias of problem 24.1 at fs = 30 Hz. What does it cost?",
+    "solution": "From theorem 2 the zeros are at f = k fs/N. For the first zero at 10 Hz with fs = 30 Hz, N = 3; it also has a zero at 20 Hz. The foundations2.py check shows the aliased stub flicker drops from std 70.7 to 0.00. Cost: a delay of (N-1)/2 = 1 sample (33 ms) and a slight smoothing of real changes. This works only because the alias landed exactly on a null; it is not a general cure for aliasing."
+   },
+   {
+    "id": "24.4",
+    "type": "calculation",
+    "difficulty": 2,
+    "marks": 4,
+    "problem": "Accelerometer noise has std 40 mg (independent samples). How many samples must a moving average use to bring it to 5 mg, and what delay does that add at 50 Hz?",
+    "solution": "Need 40/sqrt(N) <= 5, so N >= (40/5)^2 = 64. Delay (N-1)/2 = 31.5 samples = 0.63 s at 50 Hz, too slow for gesture detection; consider a smaller N or accept more noise."
+   },
+   {
+    "id": "24.5",
+    "type": "calculation",
+    "difficulty": 2,
+    "marks": 5,
+    "problem": "An EMA with alpha = 0.2 runs at Ts = 0.1 s. Compute its time constant, the equivalent moving-average length for noise, the noise std ratio and the -3 dB frequency.",
+    "solution": "tau = -0.1/ln(0.8) = 0.448 s (Ts/alpha would say 0.5 s). Equivalent N = (2 - alpha)/alpha = 9; std ratio = sqrt(alpha/(2 - alpha)) = sqrt(1/9) = 0.333. -3 dB: cos w = (1 + 0.8^2 - 2 x 0.2^2)/(2 x 0.8) = 0.975, w = 0.2241 rad/sample, f = w/(2 pi Ts) = 0.3566 Hz."
+   },
+   {
+    "id": "24.6",
+    "type": "proof",
+    "difficulty": 2,
+    "marks": 5,
+    "problem": "Prove that an EMA with alpha = 2/(N+1) reduces white-noise variance by exactly the same factor as an N-point moving average.",
+    "solution": "Moving average: sigma^2/N (theorem 2). EMA: sigma^2 alpha/(2 - alpha) (theorem 3). Substitute alpha = 2/(N+1): 2 - alpha = 2N/(N+1), so alpha/(2 - alpha) = 1/N. QED. The step responses differ: the MA settles fully after N samples; the EMA approaches geometrically."
+   },
+   {
+    "id": "24.7",
+    "type": "short-answer",
+    "difficulty": 2,
+    "marks": 4,
+    "problem": "A teammate proposes removing the 100 Hz flicker alias by 'adding a digital low-pass filter after read_light_level()'. Critique the proposal and give two designs that work.",
+    "solution": "After sampling at 30 Hz the flicker is a real 10 Hz component in the data (theorem 1); a low-pass that removes it also removes genuine 10 Hz changes, and in general an alias can land anywhere in the band. Working designs: (1) sample fast enough (above 200 Hz) and filter digitally before decimating; (2) an analog low-pass (or a sensor with a long integration time) before the sampler. Choosing fs so the alias lands on an MA null (problem 24.3) is a fragile third option that depends on the exact mains frequency."
+   },
+   {
+    "id": "24.8",
+    "type": "essay",
+    "difficulty": 3,
+    "marks": 8,
+    "problem": "Lesson 14's adaptive logger samples temperature every 0.1-8 s and must notice a 1 C change within 10 s. Evaluate whether adding an EMA (alpha = 0.2 per sample) to reduce noise is compatible with that brief. Use theorem 3 and state your assumptions.",
+    "solution": "Model answer outline: the EMA lag is defined per sample, not per second. At the steady 8 s interval tau = 0.448/0.1 = 4.48 samples, i.e. about 36 s, and a 1 C step reaches only 1 - 0.8^2 = 36 % after two samples (16 s): the change may not cross the 1 C threshold within 10 s, so the brief can fail. At 0.1 s sampling the lag is negligible. Options: filter only while sampling fast; trigger the interval reset on the raw value and log the filtered one; or use a smaller window (MA N = 2). Assumptions: noise independent between samples; step change; threshold applied to the filtered value. Evaluate with lesson 14's detect_delays()."
+   }
+  ],
+  "rubric": [
+   {
+    "criterion": "Correctness of derivations and proofs",
+    "excellent": "Every step justified; assumptions stated where used; edge cases (overflow, saturation, non-preemption, out-of-band energy) handled.",
+    "adequate": "Main argument right; one step asserted without justification or one assumption left implicit.",
+    "inadequate": "Key step wrong or missing; result stated, not derived.",
+    "weight": 40
+   },
+   {
+    "criterion": "Numerical verification",
+    "excellent": "Every numeric answer reproduced by code that runs; output pasted; tolerance justified.",
+    "adequate": "Most answers checked by code; one computed by hand.",
+    "inadequate": "Numbers by hand or copied; no code or code that does not run.",
+    "weight": 25
+   },
+   {
+    "criterion": "Link to the micro:bit labs",
+    "excellent": "Applies each result to a named lab with that lab's real figures and says where the model breaks.",
+    "adequate": "Names the lab but uses generic numbers.",
+    "inadequate": "No connection to the labs.",
+    "weight": 20
+   },
+   {
+    "criterion": "Communication",
+    "excellent": "Clear notation, units on every quantity, concise.",
+    "adequate": "Readable with minor notation slips.",
+    "inadequate": "Hard to follow; units missing.",
+    "weight": 15
+   }
+  ],
+  "sources": [
+   {
+    "title": "C. E. Shannon, Communication in the Presence of Noise, Proc. IRE 37(1):10-21, 1949 (DOI 10.1109/JRPROC.1949.232969)",
+    "url": "https://ieeexplore.ieee.org/document/1697831"
+   },
+   {
+    "title": "Shannon 1949 reprinted as a Classic Paper, Proc. IEEE 86(2):447-457, 1998",
+    "url": "https://ieeexplore.ieee.org/document/659497"
+   },
+   {
+    "title": "MicroPython for micro:bit: pins (write_analog 0-1023, set_analog_period, read_analog)",
+    "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/pin.html"
+   }
+  ],
+  "seeAlso": [
+   "microbit L100 #5 Sensing temperature and light: read_light_level is a sampled 0-255 value",
+   "microbit L100 #6 Motion and gestures: polling the accelerometer",
+   "microbit L200 #8 Data logging: the logging rate is a sampling rate",
+   "microbit L300 #14 Power budgeting (modelled, not measured): adaptive sampling interval vs detection delay",
+   "microbit L400 #20 A digital twin of the sensor network: noise and CUSUM"
+  ],
+  "next": "L500 #25 Foundations III: control and real-time theory",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "validation": {
+   "status": "validated-stub",
+   "how": "Ran python foundations2.py and python -m unittest -v in labs/L500/24-sampling-filters: 3 checks OK on CPython 3.12 + numpy (Linux sandbox). Sensor data are SYNTHETIC seeded traces pushed through the stub's light sensor and accelerometer, not recordings from a board.",
+   "pendingCi": [
+    "labs/L500/2x tests in the CI matrix (ubuntu-latest, macos-latest arm64, windows-latest): added to labs/run_tests.py and labs.yml, not yet run in CI"
+   ]
+  }
+ },
+ {
+  "id": "foundations-control-real-time",
+  "number": 25,
+  "level": "L500",
+  "title": "Foundations III: control and real-time theory",
+  "phase": "Theory & rigour",
+  "category": "foundations",
+  "description": "Open versus closed loop, a discrete PID loop with stability analysis on a simulated heater, the Liu & Layland rate-monotonic bound, and CRC as polynomial division over GF(2) with a proof of burst-error detection.",
+  "outcome": "You can analyse a micro:bit control loop, a task set and a checksum with proofs, and show where the theory's assumptions do not hold on the board.",
+  "estimatedTime": "5-7 hours",
+  "prerequisites": [
+   "linear difference equations; eigenvalues of a 2x2 matrix",
+   "geometric series and limits",
+   "polynomial division; arithmetic modulo 2 (GF(2))",
+   "L200 #9 Pins and PWM on the edge connector",
+   "L300 #12 A reliable radio protocol",
+   "L300 #13 Non-blocking firmware structure"
+  ],
+  "learningObjectives": [
+   "Derive the stability condition and steady-state error of a P-controlled first-order plant, and prove that integral action removes constant-disturbance error.",
+   "Explain the critical-instant argument and derive the n = 2 rate-monotonic utilisation bound 2(sqrt 2 - 1).",
+   "Evaluate lesson 13's scheduler against the Liu & Layland assumptions and quantify the effect of non-preemption.",
+   "Prove that a CRC with G(0) = 1 and degree r detects every burst of length <= r, and compute the escape fraction for longer bursts.",
+   "Critique the use of a CRC where an attacker is present."
+  ],
+  "glossary": [
+   {
+    "term": "Closed loop",
+    "meaning": "Actuation computed from the measured error."
+   },
+   {
+    "term": "Pole",
+    "meaning": "Root of the characteristic equation; |pole| < 1 means a discrete loop is stable."
+   },
+   {
+    "term": "Integral wind-up",
+    "meaning": "Integrator growing while the actuator is saturated."
+   },
+   {
+    "term": "Utilisation",
+    "meaning": "U = sum of C_i/T_i."
+   },
+   {
+    "term": "Critical instant",
+    "meaning": "Release time giving a task its longest response: together with all higher-priority tasks."
+   },
+   {
+    "term": "GF(2)",
+    "meaning": "Arithmetic on {0,1} with XOR as addition."
+   },
+   {
+    "term": "Burst error",
+    "meaning": "Error whose first and last flipped bits are L-1 positions apart."
+   }
+  ],
+  "conceptNote": "content/concepts/L500/25-control-realtime.md",
+  "conceptSummary": "Feedback corrects model error that open loop cannot; P control trades error against a stability limit, integral action removes constant-disturbance error. RM scheduling guarantees deadlines when U <= n(2^(1/n)-1) under preemption and independence. A CRC is a remainder mod G(x) over GF(2) and catches every burst no longer than deg G.",
+  "theorems": [
+   {
+    "name": "Closed-loop stability and steady-state error of a first-order plant",
+    "statement": "For x[k+1] = a x[k] + b u[k] with 0 < a < 1, b = K(1-a) > 0 and u = Kp (r - x): the loop is stable iff 0 < Kp < (1 + a)/b (for Kp > 0), and then x -> K Kp r/(1 + K Kp), error r/(1 + K Kp). Open loop u = r/K' with true gain K leaves error r(1 - K/K'). With PI control u = Kp e + Ki Ts sum e, any equilibrium of the closed loop has e = 0, also under constant disturbances.",
+    "proof": "Substitute u: x[k+1] = (a - b Kp) x[k] + b Kp r, a first-order linear recurrence with pole p = a - b Kp. It converges for every initial state iff |p| < 1, i.e. -1 < a - b Kp < 1. The right inequality holds for any Kp > 0; the left gives Kp < (1 + a)/b. The fixed point solves x* = p x* + b Kp r, so x* = b Kp r/(1 - a + b Kp); dividing by (1 - a) and using b/(1 - a) = K gives x* = K Kp r/(1 + K Kp) and e* = r/(1 + K Kp). Open loop: x* = b u/(1 - a) = K u = K r/K', error r(1 - K/K'). PI: let s[k] = sum e. At an equilibrium, s is constant, so s[k+1] - s[k] = e* = 0, whatever constant disturbance enters the plant equation. Existence of the equilibrium requires the augmented 2x2 system to be stable (eigenvalues inside the unit circle), which the check computes, and an unsaturated actuator. With saturation the loop becomes nonlinear: an unstable gain then shows as a limit cycle and the integrator can wind up. QED.",
+    "check": "labs/L500/25-control-realtime/foundations3.py::check_control",
+    "checkOutput": "T1 control (assumed plant tau 60 s, gain 20 C, Ts 1 s): a=0.98347 b=0.33057; P stable iff Kp < (1+a)/b = 6.000 (1.1x diverges, 0.9x settles); plant gain 16: open-loop error 1.000 C, P(Kp=2) error 0.1515 C (r/(1+K Kp) = 0.1515), PI error 0.0000 C after a -2 C disturbance, PI pole radii 0.9483/0.8976"
+   },
+   {
+    "name": "Rate-monotonic utilisation bound (Liu & Layland 1973)",
+    "statement": "n independent, preemptible periodic tasks with constant run times C_i, periods T_i and deadlines equal to periods are all schedulable under rate-monotonic priorities if U = sum C_i/T_i <= n(2^{1/n} - 1). The bound decreases to ln 2 as n -> infinity and is sufficient but not necessary.",
+    "proof": "(1) Critical instant (L&L Theorem 1): the response time of a job of task i is longest when it is released together with all higher-priority tasks, because moving a higher-priority release earlier can only add interference inside the job's window. So it suffices to check the first jobs after a synchronous release. (2) n = 2, T1 < T2, and first T2 <= 2 T1. Call the set 'full' if increasing any C makes it miss. Case C1 <= T2 - T1: tau1's second job ends before T2, so full means C2 = T2 - 2 C1 and U = 1 + C1(1/T1 - 2/T2), decreasing in C1 because T2 < 2 T1; the minimum is at C1 = T2 - T1. Case C1 >= T2 - T1: full means C2 = T1 - C1, U = C1/T1 + (T1 - C1)/T2, increasing in C1; again the minimum is at C1 = T2 - T1. There, with r = T2/T1 in [1, 2): U(r) = (r - 1) + (2 - r)/r = r + 2/r - 2, minimised where 1 - 2/r^2 = 0, r = sqrt 2, giving U = 2(sqrt 2 - 1) = 0.8284. If T2 > 2 T1 the minimum is not lower (L&L reduce it to the first case). Every set with U below the minimum full utilisation is schedulable, because scaling up the C's of a non-full set until it is full only increases U. (3) For general n, the same construction C_i = T_{i+1} - T_i, C_n = 2 T1 - T_n with r_i = T_{i+1}/T_i gives U = sum r_i + 2/prod r_i - n; setting each partial derivative to zero gives r_i = 2^{1/n} and U = n(2^{1/n} - 1); L&L Theorems 4-5 complete the proof. Limit: write n(2^{1/n} - 1) = (e^{(ln 2)/n} - 1)/(1/n) -> ln 2. Sufficiency only: harmonic periods reach U = 1. QED (n = 2 in full; general n sketched, full proof in L&L 1973).",
+    "check": "labs/L500/25-control-realtime/foundations3.py::check_rm_bound",
+    "checkOutput": "T2 RM bound: n(2^(1/n)-1) = 0.8284, 0.7798, 0.7568 (n=2,3,4) -> ln 2 = 0.6931; 2985 random sets under the bound all meet deadlines; tight set U=0.8284 meets, +1 ms misses; harmonic U=1 meets, (2,4),(5,10) U=1 misses; lesson 13 U=0.37 <= 0.7798, but non-preemptive blocking gives the 20 ms button task a 24 ms response"
+   },
+   {
+    "name": "CRC detects all bursts of length <= r (polynomial division over GF(2))",
+    "statement": "Let G(x) have degree r and G(0) = 1. Every error pattern E(x) != 0 that is a burst of length L <= r is detected. For L = r + 1 the undetected fraction of bursts at a given position is 2^{-(r-1)}; for L > r + 1 it is 2^{-r}. If (x + 1) divides G, every error of odd weight is detected. CRC-16/CCITT-FALSE (G = x^16 + x^12 + x^5 + 1) satisfies both conditions.",
+    "proof": "The CRC register (init 0) computes R(x) = M(x) x^r mod G(x). Remainders are linear over GF(2): (M + E) x^r mod G = R + (E x^r mod G). A non-zero init and a final XOR add the same constant to both sides of the receiver's comparison, so the error goes undetected iff G | E(x) x^r. G(0) = 1 means x does not divide G; G and x^r are coprime, so this holds iff G | E. A burst of length L starting at bit i is E = x^i B(x) with deg B = L - 1 and B(0) = 1 (first and last bits flipped). Again gcd(G, x^i) = 1, so G | E iff G | B. If L <= r, B is non-zero with deg B < deg G, so G cannot divide it: detected. If L = r + 1, deg B = r = deg G and G | B forces B = G (the only monic multiple of degree r): 1 of the 2^{r-1} possible B (middle r - 1 bits free), fraction 2^{-(r-1)}. If L > r + 1, B = G Q with Q of degree L - 1 - r, leading coefficient 1 and Q(0) = 1 (since B(0) = G(0) Q(0)): 2^{L-r-2} choices of Q out of 2^{L-2} possible B, fraction 2^{-r}. Odd weight: E(1) = number of flipped bits mod 2 = 1, while (x + 1) | G gives G(1) = 0; G | E would force E(1) = 0. For CCITT: G(0) = 1 and G(1) = 1 + 1 + 1 + 1 = 0. QED.",
+    "check": "labs/L500/25-control-realtime/foundations3.py::check_crc",
+    "checkOutput": "T3 CRC-16/CCITT-FALSE: matches lab 12 crc16, check(\"123456789\") = 0x29B1, register = M(x)x^16 mod G; linear over GF(2) (3000 random patterns); 64-bit message: all bursts of length 1-16 detected, length 17: 48 undetected in 48 positions (1 in 2^15 each); all 41664 3-bit errors detected (x+1 | G)"
+   }
+  ],
+  "problemSet": [
+   {
+    "id": "25.1",
+    "type": "calculation",
+    "difficulty": 2,
+    "marks": 4,
+    "problem": "For the assumed heater (tau = 60 s, K = 20 C at full duty, Ts = 1 s), compute a, b and the largest stable proportional gain.",
+    "solution": "a = e^{-1/60} = 0.98347; b = 20(1 - a) = 0.33057; Kp_max = (1 + a)/b = 6.000. The foundations3.py check shows 1.1 x 6.000 diverging and 0.9 x 6.000 settling (unsaturated model)."
+   },
+   {
+    "id": "25.2",
+    "type": "calculation",
+    "difficulty": 1,
+    "marks": 3,
+    "problem": "With Kp = 2 and the model gain K = 20, what steady-state error remains for a +5 C set-point? What if the real gain is 16?",
+    "solution": "e = r/(1 + K Kp) = 5/41 = 0.122 C. With K = 16: 5/33 = 0.1515 C (the check measures 0.1515 C). Open loop with u = 5/20 would leave 5(1 - 16/20) = 1.000 C."
+   },
+   {
+    "id": "25.3",
+    "type": "proof",
+    "difficulty": 2,
+    "marks": 6,
+    "problem": "Prove that a stable PI loop on the plant x[k+1] = a x[k] + b u[k] + d (d an unknown constant) reaches zero steady-state error, and state two conditions under which this fails on a real micro:bit heater.",
+    "solution": "Let s[k+1] = s[k] + e[k] Ts and u = Kp e + Ki s. If the augmented linear system is stable it converges to an equilibrium (x*, s*); at equilibrium s[k+1] = s[k], so e* Ts = 0 and e* = 0, independently of d (d only shifts s*). Fails if (1) the actuator saturates (duty pinned at 0 or 1023), making the loop nonlinear so the integrator winds up and overshoots; (2) the gains make the augmented system unstable (pole radius >= 1), e.g. too large Ki, or sensor delay adds poles. Also: quantised duty (1/1023 steps) and sensor resolution leave a small limit cycle."
+   },
+   {
+    "id": "25.4",
+    "type": "calculation",
+    "difficulty": 1,
+    "marks": 3,
+    "problem": "Compute the RM bound for n = 3 and n = 5 and the utilisation of lesson 13's tasks (button 5/20 ms, sensor 20/1000 ms, display 10/100 ms).",
+    "solution": "3(2^{1/3} - 1) = 0.7798; 5(2^{1/5} - 1) = 0.7435. Lesson 13: U = 5/20 + 20/1000 + 10/100 = 0.37 <= 0.7798."
+   },
+   {
+    "id": "25.5",
+    "type": "calculation",
+    "difficulty": 2,
+    "marks": 5,
+    "problem": "Task set A: (C, T) = (10, 50), (20, 100), (90, 200) ms. Task set B: (2, 4), (5, 10). Apply the RM bound, then decide schedulability by simulating from a critical instant.",
+    "solution": "A: U = 0.2 + 0.2 + 0.45 = 0.85 > 0.7798, so the bound is inconclusive. Simulation: tau1 runs 0-10, tau2 10-30, tau3 30-50, tau1 50-60, tau3 60-100, tau1 100-110, tau2 110-130, tau3 130-150, tau1 150-160, tau3 160-170: tau3 finishes at 170 <= 200, schedulable (the periods are harmonic). B: U = 0.5 + 0.5 = 1.0; tau2 gets only 2-4 and 6-8, 4 of its 5 units by t = 10: deadline missed with 1 unit remaining."
+   },
+   {
+    "id": "25.6",
+    "type": "short-answer",
+    "difficulty": 3,
+    "marks": 6,
+    "problem": "Lesson 13's scheduler is cooperative. Compute the worst-case response of the button task when it becomes ready 1 ms after the sensor task starts its full 20 ms budget, and evaluate whether the RM result 'U = 0.37, schedulable' still holds.",
+    "solution": "The button waits for the sensor task: 19 ms blocking + 5 ms own budget = 24 ms response, longer than its 20 ms period, so one 20 ms poll is late. The RM bound assumes preemption; with non-preemptive tasks a blocking term B_i (longest lower-priority budget) must be added, and here it breaks the period-as-deadline test. The lesson's real requirement - catch a 150 ms tap - is still met because 24 ms << 150 ms, which is why lesson 13 checks taps, not periods. Fixes: shorter sensor budget (split the work), or move the button to an interrupt (lesson 16 shows the race that creates)."
+   },
+   {
+    "id": "25.7",
+    "type": "calculation",
+    "difficulty": 2,
+    "marks": 4,
+    "problem": "For CRC-16/CCITT-FALSE, what fraction of bursts of length 17 and of length 30 goes undetected at a fixed position? Is a burst of length 16 ever missed?",
+    "solution": "Length 17 (= r + 1): 2^{-15} = 3.05e-05 (the check counts exactly 1 of 32,768 at each of 48 positions). Length 30 (> r + 1): 2^{-16} = 1.53e-05. Length <= 16: never (theorem 3)."
+   },
+   {
+    "id": "25.8",
+    "type": "essay",
+    "difficulty": 3,
+    "marks": 8,
+    "problem": "Lesson 12 protects radio frames with CRC-16 and lesson 19 adds a MAC. Using the linearity of the CRC, explain how an attacker can change a frame's payload and still pass the CRC check, and argue which property a MAC adds.",
+    "solution": "Model answer outline: CRC(M + E) = CRC(M) + CRC_0(E) for equal lengths, where CRC_0 is computed with init 0 and no final XOR, and every term is public. An attacker who wants to flip bits E in the payload computes CRC_0(E) (no secret needed) and XORs it into the transmitted check field; the receiver's comparison passes. Even without knowing M, the attacker can do this blind. A MAC (lesson 19) is keyed: without the key the attacker cannot compute the tag for M + E, and a good MAC is not linear in the message. CRC protects against random channel errors (theorem 3); a MAC protects against an adversary. Both have a place: the CRC cheaply drops noise-damaged frames before spending effort on verification."
+   }
+  ],
+  "rubric": [
+   {
+    "criterion": "Correctness of derivations and proofs",
+    "excellent": "Every step justified; assumptions stated where used; edge cases (overflow, saturation, non-preemption, out-of-band energy) handled.",
+    "adequate": "Main argument right; one step asserted without justification or one assumption left implicit.",
+    "inadequate": "Key step wrong or missing; result stated, not derived.",
+    "weight": 40
+   },
+   {
+    "criterion": "Numerical verification",
+    "excellent": "Every numeric answer reproduced by code that runs; output pasted; tolerance justified.",
+    "adequate": "Most answers checked by code; one computed by hand.",
+    "inadequate": "Numbers by hand or copied; no code or code that does not run.",
+    "weight": 25
+   },
+   {
+    "criterion": "Link to the micro:bit labs",
+    "excellent": "Applies each result to a named lab with that lab's real figures and says where the model breaks.",
+    "adequate": "Names the lab but uses generic numbers.",
+    "inadequate": "No connection to the labs.",
+    "weight": 20
+   },
+   {
+    "criterion": "Communication",
+    "excellent": "Clear notation, units on every quantity, concise.",
+    "adequate": "Readable with minor notation slips.",
+    "inadequate": "Hard to follow; units missing.",
+    "weight": 15
+   }
+  ],
+  "sources": [
+   {
+    "title": "C. L. Liu, J. W. Layland, Scheduling Algorithms for Multiprogramming in a Hard-Real-Time Environment, J. ACM 20(1):46-61, 1973 (DOI 10.1145/321738.321743; record via dblp)",
+    "url": "https://dblp.org/db/journals/jacm/jacm20"
+   },
+   {
+    "title": "CRC RevEng catalogue, 16-bit CRCs (CRC-16/IBM-3740 = CCITT-FALSE: poly 0x1021, init 0xFFFF, check 0x29B1)",
+    "url": "https://reveng.sourceforge.io/crc-catalogue/16.htm"
+   },
+   {
+    "title": "MicroPython for micro:bit: pins (write_analog 0-1023, set_analog_period, read_analog)",
+    "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/pin.html"
+   }
+  ],
+  "seeAlso": [
+   "microbit L200 #9 Pins and PWM on the edge connector: the heater's PWM actuator",
+   "microbit L300 #12 A reliable radio protocol: CRC-16/CCITT-FALSE on every frame",
+   "microbit L300 #13 Non-blocking firmware structure: periods and budgets",
+   "microbit L300 #16 Close-sibling low-level code: a timer interrupt race in Rust: preemption has a price",
+   "microbit L400 #19 Securing constrained devices: authenticated radio frames: why a MAC, not a CRC"
+  ],
+  "next": "L500 #26 Ethics: classroom data, children's privacy, e-waste and accessibility",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "validation": {
+   "status": "validated-stub",
+   "how": "Ran python foundations3.py and python -m unittest -v in labs/L500/25-control-realtime: 3 checks OK on CPython 3.12 + numpy (Linux sandbox). The heater is a simulated plant with ASSUMED parameters driven through the stub's pin0.write_analog; the RM checks are exact discrete simulations; CRC checks reuse lab 12's crc16. Nothing measured on a board.",
+   "pendingCi": [
+    "labs/L500/2x tests in the CI matrix (ubuntu-latest, macos-latest arm64, windows-latest): added to labs/run_tests.py and labs.yml, not yet run in CI"
+   ]
+  }
+ },
+ {
+  "id": "ethics-classroom-data-sustainability-accessibility",
+  "number": 26,
+  "level": "L500",
+  "title": "Ethics: classroom data, children's privacy, e-waste and accessibility",
+  "phase": "Theory & rigour",
+  "category": "ethics",
+  "description": "Analyse a classroom sensing deployment against professional codes and children's data law, minimise what leaves the board, account for batteries and e-waste, and remove barriers for disabled pupils.",
+  "outcome": "You can write a structured case analysis that names stakeholders, data, obligations and options, and defend a design decision with cited primary sources.",
+  "estimatedTime": "3-5 hours",
+  "prerequisites": [
+   "L400 #22 Capstone: classroom environmental monitor network",
+   "L300 #14 Power budgeting (modelled, not measured)",
+   "No mathematics beyond arithmetic"
+  ],
+  "learningObjectives": [
+   "Explain why classroom sensor data can be personal data about children and identify which fields make it so.",
+   "Evaluate a deployment against the ACM Code (1.2, 1.6), the IEEE Code (7.8 item 1), the ICO Children's code standards and DPDP Act section 9 at policy level.",
+   "Analyze the e-waste and battery consequences of a firmware design choice with numbers.",
+   "Critique a physical-computing activity for accessibility barriers and propose adaptations."
+  ],
+  "glossary": [
+   {
+    "term": "Personal data",
+    "meaning": "Information relating to an identifiable person; linkability makes sensor data personal."
+   },
+   {
+    "term": "Data minimisation",
+    "meaning": "Collect only what the stated purpose needs (ICO standard 8; a DPDP principle)."
+   },
+   {
+    "term": "DPIA",
+    "meaning": "Data protection impact assessment (ICO standard 2)."
+   },
+   {
+    "term": "Verifiable parental consent",
+    "meaning": "DPDP s.9(1): consent of a child's parent, checked, before processing."
+   },
+   {
+    "term": "WEEE",
+    "meaning": "Waste electrical and electronic equipment."
+   }
+  ],
+  "conceptNote": "content/concepts/L500/26-ethics-classroom-data.md",
+  "conceptSummary": "Classroom sensing produces data about children as soon as it is linkable to a seat or a timetable. Minimise on the gateway, state the purpose first, follow the ICO Children's code standards and India's DPDP s.9 at policy level, count the batteries your firmware consumes, and design out sensory and motor barriers.",
+  "caseStudy": {
+   "case": "A secondary school extends the lesson 22 classroom monitor. Each of 30 desks gets a micro:bit V2 logging temperature, light and microphone sound level every second, tagged with the desk number; the seating plan links desks to pupils. A vendor offers a free cloud dashboard that keeps all data indefinitely and adds an 'engagement score' per desk. The boards run on 2 x AAA cells with the always-on logger from lesson 14. Two pupils in the class are blind and one has limited fine motor control; they are asked to 'check the LEDs and press A to mark the start of the lesson'.",
+   "stakeholders": [
+    "Pupils (data subjects; under 18)",
+    "Parents/guardians",
+    "Teachers",
+    "School leadership as controller / data fiduciary",
+    "School data protection officer",
+    "The dashboard vendor (processor or independent controller?)",
+    "Disabled pupils and the SEN coordinator",
+    "Site staff who collect batteries and boards",
+    "Regulators (ICO in the UK; Data Protection Board of India)"
+   ],
+   "questions": [
+    "Which fields make the data personal data about children, and which purpose does each serve?",
+    "Which ICO Children's code standards (for example 2, 7, 8, 12, 14) and which DPDP s.9 duties are engaged, and is the 'engagement score' compatible with them?",
+    "Propose a minimised design: what leaves the board, at what rate, aggregated how, retained for how long?",
+    "How many battery sets would the always-on logger consume per board in a 39-week year versus the adaptive design, and what should the school do at end of life?",
+    "Which steps exclude the blind pupils and the pupil with limited fine motor control, and what adaptations remove those barriers?"
+   ],
+   "frameworks": [
+    "ACM Code of Ethics 2018: 1.2 Avoid harm (data aggregation), 1.6 Respect privacy, 1.1 sustainability, 3.7 infrastructure",
+    "IEEE Code of Ethics 7.8 item 1: safety, sustainable development, privacy",
+    "ICO Age appropriate design code (15 standards), UK",
+    "Digital Personal Data Protection Act 2023 s.9 and DPDP Rules 2025, India (check commencement)",
+    "UN CRC General comment No. 25 (2021)",
+    "Global E-waste Monitor 2024; WEEE Directive 2012/19/EU",
+    "micro:bit hardware accessibility statement; WCAG 2.2 for the dashboard",
+    "The 7-step structured case analysis in the concept note"
+   ],
+   "modelAnswer": "1 Facts/decision: approve, modify or reject the per-desk extension. 2 Data: desk-tagged microphone level per second plus a seating plan is personal data about children and can reveal who talks and when; temperature and light per desk are personal only through the same link. The 'engagement score' is profiling of children. 3 Obligations (policy level): ACM 1.2 asks for analysis of aggregation effects, 1.6 for privacy; ICO standards 8 (data minimisation), 7 (high-privacy default settings), 12 (profiling off by default) and 14 (connected devices) point against per-desk sound and the score; under DPDP s.9 a fiduciary in India would need verifiable parental consent and must not undertake behavioural monitoring of children - an engagement score is close to that line, and s.9(3) is not cured by consent. Indefinite vendor retention conflicts with storage limitation. A DPIA (ICO standard 2) is needed before deployment. 4 Options: (a) as proposed; (b) room-level only: the gateway averages temperature and light over the room every 10 minutes, no sound level, no desk ids, 30-day retention, no score; (c) sound only as a room-level 'too loud' flag computed on the board, never stored. 5 Choice: (b) + (c) answers the stated purpose (comfortable room) with residual risk low; reject the score. 6 Batteries: always-on 6,552 h / 41.7 h = 158 sets per board per year (316 cells), 30 boards = 9,480 cells; adaptive 6,552 / 2,158.3 = 4 sets (8 cells), 240 cells - or use USB power. Collect cells and boards through a WEEE-compliant route; reuse boards across cohorts. 7 Accessibility: replace 'check the LEDs' with sound and serial-text output readable by a screen reader, and 'press A' with an external large switch on the edge connector or an automatic start from the timetable; use USB rather than Bluetooth pairing (pairing needs sight). 8 Measure: count fields leaving the gateway (target: 2), audit retention, ask the disabled pupils whether the activity worked for them."
+  },
+  "problemSet": [
+   {
+    "id": "26.1",
+    "type": "short-answer",
+    "difficulty": 1,
+    "marks": 4,
+    "problem": "Give two fields from lesson 22's telemetry that are not personal data on their own and explain what would make each personal.",
+    "solution": "Room temperature and light level are not about a person on their own. They become personal when linked to an individual: a per-desk tag plus a seating plan, or a timestamp joined with a timetable that places one pupil in the room (e.g. a one-to-one session)."
+   },
+   {
+    "id": "26.2",
+    "type": "short-answer",
+    "difficulty": 2,
+    "marks": 5,
+    "problem": "Name three ICO Children's code standards most relevant to a connected classroom sensor and say what each requires of the design (policy level).",
+    "solution": "Standard 8 data minimisation: collect only what each element of the service needs. Standard 14 connected toys and devices: the code applies to connected devices, so the design must conform at the device level too. Standard 2 DPIA: assess and mitigate risks before deployment. (Standard 12 profiling - off by default - also applies to an engagement score.)"
+   },
+   {
+    "id": "26.3",
+    "type": "short-answer",
+    "difficulty": 2,
+    "marks": 5,
+    "problem": "Summarise DPDP Act 2023 section 9 in three duties, and explain why one of them cannot be satisfied by obtaining consent.",
+    "solution": "(1) Obtain verifiable consent of a parent or lawful guardian before processing a child's personal data (s.9(1)). (2) Do not process in a way likely to cause a detrimental effect on a child's well-being (s.9(2)). (3) Do not undertake tracking or behavioural monitoring of children or targeted advertising directed at them (s.9(3)). Duty 3 is a prohibition, not a consent requirement, so parental consent does not lift it; exemptions exist only as prescribed under s.9(4)-(5) and the 2025 Rules. Commencement is phased; check the date."
+   },
+   {
+    "id": "26.4",
+    "type": "calculation",
+    "difficulty": 1,
+    "marks": 4,
+    "problem": "A school year is 39 weeks of continuous logging. Using lesson 14's board estimates (always-on 41.7 h, adaptive 2,158.3 h per set of 2 x AAA), how many battery sets and cells does each design use per board per year, and for 30 boards?",
+    "solution": "39 x 7 x 24 = 6,552 h. Always-on: 6,552/41.7 = 157.1, so 158 sets = 316 cells per board, 9,480 cells for 30 boards. Adaptive: 6,552/2,158.3 = 3.04, so 4 sets = 8 cells per board, 240 cells for 30 boards. Both are model estimates (lesson 14 labels); the ratio, not the absolute figure, is the robust conclusion."
+   },
+   {
+    "id": "26.5",
+    "type": "short-answer",
+    "difficulty": 2,
+    "marks": 4,
+    "problem": "List two barriers the micro:bit hardware presents to a blind pupil and one to a pupil with limited fine motor control, with an adaptation for each.",
+    "solution": "Blind: LED-matrix output (use sound or serial text to a screen reader); Bluetooth pairing pattern needs sight (use USB); compass calibration needs sight (avoid compass features or give sighted support). Fine motor: small buttons A/B (connect a large external switch to an edge-connector pin, or a large foil touch pad on pin 0-2)."
+   },
+   {
+    "id": "26.6",
+    "type": "essay",
+    "difficulty": 3,
+    "marks": 10,
+    "problem": "Write a structured case analysis (7 steps from the concept note, 600-900 words) of the case study, ending with a decision and the residual risk you accept.",
+    "solution": "Graded with the rubric; see caseStudy.modelAnswer for a strong answer's content. A strong answer cites primary sources by section, separates law from ethics, quantifies the battery consequence, and makes a decision rather than listing considerations."
+   }
+  ],
+  "rubric": [
+   {
+    "criterion": "Stakeholders and data inventory",
+    "excellent": "All affected parties named with interests; every field classified by identifiability, purpose and retention.",
+    "adequate": "Main parties and fields named; purposes partly missing.",
+    "inadequate": "Stakeholders generic; data not analysed.",
+    "weight": 20
+   },
+   {
+    "criterion": "Use of codes, law and standards",
+    "excellent": "Cites ACM/IEEE principles and ICO/DPDP provisions by number, correctly, at policy level; distinguishes law from ethics; notes jurisdiction and commencement.",
+    "adequate": "Cites sources with minor inaccuracies.",
+    "inadequate": "No primary sources or misstated law.",
+    "weight": 25
+   },
+   {
+    "criterion": "Options and decision",
+    "excellent": "At least three options including 'do not collect'; a clear decision with residual risk and how it will be checked.",
+    "adequate": "Options listed; decision weakly justified.",
+    "inadequate": "No decision.",
+    "weight": 25
+   },
+   {
+    "criterion": "Sustainability and accessibility",
+    "excellent": "Battery/e-waste consequence computed; concrete accessibility adaptations for each barrier.",
+    "adequate": "Mentions both qualitatively.",
+    "inadequate": "Omits one or both.",
+    "weight": 20
+   },
+   {
+    "criterion": "Writing",
+    "excellent": "Concise, structured, sources linked.",
+    "adequate": "Readable.",
+    "inadequate": "Disorganised.",
+    "weight": 10
+   }
+  ],
+  "sources": [
+   {
+    "title": "ACM Code of Ethics and Professional Conduct (2018)",
+    "url": "https://www.acm.org/code-of-ethics"
+   },
+   {
+    "title": "IEEE Code of Ethics (IEEE Policies 7.8, revisions through June 2020)",
+    "url": "https://www.ieee.org/about/corporate/governance/p7-8"
+   },
+   {
+    "title": "ICO, Age appropriate design: a code of practice for online services - Standards of age appropriate design",
+    "url": "https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/childrens-information/childrens-code-guidance-and-resources/age-appropriate-design-a-code-of-practice-for-online-services/standards-of-age-appropriate-design/"
+   },
+   {
+    "title": "The Digital Personal Data Protection Act, 2023 (No. 22 of 2023), Gazette of India, MeitY copy (section 9: children)",
+    "url": "https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf"
+   },
+   {
+    "title": "PIB (MeitY), Government notifies DPDP Rules, 14 Nov 2025 (18-month phased timeline; children's verifiable consent, limited exemptions)",
+    "url": "https://pib.gov.in/PressReleasePage.aspx?PRID=2190014"
+   },
+   {
+    "title": "UN Committee on the Rights of the Child, General comment No. 25 (2021) on children's rights in relation to the digital environment (CRC/C/GC/25)",
+    "url": "https://www.ohchr.org/en/documents/general-comments-and-recommendations/general-comment-no-25-2021-childrens-rights-relation"
+   },
+   {
+    "title": "ITU/UNITAR, The Global E-waste Monitor 2024",
+    "url": "https://www.itu.int/en/ITU-D/Environment/Pages/Publications/The-Global-E-waste-Monitor-2024.aspx"
+   },
+   {
+    "title": "Directive 2012/19/EU on waste electrical and electronic equipment (WEEE) (recast), EUR-Lex",
+    "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:32012L0019"
+   },
+   {
+    "title": "Micro:bit Educational Foundation, micro:bit hardware accessibility statement",
+    "url": "https://microbit.org/accessibility/hardware-statement/"
+   },
+   {
+    "title": "Micro:bit Educational Foundation, Working with students with visual impairments",
+    "url": "https://microbit.org/accessibility/visual-impairment/"
+   },
+   {
+    "title": "W3C, Web Content Accessibility Guidelines (WCAG) 2.2, W3C Recommendation",
+    "url": "https://www.w3.org/TR/WCAG22/"
+   }
+  ],
+  "seeAlso": [
+   "microbit L400 #22 Capstone: classroom environmental monitor network: the deployment analysed here",
+   "microbit L300 #14 Power budgeting (modelled, not measured): battery sets per year",
+   "microbit L400 #21 Local AI at the edge gateway: it explains, code decides: code, not a model, decides what is collected",
+   "microbit L400 #17 Edge-to-cloud architecture: from sensor boards to a dashboard: where data leaves the room"
+  ],
+  "next": "L500 #27 Reading seminar: Shannon (1949) and Liu & Layland (1973)",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "validation": {
+   "status": "validated-stub",
+   "how": "No lab code. The numeric problem (26.4) is recomputed by research/l500_checks.py (CPython, local). Legal and regulatory statements were checked on 2026-10-30 against the retrieved ICO, MeitY/Gazette, PIB, OHCHR, ITU and EUR-Lex pages at policy level; they are not legal advice and were not reviewed by a lawyer.",
+   "pendingCi": [
+    "None (no code beyond research/l500_checks.py)"
+   ]
+  }
+ },
+ {
+  "id": "reading-seminar-shannon-liu-layland",
+  "number": 27,
+  "level": "L500",
+  "title": "Reading seminar: Shannon (1949) and Liu & Layland (1973)",
+  "phase": "Theory & rigour",
+  "category": "reading",
+  "description": "Read two foundational papers behind lessons 24 and 25, answer guided questions, and write a critical response that tests one assumption against a micro:bit lab.",
+  "outcome": "You can summarise a primary paper's claims and assumptions in your own words and judge where they hold on a micro:bit.",
+  "estimatedTime": "4-6 hours (reading 2-3 h, response 2-3 h)",
+  "prerequisites": [
+   "L500 #24 Foundations II: sampling and signal processing",
+   "L500 #25 Foundations III: control and real-time theory",
+   "logarithms; Fourier transform (Shannon); utilisation and priorities (Liu & Layland)"
+  ],
+  "learningObjectives": [
+   "Summarise each paper's problem, main results and assumptions without reproducing its text.",
+   "Explain how Shannon's sampling theorem underpins his dimension count and capacity formula.",
+   "Explain the critical-instant theorem and why it makes the utilisation bound testable.",
+   "Critique one assumption of each paper against measurements or outputs from the micro:bit labs."
+  ],
+  "glossary": [
+   {
+    "term": "Channel capacity",
+    "meaning": "Maximum reliable bit rate; Shannon: C = W log2(1 + P/N)."
+   },
+   {
+    "term": "Hard real-time",
+    "meaning": "Every deadline must be met, not just most."
+   },
+   {
+    "term": "Deadline-driven scheduling",
+    "meaning": "Dynamic priorities by nearest deadline (EDF)."
+   },
+   {
+    "term": "DOI",
+    "meaning": "Persistent identifier for a publication."
+   }
+  ],
+  "conceptNote": "content/concepts/L500/27-reading-seminar.md",
+  "conceptSummary": "Shannon (1949) turned band-limited signals into points in a 2TW-dimensional space and derived channel capacity; Liu & Layland (1973) defined the periodic task model, the critical instant and the RM utilisation bound. Both results are only as good as their assumptions, which micro:bit projects often break.",
+  "readings": [
+   {
+    "citation": "Shannon, C. E. (1949). Communication in the Presence of Noise. Proceedings of the IRE, 37(1), 10-21. DOI 10.1109/JRPROC.1949.232969. Reprinted as a Classic Paper in Proceedings of the IEEE, 86(2), 447-457, 1998.",
+    "url": "https://ieeexplore.ieee.org/document/1697831",
+    "why": "The sampling theorem of lesson 24 is Theorem 1 here, used as a tool for the geometric picture of signals and the capacity of a noisy band-limited channel.",
+    "guidingQuestions": [
+     "What are the five elements of Shannon's communication system, and which of them does a micro:bit radio link (lesson 7) implement in hardware and which in your code?",
+     "How does the sampling theorem lead to the claim that signals of bandwidth W and duration T have about 2TW degrees of freedom? Why is that only approximately true?",
+     "State the capacity formula for white Gaussian noise in your own words. Which quantities does a designer control?",
+     "What does Shannon mean by an 'ideal' system, and what does it cost in delay?",
+     "Which assumption of the paper is furthest from a micro:bit light sensor sampled at 30 Hz under mains lighting (lesson 24)?"
+    ],
+    "responsePrompt": "In 500-700 words, take one assumption of the sampling theorem (strict band-limiting or ideal sampling) and test it against lesson 24's aliasing check: quote the check's numbers, explain the failure mode, and propose a design change with its cost."
+   },
+   {
+    "citation": "Liu, C. L., & Layland, J. W. (1973). Scheduling Algorithms for Multiprogramming in a Hard-Real-Time Environment. Journal of the ACM, 20(1), 46-61. DOI 10.1145/321738.321743.",
+    "url": "https://doi.org/10.1145/321738.321743",
+    "why": "Defines the periodic task model, the critical instant and the rate-monotonic utilisation bound used in lesson 25, and contrasts fixed with deadline-driven priorities.",
+    "guidingQuestions": [
+     "List the assumptions of the task model in the paper's opening sections. Which does lesson 13's cooperative scheduler violate?",
+     "Explain the critical-instant theorem in your own words and why it reduces an infinite schedule to a finite check.",
+     "Why is rate-monotonic priority optimal among fixed-priority assignments? Sketch the exchange argument.",
+     "Where does the bound of about 70 % for large task sets come from, and is it pessimistic for harmonic periods?",
+     "What does deadline-driven scheduling achieve, and what would it cost on a micro:bit running MicroPython?"
+    ],
+    "responsePrompt": "In 500-700 words, evaluate lesson 13's scheduler against the paper: compute U and the bound, identify the violated assumption (preemption), quantify its effect with lesson 25's 24 ms blocking result, and argue whether the RM analysis is still useful for this board."
+   }
+  ],
+  "problemSet": [
+   {
+    "id": "27.1",
+    "type": "calculation",
+    "difficulty": 1,
+    "marks": 3,
+    "problem": "Using Shannon's capacity formula, compute C for W = 1 MHz and a signal-to-noise ratio of 10 dB.",
+    "solution": "10 dB is a power ratio of 10. C = W log2(1 + 10) = 1e6 x 3.459 = 3.459 Mbit/s. This is an upper bound for any coding scheme over that channel; it says nothing about a particular radio's achieved rate."
+   },
+   {
+    "id": "27.2",
+    "type": "calculation",
+    "difficulty": 1,
+    "marks": 3,
+    "problem": "Compute the Liu & Layland bound for n = 5 and its limit for large n.",
+    "solution": "5(2^{1/5} - 1) = 0.7435; the limit is ln 2 = 0.6931, the 'as low as 70 percent' of the abstract."
+   },
+   {
+    "id": "27.3",
+    "type": "short-answer",
+    "difficulty": 2,
+    "marks": 4,
+    "problem": "Explain in at most 100 words why Shannon needs the sampling theorem to count the 'dimensions' of a set of signals.",
+    "solution": "A band-limited signal is fixed by its samples every 1/(2W) s, so over duration T it is essentially a list of 2TW numbers. Signals become points in a 2TW-dimensional space, which lets Shannon use geometry (sphere packing around noise) to count how many signals can be distinguished, and hence the capacity."
+   },
+   {
+    "id": "27.4",
+    "type": "short-answer",
+    "difficulty": 2,
+    "marks": 4,
+    "problem": "Name two assumptions of Liu & Layland's task model and, for each, a micro:bit situation that breaks it.",
+    "solution": "Preemption: MicroPython's cooperative loop (lesson 13) cannot preempt a running task. Constant run time: radio retries (lesson 12) and garbage collection make execution time vary. (Also: independence - tasks share the display and radio.)"
+   },
+   {
+    "id": "27.5",
+    "type": "essay",
+    "difficulty": 3,
+    "marks": 10,
+    "problem": "Critical response on Shannon 1949 (see readings[0].responsePrompt).",
+    "solution": "Graded with the rubric. A strong answer paraphrases the theorem precisely, uses lesson 24's numbers (100 Hz at 30 Hz -> 10 Hz; std 70.7 -> 0.00 with a 3-point MA), distinguishes prevention (anti-alias filter, faster sampling) from mitigation, and prices the change (power, CPU, parts)."
+   },
+   {
+    "id": "27.6",
+    "type": "essay",
+    "difficulty": 3,
+    "marks": 10,
+    "problem": "Critical response on Liu & Layland 1973 (see readings[1].responsePrompt).",
+    "solution": "Graded with the rubric. A strong answer computes U = 0.37 and 0.7798, explains that the bound presumes preemption, uses the 24 ms blocking response, and concludes that the analysis remains useful as a first screen once a blocking term is added."
+   }
+  ],
+  "rubric": [
+   {
+    "criterion": "Accurate summary",
+    "excellent": "Claims and assumptions stated precisely in own words with page/section pointers; no copying.",
+    "adequate": "Mostly accurate; some vagueness.",
+    "inadequate": "Misstates the result or copies text.",
+    "weight": 30
+   },
+   {
+    "criterion": "Critical engagement",
+    "excellent": "Tests an assumption against a lab with that lab's numbers; considers counter-arguments.",
+    "adequate": "Identifies an assumption without testing it.",
+    "inadequate": "Restates the paper.",
+    "weight": 35
+   },
+   {
+    "criterion": "Design consequence",
+    "excellent": "Proposes a concrete change with its cost.",
+    "adequate": "Change proposed without cost.",
+    "inadequate": "No consequence drawn.",
+    "weight": 20
+   },
+   {
+    "criterion": "Citation and licence practice",
+    "excellent": "DOI cited; quotations minimal and attributed; no unlicensed copies linked.",
+    "adequate": "Citation present but incomplete.",
+    "inadequate": "No citation or reproduces text.",
+    "weight": 15
+   }
+  ],
+  "sources": [
+   {
+    "title": "C. E. Shannon, Communication in the Presence of Noise, Proc. IRE 37(1):10-21, 1949 (DOI 10.1109/JRPROC.1949.232969)",
+    "url": "https://ieeexplore.ieee.org/document/1697831"
+   },
+   {
+    "title": "Shannon 1949 reprinted as a Classic Paper, Proc. IEEE 86(2):447-457, 1998",
+    "url": "https://ieeexplore.ieee.org/document/659497"
+   },
+   {
+    "title": "C. L. Liu, J. W. Layland, Scheduling Algorithms for Multiprogramming in a Hard-Real-Time Environment, J. ACM 20(1):46-61, 1973 (DOI 10.1145/321738.321743; record via dblp)",
+    "url": "https://dblp.org/db/journals/jacm/jacm20"
+   }
+  ],
+  "seeAlso": [
+   "microbit L300 #13 Non-blocking firmware structure: the task set analysed in the response",
+   "microbit L200 #7 Radio between two boards: a real noisy channel",
+   "microbit L100 #5 Sensing temperature and light: the sampled light sensor"
+  ],
+  "next": "Course assessment pack: content/assessment/ (syllabus, midterm, final, concept inventory, capstone oral defence)",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "validation": {
+   "status": "validated-stub",
+   "how": "No lab code. Bibliographic data verified on 2026-10-30: Shannon via IEEE Xplore records (1697831; 1998 reprint 659497) and DOI listings (Scilit, INSPIRE); Liu & Layland via dblp (JACM 20(1):46-61, DOI 10.1145/321738.321743). The DOI landing pages themselves could not be fetched by the research tool (see KNOWN-GAPS). Numeric problems 27.1-27.2 are recomputed by research/l500_checks.py.",
+   "pendingCi": [
+    "None (no code beyond research/l500_checks.py)"
+   ]
+  }
+ }
+]

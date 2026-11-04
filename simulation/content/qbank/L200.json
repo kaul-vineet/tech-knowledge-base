@@ -1,0 +1,728 @@
+[
+  {
+    "id": "sim-L200-001",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The lab fits three distributions to 200 service times and ranks them by KS distance D. Why is 1.36/sqrt(n) only a reference line and not a valid 5% test here?",
+    "options": [
+      "The KS test only applies to normal distributions, not lognormal ones",
+      "The parameters were fitted to the same sample",
+      "1.36/sqrt(n) is valid only for samples of more than 1,000 points",
+      "D must be computed on log-transformed data before testing anything"
+    ],
+    "answer": 1,
+    "explanation": "The tabulated critical value assumes fully specified parameters; fitting them to the same sample makes D smaller, so the test is too lenient. D still ranks candidates fairly.",
+    "source": "Lesson 7 checkYourself"
+  },
+  {
+    "id": "sim-L200-002",
+    "level": "L200",
+    "lesson": 7,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "By Pollaczek-Khinchine the mean queue wait grows with 1 + cv^2. With the same mean, how much longer is the wait with exponential service (cv = 1) than with service times of cv = 0.5?",
+    "options": [
+      "1.60x",
+      "2.00x",
+      "1.25x",
+      "1.33x"
+    ],
+    "answer": 0,
+    "explanation": "(1 + 1) / (1 + 0.25) = 1.60. Matching only the mean is not enough: the variability (cv) of service times drives waits too.",
+    "source": "Lesson 7 checkYourself"
+  },
+  {
+    "id": "sim-L200-003",
+    "level": "L200",
+    "lesson": 7,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A lognormal fit gives mu = 1.0 and sigma = 0.5 for log(service time in minutes). What mean service time does it imply, exp(mu + sigma^2 / 2)?",
+    "options": [
+      "3.08 min",
+      "2.72 min",
+      "3.49 min",
+      "1.65 min"
+    ],
+    "answer": 0,
+    "explanation": "exp(1.0 + 0.125) = 3.08 minutes. exp(mu) = 2.72 is the median, which is below the mean for a right-skewed lognormal.",
+    "source": "Lesson 7 codeWalkthrough (fit_lognormal)"
+  },
+  {
+    "id": "sim-L200-004",
+    "level": "L200",
+    "lesson": 7,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The KS distance compares a fitted CDF with the empirical CDF just before and after each step. What does this print for four points against a Uniform(0, 1) fit?",
+    "code": "data = sorted([0.9, 0.1, 0.5, 0.4])\nn = len(data)\ncdf = lambda x: x  # fitted Uniform(0, 1)\nd = max(max(i / n - cdf(x), cdf(x) - (i - 1) / n) for i, x in enumerate(data, 1))\nprint(round(d, 3))",
+    "options": [
+      "0.15",
+      "0.1",
+      "0.25",
+      "0.4"
+    ],
+    "answer": 2,
+    "explanation": "The largest gap is at x = 0.5: the ECDF has risen to 3/4 while F(0.5) = 0.5, a gap of 0.25. Checking only one side of each step can miss the maximum.",
+    "source": "Lesson 7 codeWalkthrough (ks_statistic)"
+  },
+  {
+    "id": "sim-L200-005",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "An exponential fit matches the data's mean service time exactly, yet the simulated mean wait is about 25% too high. Why?",
+    "options": [
+      "The exponential fit always underestimates the mean service time",
+      "The simulation used a different arrival rate for each candidate",
+      "Exponential samples are slower to generate than lognormal ones",
+      "Wrong spread: exponential cv is 1, the data's is 0.73"
+    ],
+    "answer": 3,
+    "explanation": "Queue waits depend on the variability of service, not just its mean; a too-variable input inflates waits. The arrival rate was the same for every candidate.",
+    "source": "Lesson 7 checkYourself"
+  },
+  {
+    "id": "sim-L200-006",
+    "level": "L200",
+    "lesson": 7,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Fitting a lognormal to logged service times raises 'RuntimeWarning: divide by zero encountered in log'. What is the right fix?",
+    "code": "import numpy as np\n\ntimes = np.array([3.2, 0.0, 5.1, 2.7, 4.4])\nlogs = np.log(times)\nmu, sigma = logs.mean(), logs.std()",
+    "options": [
+      "Add 1 to every value before taking logs and keep the fit as is",
+      "Switch to a normal fit, since it accepts zero and negative values",
+      "Silence the warning with numpy's errstate and continue the fit",
+      "Remove or fix the zero timings; lognormal needs x > 0"
+    ],
+    "answer": 3,
+    "explanation": "log(0) is minus infinity, so zero records break the MLE. Shifting data by +1 changes the distribution you fit, and a normal can produce negative service times.",
+    "source": "Lesson 7 troubleshooting"
+  },
+  {
+    "id": "sim-L200-007",
+    "level": "L200",
+    "lesson": 7,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A normal fit to service times looks acceptable, but the simulation clips negative samples at 0 and waits come out high. What should you do?",
+    "options": [
+      "Keep the normal and resample until every draw is positive",
+      "Choose a positive family such as the lognormal instead of clipping",
+      "Keep clipping, but report the waits with a wider interval",
+      "Replace the normal with its mean as a constant service time"
+    ],
+    "answer": 1,
+    "explanation": "Clipping or resampling changes the fitted distribution (it raises the mean), so the model no longer uses what you fitted. A constant time removes the variability that creates queues.",
+    "source": "Lesson 7 troubleshooting"
+  },
+  {
+    "id": "sim-L200-008",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does a Q-Q comparison add to the KS distance when choosing an input distribution?",
+    "options": [
+      "It shows where the fit departs, especially in the tails",
+      "It gives a p-value that replaces the KS statistic altogether",
+      "It estimates the parameters more accurately than maximum likelihood",
+      "It removes the need to check what the fit does to the model"
+    ],
+    "answer": 0,
+    "explanation": "D is a single largest gap; Q-Q points show fitted versus data quantiles across the range, so tail problems (which drive long waits) are visible. It is a diagnostic, not a parameter estimator.",
+    "source": "Lesson 7 concepts"
+  },
+  {
+    "id": "sim-L200-009",
+    "level": "L200",
+    "lesson": 7,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "An agent assistant proposes 'exponential, because cv is close to 1' and later writes that 'D below 0.05 means acceptance at the 99% level'. How should the pipeline treat this?",
+    "options": [
+      "Code ranks fits and overrules it; invented numbers stay unverified",
+      "Accept the agent's pick, since it reasoned from a summary statistic",
+      "Ask the agent again until its pick matches the KS ranking result",
+      "Publish the explanation, since 0.05 and 99% are standard values"
+    ],
+    "answer": 0,
+    "explanation": "The lab lets the agent suggest and explain, but code decides by D (lognormal 0.031) and flags numbers that do not come from the evidence, such as 0.05 and 99. Re-asking does not make the agent's claims checked.",
+    "source": "Lesson 7 agentAssist"
+  },
+  {
+    "id": "sim-L200-010",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In a resource model with c desks, what happens to the busy-desk count when a desk is released and someone is waiting?",
+    "options": [
+      "It drops by one, then rises by one on the next arrival event",
+      "It drops by one and the waiting customer must re-request a desk",
+      "It rises by one because a new service has just started",
+      "Unchanged: the desk passes straight to the next in line"
+    ],
+    "answer": 3,
+    "explanation": "Release hands the desk over, so busy is unchanged and the waiting customer starts immediately. Incrementing busy on hand-over double counts and pushes utilisation above 1.",
+    "source": "Lesson 8 codeWalkthrough"
+  },
+  {
+    "id": "sim-L200-011",
+    "level": "L200",
+    "lesson": 8,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A help desk has 4 agents, arrival rate 3.0 per minute and service rate 1.0 per minute per agent. What is the Erlang C probability that a caller has to wait?",
+    "options": [
+      "0.750",
+      "0.509",
+      "0.206",
+      "0.310"
+    ],
+    "answer": 1,
+    "explanation": "Erlang C with a = 3 and c = 4 gives 0.509: half of callers wait even at 75% utilisation. Utilisation (0.750) is not the probability of waiting, because all four agents must be busy at once.",
+    "source": "Lesson 8 code (erlang_c)"
+  },
+  {
+    "id": "sim-L200-012",
+    "level": "L200",
+    "lesson": 8,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Arrivals are 4.2 per minute and each desk serves 1.0 per minute. What is the smallest number of desks with Erlang C P(wait) below 20%?",
+    "options": [
+      "5 desks",
+      "7 desks",
+      "6 desks",
+      "8 desks"
+    ],
+    "answer": 1,
+    "explanation": "Five desks are barely stable (84% load) and six still give P(wait) above 20%; seven is the first below. The lab sizes the pool the same way, one desk at a time.",
+    "source": "Lesson 8 expectedResults"
+  },
+  {
+    "id": "sim-L200-013",
+    "level": "L200",
+    "lesson": 8,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The queue length changes at the listed times and the run ends at t = 10. What time-average queue length does this print?",
+    "code": "changes = [(0.0, 0), (2.0, 2), (5.0, 1)]  # (time, queue length from that time on)\nend = 10.0\narea = 0.0\nfor (t, q), (t_next, _) in zip(changes, changes[1:] + [(end, None)]):\n    area += q * (t_next - t)\nprint(round(area / end, 3))",
+    "options": [
+      "1.0",
+      "1.5",
+      "1.1",
+      "0.75"
+    ],
+    "answer": 2,
+    "explanation": "The time-weighted area is 0x2 + 2x3 + 1x5 = 11, divided by 10 minutes gives 1.1. Averaging the three recorded lengths (1.0) ignores how long each lasted.",
+    "source": "Lesson 8 codeWalkthrough (area_line)"
+  },
+  {
+    "id": "sim-L200-014",
+    "level": "L200",
+    "lesson": 8,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A c-desk simulation reports utilisation 1.07. Which line is the bug?",
+    "code": "def on_release(t):\n    global busy\n    if line:\n        waits.append(t - line.popleft())\n        busy += 1\n        schedule(t + service(), 'release')\n    else:\n        busy -= 1",
+    "options": [
+      "busy -= 1 in the final branch: it should stay unchanged there too",
+      "line.popleft(): the next customer should be taken from the back",
+      "busy += 1 in the hand-over branch: a hand-over leaves busy unchanged",
+      "waits.append(t - ...): the wait should be measured after service"
+    ],
+    "answer": 2,
+    "explanation": "When a released desk goes straight to the next customer, the number of busy desks does not change. Adding one there over-counts busy time and utilisation exceeds 1.",
+    "source": "Lesson 8 troubleshooting"
+  },
+  {
+    "id": "sim-L200-015",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Three desks run at 80% utilisation, yet Erlang C says about 65% of patients wait. How can both be true?",
+    "options": [
+      "A patient waits only when all three desks are busy at once",
+      "Utilisation is measured per desk, so 3 x 80% = 240% of capacity",
+      "Erlang C counts patients who wait zero seconds as waiting",
+      "The 65% includes patients turned away when the line is full"
+    ],
+    "answer": 0,
+    "explanation": "Utilisation is the average share of time each desk is busy; the chance that all three are busy simultaneously at an arrival is a different quantity (0.647 here). There is no blocking in Erlang C.",
+    "source": "Lesson 8 checkYourself"
+  },
+  {
+    "id": "sim-L200-016",
+    "level": "L200",
+    "lesson": 8,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A clinic has three receptionists, each with their own line. Same staff, same arrivals: what does switching to one shared line do to the mean wait in the lab?",
+    "options": [
+      "Nothing changes, because utilisation is still 80% at every desk",
+      "It rises, because one long line moves more slowly than three short ones",
+      "It falls only if the receptionists also work faster in a pooled setup",
+      "It falls from about 3.87 to 1.11 min: no desk idles while others queue"
+    ],
+    "answer": 3,
+    "explanation": "Pooling lets any free desk take the next patient, so capacity is never wasted while people wait elsewhere. Utilisation is unchanged; waiting is not.",
+    "source": "Lesson 8 checkYourself"
+  },
+  {
+    "id": "sim-L200-017",
+    "level": "L200",
+    "lesson": 8,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "This is the Erlang B recursion for blocking with no waiting room. What does it print for offered load a = 2.4 and c = 3 desks?",
+    "code": "def erlang_b(a, c):\n    b = 1.0\n    for k in range(1, c + 1):\n        b = a * b / (k + a * b)\n    return b\n\nprint(round(erlang_b(2.4, 3), 3))",
+    "options": [
+      "0.268",
+      "0.647",
+      "0.8",
+      "0.2"
+    ],
+    "answer": 0,
+    "explanation": "B(0) = 1, then B = aB/(k + aB) for k = 1..3 gives 0.268: about 27% of arrivals are blocked. 0.647 is Erlang C, the probability of waiting when a queue is allowed.",
+    "source": "Lesson 8 buildTask"
+  },
+  {
+    "id": "sim-L200-018",
+    "level": "L200",
+    "lesson": 8,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A pharmacy's arrivals peak sharply at lunch and some customers leave if the line is long. Is Erlang C enough to size the counters?",
+    "options": [
+      "No: it assumes steady Poisson arrivals and no abandonment, so simulate",
+      "Yes: Erlang C handles peaks if you use the daily average rate",
+      "Yes: abandonment only lowers waits, so Erlang C is conservative",
+      "No: Erlang C cannot handle more than three counters at once"
+    ],
+    "answer": 0,
+    "explanation": "Erlang C is steady-state with no abandonment; peaks and leaving customers need a simulation, ideally checked against Erlang C in the degenerate case. A daily average hides the lunch peak.",
+    "source": "Lesson 8 caution"
+  },
+  {
+    "id": "sim-L200-019",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "How does an embedded Runge-Kutta pair such as Dormand-Prince estimate each step's error almost for free?",
+    "options": [
+      "It repeats every step with half the step size and compares results",
+      "The 4th-order result reuses the 5th-order stages",
+      "It compares the answer with the exact solution supplied by the user",
+      "It runs a second, implicit solver in parallel on each step"
+    ],
+    "answer": 1,
+    "explanation": "Both answers come from the same stage evaluations with different weights, so the error estimate costs no extra function calls. Step doubling would roughly triple the work.",
+    "source": "Lesson 9 checkYourself"
+  },
+  {
+    "id": "sim-L200-020",
+    "level": "L200",
+    "lesson": 9,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Coffee cools as T(t) = 20 + 70 e^(-0.05 t) C (t in minutes). When does it reach 50 C, t = ln(70/30) / 0.05?",
+    "options": [
+      "11.19 min",
+      "16.95 min",
+      "8.47 min",
+      "24.08 min"
+    ],
+    "answer": 1,
+    "explanation": "ln(70/30) / 0.05 = 16.95 minutes. 11.19 min is when it reaches 60 C (the lab's event example), not 50 C.",
+    "source": "Lesson 9 buildTask"
+  },
+  {
+    "id": "sim-L200-021",
+    "level": "L200",
+    "lesson": 9,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Explicit Euler on dv/dt = -v / tau is stable only for dt < 2 tau. With tau = 1 ms, at least how many steps does it need to cover 10 s?",
+    "options": [
+      "50 steps",
+      "500 steps",
+      "10,000 steps",
+      "5,000 steps"
+    ],
+    "answer": 3,
+    "explanation": "The largest stable step is 2 ms, so 10 s needs at least 5,000 steps however loose the tolerance. That is stiffness: stability, not accuracy, sets the step.",
+    "source": "Lesson 9 concepts"
+  },
+  {
+    "id": "sim-L200-022",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Tightening rtol from 1e-3 to 1e-6 barely changes the explicit solver's step count on the RC filter (about 3,000 steps). What does that indicate?",
+    "options": [
+      "Stiffness: stability, not accuracy, is limiting the step size",
+      "The tolerance is being ignored because atol was not also set",
+      "The solver has already reached machine precision at 1e-3",
+      "The RC filter's solution changes too fast for any solver"
+    ],
+    "answer": 0,
+    "explanation": "On a stiff problem an explicit method must keep steps around a few tau to stay stable, so accuracy settings hardly matter. An implicit method removes that limit (1,000 steps at dt = 0.01 in the lab).",
+    "source": "Lesson 9 checkYourself"
+  },
+  {
+    "id": "sim-L200-023",
+    "level": "L200",
+    "lesson": 9,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "This is the step-size update rule (error ~ h^5, safety 0.9, limits x0.2 to x10). What does it print for errors e = 32, 0.5 and 1e-12?",
+    "code": "def factor(e):\n    return round(min(10, max(0.2, 0.9 * e ** -0.2)), 2)\n\nprint([factor(e) for e in (32, 0.5, 1e-12)])",
+    "options": [
+      "[0.2, 1.15, 10]",
+      "[0.45, 0.9, 226.45]",
+      "[0.03, 1.74, 10]",
+      "[0.45, 1.03, 10]"
+    ],
+    "answer": 3,
+    "explanation": "0.9 x 32^-0.2 = 0.45 (shrink), 0.9 x 0.5^-0.2 = 1.03 (grow slightly) and a tiny error hits the x10 cap. The limits stop one lucky step from making the next one huge.",
+    "source": "Lesson 9 codeWalkthrough"
+  },
+  {
+    "id": "sim-L200-024",
+    "level": "L200",
+    "lesson": 9,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A component of size about 1e-6 has the wrong value although rtol was tightened to 1e-9 and the answer did not change. What is the likely cause?",
+    "code": "y = [350.0, 2e-6]          # temperature (K), concentration\nrtol, atol = 1e-9, 1e-3\nscale = [atol + rtol * abs(v) for v in y]",
+    "options": [
+      "rtol must be tightened further, to 1e-12 or below",
+      "The solver needs a larger maximum step to resolve it",
+      "atol is too large for that small component",
+      "The component should be rescaled after integration"
+    ],
+    "answer": 2,
+    "explanation": "The allowed error per component is atol + rtol*|y|; with atol = 1e-3 the tolerance on a 1e-6 quantity is a thousand times the quantity itself. Lower atol (or rescale the variables before solving).",
+    "source": "Lesson 9 troubleshooting"
+  },
+  {
+    "id": "sim-L200-025",
+    "level": "L200",
+    "lesson": 9,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "An adaptive explicit solver crawls through millions of steps on a chemistry model whatever tolerance you choose. What should you try?",
+    "options": [
+      "A looser tolerance, such as rtol = 1e-1",
+      "A higher-order explicit method such as RK8",
+      "An implicit method such as Radau or BDF",
+      "A fixed step equal to the output interval"
+    ],
+    "answer": 2,
+    "explanation": "Step counts that ignore the tolerance are the signature of stiffness, which implicit methods handle. A higher-order explicit method has the same stability limit problem.",
+    "source": "Lesson 9 troubleshooting"
+  },
+  {
+    "id": "sim-L200-026",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does a solver tolerance (rtol/atol) actually bound?",
+    "options": [
+      "The global error of the final answer, measured against the truth",
+      "The rounding error of each arithmetic operation in the solver",
+      "The maximum number of steps the solver is allowed to take",
+      "Each step's estimated local error, not the final global error"
+    ],
+    "answer": 3,
+    "explanation": "Local errors can accumulate, so the final error can exceed the tolerance; check against an exact case or an invariant (the lab's rabbit-fox invariant drift). Tolerances do not cap step counts.",
+    "source": "Lesson 9 caution"
+  },
+  {
+    "id": "sim-L200-027",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why delete a warm-up period before averaging a steady-state output?",
+    "options": [
+      "The start state is not typical, so early outputs bias the average",
+      "Early outputs are computed less accurately by the random generator",
+      "The first customers are always excluded from service metrics",
+      "Deleting data makes confidence intervals narrower and more precise"
+    ],
+    "answer": 0,
+    "explanation": "The lab starts with a 30-ticket backlog, so early waits are far too high (5.59 vs 4.0 min). Deleting them removes bias; the interval then covers the truth.",
+    "source": "Lesson 10 concepts"
+  },
+  {
+    "id": "sim-L200-028",
+    "level": "L200",
+    "lesson": 10,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "With 10 replications the 95% CI half-width is 0.50 min. About how many replications give a half-width of 0.20 min?",
+    "options": [
+      "about 25",
+      "about 40",
+      "about 63",
+      "about 100"
+    ],
+    "answer": 2,
+    "explanation": "Half-width scales like 1/sqrt(n), so n = 10 x (0.50/0.20)^2 = 62.5, about 63. Scaling n linearly (25) only narrows the interval by sqrt(2.5).",
+    "source": "Lesson 10 checkYourself"
+  },
+  {
+    "id": "sim-L200-029",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why not build a CI from one long run of 400,000 waits using s / sqrt(400,000)?",
+    "options": [
+      "400,000 values overflow the standard deviation in floating point",
+      "The t-distribution is not defined for that many degrees of freedom",
+      "One long run always has more bias than many short ones",
+      "Waits are autocorrelated, so that interval is far too narrow"
+    ],
+    "answer": 3,
+    "explanation": "Consecutive customers share the same queue, so their waits are strongly correlated and carry much less information than independent values. Replication means are independent, making the t-interval valid.",
+    "source": "Lesson 10 checkYourself"
+  },
+  {
+    "id": "sim-L200-030",
+    "level": "L200",
+    "lesson": 10,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The relative-precision rule stops adding replications when half / |mean| <= rel / (1 + rel). What does this print?",
+    "code": "mean, half, rel = 4.04, 0.19, 0.05\nlimit = rel / (1 + rel)\nprint(round(limit, 4), half / abs(mean) <= limit)",
+    "options": [
+      "0.05 True",
+      "0.0476 False",
+      "0.0476 True",
+      "0.05 False"
+    ],
+    "answer": 2,
+    "explanation": "rel / (1 + rel) = 0.05 / 1.05 = 0.0476, and 0.19 / 4.04 = 0.047 is below it, so the rule stops. Comparing with 0.05 directly is slightly too lenient.",
+    "source": "Lesson 10 buildTask"
+  },
+  {
+    "id": "sim-L200-031",
+    "level": "L200",
+    "lesson": 10,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Your replications' 95% CIs keep missing a known analytic answer, run after run. What are the two likely causes?",
+    "options": [
+      "Too few replications, or the confidence level is set too high",
+      "The analytic answer is approximate, or the seed is too small",
+      "Warm-up bias was not removed, or the runs are not independent",
+      "Floating-point error, or the runs were too long to converge"
+    ],
+    "answer": 2,
+    "explanation": "A CI that is systematically off means bias (start state) or a wrong error estimate (shared seeds, correlated runs). More replications narrow a biased interval around the wrong value.",
+    "source": "Lesson 10 troubleshooting"
+  },
+  {
+    "id": "sim-L200-032",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "When choosing a warm-up length, which mistake is cheaper?",
+    "options": [
+      "Deleting too little: the extra data narrows the interval",
+      "Deleting too much: you lose some data, but no bias remains",
+      "Both cost the same, so choose the rule's exact proposal",
+      "Deleting too little: bias averages out over replications"
+    ],
+    "answer": 1,
+    "explanation": "Over-deletion only wastes some runtime; under-deletion leaves bias that no number of replications removes. Bias does not average out because every replication shares it.",
+    "source": "Lesson 10 caution"
+  },
+  {
+    "id": "sim-L200-033",
+    "level": "L200",
+    "lesson": 10,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Managers ask how long patients wait on Monday mornings right after opening, when the waiting room starts empty. What should you do with the warm-up?",
+    "options": [
+      "Delete it as usual, then report the steady-state mean wait",
+      "Delete it and then add a fixed correction for opening time",
+      "Delete twice the usual amount to be safe at opening time",
+      "Keep it: the transient from opening is exactly what is being asked"
+    ],
+    "answer": 3,
+    "explanation": "Warm-up deletion targets steady-state questions. When the question is about the start-up period itself, deleting it removes the answer.",
+    "source": "Lesson 10 useWhen"
+  },
+  {
+    "id": "sim-L200-034",
+    "level": "L200",
+    "lesson": 10,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "This function reports a very narrow CI for the mean wait. What is wrong?",
+    "code": "import statistics, math\n\ndef ci(runs):\n    all_waits = [w for run in runs for w in run[170:]]\n    m = statistics.fmean(all_waits)\n    half = 1.96 * statistics.stdev(all_waits) / math.sqrt(len(all_waits))\n    return m, half",
+    "options": [
+      "It should use 2.262 instead of 1.96 for so many observations",
+      "It should divide by len(all_waits) instead of its square root",
+      "It should sort the waits before computing the standard deviation",
+      "It pools correlated waits instead of one mean per replication"
+    ],
+    "answer": 3,
+    "explanation": "Pooling correlated waits and dividing by sqrt(N) of all of them understates the error. Compute one mean per replication and build the t-interval from those.",
+    "source": "Lesson 10 codeWalkthrough (ci)"
+  },
+  {
+    "id": "sim-L200-035",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In an (s, S) policy, why must the reorder check use inventory position (on hand + on order) rather than on-hand stock?",
+    "options": [
+      "On-hand stock is only updated at the end of each simulated year",
+      "Inventory position includes lost sales, which must be replaced",
+      "On-hand rules re-order daily until the first delivery lands",
+      "On-hand stock cannot fall below s while an order is outstanding"
+    ],
+    "answer": 2,
+    "explanation": "During the lead time stock stays low, so an on-hand rule fires again and again, piling up duplicate orders. Counting what is already on order prevents that.",
+    "source": "Lesson 11 concepts"
+  },
+  {
+    "id": "sim-L200-036",
+    "level": "L200",
+    "lesson": 11,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Two policies' daily costs each have standard deviation 0.8 across replications. With CRN their correlation is 0.9. How wide is the CRN difference CI relative to the independent-runs CI (same n)?",
+    "options": [
+      "0.32",
+      "0.10",
+      "0.90",
+      "0.45"
+    ],
+    "answer": 0,
+    "explanation": "Var(X - Y) = 2 sigma^2 (1 - rho), so the width ratio is sqrt(1 - 0.9) = 0.32. CRN removes the shared noise; it does not shrink the width by the full correlation.",
+    "source": "Lesson 11 expectedResults"
+  },
+  {
+    "id": "sim-L200-037",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Two policies' cost CIs overlap heavily. Why can a paired CRN comparison still show one is cheaper?",
+    "options": [
+      "Overlap ignores the positive correlation that pairing uses",
+      "Overlap only matters when both intervals use the same confidence level",
+      "CRN runs more replications, so its intervals are always narrower",
+      "Paired comparisons use a one-sided test, which is more sensitive"
+    ],
+    "answer": 0,
+    "explanation": "Under CRN both policies see the same demand, so most noise is shared and cancels in the per-replication difference (-0.25 +/- 0.12 vs +0.03 +/- 0.44 independent). Comparing separate intervals throws that away.",
+    "source": "Lesson 11 checkYourself"
+  },
+  {
+    "id": "sim-L200-038",
+    "level": "L200",
+    "lesson": 11,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Day 4 of an (s, S) = (30, 80) policy: 22 units on hand and orders due on later days in the arriving array. What does this print?",
+    "code": "s, S, t, on_hand = 30, 80, 4, 22\narriving = [0, 0, 0, 0, 0, 0, 5, 0, 0, 0]\nposition = on_hand + sum(arriving[t + 1:])\norder = S - position if position <= s else 0\nprint(order)",
+    "options": [
+      "58",
+      "53",
+      "75",
+      "0"
+    ],
+    "answer": 1,
+    "explanation": "Position = 22 on hand + 5 still on order = 27, which is at or below s = 30, so it orders up to S: 80 - 27 = 53. Ignoring the 5 units on order would give 58.",
+    "source": "Lesson 11 codeWalkthrough (position)"
+  },
+  {
+    "id": "sim-L200-039",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the lab create one random stream per purpose (demand, lead time) instead of one shared stream?",
+    "options": [
+      "Separate streams are faster because they can be drawn in parallel",
+      "An extra draw in one policy would shift every later draw of the other",
+      "A shared stream would produce correlated demand on adjacent days",
+      "numpy limits each generator to one distribution type per stream"
+    ],
+    "answer": 1,
+    "explanation": "If policies consume the shared stream differently (e.g. one orders more often), the demand days stop lining up and CRN is lost: -0.19 +/- 0.31 with one stream vs -0.25 +/- 0.12.",
+    "source": "Lesson 11 checkYourself"
+  },
+  {
+    "id": "sim-L200-040",
+    "level": "L200",
+    "lesson": 11,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Simulated shops place an order almost every day of the year. Which line causes it?",
+    "code": "for t in range(365):\n    on_hand = max(0, on_hand + arriving[t] - demand[t])\n    if on_hand <= s:\n        arriving[t + lead[t]] += S - on_hand",
+    "options": [
+      "S - on_hand: the order size should be fixed at S, not topped up",
+      "if on_hand <= s: it should test on_hand plus the units on order",
+      "lead[t]: the lead time must be drawn after the order is placed",
+      "arriving[t + lead[t]]: deliveries should arrive on the same day"
+    ],
+    "answer": 1,
+    "explanation": "Reordering on on-hand stock ignores what is already in the pipeline, so every day of the lead time triggers another order. The fix is to compare inventory position with s.",
+    "source": "Lesson 11 troubleshooting"
+  },
+  {
+    "id": "sim-L200-041",
+    "level": "L200",
+    "lesson": 11,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Finance wants the absolute expected yearly cost of the current policy, not a comparison. Should you still use common random numbers?",
+    "options": [
+      "Yes: CRN always narrows the CI of a single policy's mean",
+      "No: plain independent replications answer that question",
+      "Yes: CRN removes the bias of a single policy's estimate",
+      "No: CRN would make that one policy's estimate biased"
+    ],
+    "answer": 1,
+    "explanation": "CRN helps differences between configurations; for one system's absolute number there is nothing to pair. CRN neither biases nor sharpens a single mean.",
+    "source": "Lesson 11 useWhen"
+  },
+  {
+    "id": "sim-L200-042",
+    "level": "L200",
+    "lesson": 11,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "Each replication draws demand from default_rng([rep, 0]) and lead times from default_rng([rep, 1]). What does this print?",
+    "code": "import numpy as np\n\ndef demand(rep, lead_draws):\n    lead = np.random.default_rng([rep, 1])\n    lead.integers(1, 6, lead_draws)  # policies may use different numbers of lead times\n    return np.random.default_rng([rep, 0]).poisson(5, 3).tolist()\n\nprint(demand(3, 0) == demand(3, 12))",
+    "options": [
+      "False",
+      "None",
+      "True",
+      "[]"
+    ],
+    "answer": 2,
+    "explanation": "Demand comes from its own stream keyed on [rep, 0], so however many lead-time numbers a policy consumes, the demand draws are identical. That is why one stream per purpose keeps CRN intact.",
+    "source": "Lesson 11 codeWalkthrough (streams)"
+  }
+]

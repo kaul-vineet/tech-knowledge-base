@@ -1,0 +1,1383 @@
+[
+  {
+    "id": "setup-workspace",
+    "number": 1,
+    "level": "Setup",
+    "title": "Set up your environment",
+    "phase": "Foundations",
+    "category": "workspace",
+    "description": "Install Python 3.12 on the Mac mini or the Windows PC, run labs with unittest, and add the optional diagram and local-model tools.",
+    "outcome": "You can run any L100 lab and its tests with one command, and know which optional tools render diagrams.",
+    "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux; Homebrew python@3.12 is 3.12.16); SQLite via sqlite3; unittest. Targets: Apple-silicon Mac mini (macOS, zsh, Homebrew) and a Windows 11 PC (PowerShell, winget). Optional, lesson 6 only: Node.js 24 LTS (brew node@24 / winget OpenJS.NodeJS.LTS 24.x) to run @mermaid-js/mermaid-cli 11.17.0 with npx; Podman (or Docker) to run structurizr/structurizr:2026.09.19 (image published for linux/amd64 and linux/arm64); Ollama to run a local model for the agent assist.",
+    "estimatedTime": "20-40 minutes (Python only: 15 minutes)",
+    "overview": [
+      "Every lab is a folder of plain Python files plus test_*.py; `python -m unittest` inside the folder runs them.",
+      "Only Python 3.12 is required; diagram renderers are optional."
+    ],
+    "prerequisites": [
+      "Python 3.12 or newer on PATH",
+      "A terminal and a text editor",
+      "Basic Python (functions, classes, imports)"
+    ],
+    "glossary": [
+      {
+        "term": "Lab folder",
+        "meaning": "labs/L100/NN-name/: runnable code, README.md with observed output, and tests."
+      },
+      {
+        "term": "Test discovery",
+        "meaning": "`python -m unittest` (= `discover`) imports test*.py from the current folder and runs methods named test*."
+      },
+      {
+        "term": "Running example",
+        "meaning": "Library Loans: members borrow and return books; every lesson grows the same service."
+      }
+    ],
+    "concepts": [
+      "One folder per lab, runnable from inside that folder.",
+      "Tests are the definition of done: each lab ships test_*.py.",
+      "Pin versions (Python 3.12, mermaid-cli 11.17.0, Structurizr image 2026.09.19) for reproducible results.",
+      "Same commands on both machines once a venv is active: only install and env-var syntax differ (zsh vs PowerShell)."
+    ],
+    "steps": [
+      {
+        "title": "Check your Python",
+        "detail": "Install Python 3.12+, create a virtual environment in the repository root and activate it. Inside the venv `python` is the same command on both machines; no packages are installed. Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+        "expected": "`python --version` prints Python 3.12.x or newer inside the venv.",
+        "ifNot": "macOS: call python3.12 explicitly. Windows: `py --list` shows installed versions; if scripts are blocked, `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.",
+        "mac": "brew install python@3.12\npython3.12 -m venv .venv && source .venv/bin/activate\npython --version",
+        "windows": "winget install -e --id Python.Python.3.12\npy -3.12 -m venv .venv; .venv\\Scripts\\Activate.ps1\n$env:PYTHONUTF8 = \"1\"   # UTF-8 output for labs that print Unicode\npython --version"
+      },
+      {
+        "title": "Run the environment check",
+        "detail": "Go to labs/L100/01-setup-workspace and run `python check_env.py`.",
+        "expected": "`platform Darwin arm64` (Mac mini) or `platform Windows AMD64` (PC), then `python ... OK`, `stdlib 7 modules OK`, `sqlite ... OK`; optional tools show `found` or `not found (ok)`.",
+        "ifNot": "If a stdlib module is MISSING, your Python build is incomplete (some distros package sqlite3 separately); install the full Python.",
+        "mac": "cd labs/L100/01-setup-workspace\npython check_env.py",
+        "windows": "cd labs\\L100\\01-setup-workspace\npython check_env.py"
+      },
+      {
+        "title": "Run the lab's tests",
+        "detail": "python -m unittest -v",
+        "expected": "Ran 6 tests ... OK",
+        "ifNot": "Be inside the lab folder; discovery imports from the current directory.",
+        "mac": "python -m unittest -v",
+        "windows": "python -m unittest -v"
+      },
+      {
+        "title": "Run all labs at once",
+        "detail": "python run_all_labs.py (once the other lab folders exist)",
+        "expected": "One OK line per lab, then ALL LABS PASSED.",
+        "ifNot": "Open the failing lab and run `python -m unittest -v` there.",
+        "mac": "python run_all_labs.py",
+        "windows": "python run_all_labs.py"
+      },
+      {
+        "title": "Optional: note diagram tools",
+        "detail": "Read the 'Optional tools' table in the README; install only to render lesson 6 locally (steps 6-7).",
+        "expected": "You know Structurizr Lite is end-of-life and `structurizr/structurizr ... local` replaces it.",
+        "ifNot": "Skip; CI renders diagrams.",
+        "mac": "node --version; podman --version; ollama --version   # 'command not found' is fine",
+        "windows": "node --version; podman --version; ollama --version   # 'not recognized' is fine"
+      },
+      {
+        "title": "Optional: Node.js + Podman for diagrams",
+        "detail": "Install Node.js 24 LTS (for `npx` mermaid-cli) and Podman, then create and start a Podman machine (a small Linux VM; on Windows it is backed by WSL 2, which must be installed first). Docker Desktop works with the same commands.",
+        "expected": "`node --version` prints v24.x; `podman info` prints host details without an error.",
+        "ifNot": "Windows: run `wsl --install` in an administrator PowerShell, reboot, then `podman machine init`. macOS: Podman recommends its pkg installer; Homebrew works but is community-maintained.",
+        "mac": "brew install node@24\nexport PATH=\"$(brew --prefix node@24)/bin:$PATH\"   # node@24 is keg-only\nbrew install podman\npodman machine init\npodman machine start\npodman info",
+        "windows": "winget install -e --id OpenJS.NodeJS.LTS --version 24.19.0   # pinned: the LTS id moves to Node 26 once 26 becomes LTS\nwinget install -e --id RedHat.Podman   # needs WSL 2\npodman machine init\npodman machine start\npodman info"
+      },
+      {
+        "title": "Optional: a local model for the agent assist",
+        "detail": "Install Ollama, start its server, pull a small model and point the lab client at it with LOCAL_MODEL_URL and LOCAL_MODEL. Lesson 6 runs without this (it uses a deterministic fake server); the real model is only for `agent_assist.py --real`.",
+        "expected": "`ollama list` shows qwen2.5:1.5b (986 MB); the API answers on http://localhost:11434/v1.",
+        "ifNot": "Skip it. Never point LOCAL_MODEL_URL at a remote service with company data.",
+        "mac": "brew install ollama\nbrew services start ollama   # the server must run before ollama pull\nollama pull qwen2.5:1.5b\nexport LOCAL_MODEL_URL=http://localhost:11434/v1\nexport LOCAL_MODEL=qwen2.5:1.5b",
+        "windows": "# install OllamaSetup.exe from ollama.com/download (winget Ollama.Ollama lags behind)\nollama pull qwen2.5:1.5b\n$env:LOCAL_MODEL_URL=\"http://localhost:11434/v1\"\n$env:LOCAL_MODEL=\"qwen2.5:1.5b\""
+      }
+    ],
+    "code": "\"\"\"Lab 01 - check that the workspace can run every L100 lab (stdlib only).\"\"\"\nimport importlib\nimport platform\nimport shutil\nimport sqlite3\nimport sys\n\nMIN_PYTHON = (3, 12)\n# Every L100 lab uses only these standard-library modules.\nREQUIRED_MODULES = [\"ast\", \"dataclasses\", \"http.server\", \"json\", \"sqlite3\",\n                    \"unittest\", \"urllib.request\"]\n# Optional tools: only needed to render diagrams (lesson 6). Missing is OK.\n# shutil.which() also finds Windows launchers such as npx.cmd (it honours PATHEXT).\nOPTIONAL_TOOLS = {\"node\": \"Node.js (for mermaid-cli)\", \"npx\": \"runs mermaid-cli without a global install\",\n                  \"podman\": \"Podman (for Structurizr; open source)\", \"docker\": \"Docker (same role as podman)\",\n                  \"ollama\": \"local model server (lesson 6 agent assist; optional)\"}\n\n\n# fail fast: refuse to continue on an interpreter older than the labs target\ndef check_python(version=sys.version_info):\n    return tuple(version[:2]) >= MIN_PYTHON\n\n\ndef missing_modules(names=REQUIRED_MODULES):\n    missing = []\n    for name in names:\n        try:\n            importlib.import_module(name)\n        except ImportError:\n            missing.append(name)\n    return missing\n\n\ndef main():\n    ok = check_python()\n    # same check on macOS (arm64), Windows (AMD64) and Linux: only the platform line differs\n    print(f\"platform {platform.system()} {platform.machine()}\")\n    print(f\"python   {sys.version.split()[0]:<10} {'OK' if ok else 'TOO OLD (need 3.12+)'}\")\n    missing = missing_modules()\n    print(f\"stdlib   {len(REQUIRED_MODULES)} modules  {'OK' if not missing else 'MISSING ' + ', '.join(missing)}\")\n    print(f\"sqlite   {sqlite3.sqlite_version:<10} OK\")\n    for tool, label in OPTIONAL_TOOLS.items():\n        found = shutil.which(tool)\n        print(f\"optional {tool:<10} {'found' if found else 'not found (ok)'} - {label}\")\n    # exit code is the contract with CI: 0 = workspace ready, 1 = fix it first\n    return 0 if ok and not missing else 1\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/01-setup-workspace/check_env.py",
+        "purpose": "Environment check"
+      },
+      {
+        "path": "labs/L100/01-setup-workspace/test_check_env.py",
+        "purpose": "unittest suite"
+      },
+      {
+        "path": "labs/L100/01-setup-workspace/run_all_labs.py",
+        "purpose": "Runs every lab's tests"
+      },
+      {
+        "path": "labs/L100/01-setup-workspace/try_it.py",
+        "purpose": "tryIt experiments"
+      },
+      {
+        "path": "labs/L100/01-setup-workspace/README.md",
+        "purpose": "Run commands and observed output"
+      }
+    ],
+    "expectedResults": [
+      "check_env.py exits 0 with OK for python, stdlib and sqlite and names your platform",
+      "Ran 6 tests ... OK",
+      "run_all_labs.py prints ALL LABS PASSED"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "6 tests pass"
+      },
+      {
+        "action": "check_python((3, 11, 9))",
+        "expected": "False (too old)"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "ModuleNotFoundError: check_env",
+        "action": "Run the tests from inside the lab folder."
+      },
+      {
+        "symptom": "Windows: `Activate.ps1 cannot be loaded because running scripts is disabled`",
+        "action": "Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or call `.venv\\Scripts\\python.exe` directly. More rows: lab README."
+      }
+    ],
+    "equivalents": [
+      "Same idea with pytest: `pytest` also discovers test_*.py (not installed here, so labs use unittest).",
+      "Java/.NET/Node: `mvn test` / `dotnet test` / `npm test` as the one test command per project.",
+      "Diagram tooling: Structurizr DSL ≈ C4-PlantUML ≈ Mermaid C4 rendered with mermaid-cli.",
+      "Containers: Podman / Podman Desktop (macOS + Windows), Colima (macOS) or Rancher Desktop run the same images; Docker Desktop is the equivalent with `docker` in place of `podman`."
+    ],
+    "checkpoint": "PASS if, on your Mac mini or Windows PC, `python check_env.py` exits 0 and `python -m unittest -v` reports OK in 01-setup-workspace.",
+    "checkYourself": [
+      {
+        "q": "Why must you `cd` into the lab folder before running the tests?",
+        "a": "Discovery imports `test*.py` from the current folder, and the tests import sibling modules."
+      },
+      {
+        "q": "How many tests does lab 02 run, and why?",
+        "a": "12 = 5 rule tests × 2 repositories + 1 HTTP test + 1 dependency-direction test."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Rename test_check_env.py to checks_env_test.py, then run `python -m unittest`.",
+        "predict": "Will discovery still find the 6 tests?",
+        "expected": "Exit 5, `NO TESTS RAN`: `test*.py` no longer matches."
+      },
+      {
+        "task": "Set `MIN_PYTHON = (3, 99)` in check_env.py and call `main()`.",
+        "predict": "What does `main()` return?",
+        "expected": "Returns 1; prints `python   3.12.15    TOO OLD (need 3.12+)` (the hint text is hard-coded)."
+      }
+    ],
+    "inRealSystems": "CI systems (GitHub Actions, Jenkins, Buildbot) run the same `python -m unittest` on every push; pytest keeps the same discovery and test-case ideas.",
+    "useWhen": "Use the stdlib toolchain for zero-install labs and CI; add pytest when you need fixtures, plugins or parallel runs.",
+    "next": "L200 lesson 11 – Testing pyramid: unit, integration and end-to-end layers, measured in CI",
+    "sources": [
+      {
+        "title": "unittest — Unit testing framework (Python docs)",
+        "url": "https://docs.python.org/3/library/unittest.html"
+      },
+      {
+        "title": "Status of Python versions (Python Developer's Guide)",
+        "url": "https://devguide.python.org/versions/"
+      },
+      {
+        "title": "mermaid-js/mermaid-cli (GitHub)",
+        "url": "https://github.com/mermaid-js/mermaid-cli"
+      },
+      {
+        "title": "Structurizr local command",
+        "url": "https://docs.structurizr.com/local"
+      },
+      {
+        "title": "venv – activation per shell and Windows execution policy (Python 3.12 docs)",
+        "url": "https://docs.python.org/3.12/library/venv.html"
+      },
+      {
+        "title": "Using Python on Windows – py launcher (Python 3.12 docs)",
+        "url": "https://docs.python.org/3.12/using/windows.html"
+      },
+      {
+        "title": "Homebrew formula python@3.12",
+        "url": "https://formulae.brew.sh/formula/python@3.12"
+      },
+      {
+        "title": "winget manifests – Python.Python.3.12 (microsoft/winget-pkgs)",
+        "url": "https://github.com/microsoft/winget-pkgs/tree/master/manifests/p/Python/Python/3/12"
+      },
+      {
+        "title": "Podman installation (macOS, Windows)",
+        "url": "https://podman.io/docs/installation"
+      },
+      {
+        "title": "Podman for Windows (WSL 2 / Hyper-V, volume mounts)",
+        "url": "https://github.com/containers/podman/blob/main/docs/tutorials/podman-for-windows.md"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran check_env.py, `python -m unittest -v` (5 tests OK) and run_all_labs.py (6/6 labs OK) on Python 3.12.15 / Linux, 2026-10-28; output pasted in README. Rebalance 2026-10-28: concept comments added to lab code, all tests re-run (OK); both tryIt items executed with `python try_it.py` and `expected` pasted from the observed output. Platform pass 2026-10-28: lab code made cross-platform (pathlib, explicit UTF-8 for text files and subprocess output, sys.executable, 127.0.0.1); all tests and try_it.py re-run on Linux (OK). macOS (arm64) and Windows are `expected` until the CI matrix (ubuntu/macos/windows-latest) runs. Test count now: 6 tests OK.",
+      "pendingCi": [
+        "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+        "zsh / PowerShell install commands in steps 1, 6 and 7 (Homebrew, winget, Podman, Ollama)"
+      ]
+    },
+    "conceptNote": "content/concepts/01-setup-workspace.md",
+    "conceptSummary": "One interpreter (Python 3.12), one test runner (unittest discovery from inside each lab folder) and one folder layout make every lab a copy-run-observe loop. Diagram renderers (mermaid-cli, Structurizr local) are optional extras that CI runs for you.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "layered-structure",
+    "number": 2,
+    "level": "L100",
+    "title": "Layered structure: presentation, service, repository",
+    "phase": "Structure",
+    "category": "layering",
+    "description": "Split Library Loans into HTTP handler, business rules and storage; swap in-memory storage for SQLite.",
+    "outcome": "You can separate HTTP, rules and storage so that changing the database touches only the repository and one wiring line.",
+    "environment": "Python 3.12 (validated on 3.12.15) standard library only; SQLite 3.44.0 via sqlite3; unittest",
+    "estimatedTime": "25-30 minutes",
+    "overview": [
+      "Three layers, dependencies pointing down: handler → service → repository.",
+      "The same rule tests run against both repositories, proving storage is swappable."
+    ],
+    "prerequisites": [
+      "Lesson 1 done",
+      "Know what an HTTP status code is"
+    ],
+    "glossary": [
+      {
+        "term": "Presentation layer",
+        "meaning": "Code that speaks HTTP/JSON (handler.py); no business rules."
+      },
+      {
+        "term": "Service layer",
+        "meaning": "Business rules (service.py); no HTTP, no SQL."
+      },
+      {
+        "term": "Repository",
+        "meaning": "Object hiding how data is stored behind methods like add/get/active."
+      },
+      {
+        "term": "Wiring (composition root)",
+        "meaning": "The one place that picks concrete classes (build_service in app.py)."
+      }
+    ],
+    "concepts": [
+      "Dependencies go top-down: presentation → domain/service → data source.",
+      "Layers are logical, not physical tiers: all three run in one process here.",
+      "Swapping storage = another repository class + one wiring change.",
+      "Bind SQL values with ? placeholders, never string formatting."
+    ],
+    "steps": [
+      {
+        "title": "Run with in-memory storage",
+        "detail": "cd labs/L100/02-layered-structure && python app.py --storage memory",
+        "expected": "201 first borrow, 409 same book again, 200 on return, 404 for loan 99.",
+        "ifNot": "Check Python 3.12+ and that you are in the lab folder."
+      },
+      {
+        "title": "Run with SQLite storage",
+        "detail": "python app.py --storage sqlite",
+        "expected": "Exactly the same four result lines.",
+        "ifNot": "A thread error means check_same_thread=False was removed from SqliteLoanRepository."
+      },
+      {
+        "title": "See what changed",
+        "detail": "Open app.py build_service(): only the repository class differs; service.py and handler.py are shared.",
+        "expected": "You can point to the single line that selects storage.",
+        "ifNot": "Search app.py for `SqliteLoanRepository`."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v",
+        "expected": "Ran 12 tests ... OK (5 rule tests × 2 repositories, 1 HTTP test, 1 dependency-direction test).",
+        "ifNot": "If only SQLite rule tests fail, the repositories return different values; compare get()/active()."
+      },
+      {
+        "title": "Break the rule on purpose",
+        "detail": "Add `import sqlite3` at the top of service.py, run the tests, then remove it.",
+        "expected": "test_service_has_no_infrastructure_imports fails while the import is there.",
+        "ifNot": "Edit service.py in this lab folder."
+      }
+    ],
+    "code": "\"\"\"Repository layer: the ONLY code that knows how loans are stored.\n\nBoth classes expose the same four methods, so the service layer cannot tell them apart.\n\"\"\"\nimport sqlite3\nfrom dataclasses import dataclass\n\n\n@dataclass\nclass Loan:\n    id: int\n    book_id: str\n    member_id: str\n    returned: bool = False\n\n\n# repository pattern: same four methods (add/get/active/mark_returned) => storage is swappable\nclass InMemoryLoanRepository:\n    def __init__(self):\n        self._loans: dict[int, Loan] = {}\n\n    def add(self, book_id, member_id):\n        loan = Loan(len(self._loans) + 1, book_id, member_id)\n        self._loans[loan.id] = loan\n        return loan\n\n    def get(self, loan_id):\n        return self._loans.get(loan_id)\n\n    def active(self):\n        return [loan for loan in self._loans.values() if not loan.returned]\n\n    def mark_returned(self, loan_id):\n        # returning keeps the row, so the next new loan id keeps counting up\n        self._loans[loan_id].returned = True\n\n\nclass SqliteLoanRepository:\n    def __init__(self, path=\":memory:\"):\n        # check_same_thread=False: the HTTP server calls us from its own thread.\n        self._db = sqlite3.connect(path, check_same_thread=False)\n        self._db.execute(\"CREATE TABLE IF NOT EXISTS loans (id INTEGER PRIMARY KEY, \"\n                         \"book_id TEXT NOT NULL, member_id TEXT NOT NULL, \"\n                         \"returned INTEGER NOT NULL DEFAULT 0)\")\n        self._db.commit()\n\n    def add(self, book_id, member_id):\n        # parameter binding: ? placeholders send values apart from the SQL text (no SQL injection)\n        cur = self._db.execute(\"INSERT INTO loans (book_id, member_id) VALUES (?, ?)\",\n                               (book_id, member_id))\n        self._db.commit()\n        return Loan(cur.lastrowid, book_id, member_id)\n\n    def get(self, loan_id):\n        row = self._db.execute(\"SELECT id, book_id, member_id, returned FROM loans \"\n                               \"WHERE id = ?\", (loan_id,)).fetchone()\n        return Loan(row[0], row[1], row[2], bool(row[3])) if row else None\n\n    def active(self):\n        rows = self._db.execute(\"SELECT id, book_id, member_id FROM loans WHERE returned = 0\")\n        return [Loan(r[0], r[1], r[2]) for r in rows.fetchall()]\n\n    def mark_returned(self, loan_id):\n        self._db.execute(\"UPDATE loans SET returned = 1 WHERE id = ?\", (loan_id,))\n        self._db.commit()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/02-layered-structure/handler.py",
+        "purpose": "Presentation layer (http.server handler)"
+      },
+      {
+        "path": "labs/L100/02-layered-structure/service.py",
+        "purpose": "Service layer (loan rules)"
+      },
+      {
+        "path": "labs/L100/02-layered-structure/repository.py",
+        "purpose": "Repository layer: in-memory and SQLite"
+      },
+      {
+        "path": "labs/L100/02-layered-structure/app.py",
+        "purpose": "Wiring + demo client"
+      },
+      {
+        "path": "labs/L100/02-layered-structure/test_layers.py",
+        "purpose": "Tests"
+      },
+      {
+        "path": "labs/L100/02-layered-structure/try_it.py",
+        "purpose": "tryIt experiments"
+      },
+      {
+        "path": "labs/L100/02-layered-structure/README.md",
+        "purpose": "Run commands and observed output"
+      }
+    ],
+    "expectedResults": [
+      "Memory and SQLite demo outputs are identical",
+      "Ran 12 tests ... OK"
+    ],
+    "testCases": [
+      {
+        "action": "Borrow b1 twice",
+        "expected": "BookAlreadyOnLoan / HTTP 409"
+      },
+      {
+        "action": "Member exceeds the loan limit",
+        "expected": "LoanLimitReached"
+      },
+      {
+        "action": "Scan service.py imports",
+        "expected": "No sqlite3, http.server, handler or repository import"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "ProgrammingError: SQLite objects created in a thread can only be used in that same thread",
+        "action": "Open the connection with check_same_thread=False (as in the lab) and keep writes serialized."
+      },
+      {
+        "symptom": "A rule test fails only for SQLite",
+        "action": "Make both repositories return equal Loan values (e.g. returned as bool)."
+      }
+    ],
+    "equivalents": [
+      "Spring (Java): @RestController → @Service → Spring Data repository interface.",
+      "ASP.NET Core: controller/minimal API → service class → repository or EF Core DbContext via DI.",
+      "Express (Node): route handler → service module → data-access module.",
+      "Variation: Hexagonal architecture (ports & adapters) makes the domain independent of its data source via a mapper/interface."
+    ],
+    "caution": "check_same_thread=False lets another thread use the connection; you must then serialize writes yourself. The lab uses the single-threaded HTTPServer.",
+    "checkpoint": "PASS if both storage modes print identical results and `python -m unittest -v` reports 12 tests OK.",
+    "checkYourself": [
+      {
+        "q": "Which file changes when you swap in-memory storage for SQLite?",
+        "a": "Only `app.py` (`build_service`); the new repository class is additive."
+      },
+      {
+        "q": "Why does the service raise `LoanLimitReached` instead of returning 409?",
+        "a": "HTTP is a presentation concern; the handler maps the error, and a CLI could map it differently."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Set `max_active_per_member=1`; borrow b1 then b2 over HTTP, then call `service.borrow` directly.",
+        "predict": "What do HTTP and the direct call return?",
+        "expected": "HTTP `409 member m1 already has 1 loans`; direct call raises `LoanLimitReached` with the same text. Only the handler adds the status."
+      },
+      {
+        "task": "On both repositories: borrow b1–b3, return loan 2, borrow b4.",
+        "predict": "Same loan id for b4?",
+        "expected": "Yes, both give loan id 4."
+      }
+    ],
+    "inRealSystems": "Spring (`@RestController` → `@Service` → repository), ASP.NET Core (controller → service → `DbContext`) and Express (route → service → data module) use the same three layers.",
+    "useWhen": "Use layers when a service mixes rules, I/O and storage; skip them for a 20-line script, and split large apps by module first (lesson 3).",
+    "next": "L200 lesson 7 – Hexagonal architecture: ports and adapters",
+    "sources": [
+      {
+        "title": "Presentation Domain Data Layering – Martin Fowler (background)",
+        "url": "https://martinfowler.com/bliki/PresentationDomainDataLayering.html"
+      },
+      {
+        "title": "sqlite3 — DB-API 2.0 interface for SQLite (Python 3.12 docs)",
+        "url": "https://docs.python.org/3.12/library/sqlite3.html"
+      },
+      {
+        "title": "http.server — HTTP servers (Python 3.12 docs)",
+        "url": "https://docs.python.org/3.12/library/http.server.html"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python app.py --storage memory`, `--storage sqlite` and `python -m unittest -v` (12 tests OK) on Python 3.12.15 / SQLite 3.44.0, 2026-10-28; output pasted in README. Rebalance 2026-10-28: concept comments added to lab code, all tests re-run (OK); both tryIt items executed with `python try_it.py` and `expected` pasted from the observed output. Platform pass 2026-10-28: lab code made cross-platform (pathlib, explicit UTF-8 for text files and subprocess output, sys.executable, 127.0.0.1); all tests and try_it.py re-run on Linux (OK). macOS (arm64) and Windows are `expected` until the CI matrix (ubuntu/macos/windows-latest) runs. Test count now: 12 tests OK.",
+      "pendingCi": [
+        "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)"
+      ]
+    },
+    "conceptNote": "content/concepts/02-layered-structure.md",
+    "conceptSummary": "Presentation, service and repository layers give HTTP, business rules and storage one home each, with dependencies pointing down. Because the service only talks to a repository interface, swapping in-memory storage for SQLite changes one wiring line.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "modular-monolith-boundaries",
+    "number": 3,
+    "level": "L100",
+    "title": "Modular monolith boundaries with a fitness function",
+    "phase": "Structure",
+    "category": "modularity",
+    "description": "Two modules (catalog, loans) with public interfaces, plus a check that fails on imports of another module's internals.",
+    "outcome": "You can define module public interfaces and enforce them automatically in tests and CI.",
+    "environment": "Python 3.12 (validated on 3.12.15) standard library only; SQLite 3.44.0 via sqlite3; unittest (ast module for import scanning)",
+    "estimatedTime": "25-30 minutes",
+    "overview": [
+      "Each module exposes a public interface (__init__.py) and hides code under internal/.",
+      "check_boundaries.py parses imports with ast and fails if one module reaches into another's internal package."
+    ],
+    "prerequisites": [
+      "Lesson 2 done",
+      "Know Python packages and relative imports"
+    ],
+    "glossary": [
+      {
+        "term": "Modular monolith",
+        "meaning": "One deployable unit split into modules that talk through explicit interfaces."
+      },
+      {
+        "term": "Public interface",
+        "meaning": "What other modules may use (here: names in library/<module>/__init__.py)."
+      },
+      {
+        "term": "Internal package",
+        "meaning": "library/<module>/internal/: only the owning module may import it."
+      },
+      {
+        "term": "Fitness function",
+        "meaning": "An automated check (test or CI step) that guards an architectural rule."
+      }
+    ],
+    "concepts": [
+      "Modules talk only through public interfaces.",
+      "Python cannot hide public names, so the rule is enforced by a check, not the compiler.",
+      "The check runs as a unit test and as a CI step (exit code 1 on violation).",
+      "Modules are domain-oriented (vertical); each can be layered inside."
+    ],
+    "steps": [
+      {
+        "title": "Run the boundary check",
+        "detail": "cd labs/L100/03-modular-monolith && python check_boundaries.py",
+        "expected": "checked 7 files: 0 boundary violation(s) (exit code 0)",
+        "ifNot": "Run from the lab folder so library/ is found.",
+        "mac": "cd labs/L100/03-modular-monolith\npython check_boundaries.py",
+        "windows": "cd labs\\L100\\03-modular-monolith\npython check_boundaries.py"
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v",
+        "expected": "Ran 8 tests ... OK (includes 2 cross-platform path tests)",
+        "ifNot": "ModuleNotFoundError: library → you are not in the lab folder.",
+        "mac": "python -m unittest -v",
+        "windows": "python -m unittest -v"
+      },
+      {
+        "title": "Add a forbidden shortcut",
+        "detail": "Create library/loans/shortcut.py containing `from library.catalog.internal.store import BOOKS`, then run python check_boundaries.py.",
+        "expected": "VIOLATION library/loans/shortcut.py:1 'loans' imports internals of 'catalog' ... and exit code 1 (forward slashes on every OS)",
+        "ifNot": "Check the file is inside library/loans/.",
+        "mac": "printf 'from library.catalog.internal.store import BOOKS\\n' > library/loans/shortcut.py\npython check_boundaries.py; echo \"exit=$?\"",
+        "windows": "Set-Content library\\loans\\shortcut.py 'from library.catalog.internal.store import BOOKS'\npython check_boundaries.py; \"exit=$LASTEXITCODE\""
+      },
+      {
+        "title": "Fix it",
+        "detail": "Delete library/loans/shortcut.py and run python check_boundaries.py again.",
+        "expected": "0 boundary violation(s) again.",
+        "ifNot": "Delete any other files you added under library/.",
+        "mac": "rm library/loans/shortcut.py\npython check_boundaries.py",
+        "windows": "Remove-Item library\\loans\\shortcut.py\npython check_boundaries.py"
+      },
+      {
+        "title": "Read how loans uses catalog",
+        "detail": "Open library/loans/internal/rules.py: `from library import catalog`, then is_available / set_on_loan.",
+        "expected": "No import of catalog.internal anywhere in loans.",
+        "ifNot": "Run the check again; it prints the offending file and line."
+      }
+    ],
+    "code": "\"\"\"Fitness function: fail if one module imports another module's internals.\n\nRule: code in library/<A>/ may import library.<B> (public interface) but never\nlibrary.<B>.internal... when A != B. Run: python check_boundaries.py\n\"\"\"\nimport ast\nimport pathlib\nimport sys\n\nROOT_PACKAGE = \"library\"\nMODULES = {\"catalog\", \"loans\"}\n\n\ndef imported_targets(tree, package):\n    \"\"\"Yield (line, [dotted names]) for every import statement, resolving relative imports.\"\"\"\n    for node in ast.walk(tree):\n        if isinstance(node, ast.Import):\n            yield node.lineno, [alias.name for alias in node.names]\n        elif isinstance(node, ast.ImportFrom):\n            # relative import: level counts the dots, so go up (level - 1) packages from this file's package\n            parts = package.split(\".\")\n            base = parts[:len(parts) - node.level + 1] if node.level else []\n            module = \".\".join(base + ([node.module] if node.module else []))\n            # `from library.catalog import internal` imports a sub-module too\n            yield node.lineno, [module] + [f\"{module}.{alias.name}\" for alias in node.names]\n\n\ndef violations(source, package, label=\"<source>\"):\n    owner = package.split(\".\")[1] if \".\" in package else None\n    found = []\n    for line, targets in imported_targets(ast.parse(source), package):\n        for target in targets:\n            parts = target.split(\".\")\n            # module boundary: another module's internal/ package is off limits; its __init__ is the public interface\n            if (len(parts) >= 3 and parts[0] == ROOT_PACKAGE and parts[1] in MODULES\n                    and parts[1] != owner and parts[2] == \"internal\"):\n                found.append(f\"{label}:{line} '{owner}' imports internals of '{parts[1]}' ({target})\")\n                break  # one report per import statement\n    return found\n\n\ndef package_of(relative_path):\n    \"\"\"relative_path is a Path/PurePath; .parts already split it on / (macOS) or \\\\ (Windows).\"\"\"\n    # path separators: never split str(path) on \"/\" - on Windows it holds backslashes\n    return \".\".join(relative_path.parts[:-1])\n\n\ndef scan(base_dir):\n    problems, files = [], sorted((base_dir / ROOT_PACKAGE).rglob(\"*.py\"))\n    for path in files:\n        relative = path.relative_to(base_dir)\n        # library/loans/internal/rules.py -> library.loans.internal; as_posix() keeps reports identical on every OS\n        problems += violations(path.read_text(encoding=\"utf-8\"), package_of(relative), relative.as_posix())\n    return len(files), problems\n\n\nif __name__ == \"__main__\":\n    count, problems = scan(pathlib.Path(__file__).parent)\n    for problem in problems:\n        print(\"VIOLATION\", problem)\n    print(f\"checked {count} files: {len(problems)} boundary violation(s)\")\n    # fitness function: an automated pass/fail check that CI runs on every change\n    sys.exit(1 if problems else 0)\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/03-modular-monolith/library/catalog/__init__.py",
+        "purpose": "Catalog public interface"
+      },
+      {
+        "path": "labs/L100/03-modular-monolith/library/catalog/internal/store.py",
+        "purpose": "Catalog internals"
+      },
+      {
+        "path": "labs/L100/03-modular-monolith/library/loans/__init__.py",
+        "purpose": "Loans public interface"
+      },
+      {
+        "path": "labs/L100/03-modular-monolith/library/loans/internal/rules.py",
+        "purpose": "Loans internals using catalog's public interface"
+      },
+      {
+        "path": "labs/L100/03-modular-monolith/check_boundaries.py",
+        "purpose": "Fitness function"
+      },
+      {
+        "path": "labs/L100/03-modular-monolith/test_boundaries.py",
+        "purpose": "Tests"
+      },
+      {
+        "path": "labs/L100/03-modular-monolith/try_it.py",
+        "purpose": "tryIt experiments"
+      },
+      {
+        "path": "labs/L100/03-modular-monolith/README.md",
+        "purpose": "Run commands and observed output"
+      }
+    ],
+    "expectedResults": [
+      "0 boundary violations on the real code",
+      "Ran 8 tests ... OK",
+      "1 violation and exit 1 with the temporary shortcut.py"
+    ],
+    "testCases": [
+      {
+        "action": "violations('from library.catalog.internal.store import BOOKS', 'library.loans.internal')",
+        "expected": "1 violation"
+      },
+      {
+        "action": "violations('from ..catalog.internal import store', 'library.loans')",
+        "expected": "1 violation (relative import resolved)"
+      },
+      {
+        "action": "violations('from library import catalog', 'library.loans')",
+        "expected": "[] (public interface allowed)"
+      },
+      {
+        "action": "package_of(PureWindowsPath(r'library\\loans\\internal\\rules.py'))",
+        "expected": "'library.loans.internal' (same as the POSIX path)"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "ModuleNotFoundError: library",
+        "action": "Run from 03-modular-monolith so library/ is importable."
+      },
+      {
+        "symptom": "importlib.import_module('library.catalog.internal...') is not reported",
+        "action": "The check reads static import statements only; keep imports static. Windows path row: lab README."
+      }
+    ],
+    "equivalents": [
+      "Python: import-linter contracts (forbidden, independence, layers), run with `lint-imports`.",
+      "Java: ArchUnit rules inside JUnit tests; Spring Modulith `ApplicationModules.of(App.class).verify()` treats sub-packages as internal.",
+      "JavaScript/TypeScript: dependency-cruiser `forbidden` rules.",
+      ".NET: the ArchUnit port for .NET/C# linked from archunit.org."
+    ],
+    "checkpoint": "PASS if check_boundaries.py exits 0 on the real code and exits 1 when shortcut.py imports catalog internals.",
+    "checkYourself": [
+      {
+        "q": "Which import is allowed in `library/loans`: `from library import catalog` or `from library.catalog.internal import store`?",
+        "a": "`from library import catalog`; the other reaches into catalog internals."
+      },
+      {
+        "q": "Why is `check_boundaries.py` called a fitness function?",
+        "a": "It is an automated, objective check that the modular structure still holds, run on every change."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Break the boundary: add `library/loans/shortcut.py` with `from ..catalog.internal import store`; run the check and the tests.",
+        "predict": "Is a relative import caught?",
+        "expected": "Yes: `VIOLATION library/loans/shortcut.py:1 'loans' imports internals of 'catalog'`, exit 1; `test_real_code_has_no_violations` FAILS."
+      },
+      {
+        "task": "Use `importlib.import_module(\"library.catalog.internal.store\")` instead.",
+        "predict": "Caught?",
+        "expected": "No: `0 boundary violation(s)`, exit 0. Keep imports static."
+      }
+    ],
+    "inRealSystems": "import-linter (Python `forbidden`/`independence`/`layers` contracts), Spring Modulith `verify()`, ArchUnit and dependency-cruiser enforce module boundaries as tests.",
+    "useWhen": "Enforce boundaries when several people change one codebase or you may split out a service later; postpone while the boundaries are still unknown.",
+    "next": "L200 lesson 8 – Aggregates and invariants: consistency boundaries inside a module",
+    "sources": [
+      {
+        "title": "Import Linter documentation",
+        "url": "https://import-linter.readthedocs.io/en/stable/"
+      },
+      {
+        "title": "ArchUnit – Unit test your Java architecture",
+        "url": "https://www.archunit.org/"
+      },
+      {
+        "title": "sverweij/dependency-cruiser (GitHub)",
+        "url": "https://github.com/sverweij/dependency-cruiser"
+      },
+      {
+        "title": "ast — Abstract syntax trees (Python docs)",
+        "url": "https://docs.python.org/3/library/ast.html"
+      },
+      {
+        "title": "Spring Modulith – Fundamentals",
+        "url": "https://docs.spring.io/spring-modulith/reference/fundamentals.html"
+      },
+      {
+        "title": "Building Evolutionary Architectures – fitness functions (Ford, Parsons, Kua; background)",
+        "url": "https://evolutionaryarchitecture.com/"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran check_boundaries.py (0 violations, exit 0), `python -m unittest -v` (6 tests OK), then created library/loans/shortcut.py, observed 1 violation and exit 1, and deleted it; Python 3.12.15, 2026-10-28. Rebalance 2026-10-28: concept comments added to lab code, all tests re-run (OK); both tryIt items executed with `python try_it.py` and `expected` pasted from the observed output. Platform pass 2026-10-28: lab code made cross-platform (pathlib, explicit UTF-8 for text files and subprocess output, sys.executable, 127.0.0.1); all tests and try_it.py re-run on Linux (OK). macOS (arm64) and Windows are `expected` until the CI matrix (ubuntu/macos/windows-latest) runs. Test count now: 8 tests OK.",
+      "pendingCi": [
+        "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+        "README PowerShell sequence that adds and removes shortcut.py"
+      ]
+    },
+    "conceptNote": "content/concepts/03-modular-monolith.md",
+    "conceptSummary": "A modular monolith ships as one unit but splits code into modules that may only use each other's public interfaces. Because Python cannot hide names, an automated fitness function that parses imports enforces the boundary in tests and CI.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "import-linter",
+        "role": "CHECK",
+        "exercise": "In 03-modular-monolith write a .importlinter file: root_package = library and one `forbidden` contract (source_modules = library.loans, forbidden_modules = library.catalog.internal, allow_indirect_imports = True, because the public library.catalog itself imports its own internals). Run `lint-imports`, add the README's temporary shortcut.py, run it again, then open `import-linter explore` to see the import graph.",
+        "expected": "Pending a manual run (import-linter is not installed here). Should match the lab's checker: contract KEPT on the real code (check_boundaries.py: `checked 7 files: 0 boundary violation(s)`) and BROKEN with shortcut.py, naming library.loans.shortcut -> library.catalog.internal.store (check_boundaries.py: `VIOLATION library/loans/shortcut.py:1 'loans' imports internals of 'catalog'`).",
+        "licence": "BSD-2-Clause (OSI: yes)",
+        "url": "https://github.com/seddonym/import-linter",
+        "mac": "pip install import-linter   # inside the lesson-1 venv; then: lint-imports",
+        "windows": "pip install import-linter   # inside the lesson-1 venv; then: lint-imports"
+      }
+    ]
+  },
+  {
+    "id": "api-first-openapi",
+    "number": 4,
+    "level": "L100",
+    "title": "API-first with OpenAPI 3.1",
+    "phase": "Interfaces",
+    "category": "api-contract",
+    "description": "Write a minimal OpenAPI 3.1.2 document, implement it with http.server, and test responses against it.",
+    "outcome": "You can write an OpenAPI contract before the code and catch drift between spec and implementation in a test.",
+    "environment": "Python 3.12 (validated on 3.12.15) standard library only; SQLite 3.44.0 via sqlite3; unittest; OpenAPI Specification 3.1.2",
+    "estimatedTime": "30 minutes",
+    "overview": [
+      "openapi.json is the source of truth; server.py implements it; test_contract.py calls every operation and checks status codes and required fields against the spec.",
+      "Why 3.1 and not 3.2.x: the catalogued tools (Swagger Editor exercise, Bruno import) target 3.1, 3.2 tooling is still rolling out, and minor OAS versions may break compatibility; this lab uses no 3.2-only feature."
+    ],
+    "prerequisites": [
+      "Lesson 2 done",
+      "Comfortable reading JSON"
+    ],
+    "glossary": [
+      {
+        "term": "OpenAPI Description",
+        "meaning": "JSON/YAML document describing an HTTP API; requires `openapi`, `info` (title, version) and at least one of paths/components/webhooks."
+      },
+      {
+        "term": "Path templating",
+        "meaning": "`/loans/{loanId}`: braces mark a path parameter that must be declared."
+      },
+      {
+        "term": "Provider contract test",
+        "meaning": "Checks that the provider's real responses match its documented contract."
+      },
+      {
+        "term": "Consumer-driven contract",
+        "meaning": "Contract produced by consumer tests (Pact) — 'contract by example'."
+      }
+    ],
+    "concepts": [
+      "Design the contract first; docs, clients and tests can be generated from it.",
+      "Every status code the server can return should be declared in `responses`.",
+      "A test that exercises every declared response keeps spec and code in sync.",
+      "`openapi` is the spec version (3.1.2); `info.version` is the version of your document."
+    ],
+    "steps": [
+      {
+        "title": "Read the contract",
+        "detail": "Open openapi.json: getHealth, createLoan, getLoan; schemas Health, NewLoan, Loan, Error.",
+        "expected": "You can list each operation's status codes (200; 201/400/409; 200/404).",
+        "ifNot": "Search for \"responses\" in the file."
+      },
+      {
+        "title": "Run the contract tests",
+        "detail": "cd labs/L100/04-api-first-openapi && python -m unittest -v",
+        "expected": "Ran 4 tests ... OK",
+        "ifNot": "Read the subTest output: it names method, path and the problem."
+      },
+      {
+        "title": "Run server and client",
+        "detail": "Terminal 1: python server.py 18765 — Terminal 2: python client_demo.py 18765",
+        "expected": "Four lines ending in `contract: OK` (200, 201, 409, 200).",
+        "ifNot": "`Address already in use` → pick another free port for both commands.",
+        "mac": "python server.py 18765        # terminal 1\npython client_demo.py 18765   # terminal 2",
+        "windows": "python server.py 18765        # PowerShell window 1\npython client_demo.py 18765   # PowerShell window 2"
+      },
+      {
+        "title": "Create drift on purpose",
+        "detail": "In server.py change the 409 conflict status to 422, then run the tests.",
+        "expected": "test_responses_match_spec fails (422 ≠ 409, and 422 is not declared).",
+        "ifNot": "Make sure you edited the POST conflict branch."
+      },
+      {
+        "title": "Revert and re-run",
+        "detail": "Change 422 back to 409; python -m unittest -v",
+        "expected": "OK again.",
+        "ifNot": "Compare server.py with the lesson code."
+      }
+    ],
+    "code": "\"\"\"Library Loans API implemented AFTER writing openapi.json. Run: python server.py [port]\"\"\"\nimport json\nimport re\nimport sys\nfrom http.server import BaseHTTPRequestHandler, HTTPServer\n\nLOANS = {}  # in-memory store keeps this lab focused on the contract\n\n\nclass LoansApi(BaseHTTPRequestHandler):\n    def do_GET(self):\n        match = re.fullmatch(r\"/loans/(\\d+)\", self.path)\n        if self.path == \"/health\":\n            self.send_json(200, {\"status\": \"ok\"})\n        elif match and int(match.group(1)) in LOANS:\n            self.send_json(200, LOANS[int(match.group(1))])\n        else:\n            self.send_json(404, {\"error\": f\"not found: {self.path}\"})\n\n    def do_POST(self):\n        if self.path != \"/loans\":\n            return self.send_json(404, {\"error\": f\"not found: {self.path}\"})\n        try:\n            body = json.loads(self.rfile.read(int(self.headers.get(\"Content-Length\", 0))) or b\"{}\")\n        except json.JSONDecodeError:\n            body = {}\n        book, member = body.get(\"bookId\"), body.get(\"memberId\")\n        if not isinstance(book, str) or not isinstance(member, str):\n            # contract-first: 400, 409, 201 and 404 are all declared in openapi.json; an undeclared status is drift\n            return self.send_json(400, {\"error\": \"bookId and memberId must be strings\"})\n        if any(l[\"bookId\"] == book and l[\"status\"] == \"active\" for l in LOANS.values()):\n            return self.send_json(409, {\"error\": f\"book {book} is already on loan\"})\n        # response body must carry every field the Loan schema lists as required\n        loan = {\"id\": len(LOANS) + 1, \"bookId\": book, \"memberId\": member, \"status\": \"active\"}\n        LOANS[loan[\"id\"]] = loan\n        self.send_json(201, loan)\n\n    def send_json(self, status, payload):\n        data = json.dumps(payload).encode()\n        self.send_response(status)\n        self.send_header(\"Content-Type\", \"application/json\")\n        self.send_header(\"Content-Length\", str(len(data)))\n        self.end_headers()\n        self.wfile.write(data)\n\n    def log_message(self, *args):\n        pass  # quiet output for labs\n\n\nif __name__ == \"__main__\":\n    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000\n    print(f\"Library Loans API on http://127.0.0.1:{port} (Ctrl+C to stop)\")\n    HTTPServer((\"127.0.0.1\", port), LoansApi).serve_forever()\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/04-api-first-openapi/openapi.json",
+        "purpose": "OpenAPI 3.1.2 contract"
+      },
+      {
+        "path": "labs/L100/04-api-first-openapi/server.py",
+        "purpose": "stdlib implementation"
+      },
+      {
+        "path": "labs/L100/04-api-first-openapi/contract_check.py",
+        "purpose": "Minimal response-vs-spec checker"
+      },
+      {
+        "path": "labs/L100/04-api-first-openapi/test_contract.py",
+        "purpose": "Contract tests"
+      },
+      {
+        "path": "labs/L100/04-api-first-openapi/client_demo.py",
+        "purpose": "Manual client with contract check"
+      },
+      {
+        "path": "labs/L100/04-api-first-openapi/try_it.py",
+        "purpose": "tryIt experiments"
+      },
+      {
+        "path": "labs/L100/04-api-first-openapi/README.md",
+        "purpose": "Run commands and observed output"
+      }
+    ],
+    "expectedResults": [
+      "Ran 4 tests ... OK",
+      "client_demo.py prints `contract: OK` for 4 calls"
+    ],
+    "testCases": [
+      {
+        "action": "Call every operation incl. 400/404/409 cases",
+        "expected": "check() returns [] for each response"
+      },
+      {
+        "action": "check() with status 500 on GET /loans/1",
+        "expected": "'status 500 not declared'"
+      },
+      {
+        "action": "check() on a body missing memberId, id as string, status 'lost'",
+        "expected": "3 problems"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Port busy: `OSError: [Errno 98] Address already in use` (Linux); macOS says [Errno 48], Windows [WinError 10048]",
+        "action": "Use another port (`python server.py 18765`); tests bind port 0 automatically."
+      },
+      {
+        "symptom": "Every call reports `status 404 not declared`",
+        "action": "Another server owns that port; use the port printed by server.py."
+      }
+    ],
+    "equivalents": [
+      "Schemathesis (MIT): generates test requests from the OpenAPI document and checks responses against it.",
+      "Pact: consumer-driven contract tests between consumer and provider (complements schema checks).",
+      "Spring/ASP.NET/Express: validate requests/responses or generate stubs from the same openapi.json with OpenAPI tooling.",
+      "OpenAPI 3.2 (3.2.1 latest on spec.openapis.org): adds e.g. the `query` method, `additionalOperations` and streaming media types; change the `openapi` field only after your validator and generators pass it."
+    ],
+    "caution": "http.server is not recommended for production (basic security checks only). Run generators/fuzzers such as Schemathesis against dev/staging, never production: they send real requests that create and delete data.",
+    "checkpoint": "PASS if all 4 tests pass and changing 409 to an undeclared status makes a test fail.",
+    "checkYourself": [
+      {
+        "q": "Which top-level fields must every OpenAPI 3.1 document have?",
+        "a": "`openapi`, `info` (title, version) and at least one of `paths`/`components`/`webhooks`."
+      },
+      {
+        "q": "What does `contract_check.py` report for a 200 body missing `memberId`?",
+        "a": "`GET /loans/{loanId} 200: missing required field 'memberId'`."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "In server.py rename the response field `memberId` to `member`; run the tests.",
+        "predict": "Which checks fail?",
+        "expected": "`FAILED (failures=2)`: POST 201 and GET 200, `missing required field 'memberId'`."
+      },
+      {
+        "task": "Call `check(spec, \"POST\", \"/loans\", 500, ...)`, then with 409.",
+        "predict": "Is 500 allowed?",
+        "expected": "500: `status 500 not declared`; 409: `[]`."
+      }
+    ],
+    "inRealSystems": "Schemathesis generates requests from an OpenAPI schema; Pact adds consumer-driven contracts; OpenAPI files also feed doc and client generators.",
+    "useWhen": "Use API-first when other teams or apps consume the API; lighten it for a throw-away endpoint, and freeze the contract once the design settles.",
+    "next": "L200 lesson 9 – Event-driven integration: AsyncAPI as the contract for events",
+    "sources": [
+      {
+        "title": "OpenAPI Specification v3.1.2",
+        "url": "https://spec.openapis.org/oas/v3.1.2.html"
+      },
+      {
+        "title": "OpenAPI Specification – published versions",
+        "url": "https://spec.openapis.org/oas/"
+      },
+      {
+        "title": "http.server — HTTP servers (Python 3.12 docs)",
+        "url": "https://docs.python.org/3.12/library/http.server.html"
+      },
+      {
+        "title": "schemathesis/schemathesis (GitHub)",
+        "url": "https://github.com/schemathesis/schemathesis"
+      },
+      {
+        "title": "Pact Docs – Introduction",
+        "url": "https://docs.pact.io/"
+      },
+      {
+        "title": "OpenAPI Specification v3.2.0 (§2.1 versions, Path Item `query`)",
+        "url": "https://spec.openapis.org/oas/v3.2.0.html"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python -m unittest -v` (4 tests OK); started `python server.py 18765` and ran `python client_demo.py 18765` (4 × contract OK) on Python 3.12.15, 2026-10-28. Port 8765 was busy on the shared host (Errno 98 observed) — now a troubleshooting row. openapi.json was not checked with an external OpenAPI validator (none available offline); see KNOWN-GAPS. Rebalance 2026-10-28: concept comments added to lab code, all tests re-run (OK); both tryIt items executed with `python try_it.py` and `expected` pasted from the observed output. Platform pass 2026-10-28: lab code made cross-platform (pathlib, explicit UTF-8 for text files and subprocess output, sys.executable, 127.0.0.1); all tests and try_it.py re-run on Linux (OK). macOS (arm64) and Windows are `expected` until the CI matrix (ubuntu/macos/windows-latest) runs. Test count now: 4 tests OK.",
+      "pendingCi": [
+        "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)"
+      ]
+    },
+    "conceptNote": "content/concepts/04-api-first-openapi.md",
+    "conceptSummary": "API-first means writing the OpenAPI contract (paths, status codes, schemas) before the code, so clients and server share one machine-readable promise. A contract test calls every operation and fails when a response drifts from what the spec declares.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "Swagger Editor v5 / Swagger UI",
+        "role": "CHECK",
+        "exercise": "Open openapi.json (OpenAPI 3.1.2) in Swagger Editor v5, read the validation pane, then rename the required field memberId to member in the Loan schema only and watch the rendered docs change.",
+        "expected": "Pending a manual run. The real file should show no validation errors and 3 paths (/health, /loans, /loans/{loanId}) with 200/201/409/404 responses. A schema-only rename is still a valid document: the editor cannot see the drift - only the lab's contract test fails (tryIt 1: `missing required field 'memberId'`). 'Try it out' against server.py is likely blocked by the browser because server.py sends no CORS headers (not tested); use Bruno or client_demo.py for real calls.",
+        "mac": "docker run -p 8080:80 docker.swagger.io/swaggerapi/swagger-editor:latest   # then open http://localhost:8080 (or use the editor in a browser)",
+        "windows": "docker run -p 8080:80 docker.swagger.io/swaggerapi/swagger-editor:latest   # same; podman run works the same way",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://github.com/swagger-api/swagger-editor"
+      },
+      {
+        "name": "Bruno",
+        "role": "CHECK",
+        "exercise": "Start `python server.py 18765`, import openapi.json into a new collection, set the base URL to http://127.0.0.1:18765, add assertions on status and body, and run POST /loans twice, then GET /loans/1.",
+        "expected": "Pending a manual run. Should match client_demo.py's printed output: POST /loans -> 201 {'id': 1, 'bookId': 'b1', 'memberId': 'm1', 'status': 'active'}, the same POST again -> 409 {'error': 'book b1 is already on loan'}, GET /loans/1 -> 200 with status 'active'.",
+        "licence": "MIT, open-core: Pro/Ultimate paid tiers (OSI: yes)",
+        "url": "https://github.com/usebruno/bruno",
+        "mac": "brew install --cask bruno",
+        "windows": "winget install Bruno.Bruno"
+      }
+    ],
+    "seeAlso": [
+      "ai-agents L200 #10 Build an MCP server and client: the same contract-first idea for agent tools - each MCP tool publishes a JSON Schema for its input before anyone calls it."
+    ]
+  },
+  {
+    "id": "config-12factor",
+    "number": 5,
+    "level": "L100",
+    "title": "Configuration the 12-factor way",
+    "phase": "Operations",
+    "category": "configuration",
+    "description": "Read config from environment variables with defaults, validate at startup, keep secrets out of code.",
+    "outcome": "You can run the same build in any environment by changing env vars only, and make bad config fail fast.",
+    "environment": "Python 3.12 (validated on 3.12.15) standard library only; SQLite 3.44.0 via sqlite3; unittest",
+    "estimatedTime": "20-25 minutes",
+    "overview": [
+      "load_settings() reads LOANS_* env vars, applies defaults, collects every error and raises once; app.py exits 2 on bad config.",
+      "The SMTP password has no default in code and is excluded from repr so it never lands in logs."
+    ],
+    "prerequisites": [
+      "Lesson 1 done",
+      "Know how to set an env var in your shell"
+    ],
+    "glossary": [
+      {
+        "term": "Config (12-factor)",
+        "meaning": "Everything likely to vary between deploys: backing-service handles, credentials, per-deploy values."
+      },
+      {
+        "term": "Fail fast",
+        "meaning": "Validate at startup and refuse to run, instead of failing on the first request."
+      },
+      {
+        "term": "Secret",
+        "meaning": "A credential (password, API key); never committed, never logged."
+      }
+    ],
+    "concepts": [
+      "Strict separation of config from code: env vars, not constants.",
+      "Each env var is an independent control — no bundled 'dev/prod' groups.",
+      "Validate types and ranges once; report all errors together.",
+      "Litmus test: could the repo be published right now without leaking credentials?"
+    ],
+    "steps": [
+      {
+        "title": "Start with defaults",
+        "detail": "Go to labs/L100/05-config-12factor and run `python app.py` with no LOANS_* variables set.",
+        "expected": "starting with Settings(port=8080, db_path='loans.db', max_active_loans=3, log_level='INFO') / smtp password: not set",
+        "ifNot": "Unset leftover LOANS_* variables in your shell.",
+        "mac": "cd labs/L100/05-config-12factor\npython app.py",
+        "windows": "cd labs\\L100\\05-config-12factor\npython app.py"
+      },
+      {
+        "title": "Override via environment",
+        "detail": "Set LOANS_PORT=9000, LOANS_LOG_LEVEL=debug and LOANS_SMTP_PASSWORD=example-only in your shell, run app.py, then remove them. zsh sets variables with `export` (or for one command: `VAR=value python app.py`); PowerShell uses `$env:VAR = \"value\"` and has no one-command form.",
+        "expected": "port=9000, log_level='DEBUG', `smtp password: set` — the value itself is not printed.",
+        "ifNot": "PowerShell keeps $env: values for the whole session: remove them with `Remove-Item Env:\\LOANS_*` or open a new window.",
+        "mac": "export LOANS_PORT=9000 LOANS_LOG_LEVEL=debug LOANS_SMTP_PASSWORD=example-only\npython app.py\nunset LOANS_PORT LOANS_LOG_LEVEL LOANS_SMTP_PASSWORD",
+        "windows": "$env:LOANS_PORT = \"9000\"; $env:LOANS_LOG_LEVEL = \"debug\"; $env:LOANS_SMTP_PASSWORD = \"example-only\"\npython app.py\nRemove-Item Env:\\LOANS_*"
+      },
+      {
+        "title": "Break it",
+        "detail": "Set LOANS_PORT=abc and LOANS_LOG_LEVEL=LOUD, run app.py and print its exit code (zsh: `$?`, PowerShell: `$LASTEXITCODE`).",
+        "expected": "invalid configuration: (both errors listed); exit code 2",
+        "ifNot": "Set both variables before starting Python; os.environ is read once at startup.",
+        "mac": "LOANS_PORT=abc LOANS_LOG_LEVEL=LOUD python app.py; echo \"exit=$?\"",
+        "windows": "$env:LOANS_PORT = \"abc\"; $env:LOANS_LOG_LEVEL = \"LOUD\"\npython app.py; \"exit=$LASTEXITCODE\"\nRemove-Item Env:\\LOANS_*"
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v",
+        "expected": "Ran 9 tests ... OK",
+        "ifNot": "If StartupTest fails, check that the interpreter running the tests is 3.12+ (it launches app.py with the same one).",
+        "mac": "python -m unittest -v",
+        "windows": "python -m unittest -v"
+      }
+    ],
+    "code": "\"\"\"12-factor config: every per-deploy value comes from an env var, validated once at startup.\"\"\"\nimport os\nfrom dataclasses import dataclass, field\n\nLOG_LEVELS = {\"DEBUG\", \"INFO\", \"WARNING\", \"ERROR\"}\n\n\nclass ConfigError(Exception):\n    \"\"\"Raised with ALL problems at once so a bad deploy fails fast and clearly.\"\"\"\n\n\n@dataclass(frozen=True)\nclass Settings:\n    port: int\n    db_path: str\n    max_active_loans: int\n    log_level: str\n    # Secret: no default in code, and repr=False keeps it out of logs and tracebacks.\n    smtp_password: str | None = field(default=None, repr=False)\n\n\ndef load_settings(environ=None):\n    # config in the environment: read once at startup, then pass the frozen Settings around\n    env = os.environ if environ is None else environ\n    errors = []\n\n    def integer(name, default, low, high):\n        raw = env.get(name, str(default))\n        try:\n            value = int(raw)\n        except ValueError:\n            errors.append(f\"{name}={raw!r} is not an integer\")\n            return default\n        if not low <= value <= high:\n            errors.append(f\"{name}={value} must be between {low} and {high}\")\n        return value\n\n    port = integer(\"LOANS_PORT\", 8080, 1, 65535)\n    max_loans = integer(\"LOANS_MAX_ACTIVE_LOANS\", 3, 1, 50)\n    log_level = env.get(\"LOANS_LOG_LEVEL\", \"INFO\").upper()\n    if log_level not in LOG_LEVELS:\n        errors.append(f\"LOANS_LOG_LEVEL={log_level!r} must be one of {sorted(LOG_LEVELS)}\")\n    db_path = env.get(\"LOANS_DB_PATH\", \"loans.db\")\n    if not db_path.strip():\n        errors.append(\"LOANS_DB_PATH must not be empty\")\n    # fail fast: collect every problem, then refuse to start with all of them in one message\n    if errors:\n        raise ConfigError(\"; \".join(errors))\n    return Settings(port, db_path, max_loans, log_level, env.get(\"LOANS_SMTP_PASSWORD\") or None)\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/05-config-12factor/config.py",
+        "purpose": "Settings + load_settings with validation"
+      },
+      {
+        "path": "labs/L100/05-config-12factor/app.py",
+        "purpose": "Startup that fails fast"
+      },
+      {
+        "path": "labs/L100/05-config-12factor/test_config.py",
+        "purpose": "Tests incl. a no-literal-secret scan"
+      },
+      {
+        "path": "labs/L100/05-config-12factor/try_it.py",
+        "purpose": "tryIt experiments"
+      },
+      {
+        "path": "labs/L100/05-config-12factor/README.md",
+        "purpose": "Run commands and observed output"
+      }
+    ],
+    "expectedResults": [
+      "Defaults shown when no env vars are set",
+      "Bad values → one message listing all errors, exit 2 (same on zsh and PowerShell)",
+      "Ran 9 tests ... OK"
+    ],
+    "testCases": [
+      {
+        "action": "load_settings({})",
+        "expected": "port 8080, db loans.db, max 3, INFO, no secret"
+      },
+      {
+        "action": "LOANS_PORT=abc, LOANS_MAX_ACTIVE_LOANS=0, LOANS_LOG_LEVEL=LOUD",
+        "expected": "ConfigError naming all three"
+      },
+      {
+        "action": "repr(settings) with LOANS_SMTP_PASSWORD set",
+        "expected": "secret value absent"
+      },
+      {
+        "action": "os.environ['loans_case_probe'] = '1'; 'LOANS_CASE_PROBE' in os.environ",
+        "expected": "True on Windows, False on macOS/Linux"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Changed variable has no effect",
+        "action": "os.environ is captured at interpreter start; set the variable before launching Python."
+      },
+      {
+        "symptom": "Secret appears in a log",
+        "action": "Log the Settings object (secret field has repr=False), never os.environ or the raw value. OS-specific rows (env-name case, PowerShell session): lab README."
+      }
+    ],
+    "equivalents": [
+      "Spring Boot: externalized configuration from env vars + validated @ConfigurationProperties.",
+      "ASP.NET Core: environment-variable configuration provider + options validation at startup.",
+      "Node/Express: read process.env once into a validated config object.",
+      "Production secrets: an open-source secrets manager or orchestrator-mounted secret files instead of plain env vars."
+    ],
+    "caution": "Env vars keep secrets out of the repo, but OWASP warns they are visible to other processes and may end up in logs or dumps; prefer mounted secret files or a secrets manager in production, and never bake secrets into images with Docker ENV/ARG.",
+    "checkpoint": "PASS if LOANS_PORT=abc (set with `export`/inline in zsh or `$env:` in PowerShell) makes `python app.py` exit 2 with a clear message and `python -m unittest -v` reports 9 tests OK.",
+    "checkYourself": [
+      {
+        "q": "Is the list of HTTP routes config in the 12-factor sense?",
+        "a": "No. It does not vary between deploys, so it belongs in code."
+      },
+      {
+        "q": "Why is `LOANS_LOG_LEVEL=warn` rejected?",
+        "a": "It is upper-cased to `WARN`, which is not in DEBUG/INFO/WARNING/ERROR."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Run app.py with LOANS_LOG_LEVEL=warn (zsh: `LOANS_LOG_LEVEL=warn python app.py`; PowerShell: `$env:LOANS_LOG_LEVEL = \"warn\"; python app.py`).",
+        "predict": "Is `warn` accepted?",
+        "expected": "Exit 2: `LOANS_LOG_LEVEL='WARN' must be one of ['DEBUG', 'ERROR', 'INFO', 'WARNING']`."
+      },
+      {
+        "task": "Set `repr=True` on the secret in config.py; start with `LOANS_SMTP_PASSWORD=example-only`; run the tests.",
+        "predict": "Is the secret printed? Do tests notice?",
+        "expected": "Yes: `smtp_password='example-only'` is printed; `test_secret_is_never_shown` and `test_good_config_starts` FAIL."
+      }
+    ],
+    "inRealSystems": "The Twelve-Factor App's factor III; container platforms inject env vars and secret files per deployment, and OWASP warns never to bake secrets into images (`ENV`/`ARG`).",
+    "useWhen": "Use env-var config for values that differ between deploys; keep never-varying wiring in code, and use mounted files or a secrets manager for production secrets.",
+    "next": "L200 lesson 10 – Authentication with OpenID Connect (client secrets come from config)",
+    "sources": [
+      {
+        "title": "The Twelve-Factor App – III. Config",
+        "url": "https://12factor.net/config"
+      },
+      {
+        "title": "os — os.environ / os.getenv (Python 3.12 docs)",
+        "url": "https://docs.python.org/3.12/library/os.html"
+      },
+      {
+        "title": "OWASP Secrets Management Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+      },
+      {
+        "title": "about_Environment_Variables (PowerShell docs)",
+        "url": "https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_environment_variables"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran app.py with defaults, with overrides (secret set but not printed) and with invalid values (exit 2), plus `python -m unittest -v` (8 tests OK) on Python 3.12.15, 2026-10-28; output pasted in README. Rebalance 2026-10-28: concept comments added to lab code, all tests re-run (OK); both tryIt items executed with `python try_it.py` and `expected` pasted from the observed output. Platform pass 2026-10-28: lab code made cross-platform (pathlib, explicit UTF-8 for text files and subprocess output, sys.executable, 127.0.0.1); all tests and try_it.py re-run on Linux (OK). macOS (arm64) and Windows are `expected` until the CI matrix (ubuntu/macos/windows-latest) runs. Test count now: 9 tests OK.",
+      "pendingCi": [
+        "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+        "zsh and PowerShell env-var sequences (CI job only)"
+      ]
+    },
+    "conceptNote": "content/concepts/05-config-12factor.md",
+    "conceptSummary": "Everything that varies between deploys lives in environment variables, is read once at startup and validated so a bad deploy fails fast with all errors listed. Secrets get no default in code and never appear in logs; production secrets deserve a secrets manager or mounted files.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "documenting-architecture",
+    "number": 6,
+    "level": "L100",
+    "title": "Documenting architecture: C4 diagrams as text and an ADR",
+    "phase": "Communication",
+    "category": "documentation",
+    "description": "Keep C4 context + container diagrams (Mermaid C4 and Structurizr DSL) and a Nygard-style ADR in doc/arch next to the code.",
+    "outcome": "You can describe Library Loans with C4 context/container views as text, record a decision as an ADR, and lint both in a test.",
+    "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux); unittest. Rendering (optional locally, always in CI): @mermaid-js/mermaid-cli 11.17.0 via npx on Node 24 LTS (macOS, Windows, Linux); structurizr/structurizr:2026.09.19 via Podman or Docker (image for linux/amd64 and linux/arm64, so it runs natively on Apple silicon). Agent assist: vendored labs/_shared/local_agent (stdlib client + deterministic fake server); optional Ollama with qwen2.5:1.5b.",
+    "estimatedTime": "30 minutes",
+    "overview": [
+      "Diagrams and decisions are text files in doc/arch/, reviewed in pull requests like code.",
+      "check_docs.py lints them locally; real parsing and rendering run in CI."
+    ],
+    "prerequisites": [
+      "Lessons 2-5 (the diagrams describe that service)"
+    ],
+    "glossary": [
+      {
+        "term": "C4 model",
+        "meaning": "Static diagrams at four zoom levels (context, containers, components, code); context + container suffice for most teams."
+      },
+      {
+        "term": "Container (C4)",
+        "meaning": "An application or data store that must run for the system to work — not a Docker container."
+      },
+      {
+        "term": "ADR",
+        "meaning": "Architecture Decision Record: a short text file — Title, Context, Decision, Status, Consequences."
+      },
+      {
+        "term": "Diagrams as code",
+        "meaning": "Diagram source in a text language (Mermaid, Structurizr DSL, C4-PlantUML) rendered by a tool."
+      }
+    ],
+    "concepts": [
+      "Context view: people + our system + external systems.",
+      "Container view: zoom into our system (API + database).",
+      "One ADR per significant decision; numbers never reused; reversed decisions are marked superseded.",
+      "Mermaid C4 is experimental and lays out by statement order; Structurizr DSL derives several views from one model."
+    ],
+    "steps": [
+      {
+        "title": "Read the context diagram",
+        "detail": "Open doc/arch/c4-context.mmd: two Person, one System, one System_Ext, four Rel lines.",
+        "expected": "You can name the actors (member, librarian) and the external e-mail system.",
+        "ifNot": "Re-read the 'C4 model' glossary entry."
+      },
+      {
+        "title": "Read the container diagram and DSL",
+        "detail": "Open c4-container.mmd and workspace.dsl.",
+        "expected": "Both describe the same Loans API + SQLite database; the DSL defines elements once and has two views.",
+        "ifNot": "Search for `api` and `db` in both files."
+      },
+      {
+        "title": "Read the ADR",
+        "detail": "Open doc/arch/adr-001-sqlite-behind-repository.md.",
+        "expected": "Context → Decision (\"We will …\") → Status (Accepted) → Consequences (positive and negative).",
+        "ifNot": "Compare with Nygard's post in the sources."
+      },
+      {
+        "title": "Lint the docs",
+        "detail": "cd labs/L100/06-documenting-architecture && python check_docs.py && python -m unittest -v",
+        "expected": "4 × OK lines; Ran 16 tests ... OK (6 doc-lint + 10 agent-assist tests)",
+        "ifNot": "A FAIL line names the file and the undefined id or missing section.",
+        "mac": "cd labs/L100/06-documenting-architecture\npython check_docs.py\npython -m unittest -v",
+        "windows": "cd labs\\L100\\06-documenting-architecture\npython check_docs.py\npython -m unittest -v"
+      },
+      {
+        "title": "Break a relationship",
+        "detail": "Change `Rel(loans, email,` to `Rel(loans, mail,` in c4-context.mmd; run python check_docs.py; undo.",
+        "expected": "FAIL c4-context.mmd — Rel uses undefined id 'mail' (exit 1)",
+        "ifNot": "Make sure the file was saved."
+      },
+      {
+        "title": "Optional: render",
+        "detail": "Render the Mermaid C4 file with mermaid-cli through npx, and validate or view the Structurizr DSL in a container. Podman wants fully qualified image names (docker.io/...).",
+        "expected": "An SVG with 4 elements and 4 arrows, or the Structurizr diagram viewer at http://localhost:8080.",
+        "ifNot": "Skip; CI renders and uploads the SVGs. Windows: start the Podman machine first (`podman machine start`).",
+        "mac": "npx -p @mermaid-js/mermaid-cli@11.17.0 mmdc -i doc/arch/c4-context.mmd -o doc/arch/c4-context.svg\npodman run --rm -v \"$PWD/doc/arch:/usr/local/structurizr\" docker.io/structurizr/structurizr:2026.09.19 validate -workspace /usr/local/structurizr/workspace.dsl\npodman run -it --rm -p 8080:8080 -v \"$PWD/doc/arch:/usr/local/structurizr\" docker.io/structurizr/structurizr:2026.09.19 local",
+        "windows": "npx -p @mermaid-js/mermaid-cli@11.17.0 mmdc -i doc\\arch\\c4-context.mmd -o doc\\arch\\c4-context.svg\npodman run --rm -v \"${PWD}\\doc\\arch:/usr/local/structurizr\" docker.io/structurizr/structurizr:2026.09.19 validate -workspace /usr/local/structurizr/workspace.dsl\npodman run -it --rm -p 8080:8080 -v \"${PWD}\\doc\\arch:/usr/local/structurizr\" docker.io/structurizr/structurizr:2026.09.19 local"
+      },
+      {
+        "title": "Agent assist: a local model drafts ADR 2",
+        "detail": "Run `python agent_assist.py` (deterministic fake model). The script asks for an ADR in Nygard's format, checks it with code, retries once with the checker's findings, prints the draft without saving it, and then runs lesson 3's check_boundaries.py. With Ollama running, add `--real`.",
+        "expected": "attempt 1: REJECTED (status 'Accepted'), attempt 2: OK, the draft, then `fitness function (authoritative): checked 7 files: 0 boundary violation(s) (exit 0)`.",
+        "ifNot": "`--real` fails with connection refused: start Ollama (Mac: `brew services start ollama`; Windows: the Ollama app) or run without --real.",
+        "mac": "python agent_assist.py\nexport LOCAL_MODEL_URL=http://localhost:11434/v1\nexport LOCAL_MODEL=qwen2.5:1.5b\npython agent_assist.py --real",
+        "windows": "python agent_assist.py\n$env:LOCAL_MODEL_URL = \"http://localhost:11434/v1\"\n$env:LOCAL_MODEL = \"qwen2.5:1.5b\"\npython agent_assist.py --real"
+      }
+    ],
+    "code": "C4Container\n%% C4 container = an application or data store that must run; NOT a Docker container\n  title Container diagram for Library Loans\n  Person(member, \"Library member\", \"Borrows and returns books.\")\n  Person(librarian, \"Librarian\", \"Looks up and closes loans at the desk.\")\n  System_Ext(email, \"E-mail system\", \"Sends due-date reminders.\")\n  Container_Boundary(loans, \"Library Loans\") {\n    Container(api, \"Loans API\", \"Python 3.12, http.server\", \"Layered modular monolith: catalog and loans modules.\")\n    ContainerDb(db, \"Loans database\", \"SQLite 3\", \"Stores loans and book status.\")\n  }\n%% relationships: Rel(from, to, label, technology); every id must be defined above\n  Rel(member, api, \"Borrows and returns books using\", \"JSON/HTTP\")\n  Rel(librarian, api, \"Looks up loans using\", \"JSON/HTTP\")\n  Rel(api, db, \"Reads from and writes to\", \"sqlite3\")\n  Rel(api, email, \"Sends reminders using\", \"SMTP\")\n",
+    "codeLanguage": "mermaid",
+    "projectFiles": [
+      {
+        "path": "labs/L100/06-documenting-architecture/doc/arch/c4-context.mmd",
+        "purpose": "Mermaid C4 context diagram"
+      },
+      {
+        "path": "labs/L100/06-documenting-architecture/doc/arch/c4-container.mmd",
+        "purpose": "Mermaid C4 container diagram"
+      },
+      {
+        "path": "labs/L100/06-documenting-architecture/doc/arch/workspace.dsl",
+        "purpose": "Structurizr DSL model + two views"
+      },
+      {
+        "path": "labs/L100/06-documenting-architecture/doc/arch/adr-001-sqlite-behind-repository.md",
+        "purpose": "ADR 1 (Nygard format)"
+      },
+      {
+        "path": "labs/L100/06-documenting-architecture/check_docs.py",
+        "purpose": "Local structural lint"
+      },
+      {
+        "path": "labs/L100/06-documenting-architecture/test_docs.py",
+        "purpose": "Tests"
+      },
+      {
+        "path": "labs/L100/06-documenting-architecture/puppeteer-config.json",
+        "purpose": "mermaid-cli --no-sandbox flag for CI"
+      },
+      {
+        "path": "labs/L100/06-documenting-architecture/try_it.py",
+        "purpose": "tryIt experiments"
+      },
+      {
+        "path": "labs/L100/06-documenting-architecture/README.md",
+        "purpose": "Run commands and observed output"
+      },
+      {
+        "path": "labs/L100/06-documenting-architecture/agent_assist.py",
+        "purpose": "Agent assist: draft ADR 2 → check → retry → boundary check"
+      },
+      {
+        "path": "labs/L100/06-documenting-architecture/test_agent_assist.py",
+        "purpose": "Agent-assist tests (fake model server only)"
+      },
+      {
+        "path": "labs/_shared/local_agent/client.py",
+        "purpose": "Vendored OpenAI-compatible chat client (stdlib)"
+      },
+      {
+        "path": "labs/_shared/local_agent/fake_model_server.py",
+        "purpose": "Vendored deterministic fake model server + [[ADR-DRAFT]] rule"
+      }
+    ],
+    "expectedResults": [
+      "check_docs.py: 4 × OK, exit 0",
+      "Ran 16 tests ... OK",
+      "agent_assist.py: attempt 1 REJECTED, attempt 2 OK, fitness function 0 violations (exit 0)",
+      "CI: two SVGs rendered and `structurizr validate` passes (pending-ci)"
+    ],
+    "testCases": [
+      {
+        "action": "ADR without '## Consequences'",
+        "expected": "check_adr reports missing/out-of-order sections"
+      },
+      {
+        "action": "Mermaid Rel to an undefined alias",
+        "expected": "\"Rel uses undefined id 'ghost'\""
+      },
+      {
+        "action": "DSL with unbalanced braces and an undefined target",
+        "expected": "2 problems"
+      },
+      {
+        "action": "validate_draft(draft whose Status is 'Accepted.', 2)",
+        "expected": "rejected: agent drafts must have status 'Proposed'"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Mermaid places boxes oddly",
+        "action": "Mermaid C4 has no fully automatic layout; reorder statements or add UpdateLayoutConfig($c4ShapeInRow=\"3\")."
+      },
+      {
+        "symptom": "Podman asks which registry to use, or cannot find `structurizr/structurizr`",
+        "action": "Use the fully qualified name docker.io/structurizr/structurizr:2026.09.19 (Podman recommends fully qualified image names)."
+      }
+    ],
+    "equivalents": [
+      "C4-PlantUML (MIT): same macro names (Person, System_Ext, Container, Rel) rendered by PlantUML.",
+      "Structurizr DSL: one model, many views; `structurizr/structurizr local` replaces end-of-life Structurizr Lite.",
+      "ADR templates: Nygard (used here), MADR, Y-statements (see adr.github.io).",
+      "Agent-drafted docs: any OpenAI-compatible local server (Ollama, llama.cpp server, vLLM) works with the same client; the checker, not the model, is the gate."
+    ],
+    "checkpoint": "PASS if `python check_docs.py` prints 4 × OK and the tests pass; rendering is confirmed when the CI diagrams job succeeds.",
+    "checkYourself": [
+      {
+        "q": "Is the SQLite database file a C4 container?",
+        "a": "Yes. It is a data store that must exist for the system to work."
+      },
+      {
+        "q": "Which DSL relationship is not shown on the context view, and why?",
+        "a": "`api → db`: both ends are inside `loans`, so at system level it is internal."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Set ADR 1 status to `Reversed.`, lint; then `Superseded by ADR 2.`",
+        "predict": "Which passes?",
+        "expected": "`Reversed.`: exit 1, `status must start with one of ('Proposed', 'Accepted', 'Deprecated', 'Superseded')`; `Superseded`: exit 0."
+      },
+      {
+        "task": "Add `api -> cache` to workspace.dsl; lint.",
+        "predict": "Caught?",
+        "expected": "Exit 1: `relationship uses undefined id 'cache'`."
+      }
+    ],
+    "inRealSystems": "Structurizr is the C4 reference implementation; C4-PlantUML and Mermaid share the `Person`/`Container`/`Rel` macros; adr.github.io collects ADR templates (Nygard, MADR).",
+    "useWhen": "Write an ADR for decisions that affect structure, interfaces or qualities; skip it for trivial, easily reversed choices, and avoid code-level diagrams that go stale weekly.",
+    "next": "L200 lesson 9 – events described as a contract; component views of the hexagon (lesson 7)",
+    "sources": [
+      {
+        "title": "C4 model – Diagrams",
+        "url": "https://c4model.com/diagrams"
+      },
+      {
+        "title": "Mermaid – C4 Diagrams (syntax)",
+        "url": "https://mermaid.js.org/syntax/c4.html"
+      },
+      {
+        "title": "Structurizr DSL – Language reference",
+        "url": "https://docs.structurizr.com/dsl/language"
+      },
+      {
+        "title": "Documenting Architecture Decisions – Michael Nygard (2011) (background)",
+        "url": "https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions"
+      },
+      {
+        "title": "C4 model – Container",
+        "url": "https://c4model.com/abstractions/container"
+      },
+      {
+        "title": "Ollama – OpenAI compatibility (/v1/chat/completions)",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      },
+      {
+        "title": "structurizr/structurizr image tags (linux/amd64 + linux/arm64)",
+        "url": "https://hub.docker.com/r/structurizr/structurizr/tags"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Local lab: ran check_docs.py (4 × OK, exit 0), the deliberate-break demo (FAIL, exit 1) and `python -m unittest -v` (6 tests OK) on Python 3.12.15, 2026-10-28. Diagram RENDERING and official parser validation are pending-ci: no mermaid-cli or Docker offline; syntax hand-checked against the Mermaid C4 syntax page and the Structurizr DSL language reference; .github/workflows/labs.yml renders with mermaid-cli 11.17.0 and runs `structurizr validate` (image 2026.09.19). Rebalance 2026-10-28: concept comments added to lab code, all tests re-run (OK); both tryIt items executed with `python try_it.py` and `expected` pasted from the observed output. Platform pass 2026-10-28: lab code made cross-platform (pathlib, explicit UTF-8 for text files and subprocess output, sys.executable, 127.0.0.1); all tests and try_it.py re-run on Linux (OK). macOS (arm64) and Windows are `expected` until the CI matrix (ubuntu/macos/windows-latest) runs. Agent assist validated-local against the fake model server only: `python agent_assist.py` printed attempt 1 REJECTED (status Accepted), attempt 2 OK and the boundary check (0 violations, exit 0); 10 agent-assist tests OK. A real local model was not run. Test count now: 16 tests OK.",
+      "pendingCi": [
+        "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+        "rendering doc/arch/c4-context.mmd and doc/arch/c4-container.mmd with mermaid-cli 11.17.0",
+        "structurizr validate on doc/arch/workspace.dsl",
+        "agent_assist.py --real (real local model)"
+      ]
+    },
+    "conceptNote": "content/concepts/06-documenting-architecture.md",
+    "conceptSummary": "C4 context and container diagrams, kept as Mermaid or Structurizr DSL text next to the code, show who uses the system and which apps and data stores it runs. ADRs record each significant decision with its context and consequences, numbered and never rewritten.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "agentAssist": {
+      "task": "A local model drafts ADR 2 ('Modules talk only through public interfaces') from Nygard's template and a short brief; code decides whether the draft is usable.",
+      "prompt": "[[ADR-DRAFT]] Write an Architecture Decision Record in Michael Nygard's format.\nHeadings, in this order: '# ADR 2: <short noun phrase>', '## Context', '## Decision',\n'## Status', '## Consequences'. Status must be 'Proposed.' because a human accepts ADRs.\nReply with the Markdown only.\n<brief>\nNumber: 2\nTitle: Modules talk only through public interfaces\nContext: Library Loans is one deployable with two modules, catalog and loans. loans started to reach into catalog's internal store, so a storage change in catalog broke loans.\nDecision: We will let a module import only another module's package (its __init__), never its internal/ package. check_boundaries.py enforces this in CI and fails the build on a violation.\nConsequences: Modules can change their internals freely and could later be split out. New cross-module needs require a public function first, which adds a small amount of code.\n</brief>",
+      "check": "validate_draft(): check_docs.check_adr (Title, Context, Decision, Status, Consequences in order; valid status) + the next free number (2) + status must be 'Proposed' (only a human accepts) + the Decision must name its automated check check_boundaries.py. One retry sends the checker's findings back. Nothing is written to doc/arch/. Then lesson 3's check_boundaries.py runs: its exit code, not the ADR text, says whether the code obeys the rule.",
+      "expected": "attempt 1: REJECTED\n  - agent drafts must have status 'Proposed' (a human accepts ADRs), got 'Accepted'\nattempt 2: OK\nfitness function (authoritative): checked 7 files: 0 boundary violation(s) (exit 0)",
+      "realModelNote": "Not run here (no model in the sandbox). With Ollama and qwen2.5:1.5b the wording changes from run to run even at temperature 0 across machines and versions; the same checker rejects drafts with missing or reordered sections, a wrong number or an 'Accepted' status. Run on the Mac mini (Metal) or the Windows PC (CUDA, ROCm/Vulkan or CPU)."
+    },
+    "caution": "Agent assist: the model only proposes text. It does not write files, cannot mark an ADR Accepted, and its claims about the code count for nothing: check_boundaries.py decides. Never paste secrets, keys or code you may not share into a prompt; keep LOCAL_MODEL_URL on localhost.",
+    "learningTools": [
+      {
+        "name": "Structurizr (local)",
+        "role": "SEE",
+        "exercise": "From 06-documenting-architecture, serve doc/arch/workspace.dsl with Structurizr local and open the 'SystemContext' and 'Containers' views at http://localhost:8080. Optional: add one ADR and browse it in the decision explorer.",
+        "expected": "Pending a manual run (no container engine here; CI only runs `structurizr validate`). The context view should show 4 elements and the 4 implied relationships computed by research/concept_examples.py: member -> Library Loans, librarian -> Library Loans, Library Loans -> E-mail system, E-mail system -> member. The container view adds Loans API and Loans database inside the system boundary.",
+        "mac": "docker run -it --rm -p 8080:8080 -v \"$PWD/doc/arch:/usr/local/structurizr\" structurizr/structurizr local   # podman run works the same; the lab pins :2026.09.19",
+        "windows": "docker run -it --rm -p 8080:8080 -v \"${PWD}\\doc\\arch:/usr/local/structurizr\" structurizr/structurizr local",
+        "licence": "Apache-2.0, open-core: 'local' is free, prebuilt 'server' needs a paid licence (OSI: yes)",
+        "url": "https://docs.structurizr.com/local"
+      }
+    ]
+  }
+]

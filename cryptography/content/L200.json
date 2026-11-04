@@ -1,0 +1,1272 @@
+[
+ {
+  "id": "digital-signatures-ed25519",
+  "number": 7,
+  "level": "L200",
+  "title": "Digital signatures with Ed25519",
+  "phase": "Authenticity",
+  "category": "Signatures",
+  "description": "Sign a release file with Ed25519, publish the public key, verify a detached signature.",
+  "outcome": "You can generate, serialize and load Ed25519 keys, write a detached .sig and verify it against one or several trusted keys.",
+  "environment": "Python 3.12 (3.9+), cryptography==50.0.2, stdlib ssl/hmac/hashlib/base64",
+  "estimatedTime": "30-40 minutes",
+  "overview": [
+   "Build a release-signing tool: one private key signs, anyone with the public key verifies."
+  ],
+  "prerequisites": [
+   "L100 lessons 1-2 (venv, hashing)"
+  ],
+  "glossary": [
+   {
+    "term": "detached signature",
+    "meaning": "Signature stored in its own file next to the data (app.tar.gz.sig)."
+   },
+   {
+    "term": "PKCS#8 / SPKI",
+    "meaning": "Standard PEM containers for private / public keys."
+   },
+   {
+    "term": "key id",
+    "meaning": "Short hash of a public key used to name it (fingerprint)."
+   }
+  ],
+  "concepts": [
+   "Private key signs, public key verifies: no shared secret.",
+   "Ed25519: 32-byte keys, 64-byte deterministic signatures.",
+   "Any changed byte, or the wrong key, raises InvalidSignature."
+  ],
+  "steps": [
+   {
+    "title": "Run the lab",
+    "detail": "python signatures.py",
+    "expected": "RFC 8032 TEST 1 public key: True and signature: True",
+    "ifNot": "Check the hex of RFC8032_T1 against RFC 8032 section 7.1."
+   },
+   {
+    "title": "Inspect key serialization",
+    "detail": "save_keys() writes release.key (PKCS#8 PEM) and release.pub (SPKI PEM)",
+    "expected": "sizes: raw 32 B, PEM private 119 B, PEM public 113 B",
+    "ifNot": "PEM sizes are fixed for Ed25519; other numbers mean a different key type."
+   },
+   {
+    "title": "Sign the release",
+    "detail": "sign_file() writes app-1.0.tar.gz.sig",
+    "expected": "signature file: app-1.0.tar.gz.sig 64 bytes",
+    "ifNot": "Sign the exact bytes you ship (read in binary mode)."
+   },
+   {
+    "title": "Verify, then break it",
+    "detail": "verify with the right key, another key, and after a 1-byte change",
+    "expected": "True, False, False",
+    "ifNot": "If a changed file still verifies you are verifying the wrong file."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "6 tests OK (4 lab + 2 build task against the solution)",
+    "ifNot": "Read the failing assertion."
+   },
+   {
+    "title": "Build task",
+    "detail": "Add key_id() and verify_with_keyring() to signatures.py, then test YOUR file",
+    "expected": "test_build_task: 2 tests OK",
+    "ifNot": "Before you add the functions the build test errors (expected).",
+    "mac": "BUILD_IMPL=signatures python -m unittest -v test_build_task",
+    "windows": "$env:BUILD_IMPL=\"signatures\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_IMPL"
+   }
+  ],
+  "codeLanguage": "python",
+  "code": "\"\"\"Ed25519 detached signatures for a release file, key serialization, RFC 8032 test vector.\"\"\"\nimport tempfile\nfrom pathlib import Path\n\nfrom cryptography.exceptions import InvalidSignature\nfrom cryptography.hazmat.primitives import serialization as ser\nfrom cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey\n\n# RFC 8032 section 7.1 TEST 1 (empty message)\nRFC8032_T1 = {\n    \"secret\": bytes.fromhex(\"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60\"),\n    \"public\": bytes.fromhex(\"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a\"),\n    \"sig\": bytes.fromhex(\"e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155\"\n                         \"5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b\"),\n}\n\n\ndef save_keys(key: Ed25519PrivateKey, folder: Path) -> None:\n    # serialization: private = PKCS8 PEM (keep secret), public = SubjectPublicKeyInfo PEM (publish)\n    (folder / \"release.key\").write_bytes(key.private_bytes(\n        ser.Encoding.PEM, ser.PrivateFormat.PKCS8, ser.NoEncryption()))\n    (folder / \"release.pub\").write_bytes(key.public_key().public_bytes(\n        ser.Encoding.PEM, ser.PublicFormat.SubjectPublicKeyInfo))\n\n\ndef load_public(path: Path) -> Ed25519PublicKey:\n    return ser.load_pem_public_key(path.read_bytes())\n\n\ndef sign_file(key: Ed25519PrivateKey, path: Path) -> Path:\n    sig_path = path.with_name(path.name + \".sig\")\n    sig_path.write_bytes(key.sign(path.read_bytes()))  # detached signature: 64 bytes, stored beside the file\n    return sig_path\n\n\ndef verify_file(pub: Ed25519PublicKey, path: Path, sig_path: Path) -> bool:\n    try:\n        pub.verify(sig_path.read_bytes(), path.read_bytes())  # verify needs only the PUBLIC key\n        return True\n    except InvalidSignature:  # any changed byte in file or signature, or the wrong key\n        return False\n\n\nif __name__ == \"__main__\":\n    v = Ed25519PrivateKey.from_private_bytes(RFC8032_T1[\"secret\"])\n    print(\"RFC 8032 TEST 1 public key:\", v.public_key().public_bytes_raw() == RFC8032_T1[\"public\"])\n    print(\"RFC 8032 TEST 1 signature: \", v.sign(b\"\") == RFC8032_T1[\"sig\"])  # Ed25519 is deterministic\n\n    with tempfile.TemporaryDirectory() as tmp:\n        d = Path(tmp)\n        signer = Ed25519PrivateKey.generate()  # signer keeps this; never ship it with the release\n        save_keys(signer, d)\n        print(\"sizes: raw private 32 B, raw public 32 B, PEM private\",\n              len((d / \"release.key\").read_bytes()), \"B, PEM public\", len((d / \"release.pub\").read_bytes()), \"B\")\n\n        release = d / \"app-1.0.tar.gz\"\n        release.write_bytes(b\"pretend this is a release tarball\\n\" * 100)\n        sig = sign_file(signer, release)\n        pub = load_public(d / \"release.pub\")  # the verifier only ever loads the public key\n        print(\"signature file:\", sig.name, len(sig.read_bytes()), \"bytes\")\n        print(\"verify original:       \", verify_file(pub, release, sig))\n        print(\"verify with other key: \", verify_file(Ed25519PrivateKey.generate().public_key(), release, sig))\n        release.write_bytes(release.read_bytes().replace(b\"tarball\", b\"tarbaII\", 1))\n        print(\"verify after 1 change: \", verify_file(pub, release, sig))\n",
+  "codeWalkthrough": [
+   {
+    "title": "RFC8032_T1",
+    "detail": "Known-answer test: the RFC 8032 secret must reproduce the published key and signature exactly."
+   },
+   {
+    "title": "save_keys()",
+    "detail": "PKCS#8 PEM for the secret half, SubjectPublicKeyInfo PEM for the shareable half."
+   },
+   {
+    "title": "sign_file()",
+    "detail": "key.sign(data) -> 64 bytes in <file>.sig; the release is untouched."
+   },
+   {
+    "title": "verify_file()",
+    "detail": "pub.verify(sig, data) raises InvalidSignature on any change; needs only the public key."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L200/07-ed25519-signatures/signatures.py",
+    "purpose": "main lab"
+   },
+   {
+    "path": "labs/L200/07-ed25519-signatures/solution_keyring.py",
+    "purpose": "build solution"
+   },
+   {
+    "path": "labs/L200/07-ed25519-signatures/test_build_task.py",
+    "purpose": "build check"
+   },
+   {
+    "path": "labs/L200/07-ed25519-signatures/test_signatures.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L200/07-ed25519-signatures/try_it.py",
+    "purpose": "tryIt"
+   },
+   {
+    "path": "labs/L200/07-ed25519-signatures/README.md",
+    "purpose": "observed output"
+   }
+  ],
+  "expectedResults": [
+   "RFC 8032 TEST 1 public key: True",
+   "RFC 8032 TEST 1 signature:  True",
+   "sizes: raw private 32 B, raw public 32 B, PEM private 119 B, PEM public 113 B",
+   "signature file: app-1.0.tar.gz.sig 64 bytes"
+  ],
+  "testCases": [
+   {
+    "action": "Sign empty message with RFC 8032 TEST 1 key",
+    "expected": "signature e5564300...100b"
+   },
+   {
+    "action": "Change one byte of the file",
+    "expected": "verify_file -> False"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "ValueError loading a key",
+    "action": "PEM vs raw mix-up: use load_pem_public_key for .pub, from_public_bytes for 32 raw bytes."
+   },
+   {
+    "symptom": "Verification fails on Windows only",
+    "action": "Read and write files in binary mode ('rb'/'wb'); text mode changes line endings."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Sign the same message twice with the same key and compare the signatures.",
+    "predict": "Different, like ECDSA?",
+    "expected": "same key + same message -> identical signatures: True | first 8 bytes: 8081583b8784835c"
+   },
+   {
+    "task": "Serialize one public key as raw, PEM and OpenSSH; compare sizes and reload the PEM.",
+    "predict": "Sizes differ; the 32 key bytes are the same.",
+    "expected": "raw 32 B | PEM 113 B | OpenSSH 80 B | PEM loads back to same key: True"
+   }
+  ],
+  "buildTask": {
+   "task": "Key rotation: add key_id(pub) (first 16 hex chars of SHA-256 of the raw key) and verify_with_keyring(keyring, path, sig_path) returning the signer's key_id or None.",
+   "hints": [
+    "Loop over the keyring and call pub.verify(); catch InvalidSignature and continue.",
+    "public_bytes_raw() gives the 32 raw bytes to hash."
+   ],
+   "solution": "labs/L200/07-ed25519-signatures/solution_keyring.py",
+   "check": "test_build_task.py (2 tests: rotation old/new/stranger, stable 16-char key id)"
+  },
+  "equivalents": [
+   "Same idea in OpenSSH: ssh-keygen -Y sign / -Y verify with an ed25519 key",
+   "Same idea in OpenSSL 3: openssl pkeyutl -sign -rawin -inkey ed25519.pem",
+   "Same idea in libsodium/PyNaCl: crypto_sign_detached / nacl.signing.SigningKey"
+  ],
+  "learningTools": [
+   {
+    "name": "XCA (X Certificate and Key management)",
+    "role": "INSPECT",
+    "exercise": "Create an Ed25519 key in XCA (supported since XCA 2.4.0) and export its public key as PEM to `xca.pub` in the lab folder. Then run `python -c \"from pathlib import Path; import signatures; print(signatures.load_public(Path('xca.pub')))\"`.",
+    "expected": "Same format as the lab's release.pub: header `-----BEGIN PUBLIC KEY-----` and about 113 B, like the lab's `PEM public 113 B`. load_public() prints an Ed25519PublicKey object. Never export the private key to a shared folder. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+    "mac": "brew install --cask xca",
+    "windows": "xca-2.9.0-win64.msi or the portable zip from https://github.com/chris2511/xca/releases, or Microsoft Store 9N9K02V7XR1B",
+    "licence": "BSD-3-Clause (OSI)",
+    "url": "https://github.com/chris2511/xca/releases"
+   }
+  ],
+  "caution": "Learning code: in production use vetted formats/libraries. Never commit private keys or paste keys/tokens into a model.",
+  "checkpoint": "PASS if both RFC 8032 lines print True, tampering and the wrong key give False, and test_build_task passes against your own signatures.py.",
+  "checkYourself": [
+   {
+    "q": "Why can release.pub be public?",
+    "a": "Verifying needs only the public key; only the private key can sign."
+   },
+   {
+    "q": "Two signatures of one file are identical. Bug?",
+    "a": "No: Ed25519 is deterministic (RFC 8032)."
+   }
+  ],
+  "sources": [
+   {
+    "title": "RFC 8032 - Edwards-Curve Digital Signature Algorithm (EdDSA)",
+    "url": "https://www.rfc-editor.org/rfc/rfc8032.html"
+   },
+   {
+    "title": "pyca/cryptography - Ed25519 signing",
+    "url": "https://cryptography.io/en/latest/hazmat/primitives/asymmetric/ed25519/"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran signatures.py, try_it.py and 6 unittests (4 lab + 2 build task vs solution) in the sandbox; also ran the build test against the unmodified signatures.py (errors as expected). OpenSSH/OpenSSL/Node/Go equivalents not executed (not installed). tryIt and agentAssist expected = observed output. learningTools: expected values computed from the lab code (research/learning_tools_expected.py); the GUI/CLI tools themselves were not run (manual)."
+  },
+  "conceptNote": "content/concepts/L200/07-digital-signatures-ed25519.md",
+  "conceptSummary": "A digital signature lets one holder of a private key prove authorship to anyone holding the public key, with no shared secret. Ed25519 uses 32-byte keys and deterministic 64-byte signatures; verification fails on any change.",
+  "inRealSystems": [
+   "Release and package signing with small Ed25519 keys and detached .sig files.",
+   "SSH host and user authentication with ssh-ed25519 keys."
+  ],
+  "useWhen": "Use signatures when one party writes and many verify; avoid them when both sides already share a secret (HMAC) or need secrecy (encryption).",
+  "next": "L300 #14 Signing the software supply chain: the Ed25519 keyring from this lesson signs a release manifest, and a strict installer checks every digest before installing.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "seeAlso": [
+   "cryptography L400 #17 Crypto agility: versioned envelopes, negotiation and dual signing: generalises this lesson's key IDs to algorithm IDs, a registry and policy-driven dual signing."
+  ]
+ },
+ {
+  "id": "key-exchange-hybrid-encryption",
+  "number": 8,
+  "level": "L200",
+  "title": "Key exchange and hybrid encryption (X25519 + HKDF + AEAD)",
+  "phase": "Confidentiality",
+  "category": "Key exchange",
+  "description": "Encrypt to someone's public key with X25519, HKDF-SHA256 and ChaCha20-Poly1305 - the pattern age and HPKE use.",
+  "outcome": "You can seal a message to a public key, open it with the private key, explain each layer, and extend it to several recipients.",
+  "environment": "Python 3.12 (3.9+), cryptography==50.0.2, stdlib ssl/hmac/hashlib/base64; optional: age CLI",
+  "estimatedTime": "35-45 minutes",
+  "overview": [
+   "Combine three primitives into 'encrypt to a public key': ephemeral X25519 agreement, HKDF to derive a one-time key, AEAD to seal."
+  ],
+  "prerequisites": [
+   "L100 lesson 4 (AEAD)",
+   "Lesson 7"
+  ],
+  "glossary": [
+   {
+    "term": "ephemeral key",
+    "meaning": "Key pair generated for one message and then discarded."
+   },
+   {
+    "term": "HKDF",
+    "meaning": "HMAC-based key derivation (RFC 5869): shared secret -> uniform key."
+   },
+   {
+    "term": "info label",
+    "meaning": "Context string mixed into HKDF so keys for different protocols never collide."
+   }
+  ],
+  "concepts": [
+   "X25519(my private, your public) gives both sides the same 32-byte secret.",
+   "Never use the raw secret as a key: derive it with HKDF (salt + info).",
+   "A fresh ephemeral key per message lets the AEAD use a fixed nonce safely."
+  ],
+  "steps": [
+   {
+    "title": "Run the lab",
+    "detail": "python seal_box.py",
+    "expected": "RFC 7748 6.1 Alice public: True; shared secret: True",
+    "ifNot": "Compare the hex with RFC 7748 section 6.1."
+   },
+   {
+    "title": "Seal to Bob's public key",
+    "detail": "seal(bob_pub, msg, aad=b'to:bob')",
+    "expected": "sealed 29 B -> 77 B (overhead 48 = 32 eph_pub + 16 tag)",
+    "ifNot": "Overhead other than 48 B means the layout changed."
+   },
+   {
+    "title": "Open and try to break it",
+    "detail": "Bob opens; Eve, a changed AAD and a swapped ephemeral key try",
+    "expected": "bob opens the message; the other three print InvalidTag (rejected)",
+    "ifNot": "Pass the same AAD on both sides."
+   },
+   {
+    "title": "Fresh ephemeral key",
+    "detail": "Seal the same message twice",
+    "expected": "same msg sealed twice -> different blobs: True",
+    "ifNot": "Identical blobs mean the ephemeral key is reused - fix that first."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "9 tests OK, 1 skipped (age CLI not installed)",
+    "ifNot": "The skipped test runs where age is installed."
+   },
+   {
+    "title": "Equivalent: age CLI (optional)",
+    "detail": "Install age, then age-keygen -o key.txt; age -r <age1...> -o msg.age msg.txt; age -d -i key.txt msg.age",
+    "expected": "test_age_cli.py passes; file header starts 'age-encryption.org/v1' and '-> X25519'",
+    "ifNot": "Windows: open a new terminal after winget so age is on PATH.",
+    "mac": "brew install age",
+    "windows": "winget install --id FiloSottile.age"
+   },
+   {
+    "title": "Build task",
+    "detail": "Add seal_multi()/open_multi(): one random file key, wrapped once per recipient with seal()",
+    "expected": "test_build_task: 3 tests OK",
+    "ifNot": "Use the stanzas as AAD for the payload so nobody can swap them.",
+    "mac": "BUILD_IMPL=seal_box python -m unittest -v test_build_task",
+    "windows": "$env:BUILD_IMPL=\"seal_box\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_IMPL"
+   }
+  ],
+  "codeLanguage": "python",
+  "code": "\"\"\"Encrypt to someone's PUBLIC key: X25519 + HKDF-SHA256 + ChaCha20-Poly1305 (the pattern age and HPKE use).\"\"\"\nfrom cryptography.hazmat.primitives import hashes\nfrom cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey\nfrom cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305\nfrom cryptography.hazmat.primitives.kdf.hkdf import HKDF\n\nINFO = b\"kb-crypto-l200/v1/X25519\"  # domain-separation label (age uses \"age-encryption.org/v1/X25519\")\nZERO_NONCE = bytes(12)  # safe ONLY because every message gets a brand-new key (fresh ephemeral key pair)\n\n# RFC 7748 section 6.1 Diffie-Hellman test vector\nRFC7748 = {\n    \"a\": bytes.fromhex(\"77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a\"),\n    \"A\": bytes.fromhex(\"8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a\"),\n    \"b\": bytes.fromhex(\"5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb\"),\n    \"B\": bytes.fromhex(\"de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f\"),\n    \"K\": bytes.fromhex(\"4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742\"),\n}\n\n\ndef _key(shared: bytes, eph_pub: bytes, rcpt_pub: bytes) -> bytes:\n    if shared == bytes(32):  # RFC 7748 s6: abort on all-zero output (small-order public key)\n        raise ValueError(\"all-zero shared secret\")\n    # KDF: never use the raw DH output as a key; bind both public keys via the salt (like age)\n    return HKDF(algorithm=hashes.SHA256(), length=32, salt=eph_pub + rcpt_pub, info=INFO).derive(shared)\n\n\ndef seal(rcpt: X25519PublicKey, plaintext: bytes, aad: bytes = b\"\") -> bytes:\n    eph = X25519PrivateKey.generate()  # ephemeral key: one per message, then thrown away\n    eph_pub, rcpt_pub = eph.public_key().public_bytes_raw(), rcpt.public_bytes_raw()\n    key = _key(eph.exchange(rcpt), eph_pub, rcpt_pub)  # key agreement: X25519(eph, recipient)\n    return eph_pub + ChaCha20Poly1305(key).encrypt(ZERO_NONCE, plaintext, aad)  # blob = 32 B eph_pub || ct || 16 B tag\n\n\ndef open_(me: X25519PrivateKey, blob: bytes, aad: bytes = b\"\") -> bytes:\n    eph_pub = blob[:32]\n    key = _key(me.exchange(X25519PublicKey.from_public_bytes(eph_pub)),  # X25519(me, eph): same shared secret\n               eph_pub, me.public_key().public_bytes_raw())\n    return ChaCha20Poly1305(key).decrypt(ZERO_NONCE, blob[32:], aad)  # InvalidTag if wrong key / tampered\n\n\nif __name__ == \"__main__\":\n    a, b = (X25519PrivateKey.from_private_bytes(RFC7748[k]) for k in (\"a\", \"b\"))\n    print(\"RFC 7748 6.1 Alice public:  \", a.public_key().public_bytes_raw() == RFC7748[\"A\"])\n    print(\"RFC 7748 6.1 shared secret: \", a.exchange(b.public_key()) == RFC7748[\"K\"] == b.exchange(a.public_key()))\n\n    from cryptography.exceptions import InvalidTag\n    bob, eve = X25519PrivateKey.generate(), X25519PrivateKey.generate()\n    msg = b\"db password rotation at 02:00\"\n    blob = seal(bob.public_key(), msg, aad=b\"to:bob\")  # sender needs only Bob's PUBLIC key\n    print(f\"sealed {len(msg)} B -> {len(blob)} B (overhead {len(blob) - len(msg)} = 32 eph_pub + 16 tag)\")\n    print(\"bob opens:   \", open_(bob, blob, aad=b\"to:bob\"))\n    print(\"same msg sealed twice -> different blobs:\", seal(bob.public_key(), msg) != seal(bob.public_key(), msg))\n    for label, fn in [(\"eve opens:   \", lambda: open_(eve, blob, aad=b\"to:bob\")),\n                      (\"aad changed: \", lambda: open_(bob, blob, aad=b\"to:eve\")),\n                      (\"eph swapped: \", lambda: open_(bob, eve.public_key().public_bytes_raw() + blob[32:], b\"to:bob\"))]:\n        try:\n            fn()\n        except InvalidTag:\n            print(label, \"InvalidTag (rejected)\")\n",
+  "codeWalkthrough": [
+   {
+    "title": "_key()",
+    "detail": "Rejects an all-zero secret, then HKDF-SHA256 with salt eph_pub||recipient_pub and a versioned info label."
+   },
+   {
+    "title": "seal()",
+    "detail": "New ephemeral key per message, so the zero AEAD nonce is never reused under one key."
+   },
+   {
+    "title": "open_()",
+    "detail": "Recomputes the same secret from the 32-byte ephemeral key; the AEAD rejects anything wrong."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L200/08-hybrid-encryption/seal_box.py",
+    "purpose": "main lab"
+   },
+   {
+    "path": "labs/L200/08-hybrid-encryption/solution_multi.py",
+    "purpose": "build solution"
+   },
+   {
+    "path": "labs/L200/08-hybrid-encryption/test_age_cli.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L200/08-hybrid-encryption/test_build_task.py",
+    "purpose": "build check"
+   },
+   {
+    "path": "labs/L200/08-hybrid-encryption/test_seal_box.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L200/08-hybrid-encryption/try_it.py",
+    "purpose": "tryIt"
+   },
+   {
+    "path": "labs/L200/08-hybrid-encryption/README.md",
+    "purpose": "observed output"
+   }
+  ],
+  "expectedResults": [
+   "RFC 7748 6.1 Alice public:   True",
+   "RFC 7748 6.1 shared secret:  True",
+   "sealed 29 B -> 77 B (overhead 48 = 32 eph_pub + 16 tag)",
+   "bob opens:    b'db password rotation at 02:00'"
+  ],
+  "testCases": [
+   {
+    "action": "RFC 7748 6.1 exchange both directions",
+    "expected": "K = 4a5d9d5b...1742"
+   },
+   {
+    "action": "Open with another private key",
+    "expected": "InvalidTag"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "InvalidTag for the right recipient",
+    "action": "Same AAD and same INFO label on both sides; blob must start with the 32-byte ephemeral key."
+   },
+   {
+    "symptom": "ValueError: Error computing shared key",
+    "action": "The peer public key is a small-order point (e.g. all zeros): reject the message."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Seal 0, 29 and 4096-byte messages and compare blob sizes.",
+    "predict": "Always +48 B (32 eph_pub + 16 tag).",
+    "expected": "plaintext    0 B -> blob   48 B | plaintext   29 B -> blob   77 B | plaintext 4096 B -> blob 4144 B"
+   },
+   {
+    "task": "Open with a different HKDF info label (v2) than the sender used (v1).",
+    "predict": "InvalidTag: a different label gives a different key.",
+    "expected": "receiver uses info v2, sender used v1 -> InvalidTag (keys differ, domain separation works)"
+   }
+  ],
+  "buildTask": {
+   "task": "Multi-recipient: add seal_multi(recipients, plaintext) / open_multi(identity, blob): one random file key, wrapped per recipient with seal(), payload sealed once with the stanzas as AAD.",
+   "hints": [
+    "Format: 1 byte count || n x 80-byte stanzas (32 eph + 32 key + 16 tag) || payload.",
+    "open_multi tries each stanza; InvalidTag means 'not mine', try the next."
+   ],
+   "solution": "labs/L200/08-hybrid-encryption/solution_multi.py",
+   "check": "test_build_task.py (3 tests: each recipient opens, payload encrypted once, header tamper detected)"
+  },
+  "equivalents": [
+   "Same idea as a tool: age (X25519 recipients, HKDF-SHA256, ChaCha20-Poly1305) - see test_age_cli.py",
+   "Same idea as a standard: RFC 9180 HPKE, DHKEM(X25519, HKDF-SHA256) + HKDF-SHA256 + ChaCha20Poly1305",
+   "Same idea in libsodium/PyNaCl: crypto_box_seal / nacl.public.SealedBox"
+  ],
+  "learningTools": [
+   {
+    "name": "Wireshark",
+    "role": "INSPECT",
+    "exercise": "In the lesson-10 Wireshark capture, open the ClientHello and ServerHello and find the key_share extension.",
+    "expected": "One ephemeral key share per side, the real-world version of the lab's ephemeral X25519 public key (`overhead 48 = 32 eph_pub + 16 tag`). The group name depends on the OpenSSL that Python links (KNOWN-GAPS 33). Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+    "mac": "brew install --cask wireshark-app (or the official universal .dmg from wireshark.org/download.html)",
+    "windows": "Official x64/Arm64 installer from https://www.wireshark.org/download.html (bundles Npcap)",
+    "licence": "GPL-2.0 (OSI)",
+    "url": "https://www.wireshark.org/download.html"
+   },
+   {
+    "name": "CrypTool 2",
+    "role": "SEE",
+    "exercise": "Step through the Diffie-Hellman template before you read seal_box.py.",
+    "expected": "Both parties end with the same shared value from their own private value and the other's public value. The lab's `RFC 7748 6.1 shared secret: True` checks the same property for X25519. Windows PC only. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+    "mac": "Not available on macOS (Windows/.NET WPF only): use the Windows PC",
+    "windows": "EXE installer or ZIP from https://www.cryptool.org/en/ct2/downloads/ (no admin needed)",
+    "licence": "Apache-2.0 (OSI)",
+    "url": "https://www.cryptool.org/en/ct2/downloads/"
+   }
+  ],
+  "caution": "Learning code: in production use vetted formats/libraries. Never commit private keys or paste keys/tokens into a model.",
+  "checkpoint": "PASS if the RFC 7748 lines print True, only Bob opens the blob, overhead is 48 B, and test_build_task passes against your seal_box.py.",
+  "checkYourself": [
+   {
+    "q": "Why is a zero nonce safe here but not in L100 lesson 4?",
+    "a": "Every message uses a fresh derived key, so (key, nonce) never repeats."
+   },
+   {
+    "q": "Does Bob learn who sent the message?",
+    "a": "No; anyone can seal to him. Add a signature."
+   }
+  ],
+  "sources": [
+   {
+    "title": "RFC 7748 - Elliptic Curves for Security (X25519)",
+    "url": "https://www.rfc-editor.org/rfc/rfc7748.html"
+   },
+   {
+    "title": "pyca/cryptography - X25519 key exchange",
+    "url": "https://cryptography.io/en/latest/hazmat/primitives/asymmetric/x25519/"
+   },
+   {
+    "title": "C2SP - age file encryption format",
+    "url": "https://c2sp.org/age"
+   },
+   {
+    "title": "C2SP age.md (X25519 recipient stanza)",
+    "url": "https://github.com/C2SP/C2SP/blob/main/age.md"
+   },
+   {
+    "title": "RFC 9180 - Hybrid Public Key Encryption",
+    "url": "https://www.rfc-editor.org/rfc/rfc9180.html"
+   },
+   {
+    "title": "age - README",
+    "url": "https://github.com/FiloSottile/age"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran seal_box.py, try_it.py and 9 unittests (8 run, 1 skipped: age CLI not in sandbox) locally. test_age_cli.py is pending-ci: CI installs age on ubuntu (apt) and macOS (brew); on Windows it is skipped unless age is installed. tryIt and agentAssist expected = observed output. learningTools: expected values computed from the lab code (research/learning_tools_expected.py); the GUI/CLI tools themselves were not run (manual).",
+   "pendingCi": [
+    "test_age_cli.py (age CLI not installed in the sandbox)"
+   ]
+  },
+  "conceptNote": "content/concepts/L200/08-key-exchange-hybrid-encryption.md",
+  "conceptSummary": "Hybrid encryption lets you encrypt to a public key: an ephemeral X25519 agreement gives a shared secret, HKDF turns it into a one-time key, and an AEAD seals the payload. age's X25519 recipient and RFC 9180 HPKE are standardized versions of this pattern.",
+  "inRealSystems": [
+   "age wraps a random file key per recipient with X25519 + HKDF-SHA256 + ChaCha20-Poly1305 (C2SP age spec).",
+   "HPKE (RFC 9180) is used by Messaging Layer Security and TLS Encrypted ClientHello."
+  ],
+  "useWhen": "Use it to encrypt files or messages to a recipient's public key; avoid hand-made formats in production (use age/HPKE) and use TLS for interactive sessions.",
+  "next": "L300 #12 Envelope encryption and key rotation: the wrapped file key from this lesson becomes a per-record DEK under a versioned KEK that you rotate and retire safely.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "seeAlso": [
+   "cryptography L400 #18 Post-quantum cryptography in practice: ML-KEM, ML-DSA and hybrids: the same X25519 + HKDF exchange made hybrid with ML-KEM-768.",
+   "cryptography L400 #20 End-to-end encryption for groups: pairwise, sender keys and MLS-style epochs: multi-recipient keys grown into group keys with epochs."
+  ]
+ },
+ {
+  "id": "local-certificate-authority",
+  "number": 9,
+  "level": "L200",
+  "title": "A local certificate authority",
+  "phase": "Identity",
+  "category": "X.509 / PKI",
+  "description": "Create a root CA and a server certificate (SAN, key usage, validity) with pyca/cryptography and verify the chain.",
+  "outcome": "You can issue certificates from your own CA, read their extensions, run path validation and name the cause of a validation failure.",
+  "environment": "Python 3.12 (3.9+), cryptography==50.0.2, stdlib ssl/hmac/hashlib/base64; optional: Ollama for --real",
+  "estimatedTime": "40-50 minutes",
+  "overview": [
+   "Build the PKI that lesson 10 will use: a root CA, a localhost server certificate, path validation, and an intermediate CA as the extension."
+  ],
+  "prerequisites": [
+   "Lesson 7 (signatures)"
+  ],
+  "glossary": [
+   {
+    "term": "SAN",
+    "meaning": "subjectAltName: the DNS names / IPs a certificate is valid for."
+   },
+   {
+    "term": "BasicConstraints",
+    "meaning": "CA:TRUE/FALSE and path length: may this key sign certificates?"
+   },
+   {
+    "term": "KeyUsage / EKU",
+    "meaning": "What the key may do (keyCertSign, digitalSignature) and for which role (serverAuth, clientAuth)."
+   }
+  ],
+  "concepts": [
+   "A certificate is the CA's signature over name + public key + validity + usage.",
+   "Verifiers match the hostname against the SAN, not the CN.",
+   "Path validation = signatures + dates + extensions + name, against a trust store."
+  ],
+  "steps": [
+   {
+    "title": "Run the lab",
+    "detail": "python local_ca.py",
+    "expected": "root CN=KB Local Root CA, CA: True; leaf SAN ['localhost', '127.0.0.1'], 30 days",
+    "ifNot": "Dates are UTC; they follow your clock."
+   },
+   {
+    "title": "Verify the chain",
+    "detail": "verify(leaf, [root], 'localhost')",
+    "expected": "localhost OK, chain length 2",
+    "ifNot": "Missing KeyUsage on the root -> 'missing required extension'."
+   },
+   {
+    "title": "Read the failures",
+    "detail": "Wrong host, 31 days later, untrusted root",
+    "expected": "no matching subjectAltName / not valid at validation time / candidates exhausted",
+    "ifNot": "These three errors are the usual production causes too."
+   },
+   {
+    "title": "Write PEM files",
+    "detail": "python local_ca.py --out pki",
+    "expected": "wrote ca.pem, server.pem, server-key.pem",
+    "ifNot": "Add pki/ to .gitignore; server-key.pem is a secret."
+   },
+   {
+    "title": "Agent assist",
+    "detail": "python agent_assist.py (fake model) or --real (Ollama)",
+    "expected": "3 CONFIRMED, 1 REJECTED (clock skew misread as EXPIRED)",
+    "ifNot": "With --real, start Ollama first and set LOCAL_MODEL_URL if not default."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "13 tests OK (4 lab + 6 agent assist + 3 build task)",
+    "ifNot": "Read the failing assertion."
+   },
+   {
+    "title": "Build task",
+    "detail": "Add an intermediate CA: root (path_length=1) -> intermediate (path_length=0) -> leaf",
+    "expected": "test_build_task: 3 tests OK",
+    "ifNot": "Pass the intermediate in verify(..., intermediates=[inter]).",
+    "mac": "BUILD_IMPL=local_ca python -m unittest -v test_build_task",
+    "windows": "$env:BUILD_IMPL=\"local_ca\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_IMPL"
+   }
+  ],
+  "codeLanguage": "python",
+  "code": "\"\"\"A local certificate authority with pyca/cryptography: root CA -> server certificate (SAN, key usage, validity).\"\"\"\nimport datetime as dt\nimport ipaddress\nimport sys\nfrom pathlib import Path\n\nfrom cryptography import x509\nfrom cryptography.hazmat.primitives import hashes, serialization as ser\nfrom cryptography.hazmat.primitives.asymmetric import ec\nfrom cryptography.x509.oid import ExtendedKeyUsageOID, NameOID\nfrom cryptography.x509.verification import PolicyBuilder, Store\n\nNOW = dt.datetime.now(dt.timezone.utc)\nKU = dict(content_commitment=False, key_encipherment=False, data_encipherment=False,\n          key_agreement=False, encipher_only=False, decipher_only=False)\n\n\ndef _name(cn: str) -> x509.Name:\n    return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])\n\n\ndef make_root(cn=\"KB Local Root CA\", days=365):\n    key = ec.generate_private_key(ec.SECP256R1())\n    cert = (x509.CertificateBuilder().subject_name(_name(cn)).issuer_name(_name(cn))  # self-signed: issuer == subject\n            .public_key(key.public_key()).serial_number(x509.random_serial_number())\n            .not_valid_before(NOW).not_valid_after(NOW + dt.timedelta(days=days))\n            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)  # may sign leaves only\n            .add_extension(x509.KeyUsage(digital_signature=False, key_cert_sign=True, crl_sign=True, **KU), critical=True)\n            .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)\n            .sign(key, hashes.SHA256()))\n    return key, cert\n\n\ndef issue_server(ca_key, ca_cert, names=(\"localhost\",), ips=(\"127.0.0.1\",), days=30, not_before=None):\n    key = ec.generate_private_key(ec.SECP256R1())\n    start = not_before or NOW\n    san = [x509.DNSName(n) for n in names] + [x509.IPAddress(ipaddress.ip_address(i)) for i in ips]\n    cert = (x509.CertificateBuilder().subject_name(_name(names[0])).issuer_name(ca_cert.subject)\n            .public_key(key.public_key()).serial_number(x509.random_serial_number())\n            .not_valid_before(start).not_valid_after(start + dt.timedelta(days=days))  # validity window\n            .add_extension(x509.SubjectAlternativeName(san), critical=False)  # SAN: clients match THIS, not the CN\n            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)\n            .add_extension(x509.KeyUsage(digital_signature=True, key_cert_sign=False, crl_sign=False, **KU), critical=True)\n            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)\n            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)\n            .sign(ca_key, hashes.SHA256()))  # the CA's signature binds name + public key + validity\n    return key, cert\n\n\ndef verify(leaf, roots, hostname: str, at=None, intermediates=()):\n    \"\"\"Path validation (RFC 5280 + web-PKI profile). Returns the chain or raises VerificationError.\"\"\"\n    verifier = PolicyBuilder().store(Store(list(roots))).time(at or NOW).build_server_verifier(x509.DNSName(hostname))\n    return verifier.verify(leaf, list(intermediates))\n\n\ndef save_pem(folder: Path, ca_cert, key, cert) -> None:\n    folder.mkdir(parents=True, exist_ok=True)\n    (folder / \"ca.pem\").write_bytes(ca_cert.public_bytes(ser.Encoding.PEM))\n    (folder / \"server.pem\").write_bytes(cert.public_bytes(ser.Encoding.PEM))\n    (folder / \"server-key.pem\").write_bytes(  # private key: keep out of git, never paste into a chat/model\n        key.private_bytes(ser.Encoding.PEM, ser.PrivateFormat.PKCS8, ser.NoEncryption()))\n\n\ndef attempt(label, *args, **kw):\n    try:\n        print(f\"{label:<22} OK, chain length {len(verify(*args, **kw))}\")\n    except x509.verification.VerificationError as e:\n        print(f\"{label:<22} FAIL: {str(e).split(' (encountered')[0]}\")\n\n\nif __name__ == \"__main__\":\n    ca_key, ca = make_root()\n    key, leaf = issue_server(ca_key, ca)\n    print(\"root:\", ca.subject.rfc4514_string(), \"| CA:\", ca.extensions.get_extension_for_class(x509.BasicConstraints).value.ca)\n    print(\"leaf SAN:\", [str(n.value) for n in leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value])\n    print(\"leaf valid:\", leaf.not_valid_before_utc.date(), \"->\", leaf.not_valid_after_utc.date())\n    attempt(\"localhost\", leaf, [ca], \"localhost\")\n    attempt(\"wrong host\", leaf, [ca], \"example.com\")\n    attempt(\"31 days later\", leaf, [ca], \"localhost\", at=NOW + dt.timedelta(days=31))\n    attempt(\"untrusted root\", leaf, [make_root(\"Some Other Root\")[1]], \"localhost\")\n    if \"--out\" in sys.argv:  # python local_ca.py --out pki  -> files for lab 10 / openssl s_client\n        save_pem(Path(sys.argv[sys.argv.index(\"--out\") + 1]), ca, key, leaf)\n        print(\"wrote ca.pem, server.pem, server-key.pem\")\n",
+  "codeWalkthrough": [
+   {
+    "title": "make_root()",
+    "detail": "Self-signed; CA:TRUE, path_length=0, keyCertSign: may sign leaves only."
+   },
+   {
+    "title": "issue_server()",
+    "detail": "SAN (DNS + IP), CA:FALSE, digitalSignature, EKU serverAuth, signed by the CA key."
+   },
+   {
+    "title": "verify()",
+    "detail": "PolicyBuilder + Store + build_server_verifier: RFC 5280 path validation for one hostname at one time."
+   },
+   {
+    "title": "save_pem()",
+    "detail": "Writes certs and the PKCS#8 server key for lesson 10; the key file is secret."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L200/09-local-ca/agent_assist.py",
+    "purpose": "agent assist"
+   },
+   {
+    "path": "labs/L200/09-local-ca/local_ca.py",
+    "purpose": "main lab"
+   },
+   {
+    "path": "labs/L200/09-local-ca/solution_intermediate.py",
+    "purpose": "build solution"
+   },
+   {
+    "path": "labs/L200/09-local-ca/test_agent_assist.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L200/09-local-ca/test_build_task.py",
+    "purpose": "build check"
+   },
+   {
+    "path": "labs/L200/09-local-ca/test_local_ca.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L200/09-local-ca/try_it.py",
+    "purpose": "tryIt"
+   },
+   {
+    "path": "labs/L200/09-local-ca/README.md",
+    "purpose": "observed output"
+   }
+  ],
+  "expectedResults": [
+   "root: CN=KB Local Root CA | CA: True",
+   "leaf SAN: ['localhost', '127.0.0.1']",
+   "leaf valid: 2026-10-28 -> 2026-11-27",
+   "localhost              OK, chain length 2"
+  ],
+  "testCases": [
+   {
+    "action": "verify leaf for localhost",
+    "expected": "chain length 2"
+   },
+   {
+    "action": "verify for example.com / +31 days / other root",
+    "expected": "VerificationError"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "'Certificate is missing required extension'",
+    "action": "Add KeyUsage (critical) to the CA; the verifier's profile requires it."
+   },
+   {
+    "symptom": "'cert is not valid at validation time' on a new cert",
+    "action": "Clock skew: the machine clock is behind not_valid_before; fix NTP or backdate not_before a few minutes."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Issue a cert for DNS name ip-only.test (+127.0.0.1), then verify it for 'localhost' and for 'ip-only.test'.",
+    "predict": "localhost fails (not in SAN); ip-only.test passes.",
+    "expected": "ask localhost       FAIL: validation failed: leaf certificate has no matching subjectAltName | ask ip-only.test    OK, chain length 2"
+   },
+   {
+    "task": "Compare the DER and PEM size of the same certificate and load both.",
+    "predict": "PEM ~4/3 of DER; both load to the same certificate.",
+    "expected": "DER 424 B, PEM 631 B, ratio 1.49; DER->cert == PEM->cert: True"
+   }
+  ],
+  "buildTask": {
+   "task": "Intermediate CA: add make_hierarchy() -> (root, intermediate, leaf, leaf_key): root (path_length=1) signs an intermediate (path_length=0) that issues the localhost leaf.",
+   "hints": [
+    "Reuse issue_server(int_key, inter) for the leaf.",
+    "The intermediate needs KeyUsage keyCertSign and an AuthorityKeyIdentifier from the root key."
+   ],
+   "solution": "labs/L200/09-local-ca/solution_intermediate.py",
+   "check": "test_build_task.py (3 tests: 3-link chain, missing intermediate fails, intermediate path_length 0)"
+  },
+  "equivalents": [
+   "Same idea with mkcert: mkcert -install, then mkcert localhost 127.0.0.1 (local CA in the OS trust store)",
+   "Same idea with smallstep: step certificate create root root.crt root.key --profile root-ca; step certificate create localhost srv.crt srv.key --ca root.crt --ca-key root.key --san localhost",
+   "Same idea with OpenSSL: openssl req -x509 (root) + openssl x509 -req -extfile (leaf with subjectAltName)"
+  ],
+  "learningTools": [
+   {
+    "name": "XCA (X Certificate and Key management)",
+    "role": "BUILD WITHOUT CODE",
+    "exercise": "Build root -> localhost leaf in XCA (root: CA true, path length 0; leaf: SAN DNS localhost + IP 127.0.0.1, 30 days) and export PEM. Run `python local_ca.py --out pki` and compare the extensions of pki/ca.pem and pki/server.pem with XCA's.",
+    "expected": "Should match the lab's printed values: `root: CN=KB Local Root CA | CA: True`, `leaf SAN: ['localhost', '127.0.0.1']`, leaf valid 30 days. Extensions as in local_ca.py: BasicConstraints critical; KeyUsage keyCertSign + cRLSign on the root, digitalSignature on the leaf; EKU serverAuth on the leaf. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+    "mac": "brew install --cask xca",
+    "windows": "xca-2.9.0-win64.msi or the portable zip from https://github.com/chris2511/xca/releases, or Microsoft Store 9N9K02V7XR1B",
+    "licence": "BSD-3-Clause (OSI)",
+    "url": "https://github.com/chris2511/xca/releases"
+   },
+   {
+    "name": "KeyStore Explorer",
+    "role": "INSPECT",
+    "exercise": "After `python local_ca.py --out pki`, open pki/ca.pem and pki/server.pem in KeyStore Explorer and view the X.509 v3 extensions. Do not open server-key.pem.",
+    "expected": "Root: BasicConstraints CA = true, path length 0. Leaf: not a CA, SAN localhost + 127.0.0.1, EKU serverAuth. These are the same fields the lab prints and verify() checks. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+    "mac": "brew install --cask keystore-explorer (or kse-570-arm64.dmg)",
+    "windows": "winget install -e --id KaiKramer.KeyStoreExplorer (or kse-570-setup.exe, bundled JRE)",
+    "licence": "GPL-3.0 (OSI)",
+    "url": "https://github.com/kaikramer/keystore-explorer"
+   }
+  ],
+  "caution": "Learning code: in production use vetted formats/libraries. Never commit private keys or paste keys/tokens into a model.",
+  "checkpoint": "PASS if localhost verifies with chain length 2, the three failure cases raise VerificationError, agent_assist shows the verdicts come from code, and test_build_task passes against your local_ca.py.",
+  "checkYourself": [
+   {
+    "q": "CN=api.local but SAN only 'localhost': does api.local verify?",
+    "a": "No; verifiers match the SAN."
+   },
+   {
+    "q": "Why is EXPIRED rejected for the clock-skew case?",
+    "a": "diagnose() sees check time < notBefore: NOT_YET_VALID. Code decides."
+   }
+  ],
+  "sources": [
+   {
+    "title": "pyca/cryptography - X.509 tutorial (CA hierarchy, verification)",
+    "url": "https://cryptography.io/en/latest/x509/tutorial/"
+   },
+   {
+    "title": "mkcert - README",
+    "url": "https://github.com/FiloSottile/mkcert/blob/master/README.md"
+   },
+   {
+    "title": "smallstep - step certificate",
+    "url": "https://smallstep.com/docs/step-cli/reference/certificate/"
+   },
+   {
+    "title": "Ollama - OpenAI compatibility",
+    "url": "https://docs.ollama.com/api/openai-compatibility"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran local_ca.py (and --out), try_it.py, agent_assist.py and 13 unittests locally; agent assist uses the vendored fake model server only. mkcert/step/openssl equivalents not executed (not installed). tryIt and agentAssist expected = observed output. learningTools: expected values computed from the lab code (research/learning_tools_expected.py); the GUI/CLI tools themselves were not run (manual).",
+   "pendingCi": [
+    "agent_assist.py --real (real local model)"
+   ]
+  },
+  "conceptNote": "content/concepts/L200/09-local-certificate-authority.md",
+  "conceptSummary": "A CA certificate signs leaf certificates that bind a public key to names (SAN), uses and a validity window. A verifier accepts a leaf only if a path to a trusted root checks out for the requested name at the current time.",
+  "inRealSystems": [
+   "mkcert and step-ca run exactly this kind of local/private CA for development and internal mTLS.",
+   "Every HTTPS client performs this path validation against its trust store."
+  ],
+  "useWhen": "Use a local CA for dev, CI and internal services you control; avoid it for public sites (use ACME) and never let the root key leave a protected machine.",
+  "next": "L300 #13 Certificate lifecycle: short-lived certs, renewal and revocation: this lesson's CA issues short-lived certificates that a jittered renewal loop replaces before they expire.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "agentAssist": {
+   "task": "A local model explains four certificate-validation failures (wrong host, expired, clock skew, untrusted CA) from a report of PUBLIC certificate fields and the verifier's error text.",
+   "prompt": "System: explain an X.509 validation failure in three lines: CATEGORY (HOSTNAME_MISMATCH|EXPIRED|NOT_YET_VALID|UNTRUSTED_ISSUER), WHY, FIX. User: [[CERT-EXPLAIN]] <report>verifier error + public cert fields</report>",
+   "check": "local_ca.verify gives PASS/FAIL; diagnose() derives the category from dates, issuer signature and SAN. Agent CATEGORY is CONFIRMED only if it equals diagnose(). A guard refuses text containing 'PRIVATE KEY', long hex, base64/base64url (e.g. a 32-byte key) or JWK private members; the report holds public certificate fields only.",
+   "expected": "wrong host    verifier=FAIL  code says HOSTNAME_MISMATCH agent says HOSTNAME_MISMATCH CONFIRMED\n              agent explains: the name the client asked for is not in the certificate's SAN list.\nexpired       verifier=FAIL  code says EXPIRED           agent says EXPIRED           CONFIRMED\n              agent explains: the certificate's validity period has ended.\nclock skew    verifier=FAIL  code says NOT_YET_VALID     agent says EXPIRED           REJECTED\nuntrusted CA  verifier=FAIL  code says UNTRUSTED_ISSUER  agent says UNTRUSTED_ISSUER  CONFIRMED\n              agent explains: no trusted root signed this chain.\nVERDICTS come from the verifier; categories from diagnose(); the agent only explains.",
+   "realModelNote": "--real uses Ollama (default qwen2.5:1.5b; Metal on the Mac mini, CUDA/Vulkan/CPU on Windows); wording will vary, verdicts still come from code. Not run in the sandbox (no model)."
+  }
+ },
+ {
+  "id": "tls-on-localhost",
+  "number": 10,
+  "level": "L200",
+  "title": "TLS on localhost",
+  "phase": "Transport",
+  "category": "TLS",
+  "description": "Run a Python ssl server and client with the lab-9 CA, inspect version and cipher, and trigger hostname and trust failures.",
+  "outcome": "You can configure TLS server/client contexts correctly, read what was negotiated, diagnose verification errors and add mutual TLS.",
+  "environment": "Python 3.12 (3.9+), cryptography==50.0.2, stdlib ssl/hmac/hashlib/base64; optional: openssl CLI",
+  "estimatedTime": "40-50 minutes",
+  "overview": [
+   "Wire lesson 9's certificates into a real TLS 1.3 connection on 127.0.0.1, see it fail closed for the two most common misconfigurations, then require client certificates (mTLS)."
+  ],
+  "prerequisites": [
+   "Lesson 9 (local CA)"
+  ],
+  "glossary": [
+   {
+    "term": "SNI",
+    "meaning": "Server Name Indication: the hostname the client sends in the handshake."
+   },
+   {
+    "term": "cipher suite",
+    "meaning": "Negotiated algorithms; TLS 1.3 suites are AEAD-only."
+   },
+   {
+    "term": "mTLS",
+    "meaning": "Mutual TLS: the server also verifies a client certificate."
+   }
+  ],
+  "concepts": [
+   "Client: create_default_context(cafile=...) = CERT_REQUIRED + check_hostname.",
+   "server_hostname is both SNI and the name checked against the SAN.",
+   "Verification failures abort the handshake before any data."
+  ],
+  "steps": [
+   {
+    "title": "Run the lab",
+    "detail": "python tls_localhost.py",
+    "expected": "trusted CA  TLSv1.3 TLS_AES_256_GCM_SHA384 (256-bit) -> b'hello over TLS\\n'",
+    "ifNot": "Port in use errors cannot happen: the lab binds port 0 (any free port)."
+   },
+   {
+    "title": "Hostname mismatch",
+    "detail": "Connect with server_hostname='example.com'",
+    "expected": "REFUSED verify_code=62: Hostname mismatch",
+    "ifNot": "The name must be in the SAN (DNS or IP)."
+   },
+   {
+    "title": "Untrusted CA",
+    "detail": "Connect trusting a different CA file",
+    "expected": "REFUSED verify_code=20: unable to get local issuer certificate",
+    "ifNot": "Point cafile at the CA that issued the server cert."
+   },
+   {
+    "title": "Equivalent: openssl s_client",
+    "detail": "Start python tls_localhost.py --serve 8443, then in a second terminal run s_client with -CAfile pki/ca.pem",
+    "expected": "Verification: OK / Verify return code: 0 (ok); with the other CA a non-zero exit",
+    "ifNot": "macOS /usr/bin/openssl is LibreSSL: use Homebrew openssl@3 for the same options.",
+    "mac": "brew install openssl@3\n$(brew --prefix openssl@3)/bin/openssl s_client -connect 127.0.0.1:8443 -servername localhost -CAfile pki/ca.pem -verify_return_error -brief </dev/null",
+    "windows": "winget install -e --id ShiningLight.OpenSSL.Light\n$null | openssl s_client -connect 127.0.0.1:8443 -servername localhost -CAfile pki\\ca.pem -verify_return_error -brief"
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "7 tests OK, 1 skipped (openssl CLI not installed)",
+    "ifNot": "Firewall prompts on Windows: allow Python on private networks (loopback only)."
+   },
+   {
+    "title": "Build task",
+    "detail": "Add mTLS: issue a client cert (EKU clientAuth), server sets verify_mode=CERT_REQUIRED + load_verify_locations",
+    "expected": "test_build_task: 2 tests OK",
+    "ifNot": "In TLS 1.3 a missing client cert surfaces on the client's first recv().",
+    "mac": "BUILD_IMPL=tls_localhost python -m unittest -v test_build_task",
+    "windows": "$env:BUILD_IMPL=\"tls_localhost\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_IMPL"
+   }
+  ],
+  "codeLanguage": "python",
+  "code": "\"\"\"TLS on localhost with the stdlib ssl module and the lab-9 local CA: handshake, inspect, and two failures.\"\"\"\nimport socket\nimport ssl\nimport sys\nimport tempfile\nimport threading\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).resolve().parent.parent / \"09-local-ca\"))\nimport local_ca  # noqa: E402  (lab 9)\n\n\ndef make_pki(folder: Path) -> Path:\n    ca_key, ca = local_ca.make_root()\n    key, leaf = local_ca.issue_server(ca_key, ca, names=(\"localhost\",), ips=(\"127.0.0.1\",))\n    local_ca.save_pem(folder, ca, key, leaf)  # ca.pem, server.pem, server-key.pem\n    return folder\n\n\ndef server_context(pki: Path) -> ssl.SSLContext:\n    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)\n    ctx.minimum_version = ssl.TLSVersion.TLSv1_2  # refuse TLS 1.0/1.1\n    ctx.load_cert_chain(pki / \"server.pem\", pki / \"server-key.pem\")  # server proves it owns the cert's key\n    return ctx\n\n\ndef start_server(ctx: ssl.SSLContext, port: int = 0, connections: int = 3):\n    listener = socket.create_server((\"127.0.0.1\", port))  # loopback only\n\n    def serve():\n        with listener:\n            for _ in range(connections):\n                raw, _ = listener.accept()\n                try:\n                    with ctx.wrap_socket(raw, server_side=True) as tls:\n                        tls.sendall(b\"hello over TLS\\n\")\n                except (ssl.SSLError, OSError):  # a client that rejects our cert aborts the handshake\n                    pass\n    threading.Thread(target=serve, daemon=True).start()\n    return listener.getsockname()[1]\n\n\ndef connect(port: int, cafile: Path, hostname: str):\n    ctx = ssl.create_default_context(cafile=str(cafile))  # CERT_REQUIRED + check_hostname, trust ONLY this CA\n    with socket.create_connection((\"127.0.0.1\", port), timeout=5) as raw:\n        with ctx.wrap_socket(raw, server_hostname=hostname) as tls:  # SNI + hostname checked against SAN\n            return tls.version(), tls.cipher(), tls.recv(64)\n\n\ndef attempt(label, port, cafile, hostname):\n    try:\n        version, cipher, data = connect(port, cafile, hostname)\n        print(f\"{label:<16} {version} {cipher[0]} ({cipher[2]}-bit) -> {data!r}\")\n    except ssl.SSLCertVerificationError as e:  # the client refuses BEFORE any application data\n        print(f\"{label:<16} REFUSED verify_code={e.verify_code}: {e.verify_message}\")\n\n\nif __name__ == \"__main__\":\n    print(\"Python ssl uses\", ssl.OPENSSL_VERSION)\n    if \"--serve\" in sys.argv:  # python tls_localhost.py --serve 8443  -> try openssl s_client against it\n        pki = make_pki(Path(\"pki\"))\n        port = int(sys.argv[sys.argv.index(\"--serve\") + 1])\n        start_server(server_context(pki), port, connections=1000)\n        print(f\"serving https on 127.0.0.1:{port}, CA file {pki / 'ca.pem'} (Ctrl+C to stop)\")\n        threading.Event().wait()\n    with tempfile.TemporaryDirectory() as tmp:\n        pki, other = make_pki(Path(tmp) / \"pki\"), make_pki(Path(tmp) / \"other\")\n        port = start_server(server_context(pki))\n        attempt(\"trusted CA\", port, pki / \"ca.pem\", \"localhost\")\n        attempt(\"wrong hostname\", port, pki / \"ca.pem\", \"example.com\")\n        attempt(\"untrusted CA\", port, other / \"ca.pem\", \"localhost\")\n",
+  "codeWalkthrough": [
+   {
+    "title": "server_context()",
+    "detail": "PROTOCOL_TLS_SERVER, minimum TLS 1.2, load_cert_chain(cert, key)."
+   },
+   {
+    "title": "start_server()",
+    "detail": "Binds 127.0.0.1 only; handshake errors from refusing clients are caught."
+   },
+   {
+    "title": "connect()",
+    "detail": "create_default_context(cafile=...) + server_hostname: CA trust and SAN check on."
+   },
+   {
+    "title": "attempt()",
+    "detail": "Prints verify_code / verify_message from SSLCertVerificationError - log these in services."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L200/10-tls-localhost/solution_mtls.py",
+    "purpose": "build solution"
+   },
+   {
+    "path": "labs/L200/10-tls-localhost/test_build_task.py",
+    "purpose": "build check"
+   },
+   {
+    "path": "labs/L200/10-tls-localhost/test_openssl_cli.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L200/10-tls-localhost/test_tls_localhost.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L200/10-tls-localhost/tls_localhost.py",
+    "purpose": "main lab"
+   },
+   {
+    "path": "labs/L200/10-tls-localhost/try_it.py",
+    "purpose": "tryIt"
+   },
+   {
+    "path": "labs/L200/10-tls-localhost/README.md",
+    "purpose": "observed output"
+   }
+  ],
+  "expectedResults": [
+   "Python ssl uses OpenSSL 3.3.7 7 Apr 2026",
+   "trusted CA       TLSv1.3 TLS_AES_256_GCM_SHA384 (256-bit) -> b'hello over TLS\\n'",
+   "wrong hostname   REFUSED verify_code=62: Hostname mismatch, certificate is not valid for 'example.com'.",
+   "untrusted CA     REFUSED verify_code=20: unable to get local issuer certificate"
+  ],
+  "testCases": [
+   {
+    "action": "Trusted handshake",
+    "expected": "TLSv1.3 (or 1.2), data received"
+   },
+   {
+    "action": "server_hostname='example.com'",
+    "expected": "SSLCertVerificationError, verify_code 62"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "CERTIFICATE_VERIFY_FAILED in requests/httpx against your local server",
+    "action": "Pass the lab CA: verify='pki/ca.pem' (or REQUESTS_CA_BUNDLE); never verify=False."
+   },
+   {
+    "symptom": "Unsure which CA file Python trusts by default",
+    "action": "python -c \"import ssl; print(ssl.get_default_verify_paths())\" - the lab passes cafile= explicitly instead."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Cap the client at TLS 1.2 (maximum_version) and connect.",
+    "predict": "TLSv1.2 with an ECDHE + AES-GCM suite.",
+    "expected": "client max TLS 1.2 -> TLSv1.2 ECDHE-ECDSA-AES256-GCM-SHA384"
+   },
+   {
+    "task": "Connect with server_hostname='127.0.0.1' instead of 'localhost'.",
+    "predict": "Works: the SAN contains IP 127.0.0.1.",
+    "expected": "server_hostname='127.0.0.1' -> TLSv1.3 b'hello over TLS\\n'"
+   }
+  ],
+  "buildTask": {
+   "task": "Mutual TLS: add make_pki_with_client(), mtls_server_context() (CERT_REQUIRED + load_verify_locations), start_mtls_server(ctx, seen) recording the client CN, and connect_mtls(port, pki, with_cert).",
+   "hints": [
+    "Client side: ctx.load_cert_chain(client.pem, client-key.pem).",
+    "Server side: tls.getpeercert()['subject'] holds the client CN after the handshake."
+   ],
+   "solution": "labs/L200/10-tls-localhost/solution_mtls.py",
+   "check": "test_build_task.py (2 tests: client with cert identified by CN, client without cert rejected)"
+  },
+  "equivalents": [
+   "Same idea with OpenSSL CLI: openssl s_client -connect host:port -servername name -CAfile ca.pem -verify_return_error (test_openssl_cli.py)",
+   "Same idea in Go: tls.Config{RootCAs, ServerName, MinVersion: tls.VersionTLS12}",
+   "Same idea in Node.js: tls.connect({ca, servername}) / https.Agent({ca})"
+  ],
+  "learningTools": [
+   {
+    "name": "Wireshark",
+    "role": "INSPECT",
+    "exercise": "Start a loopback capture with display filter `tls`. Run the lab with a key log: zsh `SSLKEYLOGFILE=keylog.txt python tls_localhost.py`; PowerShell `$env:SSLKEYLOGFILE=\"$PWD\\keylog.txt\"; python tls_localhost.py`. Load keylog.txt in Preferences -> Protocols -> TLS.",
+    "expected": "Observed here (without Wireshark): keylog.txt gets 1 CLIENT_HANDSHAKE_TRAFFIC_SECRET, 3 SERVER_HANDSHAKE_TRAFFIC_SECRET, 1 CLIENT_TRAFFIC_SECRET_0, 1 SERVER_TRAFFIC_SECRET_0 and 1 EXPORTER_SECRET line (create_default_context honours SSLKEYLOGFILE, Python 3.8+). In Wireshark: a TLS 1.3 handshake with cipher suite TLS_AES_256_GCM_SHA384 and the decrypted `hello over TLS`, matching the lab's `trusted CA  TLSv1.3 TLS_AES_256_GCM_SHA384` line. The two refused connections end before any application data. Delete keylog.txt afterwards: it decrypts the capture. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+    "mac": "brew install --cask wireshark-app (or the official universal .dmg from wireshark.org/download.html)",
+    "windows": "Official x64/Arm64 installer from https://www.wireshark.org/download.html (bundles Npcap)",
+    "licence": "GPL-2.0 (OSI)",
+    "url": "https://www.wireshark.org/download.html"
+   }
+  ],
+  "caution": "Learning code: in production use vetted formats/libraries. Never commit private keys or paste keys/tokens into a model.",
+  "checkpoint": "PASS if the trusted connection negotiates TLS 1.3 (or 1.2), both misconfigurations are refused with verify codes 62 and 20, and test_build_task passes against your tls_localhost.py.",
+  "checkYourself": [
+   {
+    "q": "Dial 127.0.0.1 with server_hostname='localhost': which SAN entry counts?",
+    "a": "DNS:localhost - the server_hostname is checked."
+   },
+   {
+    "q": "Why is check_hostname=False dangerous with CERT_REQUIRED?",
+    "a": "Any trusted cert, for any site, would be accepted."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Python docs - ssl",
+    "url": "https://docs.python.org/3/library/ssl.html"
+   },
+   {
+    "title": "OpenSSL - openssl-s_client(1)",
+    "url": "https://docs.openssl.org/master/man1/openssl-s_client/"
+   },
+   {
+    "title": "RFC 8446 - TLS 1.3",
+    "url": "https://www.rfc-editor.org/rfc/rfc8446.html"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran tls_localhost.py (and --serve with a Python client), try_it.py and 7 unittests (6 run, 1 skipped) locally (Python ssl linked to OpenSSL 3.3.7). test_openssl_cli.py is pending-ci (no openssl binary in the sandbox; CI runners have one). tryIt and agentAssist expected = observed output. learningTools: expected values computed from the lab code (research/learning_tools_expected.py); the GUI/CLI tools themselves were not run (manual).",
+   "pendingCi": [
+    "test_openssl_cli.py (no openssl binary in the sandbox)",
+    "openssl s_client against tls_localhost.py --serve (README equivalent)"
+   ]
+  },
+  "conceptNote": "content/concepts/L200/10-tls-on-localhost.md",
+  "conceptSummary": "TLS authenticates the server with its certificate chain and hostname, then protects data with AEAD records. Python's create_default_context enforces both checks; turning either off leaves encryption without authentication.",
+  "inRealSystems": [
+   "Every HTTPS, gRPC and database TLS connection performs these exact checks.",
+   "Service meshes use mTLS so both sides present certificates."
+  ],
+  "useWhen": "Use verified TLS (1.2+, defaults) for every network hop; avoid disabling verification - distribute a dev CA instead.",
+  "next": "L300 #13 Certificate lifecycle: short-lived certs, renewal and revocation: certificate rotation for the TLS server you built here, with expiry alerts instead of handshake errors.",
+  "seeAlso": [
+   "distributed-systems L100 #2 Two services talking over HTTP: the plain-HTTP service call that this lesson's TLS (server cert, hostname check, mTLS) protects.",
+   "cryptography L400 #18 Post-quantum cryptography in practice: ML-KEM, ML-DSA and hybrids: the X25519MLKEM768 TLS group (pq_tls_probe.py reuses lab 9's CA on 127.0.0.1)."
+  ],
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  }
+ },
+ {
+  "id": "tokens-done-right",
+  "number": 11,
+  "level": "L200",
+  "title": "Tokens done right: signed JWT-style tokens",
+  "phase": "Authorization",
+  "category": "Tokens",
+  "description": "Sign and verify JWT-style tokens (HS256/EdDSA) with an algorithm allow-list and exp/nbf/aud checks; reproduce alg:none and key confusion. Learning code - not for production.",
+  "outcome": "You can verify a token the RFC 8725 way, explain the alg:none and key-confusion attacks, configure PyJWT equivalently and add replay protection.",
+  "environment": "Python 3.12 (3.9+), cryptography==50.0.2, stdlib ssl/hmac/hashlib/base64; optional: PyJWT==2.15.1 (requirements-L200.txt)",
+  "estimatedTime": "35-45 minutes",
+  "overview": [
+   "Build a small, readable token verifier (stdlib + Ed25519) next to a deliberately naive one, so each RFC 8725 rule is visible as a line of code."
+  ],
+  "prerequisites": [
+   "L100 lesson 2 (HMAC)",
+   "Lesson 7 (Ed25519)"
+  ],
+  "glossary": [
+   {
+    "term": "JWS compact",
+    "meaning": "header.payload.signature, each part base64url without padding."
+   },
+   {
+    "term": "alg allow-list",
+    "meaning": "The algorithms the VERIFIER accepts; the token header cannot widen it."
+   },
+   {
+    "term": "exp / nbf / aud",
+    "meaning": "Expiry, not-before and audience claims (RFC 7519)."
+   }
+  ],
+  "concepts": [
+   "The verifier chooses the algorithm; one key per algorithm.",
+   "Check the signature first, then exp/nbf with small leeway, then aud.",
+   "Signed is not encrypted: claims are readable."
+  ],
+  "steps": [
+   {
+    "title": "Run the lab",
+    "detail": "python tokens.py",
+    "expected": "valid token: alice (211 chars)",
+    "ifNot": "Token length varies slightly with the claims."
+   },
+   {
+    "title": "alg:none",
+    "detail": "Forged header {'alg':'none'} with role=admin",
+    "expected": "naive ACCEPTS role=admin | safe rejects (algorithm 'none' not allowed)",
+    "ifNot": "If safe accepts, 'none' is in your keys map - remove it."
+   },
+   {
+    "title": "Key confusion",
+    "detail": "HS256 token MACed with the server's PUBLIC Ed25519 key bytes",
+    "expected": "naive ACCEPTS role=admin | safe rejects (algorithm 'HS256' not allowed)",
+    "ifNot": "Bind each key to exactly one alg."
+   },
+   {
+    "title": "Claims checks",
+    "detail": "Expired token, token for billing-api, edited payload",
+    "expected": "safe rejects: expired / wrong audience / bad signature",
+    "ifNot": "Use UTC epoch seconds for exp and nbf."
+   },
+   {
+    "title": "Equivalent: PyJWT",
+    "detail": "python -m pip install -r requirements-L200.txt; tests in test_pyjwt_equivalence.py",
+    "expected": "3 tests OK: PyJWT reads our tokens, we read PyJWT's, PyJWT also rejects the confused token",
+    "ifNot": "Without PyJWT the 3 tests are skipped."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "13 tests OK (5 lab + 3 PyJWT + 3 build task + 2 tool check)",
+    "ifNot": "Read the failing assertion."
+   },
+   {
+    "title": "Build task",
+    "detail": "Add ReplayGuard + verify_once(): reject a second use of the same jti until exp",
+    "expected": "test_build_task: 3 tests OK",
+    "ifNot": "Run verify() BEFORE recording the jti, or forged tokens can fill the store.",
+    "mac": "BUILD_IMPL=tokens python -m unittest -v test_build_task",
+    "windows": "$env:BUILD_IMPL=\"tokens\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_IMPL"
+   }
+  ],
+  "codeLanguage": "python",
+  "code": "\"\"\"JWT-style signed tokens: algorithm allow-list, one key per algorithm, exp/nbf/aud (RFC 7519, RFC 8725 BCP).\nFOR LEARNING ONLY - not for production. In real services use a maintained library (e.g. PyJWT) configured the same way.\"\"\"\nimport base64\nimport hashlib\nimport hmac\nimport json\nimport time\n\nfrom cryptography.exceptions import InvalidSignature\nfrom cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey\n\n\nclass TokenError(Exception):\n    pass\n\n\ndef b64u(b: bytes) -> str:\n    return base64.urlsafe_b64encode(b).rstrip(b\"=\").decode()\n\n\ndef unb64u(s: str) -> bytes:\n    return base64.urlsafe_b64decode(s + \"=\" * (-len(s) % 4))\n\n\ndef _hs256(key: bytes, msg: bytes) -> bytes:\n    return hmac.new(key, msg, hashlib.sha256).digest()\n\n\ndef sign(claims: dict, alg: str, key) -> str:\n    seg = [b64u(json.dumps(x, separators=(\",\", \":\")).encode()) for x in ({\"alg\": alg, \"typ\": \"JWT\"}, claims)]\n    msg = \".\".join(seg).encode()  # the signature covers header AND payload\n    sig = _hs256(key, msg) if alg == \"HS256\" else key.sign(msg)  # HS256 = shared secret, EdDSA = private key\n    return \".\".join(seg + [b64u(sig)])\n\n\ndef verify(token: str, keys: dict, audience: str, now=None, leeway=30) -> dict:\n    \"\"\"keys = the allow-list: exactly one key per accepted algorithm, e.g. {\"EdDSA\": public_key}.\"\"\"\n    try:\n        h, p, s = token.split(\".\")\n        alg = json.loads(unb64u(h)).get(\"alg\")\n    except ValueError as e:\n        raise TokenError(\"malformed token\") from e\n    if alg not in keys:  # algorithm allow-list: rejects \"none\" and any alg we did not configure\n        raise TokenError(f\"algorithm {alg!r} not allowed\")\n    key, msg, sig = keys[alg], f\"{h}.{p}\".encode(), unb64u(s)\n    if alg == \"HS256\" and not hmac.compare_digest(_hs256(key, msg), sig):  # constant-time compare\n        raise TokenError(\"bad signature\")\n    if alg == \"EdDSA\":\n        try:\n            key.verify(sig, msg)\n        except InvalidSignature:\n            raise TokenError(\"bad signature\") from None\n    claims = json.loads(unb64u(p))  # trust claims only AFTER the signature check\n    now = time.time() if now is None else now\n    if \"exp\" not in claims or now > claims[\"exp\"] + leeway:  # exp required; small leeway for clock skew\n        raise TokenError(\"expired or no exp\")\n    if now + leeway < claims.get(\"nbf\", 0):\n        raise TokenError(\"not yet valid (nbf)\")\n    if audience not in (claims.get(\"aud\") if isinstance(claims.get(\"aud\"), list) else [claims.get(\"aud\")]):\n        raise TokenError(\"wrong audience\")  # a token minted for another service is not for us\n    return claims\n\n\nif __name__ == \"__main__\":\n    from naive import naive_verify  # the anti-pattern, kept in its own file\n\n    issuer = Ed25519PrivateKey.generate()\n    pub = issuer.public_key()\n    keys = {\"EdDSA\": pub}  # this API accepts EdDSA only\n    now = int(time.time())  # NumericDate: seconds since the epoch\n    good = sign({\"sub\": \"alice\", \"aud\": \"orders-api\", \"exp\": now + 300, \"role\": \"user\"}, \"EdDSA\", issuer)\n    print(\"valid token:\", verify(good, keys, \"orders-api\")[\"sub\"], f\"({len(good)} chars)\")\n\n    forged_claims = {\"sub\": \"alice\", \"aud\": \"orders-api\", \"exp\": now + 300, \"role\": \"admin\"}\n    none_tok = \".\".join([b64u(b'{\"alg\":\"none\",\"typ\":\"JWT\"}'), b64u(json.dumps(forged_claims).encode()), \"\"])\n    confused = sign(forged_claims, \"HS256\", pub.public_bytes_raw())  # attacker HMACs with the PUBLIC key\n    cases = [(\"alg none\", none_tok), (\"key confusion\", confused),\n             (\"expired\", sign({\"aud\": \"orders-api\", \"exp\": now - 3600}, \"EdDSA\", issuer)),\n             (\"wrong audience\", sign({\"aud\": \"billing-api\", \"exp\": now + 300}, \"EdDSA\", issuer)),\n             (\"payload edited\", good.split(\".\")[0] + \".\" + b64u(json.dumps(forged_claims).encode()) + \".\" + good.split(\".\")[2])]\n    for label, tok in cases:\n        try:\n            naive = \"ACCEPTS role=\" + naive_verify(tok, pub.public_bytes_raw()).get(\"role\", \"?\")\n        except (ValueError, InvalidSignature):\n            naive = \"rejects\"\n        try:\n            verify(tok, keys, \"orders-api\")\n            safe = \"ACCEPTS\"\n        except TokenError as e:\n            safe = f\"rejects ({e})\"\n        print(f\"{label:<15} naive {naive:<18} | safe {safe}\")\n",
+  "codeWalkthrough": [
+   {
+    "title": "sign()",
+    "detail": "base64url(header).base64url(claims), then HMAC-SHA256 or Ed25519 over those bytes."
+   },
+   {
+    "title": "alg not in keys",
+    "detail": "The keys map is the allow-list and binds one key to one alg (RFC 8725 s3.1)."
+   },
+   {
+    "title": "compare_digest / verify",
+    "detail": "Constant-time HS256 check or Ed25519 verify; claims parsed only afterwards."
+   },
+   {
+    "title": "exp / nbf / aud",
+    "detail": "exp required, 30 s leeway, aud string or list must name this service."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L200/11-tokens/naive.py",
+    "purpose": "anti-pattern"
+   },
+   {
+    "path": "labs/L200/11-tokens/solution_replay.py",
+    "purpose": "build solution"
+   },
+   {
+    "path": "labs/L200/11-tokens/test_build_task.py",
+    "purpose": "build check"
+   },
+   {
+    "path": "labs/L200/11-tokens/test_pyjwt_equivalence.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L200/11-tokens/test_tokens.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L200/11-tokens/tokens.py",
+    "purpose": "main lab"
+   },
+   {
+    "path": "labs/L200/11-tokens/try_it.py",
+    "purpose": "tryIt"
+   },
+   {
+    "path": "labs/L200/11-tokens/tool_check.py",
+    "purpose": "files/values for the CyberChef and step CLI checks (learningTools)"
+   },
+   {
+    "path": "labs/L200/11-tokens/test_tool_check.py",
+    "purpose": "tests"
+   },
+   {
+    "path": "labs/L200/11-tokens/README.md",
+    "purpose": "observed output"
+   }
+  ],
+  "expectedResults": [
+   "valid token: alice (211 chars)",
+   "alg none        naive ACCEPTS role=admin | safe rejects (algorithm 'none' not allowed)",
+   "key confusion   naive ACCEPTS role=admin | safe rejects (algorithm 'HS256' not allowed)",
+   "expired         naive ACCEPTS role=?     | safe rejects (expired or no exp)"
+  ],
+  "testCases": [
+   {
+    "action": "alg none / HS256-with-public-key token",
+    "expected": "TokenError 'not allowed'; naive_verify accepts (the bug)"
+   },
+   {
+    "action": "exp 31 s ago with 30 s leeway",
+    "expected": "TokenError expired"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "PyJWT: 'The specified alg value is not allowed'",
+    "action": "Pass algorithms=[...] containing the alg the issuer uses - never the alg read from the token."
+   },
+   {
+    "symptom": "Tokens rejected right after issue",
+    "action": "Clock skew between issuer and API: sync NTP; keep leeway small (seconds, not hours)."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Verify a token that expired 20 s ago with leeway 30 and with leeway 0.",
+    "predict": "Accepted, then rejected.",
+    "expected": "expired 20 s ago, leeway=30: accepted | expired 20 s ago, leeway= 0: rejected (expired or no exp)"
+   },
+   {
+    "task": "Decode the payload of a signed token without any key.",
+    "predict": "Readable: signing is not encryption.",
+    "expected": "payload read with NO key: {'sub': 'alice', 'email': 'alice@example.com', 'aud': 'orders-api', 'exp': 1800000060}"
+   }
+  ],
+  "buildTask": {
+   "task": "Replay protection: add ReplayGuard.check(claims, now) and verify_once(token, keys, audience, guard, now): require jti, reject a reused jti, forget ids after exp.",
+   "hints": [
+    "Store jti -> exp in a dict; purge entries with exp < now on each check.",
+    "Call tokens.verify() first; only then record the jti."
+   ],
+   "solution": "labs/L200/11-tokens/solution_replay.py",
+   "check": "test_build_task.py (3 tests: second use rejected, missing jti rejected, memory bounded by exp)"
+  },
+  "equivalents": [
+   "Same idea with PyJWT: jwt.decode(token, key, algorithms=['EdDSA'], audience='orders-api') (test_pyjwt_equivalence.py)",
+   "Same idea in Node.js: jose jwtVerify(token, key, {algorithms: ['EdDSA'], audience})",
+   "Same idea in Go: github.com/golang-jwt/jwt/v5 with jwt.WithValidMethods([]string{\"EdDSA\"})"
+  ],
+  "learningTools": [
+   {
+    "name": "CyberChef",
+    "role": "CHECK",
+    "exercise": "Run `python tool_check.py`. Paste the printed HS256 demo token into JWT Verify with the printed demo key, then into JWT Decode. Change one character of the signature and verify again.",
+    "expected": "Should match the lab's printed claims: {\"sub\":\"alice\",\"aud\":\"orders-api\",\"exp\":4102444800,\"role\":\"user\"}. The token is fixed: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbGljZSIsImF1ZCI6Im9yZGVycy1hcGkiLCJleHAiOjQxMDI0NDQ4MDAsInJvbGUiOiJ1c2VyIn0.HKTDiu55nB_ks2cnZx_ZySPZaxFaSDkNjgrdbFKN-aA. The edited signature fails. Use the demo key only; never paste a real key into a web tool. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+    "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+    "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+    "licence": "Apache-2.0 (OSI)",
+    "url": "https://github.com/gchq/CyberChef"
+   },
+   {
+    "name": "step CLI (smallstep)",
+    "role": "CHECK",
+    "exercise": "After `python tool_check.py`: zsh `step crypto jwt verify --key tool_check/issuer-pub.pem --alg EdDSA --aud orders-api --subtle < tool_check/eddsa.jwt`; PowerShell `Get-Content tool_check\\eddsa.jwt | step crypto jwt verify --key tool_check\\issuer-pub.pem --alg EdDSA --aud orders-api --subtle`. Repeat with none.jwt.",
+    "expected": "eddsa.jwt: step prints the payload with \"sub\":\"alice\" and exits 0, like the lab's `EdDSA lab verify: alice`. none.jwt: non-zero exit, like the lab's `alg none ... safe rejects`. `--subtle` is needed only because the lab tokens carry no iss claim (step otherwise requires --iss). EdDSA support in step was not checked. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab code (research/learning_tools_expected.out.txt).",
+    "mac": "brew install step",
+    "windows": "winget install -e --id Smallstep.step (manifest at 0.30.6) or step_windows_0.31.0_amd64.zip from https://github.com/smallstep/cli/releases",
+    "licence": "Apache-2.0 (OSI)",
+    "url": "https://github.com/smallstep/cli/releases"
+   }
+  ],
+  "caution": "Learning code: in production use vetted formats/libraries. Never commit private keys or paste keys/tokens into a model.",
+  "checkpoint": "PASS if alg:none and key confusion are accepted by naive_verify but rejected by verify, expired/wrong-aud tokens are rejected, PyJWT interoperates, and test_build_task passes against your tokens.py.",
+  "checkYourself": [
+   {
+    "q": "Why is HS256 risky with five verifying APIs?",
+    "a": "Each holds the secret and could mint tokens; with EdDSA only the issuer signs."
+   },
+   {
+    "q": "Header says EdDSA, keys map has only HS256?",
+    "a": "Rejected before any crypto: the verifier chooses the alg."
+   }
+  ],
+  "sources": [
+   {
+    "title": "RFC 8725 - JSON Web Token Best Current Practices",
+    "url": "https://www.rfc-editor.org/rfc/rfc8725.html"
+   },
+   {
+    "title": "PyJWT - Usage examples",
+    "url": "https://pyjwt.readthedocs.io/en/stable/usage.html"
+   },
+   {
+    "title": "RFC 8032 - EdDSA",
+    "url": "https://www.rfc-editor.org/rfc/rfc8032.html"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran tokens.py, try_it.py, tool_check.py and 13 unittests locally, including test_pyjwt_equivalence.py against the locally installed PyJWT 2.15.1 (pinned in requirements-L200.txt for CI). tryIt and agentAssist expected = observed output. learningTools: expected values computed from the lab code (research/learning_tools_expected.py); the GUI/CLI tools themselves were not run (manual)."
+  },
+  "conceptNote": "content/concepts/L200/11-tokens-done-right.md",
+  "conceptSummary": "A signed token is a readable claim set plus a signature; its safety depends on the verifier choosing the algorithm and key, then checking exp, nbf and aud. RFC 8725 codifies these rules after alg:none and key-confusion bugs in real libraries.",
+  "inRealSystems": [
+   "OAuth 2.0 access tokens and OpenID Connect ID tokens are JWTs validated this way (RFC 8725).",
+   "PyJWT requires an explicit algorithms list in decode()."
+  ],
+  "useWhen": "Use short-lived signed tokens for stateless authorization with an allow-list, exp and aud; avoid them when you need instant revocation or to hide claims.",
+  "next": "L300 #12 Envelope encryption and key rotation",
+  "seeAlso": [
+   "application-architecture L200 #10 Authentication with OpenID Connect (code flow + PKCE): the same alg allow-list, aud and exp checks applied to ID tokens from a real identity provider."
+  ],
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  }
+ }
+]

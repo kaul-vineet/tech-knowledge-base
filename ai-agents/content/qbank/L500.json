@@ -1,0 +1,773 @@
+[
+ {
+  "id": "ag-L500-001",
+  "level": "L500",
+  "lesson": 23,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "You lower the sampling temperature from 1.0 to 0.5 for the same logits. What happens to the next-token distribution?",
+  "options": [
+   "The argmax can change, because dividing every logit by 0.5 reorders tokens whose logits are close together",
+   "It gets flatter: probabilities move towards uniform and entropy rises",
+   "Nothing changes in the distribution; temperature only affects decoding speed",
+   "It gets sharper: the most likely token gains probability, entropy falls, the argmax is unchanged"
+  ],
+  "answer": 3,
+  "explanation": "Dividing all logits by T < 1 stretches their differences, so softmax concentrates mass on the largest logit; T1 shows dH/dT >= 0. Order is preserved because division by a positive number keeps the ranking.",
+  "source": "Lesson 23 T1"
+ },
+ {
+  "id": "ag-L500-002",
+  "level": "L500",
+  "lesson": 23,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Logits z = (2, 1, 0), temperature 1. What probability does softmax give the first token (4 decimals)?",
+  "options": [
+   "0.6667",
+   "0.8668",
+   "0.6652",
+   "0.5000"
+  ],
+  "answer": 2,
+  "explanation": "exp(2)/(exp(2) + exp(1) + 1) = 7.389/11.107 = 0.6652. 0.6667 is the tempting linear normalisation 2/(2+1+0), which ignores the exponential; 0.8668 is the T = 0.5 value.",
+  "source": "Lesson 23 problem 2"
+ },
+ {
+  "id": "ag-L500-003",
+  "level": "L500",
+  "lesson": 23,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Why does scaled dot-product attention divide QK^T by sqrt(d_k)?",
+  "options": [
+   "It normalises every query and key vector to length 1, turning the dot product into a cosine similarity",
+   "To keep score variance at 1: q.k has variance d_k, and a saturated softmax has near-zero gradients",
+   "It is needed so that each row of attention weights sums to 1 after the softmax",
+   "It halves the memory needed for the attention matrix when d_k is large"
+  ],
+  "answer": 1,
+  "explanation": "Var(q.k) = d_k under the independence assumption (T2); unscaled scores have standard deviation sqrt(d_k), softmax becomes nearly one-hot and its Jacobian vanishes. Rows sum to 1 because of softmax itself, with or without scaling.",
+  "source": "Lesson 23 T2; Vaswani et al. 2017 Sec. 3.2.1"
+ },
+ {
+  "id": "ag-L500-004",
+  "level": "L500",
+  "lesson": 23,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this print?",
+  "code": "import math\n\ndef softmax(z):\n    m = max(z)\n    e = [math.exp(x - m) for x in z]\n    s = sum(e)\n    return [round(x / s, 3) for x in e]\n\nprint(softmax([1, 2, 3]) == softmax([101, 102, 103]), softmax([0, 0]))",
+  "options": [
+   "False [0.5, 0.5]",
+   "True [0.5, 0.5]",
+   "True [0.0, 0.0]",
+   "False [1.0, 0.0]"
+  ],
+  "answer": 1,
+  "explanation": "Subtracting the max (or adding 100 to every logit) cancels in the ratio, so both lists are equal: softmax is shift-invariant (T1). Equal logits give a uniform distribution, not zeros.",
+  "source": "Lesson 23 T1 (shift invariance)"
+ },
+ {
+  "id": "ag-L500-005",
+  "level": "L500",
+  "lesson": 23,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "A model assigns these probabilities to the correct next tokens of a 4-token text. What does this print?",
+  "code": "import math\n\nprobs = [0.5, 0.25, 0.5, 0.0625]\nce = -sum(math.log(p) for p in probs) / len(probs)\nprint(round(math.exp(ce), 2))",
+  "options": [
+   "4.0",
+   "3.05",
+   "0.33",
+   "1.39"
+  ],
+  "answer": 0,
+  "explanation": "Perplexity is exp of the mean negative log probability, i.e. the inverse geometric mean of the probabilities: (0.5 * 0.25 * 0.5 * 0.0625)^(-1/4) = 256^(1/4) = 4.0. Averaging the probabilities (0.328) and inverting gives about 3.05, a common slip; 1.39 is the cross-entropy ln 4, before exponentiating.",
+  "source": "Lesson 23 T3; Jurafsky & Martin eq. 3.15"
+ },
+ {
+  "id": "ag-L500-006",
+  "level": "L500",
+  "lesson": 23,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "This is the top-p rule from the lab, applied to the bigram row for 'the'. What does it print?",
+  "code": "probs = {'agent': 0.375, 'tool': 0.25, 'answer': 0.125, 'result': 0.125, 'ticket': 0.125}\nkept, mass = [], 0.0\nfor tok, p in sorted(probs.items(), key=lambda kv: -kv[1]):\n    kept.append(tok)\n    mass += p\n    if mass >= 0.6:\n        break\nprint(kept, mass)",
+  "options": [
+   "['agent'] 0.375",
+   "['agent', 'tool', 'answer'] 0.75",
+   "['agent', 'tool'] 0.6",
+   "['agent', 'tool'] 0.625"
+  ],
+  "answer": 3,
+  "explanation": "Sorted by probability: agent (0.375) then tool (0.625 total) reaches 0.6, so the loop stops after two tokens with mass 0.625. The kept mass is what was accumulated, not the threshold p.",
+  "source": "Lesson 23 T4; lab tiny_lm.truncate"
+ },
+ {
+  "id": "ag-L500-007",
+  "level": "L500",
+  "lesson": 23,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "A small local model, decoded greedily, keeps repeating 'Thought: I should check the order. Action: get_order' in an agent loop. Which change addresses the cause rather than the symptom?",
+  "options": [
+   "Lower the temperature further so the model becomes more certain about which next step is the right one to take",
+   "Raise max_tokens so the model has room to finish its reasoning before acting",
+   "Cap the loop and detect repeated actions in code; sample with top-p so the trajectory can leave the cycle",
+   "Switch to top-k with k = 1 because it removes unlikely tokens from the distribution"
+  ],
+  "answer": 2,
+  "explanation": "Greedy decoding is a deterministic map; when its argmax path revisits a state it cycles (T4, the lab's 'the agent calls the agent ...'). Lower temperature and top-k with k = 1 are both still greedy; a budget and repeat detection bound the damage, and sampling can break the cycle.",
+  "source": "Lesson 23 T4; Lesson 6 step budget; Yao et al. 2023 Sec. 3.3"
+ },
+ {
+  "id": "ag-L500-008",
+  "level": "L500",
+  "lesson": 23,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "A held-out sentence contains a bigram that never occurred in the training corpus. What is the unsmoothed (MLE) bigram model's perplexity on it?",
+  "options": [
+   "Exactly V, because unseen bigrams fall back to the uniform distribution",
+   "The same as on the training set, because perplexity is normalised per token",
+   "Infinite, because that bigram gets probability 0 and log 0 is minus infinity",
+   "Slightly higher than on training, because one unseen token barely moves the average"
+  ],
+  "answer": 2,
+  "explanation": "MLE assigns count/total = 0 to unseen bigrams, so one term of the average negative log-likelihood is infinite (T3 d). Smoothing (add-k) or a softmax model, which never outputs exactly 0, keeps it finite: the lab shows 4.4475 with add-0.1.",
+  "source": "Lesson 23 T3; lab check T3"
+ },
+ {
+  "id": "ag-L500-009",
+  "level": "L500",
+  "lesson": 23,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "A team trains a tiny decoder on next-token prediction. Training loss drops to almost zero within minutes, but generated text is gibberish. Their attention code builds scores = Q @ K.T / sqrt(d) and applies softmax. What is the most likely bug?",
+  "options": [
+   "The 1/sqrt(d) scaling makes the attention softmax far too flat for the model to learn which positions matter",
+   "The causal mask is missing, so each position can attend to the very token it is supposed to predict",
+   "Softmax should be applied over the query axis instead of the key axis",
+   "The value matrix V must be normalised to unit length before mixing"
+  ],
+  "answer": 1,
+  "explanation": "Without the mask, position i sees token i+1 during training and copies it, so loss collapses; at generation time the future is not available and the shortcut fails (problem 9). Scaling affects sharpness, not leakage.",
+  "source": "Lesson 23 problem 9; Vaswani et al. Sec. 3.2.3"
+ },
+ {
+  "id": "ag-L500-010",
+  "level": "L500",
+  "lesson": 24,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "An agent passes all 20 golden cases. What is the lower end of the 95 % Wilson interval for its true pass rate (4 decimals)?",
+  "options": [
+   "0.8389",
+   "1.0000",
+   "0.8316",
+   "0.9500"
+  ],
+  "answer": 0,
+  "explanation": "Wilson at 20/20 gives [0.8389, 1]: a perfect score on 20 cases is compatible with a true rate near 84 %. The Wald interval collapses to [1, 1]; 0.8316 is the exact Clopper-Pearson lower bound, a different method.",
+  "source": "Lesson 24 T1; NIST e-Handbook 7.2.4.1"
+ },
+ {
+  "id": "ag-L500-011",
+  "level": "L500",
+  "lesson": 24,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which statement about a 95 % confidence interval for a pass rate is correct?",
+  "options": [
+   "There is a 95 % probability that the true rate lies somewhere inside this particular interval we computed from the data",
+   "95 % of the individual golden cases have pass probabilities inside the interval",
+   "Repeating the same 20 cases many times makes the interval contain the rate 95 % of the time",
+   "If the procedure were repeated on many independent samples, about 95 % of the intervals would contain the true rate"
+  ],
+  "answer": 3,
+  "explanation": "Coverage is a property of the interval-building procedure over repeated samples. A computed interval either contains the fixed true rate or not; per-case probabilities and re-running the same cases are different questions.",
+  "source": "Lesson 24 Definitions; misconceptions"
+ },
+ {
+  "id": "ag-L500-012",
+  "level": "L500",
+  "lesson": 24,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "An evaluation report runs an independent test at alpha = 0.05 on each of 10 ticket categories. If nothing changed, what is the probability of at least one false alarm (4 decimals)?",
+  "options": [
+   "0.5000",
+   "0.0500",
+   "0.0489",
+   "0.4013"
+  ],
+  "answer": 3,
+  "explanation": "FWER = 1 - 0.95^10 = 0.4013. 0.5000 is the union bound 10 x 0.05; with Bonferroni (0.005 each) the FWER would be 0.0489.",
+  "source": "Lesson 24 T4"
+ },
+ {
+  "id": "ag-L500-013",
+  "level": "L500",
+  "lesson": 24,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "What does this exact McNemar test print?",
+  "code": "from math import comb\n\ndef mcnemar(b, c):\n    n = b + c\n    tail = sum(comb(n, i) for i in range(min(b, c) + 1)) / 2 ** n\n    return round(min(1.0, 2 * tail), 4)\n\nprint(mcnemar(2, 0), mcnemar(6, 0))",
+  "options": [
+   "0.25 0.0156",
+   "0.5 0.0156",
+   "0.5 0.0312",
+   "1.0 0.0312"
+  ],
+  "answer": 2,
+  "explanation": "With b = 2, c = 0 there are 2 discordant cases: 2 * (1/4) = 0.5. With b = 6, c = 0: 2 * (1/64) = 0.03125, rounded 0.0312. Forgetting the factor 2 (one-sided) gives 0.25 and 0.0156.",
+  "source": "Lesson 24 T3; lab eval_stats.mcnemar_exact"
+ },
+ {
+  "id": "ag-L500-014",
+  "level": "L500",
+  "lesson": 24,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "Prompt A and prompt B were both run on the same 300 golden cases. Which analysis answers 'is B's pass rate different from A's'?",
+  "options": [
+   "A two-proportion z-test that treats the 300 runs of A and the 300 runs of B as two independent samples",
+   "McNemar's test on the cases where exactly one prompt passed, plus reading those discordant cases",
+   "Comparing whether the two 95 % Wilson intervals overlap",
+   "A chi-square test on the 2x2 table of total passes and fails for A and B"
+  ],
+  "answer": 1,
+  "explanation": "The design is paired, so only discordant cases inform the difference (T3); the unpaired tests ignore the shared difficulty of cases and lose power (lab: p 0.0414 paired vs 0.1882 unpaired on the same counts). Overlap of intervals is not a test.",
+  "source": "Lesson 24 T3; problem 4"
+ },
+ {
+  "id": "ag-L500-015",
+  "level": "L500",
+  "lesson": 24,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "How many independent golden cases does the normal-approximation formula require to detect a drop from 90 % to 80 % with a one-sided test at alpha = 0.05 and power 0.8?",
+  "options": [
+   "69",
+   "86",
+   "100",
+   "25"
+  ],
+  "answer": 0,
+  "explanation": "n = ((1.6449 * 0.3 + 0.8416 * 0.4)/0.1)^2 = 68.6 -> 69. Using the two-sided z = 1.96 gives 86; 100 is the naive 1/delta^2; 25 ignores the power term.",
+  "source": "Lesson 24 T2"
+ },
+ {
+  "id": "ag-L500-016",
+  "level": "L500",
+  "lesson": 24,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why is the Wald interval p_hat +/- z sqrt(p_hat(1 - p_hat)/n) a poor choice for agent pass rates?",
+  "options": [
+   "Near 0 or 1 it collapses or leaves [0, 1]; its real coverage can be far below 95 %",
+   "It is always wider than the Wilson interval, so a gate that uses it hides real regressions",
+   "It needs the exact binomial distribution, which is too slow to compute for large n",
+   "It only works for paired comparisons, not for a single pass rate"
+  ],
+  "answer": 0,
+  "explanation": "At 20/20 the Wald interval is [1, 1] and at 18/20 its upper end is 1.03. The exact coverage sums in check T1 show 0.6389 for Wald versus 0.9245 for Wilson at n = 20, p = 0.95.",
+  "source": "Lesson 24 T1"
+ },
+ {
+  "id": "ag-L500-017",
+  "level": "L500",
+  "lesson": 24,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "A weekly report says: 'New prompt significantly worse for category refunds-de (p = 0.03).' You learn 18 categories were tested at 0.05 and only this one was flagged. What is the right reading?",
+  "options": [
+   "p = 0.03 means there is a 97 % chance that the regression is real, so the prompt must be rolled back immediately",
+   "The other 17 categories passing proves the prompt is better overall",
+   "The result is invalid because p-values cannot be computed per category",
+   "About one false alarm is expected among 18 tests at 0.05; confirm on fresh cases or a corrected threshold"
+  ],
+  "answer": 3,
+  "explanation": "FWER for 18 independent tests is 1 - 0.95^18 = 0.60; Bonferroni would require p <= 0.0028. A p-value is not the probability that the effect is real.",
+  "source": "Lesson 24 T4; misconceptions"
+ },
+ {
+  "id": "ag-L500-018",
+  "level": "L500",
+  "lesson": 24,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Your gate must catch a 2-point drop from 95 % to 93 % in a refund agent, and you can afford about 200 labelled cases. What is the most defensible design?",
+  "options": [
+   "Use the 200 cases with a 95 % pass bar; a 2-point drop will show up as about 4 failed cases",
+   "Run each of the 200 cases 10 times so the suite has 2,000 cases and enough power",
+   "Keep a per-case gate, admit 200 cases cannot see a 2-point drop, and monitor that rate in production",
+   "Lower alpha to 0.01 so that any detected drop is certainly real"
+  ],
+  "answer": 2,
+  "explanation": "T2 gives roughly a thousand independent cases for a 2-point drop at this level, so 200 cannot see it reliably; rerunning the same cases does not add independent cases, and a lower alpha reduces power further. Be explicit about what the gate cannot see.",
+  "source": "Lesson 24 T2; worked example"
+ },
+ {
+  "id": "ag-L500-019",
+  "level": "L500",
+  "lesson": 25,
+  "type": "calculation",
+  "difficulty": 1,
+  "question": "A tool call succeeds independently with probability 0.5. With a budget of 3 attempts, what is the expected number of calls (2 decimals)?",
+  "options": [
+   "2.00",
+   "1.75",
+   "3.00",
+   "1.50"
+  ],
+  "answer": 1,
+  "explanation": "E[min(N, 3)] = 1 + 0.5 + 0.25 = 1.75. 2.00 is E[N] = 1/p without a budget; 3.00 is the worst case, not the mean.",
+  "source": "Lesson 25 T1"
+ },
+ {
+  "id": "ag-L500-020",
+  "level": "L500",
+  "lesson": 25,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Under T1's model, when does allowing one more attempt lower the expected cost of a call that costs c, with C_fail the cost of giving up?",
+  "options": [
+   "Whenever the success probability of the first attempt is above 0.5",
+   "When the conditional success probability of that attempt satisfies p_i * C_fail >= c",
+   "Whenever the remaining budget is below the expected number of attempts 1/p",
+   "Never, because each extra attempt adds its call cost to the total"
+  ],
+  "answer": 1,
+  "explanation": "cost(k+1) - cost(k) = -P(reach) (p_k C_fail - c): the sign depends only on p_k C_fail - c. With correlated failures p_k shrinks, so the optimal budget is finite.",
+  "source": "Lesson 25 T1"
+ },
+ {
+  "id": "ag-L500-021",
+  "level": "L500",
+  "lesson": 25,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "Value iteration for one state: act (0.8 chance of +5, else -1 and stay, gamma 0.9) or escalate (+3). What does it print?",
+  "code": "V = 0.0\nfor _ in range(200):\n    V = max(0.8 * 5 + 0.2 * (-1 + 0.9 * V), 3.0)\nprint(round(V, 2))",
+  "options": [
+   "4.63",
+   "3.0",
+   "3.8",
+   "4.0"
+  ],
+  "answer": 0,
+  "explanation": "The fixed point of V = 0.8*5 + 0.2*(-1 + 0.9 V) is V = 3.8/0.82 = 4.634 > 3, so acting wins and V rounds to 4.63. 3.8 is the one-step value without the future term.",
+  "source": "Lesson 25 T2"
+ },
+ {
+  "id": "ag-L500-022",
+  "level": "L500",
+  "lesson": 25,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which property guarantees that value iteration converges to a unique optimal value function in a finite MDP?",
+  "options": [
+   "Every policy eventually reaches a terminal state with probability 1, so the values stop changing",
+   "The rewards are bounded between 0 and 1",
+   "The transition probabilities are deterministic",
+   "The Bellman operator is a gamma-contraction in the max-norm when the discount gamma is below 1"
+  ],
+  "answer": 3,
+  "explanation": "||TU - TW|| <= gamma ||U - W|| and Banach's fixed-point theorem give existence, uniqueness and geometric convergence (T2). Termination or bounded rewards alone do not give the contraction.",
+  "source": "Lesson 25 T2"
+ },
+ {
+  "id": "ag-L500-023",
+  "level": "L500",
+  "lesson": 25,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "An A* planner over tool steps uses a heuristic that sometimes overestimates the remaining cost. In testing it returns a plan costing 8 where a 4-cost plan exists. What explains this?",
+  "options": [
+   "A* is only guaranteed to be optimal on unit-cost graphs, so weighted tool steps break the guarantee",
+   "The planner must have a bug, because A* always returns the cheapest path",
+   "Overestimation can give an optimal-path node a larger f than a worse goal, so optimality is lost",
+   "Overestimation only affects speed, so the 8-cost plan must also be optimal"
+  ],
+  "answer": 2,
+  "explanation": "Optimality needs h <= h* (T3). In the lab's plan graph h(search_kb) = 9 > h* = 2 makes A* return cost 8 instead of 4. BFS needs unit costs; A* does not.",
+  "source": "Lesson 25 T3; lab check T3"
+ },
+ {
+  "id": "ag-L500-024",
+  "level": "L500",
+  "lesson": 25,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Why can no analyser, however sophisticated, decide for every agent-generated script whether it will ever call delete?",
+  "options": [
+   "Scripts generated by language models are random, so their behaviour cannot be predicted",
+   "Static analysis tools do not yet support the newest Python syntax",
+   "A perfect decider would solve the halting problem, via the script 'run M on x, then call delete'",
+   "The decision would take exponential time, which is too slow in practice"
+  ],
+  "answer": 2,
+  "explanation": "The reduction is exact: the wrapped script deletes iff M halts on x (T4, Rice's theorem). It is impossibility, not slowness or randomness; restricted languages or syntactic allow-lists remain decidable.",
+  "source": "Lesson 25 T4"
+ },
+ {
+  "id": "ag-L500-025",
+  "level": "L500",
+  "lesson": 25,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Given T4, how should an agent that writes and runs small scripts be prevented from destroying data?",
+  "options": [
+   "Ask a second model to read every generated script and approve it only if it judges the script harmless",
+   "Expose only allow-listed tools and require approval for side effects, checked before execution",
+   "Run each script under a larger step budget until the analyser is certain",
+   "Scan the script's printed output for the word 'delete' after it runs"
+  ],
+  "answer": 1,
+  "explanation": "Capability restriction decides a syntactic question exactly and fails safe (T4); a judge model is itself unverified and injectable, a bigger budget still ends in 'unknown', and post-hoc scanning is too late.",
+  "source": "Lesson 25 T4; problem 8; Lesson 20"
+ },
+ {
+  "id": "ag-L500-026",
+  "level": "L500",
+  "lesson": 25,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Auto-approval yields +2 when right and -40 when wrong; human review always yields +0.5. Above what error rate should the agent stop auto-approving (4 decimals)?",
+  "options": [
+   "0.0357",
+   "0.0500",
+   "0.0125",
+   "0.0375"
+  ],
+  "answer": 0,
+  "explanation": "2(1 - e) - 40e = 0.5 gives e = 1.5/42 = 0.0357. 0.0375 forgets that a wrong approval also loses the +2; 0.0500 ignores the review option entirely.",
+  "source": "Lesson 25 expected utility; problem 3"
+ },
+ {
+  "id": "ag-L500-027",
+  "level": "L500",
+  "lesson": 25,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "An agent's retry loop keeps resending a request that fails with HTTP 400 until the conversation times out. In T1's terms, what is wrong?",
+  "options": [
+   "The success probability is low but still positive, so the loop only needs exponential backoff with jitter",
+   "Retries are fine; the timeout is too short for the loop to finish",
+   "The loop should retry with a higher temperature to get a different request",
+   "For a 4xx p_i is about 0, so p_i * C_fail < c: no retry pays, and the loop has no budget"
+  ],
+  "answer": 3,
+  "explanation": "A malformed request fails again (p_i near 0), so every retry is pure cost and only a budget stops it; lesson 14 raises 4xx immediately. Backoff spaces out retries but does not change p.",
+  "source": "Lesson 25 T1; Lesson 14"
+ },
+ {
+  "id": "ag-L500-028",
+  "level": "L500",
+  "lesson": 26,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "In Moffatt v. Air Canada (2024 BCCRT 149), why did the airline's defence about its chatbot fail?",
+  "options": [
+   "The tribunal found the chatbot was a separate legal entity, but held the airline liable because it had insured the bot",
+   "The customer proved the chatbot was trained on the wrong policy document",
+   "Canadian law makes software vendors, not deployers, liable for chatbot errors",
+   "It held the chatbot was part of the airline's website, and the airline answers for all information on it"
+  ],
+  "answer": 3,
+  "explanation": "The tribunal called the separate-entity argument 'remarkable' and found negligent misrepresentation by the airline. Nothing in the decision shifts liability to a vendor.",
+  "source": "Lesson 26 case study"
+ },
+ {
+  "id": "ag-L500-029",
+  "level": "L500",
+  "lesson": 26,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "EU AI Act Art. 14(4)(b) requires that people overseeing a high-risk system remain aware of which tendency?",
+  "options": [
+   "Distrusting the system after a single false alarm (disuse)",
+   "Changing the system's configuration without documentation",
+   "Automatically relying or over-relying on the system's output (automation bias)",
+   "Sharing the system's output with unauthorised third parties"
+  ],
+  "answer": 2,
+  "explanation": "Art. 14(4)(b) names automation bias explicitly; Parasuraman and Riley call it misuse. Disuse is a real effect but not what this paragraph addresses.",
+  "source": "Lesson 26 over-reliance; AI Act Art. 14"
+ },
+ {
+  "id": "ag-L500-030",
+  "level": "L500",
+  "lesson": 26,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "Your customer-facing support agent launches in the EU in November 2026. Under AI Act Art. 50(1) and (5), what must users be told, and when?",
+  "options": [
+   "Nothing until December 2027, because the omnibus regulation postponed every AI Act obligation including Art. 50",
+   "That they are interacting with an AI system - clearly, at the latest at first interaction, unless obvious",
+   "The model's name and parameter count, in the privacy policy",
+   "That answers are not legally binding, in a disclaimer after each answer"
+  ],
+  "answer": 1,
+  "explanation": "Art. 50 applies from 2 August 2026 and the omnibus left that date in place; it postponed the high-risk (Annex III) obligations to 2 December 2027. Disclaimers did not save the airline in Moffatt.",
+  "source": "Lesson 26 transparency; AI Act Art. 50"
+ },
+ {
+  "id": "ag-L500-031",
+  "level": "L500",
+  "lesson": 26,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "When does GDPR Art. 22 give a person rights over an agent's decision?",
+  "options": [
+   "When the decision is based solely on automated processing and produces legal or similarly significant effects on them",
+   "Whenever any personal data, such as a customer's name or order number, is included in a prompt sent to a language model",
+   "Only when the decision is made by a high-risk system under the AI Act",
+   "Only when the person has explicitly consented to the use of AI"
+  ],
+  "answer": 0,
+  "explanation": "Art. 22(1) covers solely automated decisions with legal or similarly significant effects; where allowed (contract, law, consent), Art. 22(3) requires safeguards such as human intervention and the right to contest. Consent is one exception, not the trigger.",
+  "source": "Lesson 26 privacy; GDPR Art. 22"
+ },
+ {
+  "id": "ag-L500-032",
+  "level": "L500",
+  "lesson": 26,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "An agent answers 5,000 questions a month with a 4 % error rate; each error costs 100. Reviewing every answer costs 1 per answer and catches 80 % of errors. What is the monthly cost with full review?",
+  "options": [
+   "9,000",
+   "5,000",
+   "4,000",
+   "16,000"
+  ],
+  "answer": 0,
+  "explanation": "Review 5,000 x 1 = 5,000 plus residual errors 200 x 0.2 = 40 x 100 = 4,000: total 9,000, versus 20,000 without review. 16,000 is the harm avoided, not a cost.",
+  "source": "Lesson 26 problem 3"
+ },
+ {
+  "id": "ag-L500-033",
+  "level": "L500",
+  "lesson": 26,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which ACM Code principle states that 'the best option may be to not implement the system'?",
+  "options": [
+   "1.6, when personal data cannot be minimised",
+   "3.1, when the public good is not the central concern",
+   "2.6, when the team lacks competence in the area",
+   "2.9, when misuse or harm are predictable or unavoidable"
+  ],
+  "answer": 3,
+  "explanation": "Principle 2.9 (robustly and usably secure systems) ends with that sentence; 2.5 adds that systems with unpredictable risks need frequent reassessment or should not be deployed.",
+  "source": "Lesson 26 when not to automate; ACM Code 2.9"
+ },
+ {
+  "id": "ag-L500-034",
+  "level": "L500",
+  "lesson": 26,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "A fairness check flags languages whose pass rate is below 90 %. What does it print?",
+  "code": "results = {'en': (95, 100), 'es': (40, 50), 'pt': (9, 10)}\nflagged = [lang for lang, (passed, n) in results.items() if passed / n < 0.9]\nprint(flagged)",
+  "options": [
+   "['es', 'pt']",
+   "['pt']",
+   "['es']",
+   "[]"
+  ],
+  "answer": 2,
+  "explanation": "es is 0.80 and flagged; pt is exactly 0.90, so '< 0.9' does not flag it - although 9/10 has a Wilson interval of roughly [0.60, 0.98] (lesson 24). en at 0.95 passes.",
+  "source": "Lesson 26 bias and fairness; Lesson 24"
+ },
+ {
+  "id": "ag-L500-035",
+  "level": "L500",
+  "lesson": 26,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "What are the four functions of the NIST AI RMF 1.0 Core?",
+  "options": [
+   "IDENTIFY, PROTECT, DETECT, RESPOND",
+   "GOVERN, MAP, MEASURE, MANAGE",
+   "PLAN, BUILD, VERIFY, DEPLOY",
+   "ASSESS, MITIGATE, MONITOR, REPORT"
+  ],
+  "answer": 1,
+  "explanation": "NIST AI 100-1 Part 2 defines GOVERN (cross-cutting), MAP, MEASURE and MANAGE. IDENTIFY/PROTECT/DETECT/RESPOND belong to the NIST Cybersecurity Framework.",
+  "source": "Lesson 26 frameworks; NIST AI 100-1 Sec. 5"
+ },
+ {
+  "id": "ag-L500-036",
+  "level": "L500",
+  "lesson": 26,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Regulation (EU) 2026/1744 (Digital Omnibus on AI) changed the AI Act timetable. Which statement is correct?",
+  "options": [
+   "All AI Act obligations, including the Art. 50 transparency duty for chatbots, were postponed to August 2028",
+   "Obligations for Annex III high-risk systems now apply from 2 December 2027 instead of 2 August 2026",
+   "The AI Act was repealed and replaced by voluntary codes of practice",
+   "Only general-purpose AI model obligations were postponed; high-risk dates are unchanged"
+  ],
+  "answer": 1,
+  "explanation": "The omnibus, published 24 July 2026, moved Annex III high-risk obligations to 2 December 2027 and Annex I systems to 2 August 2028, while the 2 August 2026 transparency date remained.",
+  "source": "Lesson 26 transparency; EP Legislative Train"
+ },
+ {
+  "id": "ag-L500-037",
+  "level": "L500",
+  "lesson": 27,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "What is the central architectural claim of 'Attention Is All You Need'?",
+  "options": [
+   "A sequence-transduction model can dispense with recurrence and convolution and rely on attention alone",
+   "Recurrent networks become competitive once an attention layer is added between encoder and decoder",
+   "Convolutional networks with dilated kernels outperform attention for translation",
+   "Attention weights can explain a translation model's decisions to end users"
+  ],
+  "answer": 0,
+  "explanation": "The abstract proposes the Transformer, 'based solely on attention mechanisms'; attention combined with RNNs already existed (Sec. 1-2). Interpretability is mentioned only as a possible side benefit.",
+  "source": "Lesson 27 reading 1; Vaswani et al. abstract"
+ },
+ {
+  "id": "ag-L500-038",
+  "level": "L500",
+  "lesson": 27,
+  "type": "calculation",
+  "difficulty": 1,
+  "question": "In the base Transformer d_model = 512 with h = 8 heads and d_k = d_model/h. What scale factor multiplies QK^T (4 decimals)?",
+  "options": [
+   "0.0442",
+   "0.3536",
+   "0.0156",
+   "0.1250"
+  ],
+  "answer": 3,
+  "explanation": "d_k = 64 and 1/sqrt(64) = 0.1250. 0.0442 uses the full d_model; 0.0156 divides by d_k instead of its square root.",
+  "source": "Lesson 27 problem 1; Vaswani et al. Sec. 3.2.2"
+ },
+ {
+  "id": "ag-L500-039",
+  "level": "L500",
+  "lesson": 27,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "What exactly do Vaswani et al. say about why unscaled dot-product attention underperforms for large d_k?",
+  "options": [
+   "They prove that unscaled dot-product attention cannot converge during training for any key dimension d_k above 64",
+   "They show experimentally that the scale factor has no effect at the base model size",
+   "They suspect large dot products push softmax into regions with tiny gradients, motivated by a variance argument",
+   "They attribute it to numerical overflow in half-precision arithmetic"
+  ],
+  "answer": 2,
+  "explanation": "Sec. 3.2.1 says 'we suspect' and gives the variance footnote; lesson 23's T2 proves the variance and measures the saturation. Distinguishing measured from conjectured is the point of the seminar.",
+  "source": "Lesson 27 guiding question 2; Lesson 23 T2"
+ },
+ {
+  "id": "ag-L500-040",
+  "level": "L500",
+  "lesson": 27,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "According to the paper's Table 1 and Sec. 4, when is a self-attention layer computationally cheaper than a recurrent layer?",
+  "options": [
+   "When the sequence length n is larger than the representation dimension d",
+   "Always, because self-attention needs O(1) sequential operations",
+   "When the sequence length n is smaller than the representation dimension d",
+   "Only when attention is restricted to a neighbourhood of size r"
+  ],
+  "answer": 2,
+  "explanation": "Per-layer cost is O(n^2 d) versus O(n d^2), so attention is cheaper when n < d. O(1) sequential operations is about parallelism, not total compute; long agent contexts have n far above d.",
+  "source": "Lesson 27 problem 1; Vaswani et al. Table 1"
+ },
+ {
+  "id": "ag-L500-041",
+  "level": "L500",
+  "lesson": 27,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "How does ReAct change the agent's action space?",
+  "options": [
+   "It replaces tool actions with chain-of-thought text, so the agent no longer needs any environment calls",
+   "It adds language 'thoughts' that update the context but produce no observation from the environment",
+   "It lets the model edit the environment's observations before reading them",
+   "It adds a second model that chooses actions while the first writes reasoning"
+  ],
+  "answer": 1,
+  "explanation": "Sec. 2 augments A with the language space L; a thought does not affect the environment and yields no observation, but it conditions later actions. One frozen model produces both.",
+  "source": "Lesson 27 reading 2; Yao et al. Sec. 2"
+ },
+ {
+  "id": "ag-L500-042",
+  "level": "L500",
+  "lesson": 27,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which actions did ReAct's Wikipedia API offer for HotpotQA and FEVER?",
+  "options": [
+   "search[entity], lookup[string] and finish[answer]",
+   "search[query], click[link] and buy[item]",
+   "retrieve[k], rerank[passages] and answer[text]",
+   "open[url], scroll[n] and cite[source]"
+  ],
+  "answer": 0,
+  "explanation": "Sec. 3.1 describes a deliberately simple API with search, lookup and finish, weaker than modern retrievers; click/buy-style actions belong to WebShop.",
+  "source": "Lesson 27 guiding question 2; Yao et al. Sec. 3.1"
+ },
+ {
+  "id": "ag-L500-043",
+  "level": "L500",
+  "lesson": 27,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "A blog post claims 'ReAct cuts hallucinated successes from 14 % to 6 %'. The numbers come from 50 labelled correct trajectories per method. What is the best critical response?",
+  "options": [
+   "The claim is proven beyond doubt, because the paper passed peer review at ICLR and the authors labelled the data",
+   "The claim is wrong, because ReAct scored lower than chain-of-thought on HotpotQA",
+   "The comparison is invalid, because hallucination cannot be measured by humans",
+   "Plausible direction, but 3/50 vs 7/50 gives wide Wilson intervals and p near 0.18: the size is not established"
+  ],
+  "answer": 3,
+  "explanation": "Lesson 24's tools: Wilson intervals [0.0206, 0.1622] and [0.0695, 0.2619] overlap heavily and the two-proportion p is 0.1824 (problem 3). Peer review does not shrink sampling error; a lower EM score is a different metric.",
+  "source": "Lesson 27 problem 3; Yao et al. Table 2"
+ },
+ {
+  "id": "ag-L500-044",
+  "level": "L500",
+  "lesson": 27,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "On HotpotQA with PaLM-540B prompting, what did ReAct's Table 1 show?",
+  "options": [
+   "ReAct alone scored far above every prompting baseline, including chain-of-thought with self-consistency",
+   "Act-only scored highest because reasoning traces distracted the model",
+   "All prompting methods matched the supervised state of the art",
+   "ReAct alone scored slightly below CoT, and the best result came from combining ReAct with CoT-SC"
+  ],
+  "answer": 3,
+  "explanation": "EM: ReAct 27.4, CoT 29.4, CoT-SC 33.4, ReAct -> CoT-SC 35.1, supervised SoTA 67.5. The paper's argument is about grounding and combination, not a single headline win.",
+  "source": "Lesson 27 reading 2; Yao et al. Table 1"
+ },
+ {
+  "id": "ag-L500-045",
+  "level": "L500",
+  "lesson": 27,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "For a 2,048-token context and d = 512, how many times more per-layer operations does self-attention (n^2 d) need than a recurrent layer (n d^2)?",
+  "options": [
+   "0.25",
+   "16.00",
+   "4.00",
+   "2.00"
+  ],
+  "answer": 2,
+  "explanation": "n^2 d / (n d^2) = n/d = 2048/512 = 4.00. 0.25 inverts the ratio; 16.00 squares it. Long contexts are where attention's quadratic cost dominates.",
+  "source": "Lesson 27 problem 1; Vaswani et al. Table 1"
+ }
+]

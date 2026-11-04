@@ -1,0 +1,1285 @@
+[
+  {
+    "id": "leader-election-leases",
+    "number": 7,
+    "level": "L200",
+    "title": "Leader election with leases and fencing tokens",
+    "phase": "Coordination",
+    "category": "leader election",
+    "description": "Three nodes compete for a TTL lease via compare-and-swap; the leader renews, a paused leader loses the lease, and fencing tokens reject its late write.",
+    "outcome": "You can elect a leader with a TTL lease and CAS, reason about failover time, and protect a resource with fencing tokens.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Optional: etcd v3.7.3 container + etcdctl (pending-ci).",
+    "estimatedTime": "45 minutes",
+    "overview": [
+      "A lease is a lock with an expiry; it gives automatic failover but cannot stop a paused ex-leader, so the resource must check a fencing token that only grows."
+    ],
+    "prerequisites": [
+      "Lesson 3 (timeouts)",
+      "Lesson 5 (idempotency keys)"
+    ],
+    "glossary": [
+      {
+        "term": "lease",
+        "meaning": "Ownership of a key that expires after a TTL unless renewed."
+      },
+      {
+        "term": "compare-and-swap (CAS)",
+        "meaning": "Write only if the key is still at the revision you expect; otherwise fail."
+      },
+      {
+        "term": "fencing token",
+        "meaning": "A number that grows with every new lease holder; the resource rejects lower ones."
+      }
+    ],
+    "concepts": [
+      "Acquire = CAS create-if-absent; renew = CAS on your own revision.",
+      "Failover time = last renewal + TTL.",
+      "Only the resource can stop a paused ex-leader: check fencing tokens there."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python election.py`",
+        "expected": "`t=0 n1 acquired the lease, fencing token 1`; identical output every run.",
+        "ifNot": "Different output -> kv_store.py or TTL was edited; compare with the README."
+      },
+      {
+        "title": "Watch renewals and failover",
+        "detail": "n1 renews at t=1 and t=2, pauses at t=3; follow the holder per tick.",
+        "expected": "`t=5 n2 acquired the lease, fencing token 4` (last renewal t=2 + TTL 3 s).",
+        "ifNot": "Check renewals use CAS with `expect: self.rev`."
+      },
+      {
+        "title": "See the fenced write",
+        "detail": "Find n1's write after it resumes at t=7.",
+        "expected": "`t=7 n1 writes with token 1: REJECTED (token 1 < 4)`, then n1 steps down.",
+        "ifNot": "FencedStorage(fencing=True) must compare with max_token."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 7 tests ... OK",
+        "ifNot": "A firewall blocking 127.0.0.1 is the usual cause; the tests use no other network."
+      },
+      {
+        "title": "Build task",
+        "detail": "Add the feature in buildTask.task to the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK (before your change they fail; the reference is solution_election.py).",
+        "ifNot": "Diff your file against solution_election.py; run without BUILD_TARGET to see the reference pass."
+      },
+      {
+        "title": "(Optional) Same on etcd",
+        "detail": "Start etcd in a container, then run the etcdctl-based script (lease, txn CAS, create_revision as token, `etcdctl elect`).",
+        "mac": "podman run -d --name etcd -p 2379:2379 gcr.io/etcd-development/etcd:v3.7.3 /usr/local/bin/etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://127.0.0.1:2379\npython etcd_equivalent.py",
+        "windows": "podman run -d --name etcd -p 2379:2379 gcr.io/etcd-development/etcd:v3.7.3 /usr/local/bin/etcd --listen-client-urls http://0.0.0.0:2379 --advertise-client-urls http://127.0.0.1:2379\n$env:ETCDCTL=\"C:\\etcd\\etcdctl.exe\"; python etcd_equivalent.py",
+        "expected": "Ends with `etcd equivalent OK` (pending-ci: not run in the sandbox).",
+        "ifNot": "etcdctl must be on PATH or in ETCDCTL; port 2379 must be free."
+      }
+    ],
+    "code": "\"\"\"L200 lesson 7 (python election.py): three nodes compete for a lease in a shared KV store (TTL +\ncompare-and-swap). The leader renews every tick; when it pauses, the lease expires, another node takes\nover with a HIGHER fencing token, and storage rejects the old leader's late write. Simulated clock.\"\"\"\nfrom helpers import SimClock, call, serve\nfrom kv_store import KVStore\n\nKEY, TTL = \"leader\", 3.0  # lease TTL 3 s; nodes act once per 1 s tick, so the leader renews at TTL/3\n\n\nclass Node:\n    def __init__(self, name, url):\n        self.name, self.url, self.rev, self.token, self.paused = name, url, 0, None, False\n\n    def pause(self):  # e.g. a long GC pause: the node stops acting but still BELIEVES it leads\n        self.paused = True\n\n    def resume(self):\n        self.paused = False\n\n    def step(self, t, storage, log):\n        if self.paused:\n            return\n        if self.token is not None:  # I think I am the leader: do the work, then renew\n            log(f\"t={t} {self.name} writes with token {self.token}: {storage.write(self.token, f'{self.name}@t{t}')}\")\n            status, body, _ = call(self.url + \"/cas\", {\"key\": KEY, \"expect\": self.rev, \"value\": self.name, \"ttl\": TTL})\n            if status == 200:\n                self.rev = body[\"rev\"]  # renewed: CAS on MY revision, TTL restarts\n            else:\n                log(f\"t={t} {self.name} renew failed (rev {self.rev} != {body['rev']}) -> steps down\")\n                self.token = None\n            return\n        status, _, _ = call(self.url + \"/get\", {\"key\": KEY})\n        if status == 404:  # lease free (never taken, or expired): try to create it, expect rev 0\n            status, body, _ = call(self.url + \"/cas\", {\"key\": KEY, \"expect\": 0, \"value\": self.name, \"ttl\": TTL})\n            if status == 200:  # only one CAS can win; the losers see 409\n                self.rev, self.token = body[\"rev\"], body[\"created\"]  # fencing token = creation revision\n                log(f\"t={t} {self.name} acquired the lease, fencing token {self.token}\")\n\n\nclass FencedStorage:\n    \"\"\"The protected resource: rejects a write whose token is lower than the highest it has seen.\"\"\"\n    def __init__(self, fencing=True):\n        self.fencing, self.max_token, self.value = fencing, 0, None\n\n    def write(self, token, value):\n        if self.fencing and token < self.max_token:\n            return f\"REJECTED (token {token} < {self.max_token})\"\n        self.max_token, self.value = max(self.max_token, token), value\n        return \"accepted\"\n\n\ndef simulate(ticks=9, events=None, fencing=True, quiet=False):\n    \"\"\"events: {tick: (node_name, method_name)}. Returns {'log', 'holders', 'storage'}.\"\"\"\n    clock, lines, holders = SimClock(), [], []\n    KVStore.reset(clock)\n    srv = serve(KVStore)\n    url, storage = f\"http://127.0.0.1:{srv.server_port}\", FencedStorage(fencing)\n    nodes = {n: Node(n, url) for n in (\"n1\", \"n2\", \"n3\")}\n    log = lines.append if quiet else (lambda s: (lines.append(s), print(s)))\n    for t in range(ticks):\n        if t in (events or {}):\n            name, action = events[t]\n            getattr(nodes[name], action)()  # the lab's events: pause / resume (build task: resign)\n            log(f\"t={t} {name} {action}\")\n        for node in nodes.values():  # fixed order n1, n2, n3 -> deterministic\n            node.step(t, storage, log)\n        status, body, _ = call(url + \"/get\", {\"key\": KEY})\n        holders.append((t, body.get(\"value\"), body.get(\"created\")) if status == 200 else (t, None, None))\n        clock.advance(1.0)\n    srv.shutdown()\n    srv.server_close()\n    return {\"log\": lines, \"holders\": holders, \"storage\": storage}\n\n\nif __name__ == \"__main__\":\n    out = simulate(events={3: (\"n1\", \"pause\"), 7: (\"n1\", \"resume\")})\n    print(\"lease holder per tick:\", \" \".join(f\"{t}:{h or '-'}\" for t, h, _ in out[\"holders\"]))\n    print(\"storage value:\", out[\"storage\"].value, \"| highest token seen:\", out[\"storage\"].max_token)\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "CAS create-if-absent",
+        "detail": "`call(url + \"/cas\", {\"key\": KEY, \"expect\": 0, ...})` succeeds for exactly one node; `body[\"created\"]` (the creation revision) becomes the fencing token."
+      },
+      {
+        "title": "Renew on my revision",
+        "detail": "The leader sends `expect: self.rev`; if another node created the key since, the revisions differ, the store answers 409 and the node steps down."
+      },
+      {
+        "title": "Work before renew",
+        "detail": "`step()` writes first, then renews. That is why the woken n1 still writes at t=7: it only learns it lost the lease afterwards — exactly the gap fencing closes."
+      },
+      {
+        "title": "Fenced storage",
+        "detail": "`FencedStorage.write` rejects `token < max_token`; it is the only place that can make a stale leader harmless."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L200/07-leader-election-leases/election.py",
+        "purpose": "Nodes (acquire/renew/pause), fenced storage, simulate(), demo"
+      },
+      {
+        "path": "labs/L200/07-leader-election-leases/kv_store.py",
+        "purpose": "Lease store: HTTP KV with TTL, CAS and a store-wide revision"
+      },
+      {
+        "path": "labs/L200/07-leader-election-leases/helpers.py",
+        "purpose": "Plumbing: JSON handler, call(), serve(), SimClock"
+      },
+      {
+        "path": "labs/L200/07-leader-election-leases/solution_election.py",
+        "purpose": "Build-task reference (Node.resign)"
+      },
+      {
+        "path": "labs/L200/07-leader-election-leases/etcd_equivalent.py",
+        "purpose": "Same on etcd via etcdctl (pending-ci)"
+      },
+      {
+        "path": "labs/L200/07-leader-election-leases/test_election.py",
+        "purpose": "unittest: CAS, TTL expiry, failover, monotonic tokens"
+      },
+      {
+        "path": "labs/L200/07-leader-election-leases/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine tests your file)"
+      },
+      {
+        "path": "labs/L200/07-leader-election-leases/try_it.py",
+        "purpose": "The two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "t=5 n2 acquired the lease, fencing token 4",
+      "t=7 n1 writes with token 1: REJECTED (token 1 < 4)",
+      "lease holder per tick: 0:n1 1:n1 2:n1 3:n1 4:n1 5:n2 6:n2 7:n2 8:n2"
+    ],
+    "testCases": [
+      {
+        "action": "Two CAS creates with expect 0",
+        "expected": "200 then 409; value of the first"
+      },
+      {
+        "action": "Advance the clock by the TTL",
+        "expected": "Key gone (404); the next holder's token is higher"
+      },
+      {
+        "action": "simulate(pause at 3, resume at 7)",
+        "expected": "Holders n1 x5 then n2 x4; n1's write rejected"
+      },
+      {
+        "action": "simulate(resign at 3) on the solution",
+        "expected": "n2 holds the lease at t=3"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Run the same pause/resume with FencedStorage(fencing=False) (`python try_it.py`).",
+        "predict": "Does n1's write at t=7 land?",
+        "expected": "tryIt 1: fencing off -> accepted | n1's stale write landed after n2's write at t=6"
+      },
+      {
+        "task": "Set TTL to 6 s instead of 3 s, same 4-tick pause (`python try_it.py`).",
+        "predict": "When does n2 take over?",
+        "expected": "TTL 3 s -> holder per tick 111112222 | n2 takes over at t=5; TTL 6 s -> 111111111 | no failover: n1 renewed in time after its pause"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Two nodes both think they lead",
+        "action": "Expected during a pause; make the resource check fencing tokens."
+      },
+      {
+        "symptom": "Failover is too slow",
+        "action": "Shorten the TTL (renew more often) or add resign() on clean shutdown."
+      }
+    ],
+    "equivalents": [
+      "Same idea in etcd: `etcdctl lease grant`, `txn` with `create(\"leader\") = \"0\"` (CAS) and the key's `create_revision` as fencing token; `etcdctl elect` = the election API (`/v3/election/campaign`).",
+      "Same idea in Kubernetes: Lease objects (coordination.k8s.io) for kube-controller-manager / kube-scheduler leader election.",
+      "Same idea in ZooKeeper: the zxid or znode version as fencing token.",
+      "Valkey `SET lock me NX EX 30` is a lease without a fencing token: fine for efficiency, not for correctness."
+    ],
+    "inRealSystems": [
+      "Kubernetes control-plane components elect one active instance with Lease objects; an alpha feature releases the lock on exit instead of waiting for the TTL.",
+      "etcd leases delete attached keys when the TTL elapses; `etcdctl elect` resigns on SIGTERM.",
+      "HBase once had the paused-leader bug that fencing tokens prevent."
+    ],
+    "useWhen": "Use a lease when exactly one worker may own a job or shard and the store offers atomic CAS + TTL; add fencing whenever correctness (not just efficiency) depends on it; avoid when every replica could safely do the work.",
+    "simulatorVsReal": "One process, simulated clock: pauses are an event, not a real GC stop; the store is in-memory, not replicated (etcd uses Raft for that).",
+    "caution": "A lease never guarantees a single actor by itself: clocks, pauses and network delays can exceed the TTL. Protect every write with a fencing token.",
+    "checkpoint": "PASS if the demo matches the README, `python -m unittest` runs 7 tests OK and your resign() passes test_build_task with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "TTL 10 s, the leader renewed at t=42 and then crashed. When can another node take over?",
+        "a": "At t=52."
+      },
+      {
+        "q": "Why can't the paused leader just check its lease before writing?",
+        "a": "It can pause between the check and the write; only the resource can reject the late write."
+      }
+    ],
+    "buildTask": {
+      "task": "Add Node.resign(): if holding the lease, CAS-delete the key with your own revision, then stop acting, so the next node takes over in the same tick instead of after the TTL.",
+      "hints": [
+        "The store already has POST /delete {key, expect}.",
+        "Use self.rev, never 0 or the latest revision: a stale resign must not delete a newer leader's key.",
+        "simulate() calls getattr(node, action)() — the event name is the method name."
+      ],
+      "solution": "labs/L200/07-leader-election-leases/solution_election.py",
+      "check": "labs/L200/07-leader-election-leases/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "sources": [
+      {
+        "title": "Kleppmann: How to do distributed locking (fencing tokens) — background (blog)",
+        "url": "https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html"
+      },
+      {
+        "title": "etcd docs v3.6: Interacting with etcd (leases)",
+        "url": "https://etcd.io/docs/v3.6/dev-guide/interacting_v3/"
+      },
+      {
+        "title": "etcd docs v3.6: gRPC gateway (txn compare)",
+        "url": "https://etcd.io/docs/v3.6/dev-guide/api_grpc_gateway/"
+      },
+      {
+        "title": "etcdctl README (lease, txn, elect)",
+        "url": "https://github.com/etcd-io/etcd/blob/main/etcdctl/README.md"
+      },
+      {
+        "title": "Kubernetes docs: Leases",
+        "url": "https://kubernetes.io/docs/concepts/architecture/leases/"
+      }
+    ],
+    "next": "L300 #12 Replicated log with Raft (simplified): terms, commit index, re-election, election restriction — how a lease store such as etcd stays correct when its own nodes fail",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python election.py`, `python try_it.py` and `python -m unittest -v` (7 tests OK) in the lab on Python 3.12.15 (Linux); outputs pasted in the README, demo identical on repeated runs (simulated clock). BUILD_TARGET=mine against the unmodified election.py: 3 errors (AttributeError: no resign), as intended. etcd_equivalent.py is pending-ci: only byte-compiled here (no etcd/etcdctl in the sandbox); the CI job `etcd` runs it. Tools/review pass (2026-10-28, UPDATE-TOOLS-REVIEW-SPEC): etcd_equivalent.py subprocess output decoded as UTF-8 (F18); still pending-ci.",
+      "pendingCi": [
+        "labs/L200/07-leader-election-leases/etcd_equivalent.py (CI job etcd)"
+      ]
+    },
+    "conceptNote": "content/concepts/L200/07-leader-election-leases.md",
+    "conceptSummary": "A lease is ownership with an expiry, taken and renewed with compare-and-swap; failover happens when the TTL runs out. A paused ex-leader cannot know it lost the lease, so the protected resource rejects writes whose fencing token is lower than one it has seen.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "at-least-once-messaging",
+    "number": 8,
+    "level": "L200",
+    "title": "At-least-once messaging: ack, visibility timeout, redelivery, dead letters",
+    "phase": "Messaging",
+    "category": "queues",
+    "description": "A tiny HTTP broker hides received messages for a visibility timeout, redelivers unacked ones, and dead-letters poison; crashing consumers create duplicate charges.",
+    "outcome": "You can explain and configure ack, visibility timeout and dead-lettering, and make a consumer idempotent so redelivery is harmless.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps).",
+    "estimatedTime": "45 minutes",
+    "overview": [
+      "Brokers redeliver anything not acked, so nothing is lost but work can run twice; consumers must be idempotent and poison messages must be parked."
+    ],
+    "prerequisites": [
+      "Lesson 5 (idempotency keys)"
+    ],
+    "glossary": [
+      {
+        "term": "visibility timeout",
+        "meaning": "How long a received message stays hidden before it is redelivered unless acked."
+      },
+      {
+        "term": "ack",
+        "meaning": "The consumer's 'done': the broker deletes the message."
+      },
+      {
+        "term": "dead-letter queue (DLQ)",
+        "meaning": "Where messages go after too many failed deliveries."
+      },
+      {
+        "term": "poison message",
+        "meaning": "A message that makes the handler fail every time."
+      }
+    ],
+    "concepts": [
+      "Receive hides; ack deletes; no ack = redelivery.",
+      "Effect-then-crash-before-ack = duplicate effect.",
+      "Bound redeliveries with a DLQ; make consumers idempotent."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python broker.py`",
+        "expected": "Ends with `ledger: 9 charges for 6 orders -> 3 duplicates` and `dead-letter queue: ['poison']`.",
+        "ifNot": "Different numbers -> seed 9, VISIBILITY 3 or MAX_RECEIVES 3 changed."
+      },
+      {
+        "title": "Follow one redelivery",
+        "detail": "m3 crashes at t=1 before its ack.",
+        "expected": "`t=4 c1 m3=o3 receive #2` = 1 + 3 s visibility.",
+        "ifNot": "Check /receive sets visible_at = now + VISIBILITY."
+      },
+      {
+        "title": "Find the duplicates",
+        "detail": "Count charges per order in the log.",
+        "expected": "o3 charged twice, o5 three times; every order charged at least once.",
+        "ifNot": "The charge must happen before the simulated crash."
+      },
+      {
+        "title": "Watch the poison message",
+        "detail": "m7 crashes while parsing on receives #1-#3.",
+        "expected": "It never charges and ends in the DLQ.",
+        "ifNot": "MAX_RECEIVES must be checked before handing the message out again."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 6 tests ... OK",
+        "ifNot": "A firewall blocking 127.0.0.1 is the usual cause; the tests use no other network."
+      },
+      {
+        "title": "Build task",
+        "detail": "Add the feature in buildTask.task to the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK (before your change they fail; the reference is solution_broker.py).",
+        "ifNot": "Diff your file against solution_broker.py; run without BUILD_TARGET to see the reference pass."
+      }
+    ],
+    "code": "\"\"\"L200 lesson 8 (python broker.py): a tiny at-least-once broker over HTTP. /receive hides a message for a\nvisibility timeout, /ack deletes it, no ack = redelivery, too many receives = dead-letter queue (DLQ).\nTwo consumers crash mid-work (seeded); the ledger shows the duplicates at-least-once delivery creates.\"\"\"\nimport random, threading\n\nfrom helpers import QuietHandler, SimClock, call, serve\n\nVISIBILITY, MAX_RECEIVES = 3.0, 3  # hide a received message for 3 s; dead-letter after 3 unacked receives\n\n\nclass Broker(QuietHandler):\n    clock, lock, queue, dlq, seq = SimClock(), threading.Lock(), [], [], 0\n\n    @classmethod\n    def reset(cls, clock):\n        cls.clock, cls.queue, cls.dlq, cls.seq = clock, [], [], 0\n\n    def do_POST(self):\n        req, cls, now = self.read_json(), type(self), self.clock()\n        with self.lock:\n            if self.path == \"/send\":\n                cls.seq += 1\n                cls.queue.append({\"id\": f\"m{cls.seq}\", \"body\": req[\"body\"], \"visible_at\": now, \"receives\": 0})\n                return self.reply(200, {\"id\": f\"m{cls.seq}\"})\n            if self.path == \"/receive\":\n                for m in list(cls.queue):\n                    if m[\"visible_at\"] > now:  # in flight: invisible until its visibility timeout ends\n                        continue\n                    if m[\"receives\"] >= MAX_RECEIVES:  # poison: received N times, never acked -> DLQ\n                        cls.queue.remove(m)\n                        cls.dlq.append(m)\n                        continue\n                    m[\"receives\"] += 1\n                    m[\"visible_at\"] = now + VISIBILITY  # lease on the message, not a delete\n                    m[\"receipt\"] = f\"{m['id']}#{m['receives']}\"  # new receipt for every delivery\n                    return self.reply(200, {k: m[k] for k in (\"id\", \"body\", \"receipt\", \"receives\")})\n                return self.reply(404, {\"empty\": True, \"in_flight\": len(cls.queue)})\n            m = next((m for m in cls.queue if m.get(\"receipt\") == req[\"receipt\"]), None)\n            if m is None:  # /ack with an old receipt: the message was redelivered (or already acked)\n                return self.reply(409, {\"error\": \"stale receipt\"})\n            cls.queue.remove(m)  # ack = done: delete for good\n            self.reply(200, {\"acked\": m[\"id\"]})\n\n\ndef consume(name, url, rng, ledger, log, crash_rate):\n    status, msg, _ = call(url + \"/receive\", {})\n    if status != 200:\n        return\n    if msg[\"body\"] == \"poison\":  # a payload the handler can never process: it crashes every time\n        return log(f\"{name} {msg['id']}={msg['body']} receive #{msg['receives']}: CRASHED while parsing\")\n    ledger.append((msg[\"id\"], msg[\"body\"]))  # the side effect (e.g. charge a card) happens first ...\n    if rng.random() < crash_rate:  # ... then the consumer crashes mid-work: no ack -> redelivery later\n        return log(f\"{name} {msg['id']}={msg['body']} receive #{msg['receives']}: charged, CRASHED before ack\")\n    call(url + \"/ack\", {\"receipt\": msg[\"receipt\"]})\n    log(f\"{name} {msg['id']}={msg['body']} receive #{msg['receives']}: charged, acked\")\n\n\ndef run(bodies=(\"o1\", \"o2\", \"o3\", \"o4\", \"o5\", \"o6\", \"poison\"), crash_rate=0.3, seed=9, quiet=False):\n    clock, ledger, rng, lines = SimClock(), [], random.Random(seed), []\n    Broker.reset(clock)\n    srv = serve(Broker)\n    url = f\"http://127.0.0.1:{srv.server_port}\"\n    for body in bodies:\n        call(url + \"/send\", {\"body\": body})\n    while Broker.queue and clock() < 60:  # one tick = 1 simulated second\n        for name in (\"c1\", \"c2\"):\n            consume(name, url, rng, ledger, lambda s: lines.append(f\"t={clock():.0f} {s}\"), crash_rate)\n        clock.advance(1.0)\n    srv.shutdown()\n    srv.server_close()\n    if not quiet:\n        print(\"\\n\".join(lines))\n    return {\"log\": lines, \"ledger\": ledger, \"dlq\": [m[\"body\"] for m in Broker.dlq]}\n\n\nif __name__ == \"__main__\":\n    out = run()\n    ids = [i for i, _ in out[\"ledger\"]]\n    print(f\"ledger: {len(ids)} charges for {len(set(ids))} orders -> {len(ids) - len(set(ids))} duplicates\")\n    print(\"dead-letter queue:\", out[\"dlq\"])\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Receive = lease on the message",
+        "detail": "`m[\"visible_at\"] = now + VISIBILITY` hides the message; nothing is deleted until /ack."
+      },
+      {
+        "title": "New receipt per delivery",
+        "detail": "`receipt = id#receives` means a consumer whose timeout expired cannot ack a later delivery (409 stale receipt)."
+      },
+      {
+        "title": "Dead-letter check first",
+        "detail": "`if m[\"receives\"] >= MAX_RECEIVES` moves the message to the DLQ instead of delivering a 4th time."
+      },
+      {
+        "title": "Where duplicates come from",
+        "detail": "`ledger.append(...)` runs before the crash check: the effect happened, the ack did not."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L200/08-at-least-once-messaging/broker.py",
+        "purpose": "Broker (send/receive/ack, DLQ), crashing consumers, demo"
+      },
+      {
+        "path": "labs/L200/08-at-least-once-messaging/helpers.py",
+        "purpose": "Plumbing: JSON handler, call(), serve(), SimClock"
+      },
+      {
+        "path": "labs/L200/08-at-least-once-messaging/solution_broker.py",
+        "purpose": "Build-task reference (idempotent consumer)"
+      },
+      {
+        "path": "labs/L200/08-at-least-once-messaging/test_broker.py",
+        "purpose": "unittest: hide/redeliver, stale receipt, DLQ, demo totals"
+      },
+      {
+        "path": "labs/L200/08-at-least-once-messaging/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine tests your file)"
+      },
+      {
+        "path": "labs/L200/08-at-least-once-messaging/try_it.py",
+        "purpose": "The two tryIt experiments (~30 s)"
+      }
+    ],
+    "expectedResults": [
+      "t=4 c1 m3=o3 receive #2: charged, acked",
+      "ledger: 9 charges for 6 orders -> 3 duplicates",
+      "dead-letter queue: ['poison']"
+    ],
+    "testCases": [
+      {
+        "action": "Receive twice without ack, then after the timeout",
+        "expected": "404 (hidden), then the same id with receives = 2"
+      },
+      {
+        "action": "Ack with the first receipt after redelivery",
+        "expected": "409 stale receipt; the current receipt acks (200)"
+      },
+      {
+        "action": "3 unacked receives",
+        "expected": "Message in the DLQ"
+      },
+      {
+        "action": "Solution run on seeds 4, 8, 9, 22",
+        "expected": "Exactly 6 charges, no duplicates"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "VISIBILITY 10 s instead of 3 s (`python try_it.py`).",
+        "predict": "Fewer duplicates? Later finish?",
+        "expected": "3 s -> last delivery at t=9, 9 charges; 10 s -> last delivery at t=23, 9 charges. Same duplicates, slower recovery."
+      },
+      {
+        "task": "MAX_RECEIVES 2, 3, 5 over 30 seeded runs (`python try_it.py`).",
+        "predict": "How often is a GOOD order dead-lettered?",
+        "expected": "MAX_RECEIVES 2 -> 12/30 runs; 3 -> 5/30; 5 -> 2/30."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Duplicates although nothing crashed",
+        "action": "Work took longer than the visibility timeout: raise it or extend it while working."
+      },
+      {
+        "symptom": "Good messages in the DLQ",
+        "action": "Raise the delivery limit and fix transient failures; alert on DLQ depth."
+      }
+    ],
+    "equivalents": [
+      "Same idea in RabbitMQ: manual consumer acks; quorum queues count failed deliveries (x-delivery-count), default delivery-limit 20 since 4.0, then drop or dead-letter (DLX).",
+      "Same idea in NATS JetStream: AckPolicy explicit, AckWait (default 30 s) before redelivery, nak to redeliver, term to give up on a poison message.",
+      "Same idea in Kafka: commit the offset after processing = at-least-once; commit before = at-most-once."
+    ],
+    "learningTools": [
+      {
+        "name": "RabbitMQ + management UI",
+        "role": "INSPECT",
+        "exercise": "In the UI: add quorum queue `orders` and a policy with delivery-limit 3 and a dead-letter exchange bound to queue `orders.dlq`; publish `poison`, then use Queues › orders › Get messages with Ack mode `Nack message requeue true` several times.",
+        "expected": "Should show the message coming back with `redelivered` set (Ready/Unacked counters move), then landing in `orders.dlq` with an `x-death` header naming the reason — the lab's `dead-letter queue: ['poison']` after MAX_RECEIVES=3. Note how many gets RabbitMQ allowed before dead-lettering vs the lab's 3. Pending a manual run.",
+        "mac": "brew install rabbitmq; rabbitmq-plugins enable rabbitmq_management; open http://localhost:15672",
+        "windows": "rabbitmq-server-4.4.0.exe (Erlang requirement not checked); enable rabbitmq_management; open http://localhost:15672",
+        "licence": "MPL-2.0 (OSI: yes)",
+        "url": "https://www.rabbitmq.com/docs/management"
+      },
+      {
+        "name": "NATS server + NATS CLI",
+        "role": "INSPECT",
+        "exercise": "With `nats-server -js` running, use the nats CLI to add a work-queue stream and a pull consumer with ack wait 3 s and max deliver 3 (the lab's VISIBILITY=3.0, MAX_RECEIVES=3); publish one message, fetch it without acking, and watch `nats consumer info` / `nats consumer graph`.",
+        "expected": "Should show the unacked message redelivered after ~3 s, like the lab's `m3` coming back at t=4 (= received at t=1 + 3 s), and no further deliveries after the 3rd. Pending a manual run.",
+        "mac": "brew install nats-server nats; run `nats-server -js` (JetStream on)",
+        "windows": "partial — CLI: scoop install extras/natscli; server: Windows asset not confirmed (container fallback)",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://github.com/nats-io/natscli"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L100 #5 Idempotency keys: exactly-once effect over at-least-once delivery: the same dedupe-by-key rule for HTTP retries — here it makes an idempotent consumer",
+      "application-architecture L200 #9 Event-driven integration: outbox, bus and AsyncAPI: the producer side — an outbox publishes at least once to idempotent consumers"
+    ],
+    "inRealSystems": [
+      "RabbitMQ quorum queues track x-delivery-count and dead-letter after the delivery limit (20 by default since 4.0).",
+      "NATS JetStream redelivers after AckWait (30 s default) and offers term for poison messages."
+    ],
+    "useWhen": "Use at-least-once delivery with idempotent consumers whenever losing a message is worse than processing it twice; avoid it for side effects you cannot deduplicate.",
+    "simulatorVsReal": "In-memory, single-process broker on a simulated clock: no persistence, replication or ordering guarantees; crashes are seeded random events.",
+    "caution": "Never ack before the work is durable. Store the processed message id in the same transaction as the side effect.",
+    "checkpoint": "PASS if the demo matches the README, 6 tests pass and your idempotent consumer passes test_build_task with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "A message is received at t=10 with a 30 s visibility timeout and never acked. When can it be delivered again?",
+        "a": "At t=40."
+      },
+      {
+        "q": "Why does acking before doing the work avoid duplicates but risk loss?",
+        "a": "A crash after the ack and before the work loses the message: that is at-most-once."
+      }
+    ],
+    "buildTask": {
+      "task": "Make consume() idempotent: if the message id is already in the ledger, ack it and log 'duplicate -> skipped, acked' instead of charging again.",
+      "hints": [
+        "Check before the side effect: `any(i == msg[\"id\"] for i, _ in ledger)`.",
+        "Still ack duplicates, or they will be redelivered until dead-lettered.",
+        "In a real database the id check and the charge share one transaction (unique key)."
+      ],
+      "solution": "labs/L200/08-at-least-once-messaging/solution_broker.py",
+      "check": "labs/L200/08-at-least-once-messaging/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "sources": [
+      {
+        "title": "NATS docs: Ack responses and redelivery",
+        "url": "https://docs.nats.io/learn/jetstream/acknowledgment"
+      },
+      {
+        "title": "RabbitMQ docs: Quorum Queues (poison message handling)",
+        "url": "https://www.rabbitmq.com/docs/quorum-queues"
+      },
+      {
+        "title": "NATS docs: Pull consumers in depth",
+        "url": "https://docs.nats.io/learn/jetstream/pull-consumers"
+      },
+      {
+        "title": "Apache Kafka 4.3 docs: Design — Message Delivery Semantics",
+        "url": "https://kafka.apache.org/43/design/design/"
+      }
+    ],
+    "next": "L300 #14 Sagas with compensation: orchestration vs choreography, idempotent steps, saga log — its choreography runs a saga over an at-least-once bus: a duplicated event refunds twice unless every handler is an idempotent consumer",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python broker.py`, `python try_it.py` and `python -m unittest -v` (6 tests OK) on Python 3.12.15 (Linux); outputs pasted in the README, demo identical on repeated runs (seed 9, simulated clock). BUILD_TARGET=mine against the unmodified broker.py: 2 failures, as intended. No real broker was run. Tools/review pass (2026-10-28, UPDATE-TOOLS-REVIEW-SPEC): added learningTools (RabbitMQ UI, NATS CLI; pending manual runs), seeAlso; Kafka source now kafka.apache.org (F15)."
+    },
+    "conceptNote": "content/concepts/L200/08-at-least-once-messaging.md",
+    "conceptSummary": "A broker hides a received message for a visibility timeout, deletes it on ack and redelivers it otherwise, so nothing is lost but a crash between the side effect and the ack repeats the effect. A delivery limit parks poison messages in a dead-letter queue; idempotent consumers make the duplicates harmless.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "consistent-hashing",
+    "number": 9,
+    "level": "L200",
+    "title": "Sharding with consistent hashing: virtual nodes, key movement, hot keys",
+    "phase": "Partitioning",
+    "category": "sharding",
+    "description": "A hash ring with 100 virtual nodes per node; measure keys moved when a node joins or leaves (vs hash % N), load balance, and a hot key.",
+    "outcome": "You can place keys on a hash ring, predict how many move on membership changes, choose vnode counts, and place replicas on distinct nodes.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Optional agent assist: Ollama or any OpenAI-compatible local server (tests use the fake server only).",
+    "estimatedTime": "40 minutes",
+    "overview": [
+      "Consistent hashing moves about 1/N of the keys when a node joins or leaves, instead of almost all of them; virtual nodes keep the load even, but no hash fixes a hot key."
+    ],
+    "prerequisites": [
+      "Lesson 2 (two services)"
+    ],
+    "glossary": [
+      {
+        "term": "hash ring",
+        "meaning": "Hash values arranged in a circle; a key belongs to the next node point clockwise."
+      },
+      {
+        "term": "virtual node (vnode)",
+        "meaning": "One of many ring positions owned by the same physical node."
+      },
+      {
+        "term": "hot key",
+        "meaning": "A single key that receives a large share of all requests."
+      }
+    ],
+    "concepts": [
+      "hash % N reshuffles ~80% of keys going from 4 to 5 nodes; a ring ~20%.",
+      "More vnodes = more even load.",
+      "Replicas = keep walking clockwise to N distinct nodes."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python ring.py`",
+        "expected": "`add E : hash % N moves 80.3% ...; ring moves 18.9% (ideal 1/5 = 20.0%)`.",
+        "ifNot": "Different numbers -> h() must be md5-based, not Python's hash()."
+      },
+      {
+        "title": "Remove a node",
+        "detail": "Read the `remove D` line.",
+        "expected": "`ring moves 24.5%; only D's keys moved: True`.",
+        "ifNot": "remove() must drop all of D's vnodes."
+      },
+      {
+        "title": "Compare vnode counts",
+        "detail": "Read the three `vnodes=` lines.",
+        "expected": "Imbalance 2.20 with 1 vnode, 1.03 with 100.",
+        "ifNot": "Check add() inserts `vnodes` points per node."
+      },
+      {
+        "title": "Find the hot key",
+        "detail": "Read the `hot key` line.",
+        "expected": "Node B serves 39,738 of 100,000 requests (imbalance 1.59).",
+        "ifNot": "Traffic is seeded (42); keep the seed."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 10 tests ... OK",
+        "ifNot": "A firewall blocking 127.0.0.1 is the usual cause; the tests use no other network."
+      },
+      {
+        "title": "Build task",
+        "detail": "Add the feature in buildTask.task to the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK (before your change they fail; the reference is solution_ring.py).",
+        "ifNot": "Diff your file against solution_ring.py; run without BUILD_TARGET to see the reference pass."
+      },
+      {
+        "title": "(Optional) Agent assist",
+        "detail": "A local model proposes a replica layout; check() decides.",
+        "mac": "python agent_assist.py --fake\nLOCAL_MODEL=qwen2.5:1.5b python agent_assist.py",
+        "windows": "python agent_assist.py --fake\n$env:LOCAL_MODEL=\"qwen2.5:1.5b\"; python agent_assist.py",
+        "expected": "With --fake: `checker: REJECTED` (S5 zone conflict, n1 over capacity).",
+        "ifNot": "Without --fake, start Ollama first (`ollama serve`)."
+      }
+    ],
+    "code": "\"\"\"L200 lesson 9 (python ring.py): shard keys over nodes with a consistent-hash ring + virtual nodes.\nMeasures how many keys move when a node joins or leaves (ring vs hash % N), how even the load is with\n1 / 10 / 100 vnodes per node, and what one hot key does to its shard. Deterministic (md5, seeded traffic).\"\"\"\nimport bisect, hashlib, random\nfrom collections import Counter\n\n\ndef h(text):  # stable 64-bit ring position; Python's hash() is salted per process -> never use it here\n    return int.from_bytes(hashlib.md5(text.encode(\"utf-8\")).digest()[:8], \"big\")\n\n\nclass HashRing:\n    def __init__(self, nodes, vnodes=100):\n        self.vnodes, self.points, self.owner = vnodes, [], {}\n        for node in nodes:\n            self.add(node)\n\n    def add(self, node):  # virtual nodes: each physical node takes `vnodes` positions on the ring\n        for i in range(self.vnodes):\n            point = h(f\"{node}#{i}\")\n            bisect.insort(self.points, point)\n            self.owner[point] = node\n\n    def remove(self, node):\n        self.points = [p for p in self.points if self.owner[p] != node]\n        self.owner = {p: n for p, n in self.owner.items() if n != node}\n\n    def node_for(self, key):  # walk clockwise from the key's position to the next vnode (wrap at the end)\n        i = bisect.bisect(self.points, h(key)) % len(self.points)\n        return self.owner[self.points[i]]\n\n\ndef modulo_node(key, nodes):  # the naive way: hash mod N -> almost every key moves when N changes\n    return nodes[h(key) % len(nodes)]\n\n\ndef moved(before, after, keys):\n    return sum(before(k) != after(k) for k in keys) / len(keys)\n\n\ndef imbalance(counts):  # busiest node / average node; 1.00 = perfectly even\n    return max(counts.values()) / (sum(counts.values()) / len(counts))\n\n\ndef main():\n    keys, four = [f\"user:{i}\" for i in range(10_000)], [\"A\", \"B\", \"C\", \"D\"]\n    ring = HashRing(four)\n    grown = HashRing(four + [\"E\"])\n    print(f\"add E   : hash % N moves {moved(lambda k: modulo_node(k, four), lambda k: modulo_node(k, four + ['E']), keys):.1%}\"\n          f\" of 10,000 keys; ring moves {moved(ring.node_for, grown.node_for, keys):.1%} (ideal 1/5 = 20.0%)\")\n    shrunk = HashRing(four)\n    shrunk.remove(\"D\")\n    only_d = all(ring.node_for(k) == \"D\" for k in keys if ring.node_for(k) != shrunk.node_for(k))\n    print(f\"remove D: ring moves {moved(ring.node_for, shrunk.node_for, keys):.1%}; only D's keys moved: {only_d}\")\n    for v in (1, 10, 100):\n        sized = HashRing(four, v)\n        counts = Counter(sized.node_for(k) for k in keys)\n        print(f\"vnodes={v:<3}: keys per node {dict(sorted(counts.items()))} imbalance {imbalance(counts):.2f}\")\n    rng = random.Random(42)  # 100,000 requests: 20% for one celebrity key, the rest spread evenly\n    traffic = Counter(ring.node_for(\"user:42\" if rng.random() < 0.2 else rng.choice(keys)) for _ in range(100_000))\n    print(f\"hot key : user:42 lives on {ring.node_for('user:42')}; requests per node {dict(sorted(traffic.items()))}\"\n          f\" imbalance {imbalance(traffic):.2f}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Stable hash",
+        "detail": "`h()` takes the first 8 bytes of md5: the same key lands on the same position in every process and on every OS."
+      },
+      {
+        "title": "Virtual nodes",
+        "detail": "`add()` inserts `vnodes` points `node#i` into a sorted list; the more points, the more evenly arcs average out."
+      },
+      {
+        "title": "Lookup",
+        "detail": "`bisect.bisect(self.points, h(key)) % len(self.points)` finds the first point clockwise and wraps past the end."
+      },
+      {
+        "title": "Measuring movement",
+        "detail": "`moved(before, after, keys)` compares two placement functions key by key — the same helper measures modulo and ring."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L200/09-consistent-hashing/ring.py",
+        "purpose": "HashRing with vnodes, modulo baseline, measurements"
+      },
+      {
+        "path": "labs/L200/09-consistent-hashing/solution_ring.py",
+        "purpose": "Build-task reference (nodes_for replicas)"
+      },
+      {
+        "path": "labs/L200/09-consistent-hashing/agent_assist.py",
+        "purpose": "Optional: local model proposes a replica layout; code checks every rule"
+      },
+      {
+        "path": "labs/L200/09-consistent-hashing/test_ring.py",
+        "purpose": "unittest: stable hash, movement, removal, balance"
+      },
+      {
+        "path": "labs/L200/09-consistent-hashing/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine tests your file)"
+      },
+      {
+        "path": "labs/L200/09-consistent-hashing/test_agent_assist.py",
+        "purpose": "unittest with the fake model server only"
+      },
+      {
+        "path": "labs/L200/09-consistent-hashing/try_it.py",
+        "purpose": "The two tryIt experiments"
+      },
+      {
+        "path": "labs/_shared/local_agent/",
+        "purpose": "Vendored helper + fake server ([[SHARD-LAYOUT]] rule)"
+      }
+    ],
+    "expectedResults": [
+      "add E   : hash % N moves 80.3% of 10,000 keys; ring moves 18.9% (ideal 1/5 = 20.0%)",
+      "vnodes=100: ... imbalance 1.03",
+      "hot key : user:42 lives on B; ... imbalance 1.59"
+    ],
+    "testCases": [
+      {
+        "action": "Add E to A-D",
+        "expected": "Ring < 25% moved, all to E; modulo > 75%"
+      },
+      {
+        "action": "Remove D",
+        "expected": "Only D's keys move"
+      },
+      {
+        "action": "1 vs 100 vnodes",
+        "expected": "Imbalance > 1.5 vs < 1.1"
+      },
+      {
+        "action": "nodes_for(key, 3) on the solution",
+        "expected": "3 distinct nodes, first = node_for(key); n=6 on 5 nodes -> ValueError"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Add E with 1 vnode vs 100 vnodes per node (`python try_it.py`).",
+        "predict": "Which nodes give keys to E?",
+        "expected": "vnodes=1: moves 17.0%, all from D; vnodes=100: moves 18.9%, taken from A 488, B 227, C 540, D 634."
+      },
+      {
+        "task": "Split hot key user:42 into 8 sub-keys user:42#0..7 (`python try_it.py`).",
+        "predict": "Does the imbalance fall?",
+        "expected": "Requests per node A 25565, B 27462, C 24940, D 22033: imbalance 1.10 (was 1.59)."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Different placement on each run",
+        "action": "You used Python's hash(); it is salted per process. Use hashlib."
+      },
+      {
+        "symptom": "One node overloaded",
+        "action": "Check the vnode count first, then look for a hot key."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Apache Cassandra: a token ring with multiple tokens per node (vnodes); replicas found by walking the ring to distinct nodes (SimpleStrategy).",
+      "Same idea in memcache clients (Facebook's memcache paper): items spread over servers by consistent hashing.",
+      "Amazon Dynamo (the paper) introduced virtual nodes for this balance problem."
+    ],
+    "inRealSystems": [
+      "Cassandra maps every node to one or more tokens; 2.x used 256 random tokens per node, 3.x+ a deterministic allocator needing fewer.",
+      "Facebook's memcache uses consistent hashing and notes a single key can take 20% of a server's requests."
+    ],
+    "useWhen": "Use consistent hashing when nodes join and leave and moving data is expensive; avoid it for a fixed node set (modulo is simpler) or when you need ordered range scans.",
+    "caution": "Agent assist: the model only proposes a layout; check() decides and a rejected layout is never applied. Do not put hostnames, credentials or customer keys in prompts.",
+    "checkpoint": "PASS if the demo matches the README, 10 tests pass and your nodes_for passes test_build_task with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "8 nodes, add a 9th. Roughly what share of keys moves with a ring? With hash % N?",
+        "a": "About 1/9 (11%) with a ring; about 8/9 with modulo."
+      },
+      {
+        "q": "Why can't more vnodes fix a hot key?",
+        "a": "A key maps to one position; vnodes spread many keys, not one key's traffic."
+      }
+    ],
+    "buildTask": {
+      "task": "Add HashRing.nodes_for(key, n=3): walk clockwise from the key, skipping vnodes of already chosen nodes, until n distinct physical nodes; raise ValueError if the ring has fewer than n.",
+      "hints": [
+        "Start at the same index as node_for.",
+        "Use `i % len(self.points)` to wrap around.",
+        "Count distinct nodes with `set(self.owner.values())`."
+      ],
+      "solution": "labs/L200/09-consistent-hashing/solution_ring.py",
+      "check": "labs/L200/09-consistent-hashing/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "agentAssist": {
+      "task": "A local model proposes a replica layout (8 shards x 3 replicas on 6 nodes in 3 zones, at most 4 per node); code validates every rule.",
+      "prompt": "system: You plan replica placement for a sharded store. Reply with exactly one line per shard, formatted 'S<i>: node,node,node', then one line starting 'summary:'. user: [[SHARD-LAYOUT]] Place 8 shards S0-S7, 3 replicas each, on nodes: n1@a n2@a n3@b n4@b n5@c n6@c (the part after @ is the zone). Rules: 3 different nodes in 3 different zones per shard; at most 4 replicas per node.",
+      "check": "parse() reads 'S<i>: a,b,c' lines; check() requires all 8 shards, 3 different known nodes, 3 different zones per shard and <= 4 replicas per node, and lists every violation. A rejected layout is never applied; the agent's summary is shown as unverified prose.",
+      "expected": "python agent_assist.py --fake -> checker: REJECTED; S5: zones ['a', 'a', 'c'] -> two replicas share a zone; n1: 5 replicas > capacity 4 (the fake model breaks S5 on purpose and claims the layout is perfect).",
+      "realModelNote": "Ollama on the Mac mini (Metal) or the Windows PC: `ollama pull qwen2.5:1.5b`, then `LOCAL_MODEL=qwen2.5:1.5b python agent_assist.py` (Windows: `$env:LOCAL_MODEL=...`). Not run against a real model here; small models often break zone or capacity rules — the checker catches whatever comes back."
+    },
+    "sources": [
+      {
+        "title": "Apache Cassandra docs: Dynamo (consistent hashing, vnodes, replication)",
+        "url": "https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html"
+      },
+      {
+        "title": "Nishtala et al., Scaling Memcache at Facebook (NSDI 2013)",
+        "url": "https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf"
+      },
+      {
+        "title": "Ollama docs: OpenAI compatibility",
+        "url": "https://github.com/ollama/ollama/blob/main/docs/api/openai-compatibility.mdx"
+      }
+    ],
+    "next": "L300 #12 Replicated log with Raft (simplified): terms, commit index, re-election, election restriction — how each shard's replicas agree: a majority-replicated log, the quorum idea behind N, R and W",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python ring.py`, `python try_it.py`, `python agent_assist.py --fake` and `python -m unittest -v` (10 tests OK, agent tests on the vendored fake server only) on Python 3.12.15 (Linux); outputs pasted in the README; deterministic (md5, seed 42). BUILD_TARGET=mine against the unmodified ring.py: 3 errors, as intended. No real model was run.",
+      "pendingCi": [
+        "labs/L200/09-consistent-hashing/agent_assist.py with a real local model (tests use the fake server only)"
+      ]
+    },
+    "conceptNote": "content/concepts/L200/09-consistent-hashing.md",
+    "conceptSummary": "Keys and nodes hash onto one ring and a key belongs to the next node point clockwise, so a join or leave moves about 1/N of the keys instead of most of them. Many virtual nodes per node even out the load; a hot key still lands on one node and needs splitting or replication.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "caching-invalidation",
+    "number": 10,
+    "level": "L200",
+    "title": "Caching and invalidation: cache-aside, TTL, stale reads, thundering herd",
+    "phase": "Performance",
+    "category": "caching",
+    "description": "Cache-aside with a TTL in front of a slow database: stale reads without invalidation, invalidate-on-write, and 50 concurrent misses on a cold key.",
+    "outcome": "You can implement cache-aside, choose a TTL, invalidate on write, and coalesce concurrent misses so a hot key causes one database read.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Optional: Valkey 9.1.3 container (pending-ci).",
+    "estimatedTime": "40 minutes",
+    "overview": [
+      "A cache trades freshness for speed: the TTL bounds staleness, invalidation shortens it, and coalescing stops a herd of misses from hitting the database at once."
+    ],
+    "prerequisites": [
+      "Lesson 3 (timeouts)"
+    ],
+    "glossary": [
+      {
+        "term": "cache-aside",
+        "meaning": "The application reads the cache, on a miss reads the source and fills the cache."
+      },
+      {
+        "term": "TTL",
+        "meaning": "Time-to-live: how long an entry may be served before it expires."
+      },
+      {
+        "term": "thundering herd",
+        "meaning": "Many concurrent misses for one key all hitting the source."
+      },
+      {
+        "term": "request coalescing",
+        "meaning": "One loader per key; concurrent callers share its result (single-flight)."
+      }
+    ],
+    "concepts": [
+      "Stale for up to one TTL without invalidation.",
+      "Write the database, then delete the cache key.",
+      "Coalesce concurrent misses per key."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python cache.py`",
+        "expected": "`cache-aside  : [5, 5, 5] -> db reads 1 (1 miss, 2 hits)`.",
+        "ifNot": "If db reads > 1, TTLCache.get is returning None for live entries."
+      },
+      {
+        "title": "See stale reads",
+        "detail": "Read the four `no invalidate` lines.",
+        "expected": "Price 5 (STALE) at t=0, 10, 29 s; 7 from t=30 (TTL).",
+        "ifNot": "The cache must use the simulated clock."
+      },
+      {
+        "title": "Invalidate on write",
+        "detail": "Read the `invalidate` line.",
+        "expected": "`t=100s write 9 -> read 9 (fresh)`.",
+        "ifNot": "set_price must delete the key after the DB write."
+      },
+      {
+        "title": "Trigger the herd",
+        "detail": "Read the `herd` line.",
+        "expected": "`50 concurrent reads of a cold key -> 50 db reads`.",
+        "ifNot": "A heavily loaded machine may show slightly fewer; the test only asserts > 1."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 6 tests ... OK",
+        "ifNot": "A firewall blocking 127.0.0.1 is the usual cause; the tests use no other network."
+      },
+      {
+        "title": "Build task",
+        "detail": "Add the feature in buildTask.task to the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK (before your change they fail; the reference is solution_cache.py).",
+        "ifNot": "Diff your file against solution_cache.py; run without BUILD_TARGET to see the reference pass."
+      },
+      {
+        "title": "(Optional) Same in Valkey",
+        "detail": "Start Valkey in a container and run the stdlib RESP client.",
+        "mac": "podman run -d --name valkey -p 6379:6379 docker.io/valkey/valkey:9.1.3\npython valkey_equivalent.py",
+        "windows": "podman run -d --name valkey -p 6379:6379 docker.io/valkey/valkey:9.1.3\npython valkey_equivalent.py",
+        "expected": "Ends with `valkey equivalent OK` (pending-ci: not run in the sandbox).",
+        "ifNot": "Port 6379 busy -> map another port and set VALKEY_PORT."
+      }
+    ],
+    "code": "\"\"\"L200 lesson 10 (python cache.py): cache-aside with a TTL in front of a slow price database.\nShows hits and misses, a stale read after a write WITHOUT invalidation, invalidate-on-write, and a\nthundering herd: 50 concurrent misses on one cold key = 50 database reads. Simulated clock for TTLs.\"\"\"\nimport threading, time\n\nfrom helpers import SimClock\n\n\nclass PriceDB:\n    \"\"\"The source of truth (stands in for a remote database): slow on purpose, counts every read.\"\"\"\n    def __init__(self, delay=0.2):\n        self.prices, self.reads, self.delay, self.lock = {\"apple\": 5}, 0, delay, threading.Lock()\n\n    def read(self, sku):\n        with self.lock:\n            self.reads += 1\n        time.sleep(self.delay)  # a slow query: the window in which a herd piles up\n        return self.prices[sku]\n\n    def write(self, sku, price):\n        self.prices[sku] = price\n\n\nclass TTLCache:\n    def __init__(self, ttl, clock):\n        self.ttl, self.clock, self.data = ttl, clock, {}\n\n    def get(self, key):  # None = absent or expired\n        value, expires = self.data.get(key, (None, 0))\n        return value if self.clock() < expires else None\n\n    def set(self, key, value):\n        self.data[key] = (value, self.clock() + self.ttl)\n\n    def delete(self, key):\n        self.data.pop(key, None)\n\n\nclass PriceService:\n    \"\"\"Cache-aside: the application reads the cache, falls back to the DB on a miss, then fills the cache.\"\"\"\n    def __init__(self, db, cache, invalidate=True):\n        self.db, self.cache, self.invalidate = db, cache, invalidate\n\n    def get_price(self, sku):\n        value = self.cache.get(sku)\n        if value is None:  # miss: read the source of truth, then populate the cache for the next reader\n            value = self.db.read(sku)\n            self.cache.set(sku, value)\n        return value\n\n    def set_price(self, sku, price):\n        self.db.write(sku, price)  # 1) write the database (the source of truth)\n        if self.invalidate:\n            self.cache.delete(sku)  # 2) invalidate-on-write: the next read misses and refetches\n\n\ndef herd(service, sku=\"apple\", n=50):\n    \"\"\"n threads read one cold key at the same moment; returns (db reads, distinct values seen).\"\"\"\n    start, seen, before = threading.Barrier(n), [], service.db.reads\n    def reader():\n        start.wait()\n        seen.append(service.get_price(sku))\n    threads = [threading.Thread(target=reader) for _ in range(n)]\n    [t.start() for t in threads]\n    [t.join() for t in threads]\n    return service.db.reads - before, sorted(set(seen))\n\n\ndef main():\n    db, clock = PriceDB(), SimClock()\n    svc = PriceService(db, TTLCache(30, clock), invalidate=False)\n    print(\"cache-aside  :\", [svc.get_price(\"apple\") for _ in range(3)], f\"-> db reads {db.reads} (1 miss, 2 hits)\")\n    svc.set_price(\"apple\", 7)  # no invalidation: the cache keeps 5 until its TTL (30 s) runs out\n    for t in (0, 10, 29, 30):\n        clock.t = t\n        price = svc.get_price(\"apple\")\n        print(f\"no invalidate: t={t:>2}s read {price}\", \"(STALE, db has 7)\" if price != 7 else \"(fresh)\")\n    svc.invalidate, clock.t = True, 100\n    svc.set_price(\"apple\", 9)\n    print(f\"invalidate   : t=100s write 9 -> read {svc.get_price('apple')} (fresh)\")\n    svc.cache.delete(\"apple\")  # the key just expired ...\n    reads, values = herd(svc)  # ... and 50 requests arrive together\n    print(f\"herd         : 50 concurrent reads of a cold key -> {reads} db reads, values {values}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "TTL on read",
+        "detail": "`TTLCache.get` returns None once `clock() >= expires`, so expiry needs no background thread."
+      },
+      {
+        "title": "Cache-aside miss path",
+        "detail": "`get_price`: miss -> `db.read` -> `cache.set`. The application, not the cache, talks to the database."
+      },
+      {
+        "title": "Write order",
+        "detail": "`set_price` writes the database first, then deletes the cache key; deleting (not updating) is idempotent."
+      },
+      {
+        "title": "The herd harness",
+        "detail": "`herd()` releases 50 threads with a Barrier so all of them check the cache before the first 0.2 s read returns."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L200/10-caching-invalidation/cache.py",
+        "purpose": "PriceDB, TTLCache, PriceService (cache-aside), herd(), demo"
+      },
+      {
+        "path": "labs/L200/10-caching-invalidation/helpers.py",
+        "purpose": "SimClock"
+      },
+      {
+        "path": "labs/L200/10-caching-invalidation/solution_cache.py",
+        "purpose": "Build-task reference (request coalescing)"
+      },
+      {
+        "path": "labs/L200/10-caching-invalidation/valkey_equivalent.py",
+        "purpose": "Same in Valkey with a stdlib RESP2 client (pending-ci)"
+      },
+      {
+        "path": "labs/L200/10-caching-invalidation/test_cache.py",
+        "purpose": "unittest: hits/TTL, stale vs invalidated, herd"
+      },
+      {
+        "path": "labs/L200/10-caching-invalidation/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine tests your file)"
+      },
+      {
+        "path": "labs/L200/10-caching-invalidation/test_valkey_client.py",
+        "purpose": "RESP client against a fake socket server (local)"
+      },
+      {
+        "path": "labs/L200/10-caching-invalidation/try_it.py",
+        "purpose": "The two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "no invalidate: t=29s read 5 (STALE, db has 7)",
+      "invalidate   : t=100s write 9 -> read 9 (fresh)",
+      "herd         : 50 concurrent reads of a cold key -> 50 db reads, values [9]"
+    ],
+    "testCases": [
+      {
+        "action": "3 reads, then advance to the TTL",
+        "expected": "1 DB read, then a 2nd at t=30"
+      },
+      {
+        "action": "Write without / with invalidation",
+        "expected": "Old value (stale) / new value"
+      },
+      {
+        "action": "50-thread herd on the solution",
+        "expected": "1 DB read, every caller gets 5"
+      },
+      {
+        "action": "RESP client vs fake server",
+        "expected": "miss -> filled, hit, DEL invalidates, -ERR raises"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "No invalidation, TTL 30 s vs 5 s, one read per second for 60 s (`python try_it.py`).",
+        "predict": "Stale reads vs DB reads?",
+        "expected": "TTL 30 s -> 30 stale reads of 60, 2 db reads; TTL 5 s -> 5 stale reads, 12 db reads."
+      },
+      {
+        "task": "Interleave a slow reader with a writer that invalidates (`python try_it.py`).",
+        "predict": "Is the cache fresh after the write?",
+        "expected": "race -> db has 11, cache serves 5 until t=30 (TTL)."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Database spikes every TTL",
+        "action": "Coalesce misses; add jitter to TTLs of keys loaded together."
+      },
+      {
+        "symptom": "Users see old data after an update",
+        "action": "Delete the key after the DB write; keep a TTL as backstop."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Valkey: `SET price:apple 5 EX 30`, `GET`, `DEL` on write; `SET lock:apple me NX EX 5` lets one process load a cold key.",
+      "Same idea in Go: golang.org/x/sync/singleflight `Group.Do(key, fn)` — one execution in flight per key.",
+      "Same idea in memcache at Facebook: demand-filled look-aside cache, delete on write, leases against stale sets and herds."
+    ],
+    "inRealSystems": [
+      "Facebook's memcache deletes (not updates) on write because deletes are idempotent, and leases cut a herd-prone key's peak DB rate from 17K/s to 1.3K/s.",
+      "Valkey's SET supports EX/PX TTLs and NX for a simple loader lock."
+    ],
+    "useWhen": "Use cache-aside with a TTL for read-heavy data that may be briefly stale; add invalidation for user-visible writes and coalescing for hot keys; avoid caching data every reader must see fresh.",
+    "simulatorVsReal": "The database is an in-process object with a 0.2 s sleep and the cache a dict; TTLs use a simulated clock. Valkey runs only in CI.",
+    "caution": "A cache is not the source of truth: never write only to the cache, and never cache data across users or tenants with the same key.",
+    "checkpoint": "PASS if the demo matches the README, 6 tests pass and your coalescing passes test_build_task with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "TTL 60 s, no invalidation, the price changes at t=10 and was cached at t=0. Until when is it stale?",
+        "a": "Until t=60."
+      },
+      {
+        "q": "Why delete the key on write instead of setting the new value?",
+        "a": "Deletes are idempotent; concurrent setters can leave an older value cached."
+      }
+    ],
+    "buildTask": {
+      "task": "Add request coalescing to PriceService.get_price: on a miss only the first caller per key reads the database; concurrent callers wait for its result.",
+      "hints": [
+        "Keep `self.inflight = {}` of key -> {'done': threading.Event()} guarded by a lock.",
+        "The leader reads, fills the cache, removes the in-flight entry and sets the event in `finally`.",
+        "Followers `wait()` and return the leader's value."
+      ],
+      "solution": "labs/L200/10-caching-invalidation/solution_cache.py",
+      "check": "labs/L200/10-caching-invalidation/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "sources": [
+      {
+        "title": "Nishtala et al., Scaling Memcache at Facebook (NSDI 2013)",
+        "url": "https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf"
+      },
+      {
+        "title": "Go package golang.org/x/sync/singleflight",
+        "url": "https://pkg.go.dev/golang.org/x/sync/singleflight"
+      },
+      {
+        "title": "Valkey docs: SET",
+        "url": "https://valkey.io/commands/set/"
+      },
+      {
+        "title": "Valkey docs: Serialization protocol (RESP)",
+        "url": "https://valkey.io/topics/protocol/"
+      }
+    ],
+    "next": "L300 #13 Network partitions and fault injection: proxy toxics, split brain, fencing and linearizability checking — a read answered from a stale copy is exactly what its linearizability checker catches",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python cache.py` (3 times: herd = 50 each time), `python try_it.py` and `python -m unittest -v` (6 tests OK) on Python 3.12.15 (Linux); outputs pasted in the README. BUILD_TARGET=mine against the unmodified cache.py: 2 failures, as intended. valkey_equivalent.py is pending-ci (no Valkey in the sandbox): its RESP client passed test_valkey_client.py against a fake socket server only; the CI job `valkey` runs it against valkey/valkey:9.1.3.",
+      "pendingCi": [
+        "labs/L200/10-caching-invalidation/valkey_equivalent.py against a real Valkey (CI job valkey)"
+      ]
+    },
+    "conceptNote": "content/concepts/L200/10-caching-invalidation.md",
+    "conceptSummary": "Cache-aside reads the cache and fills it from the database on a miss; the TTL bounds how long a changed value stays stale, and deleting the key after a write shortens it. When a hot key is missing, concurrent misses stampede the database unless one loader per key does the work and the others wait.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "rate-limiting",
+    "number": 11,
+    "level": "L200",
+    "title": "Rate limiting: token bucket, per-client limits, 429 and Retry-After",
+    "phase": "Overload protection",
+    "category": "rate limiting",
+    "description": "An HTTP API with a token bucket per client answers 429 + Retry-After; a polite client waits as told, a naive one hammers, a quiet one is unaffected.",
+    "outcome": "You can implement a token bucket, return 429 with a correct Retry-After, honour it in a client, and build a sliding-window limiter.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps).",
+    "estimatedTime": "40 minutes",
+    "overview": [
+      "A per-client token bucket caps the average rate while allowing short bursts; 429 + Retry-After tells clients exactly when to come back."
+    ],
+    "prerequisites": [
+      "Lesson 4 (retries and backoff)"
+    ],
+    "glossary": [
+      {
+        "term": "token bucket",
+        "meaning": "Tokens refill at a fixed rate up to a burst size; each request spends one."
+      },
+      {
+        "term": "429 Too Many Requests",
+        "meaning": "Status code for rate limiting (RFC 6585)."
+      },
+      {
+        "term": "Retry-After",
+        "meaning": "Response header: seconds to wait, or an HTTP date (RFC 9110)."
+      }
+    ],
+    "concepts": [
+      "Average <= rate, bursts <= burst.",
+      "Retry-After = ceil(time to next token), at least 1.",
+      "One limiter per authenticated client."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python ratelimit.py`",
+        "expected": "Alice: 5 x 200, then `429(wait 1)`; done at t=4s with 4 x 429.",
+        "ifNot": "Check RATE = 2.0 and BURST = 5."
+      },
+      {
+        "title": "Compare the naive client",
+        "detail": "Read bob's line.",
+        "expected": "`bob (retries every 0.1 s): 12 ok, 35 x 429, done at t=3.5s`.",
+        "ifNot": "bob must ignore Retry-After (honor False)."
+      },
+      {
+        "title": "Check isolation",
+        "detail": "Read carol's line.",
+        "expected": "`3 ok, 0 x 429`: limits are per X-Client-Id.",
+        "ifNot": "Api.limiters must be keyed by client."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v` (8th test: test_serve_realtime, the real-clock k6 target, ~2 s)",
+        "expected": "Ran 8 tests ... OK",
+        "ifNot": "A firewall blocking 127.0.0.1 is the usual cause; the tests use no other network."
+      },
+      {
+        "title": "Build task",
+        "detail": "Add the feature in buildTask.task to the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK (before your change they fail; the reference is solution_ratelimit.py).",
+        "ifNot": "Diff your file against solution_ratelimit.py; run without BUILD_TARGET to see the reference pass."
+      }
+    ],
+    "code": "\"\"\"L200 lesson 11 (python ratelimit.py): per-client token buckets in an HTTP API. Over the limit the server\nanswers 429 Too Many Requests + Retry-After (RFC 6585 / RFC 9110). A polite client waits as told, a naive\none retries every 0.1 s, a quiet one is never affected. Simulated clock: identical output on every run.\"\"\"\nimport math\nfrom email.utils import parsedate_to_datetime\n\nfrom helpers import QuietHandler, SimClock, call, serve\n\nRATE, BURST = 2.0, 5  # per client: 2 requests/s on average, bursts of up to 5\n\n\nclass TokenBucket:\n    def __init__(self, rate, burst, clock):\n        self.rate, self.burst, self.clock = rate, burst, clock\n        self.tokens, self.last = float(burst), clock()\n\n    def allow(self):  # returns (allowed, seconds until a token is available)\n        now = self.clock()\n        self.tokens = min(self.burst, self.tokens + (now - self.last) * self.rate)  # refill for elapsed time\n        self.last = now\n        if self.tokens >= 1:\n            self.tokens -= 1\n            return True, 0.0\n        return False, (1 - self.tokens) / self.rate\n\n\nclass Api(QuietHandler):\n    clock, limiters, make_limiter = SimClock(), {}, None\n\n    def do_GET(self):\n        client = self.headers.get(\"X-Client-Id\", self.client_address[0])  # per-client limit key\n        limiter = self.limiters.setdefault(client, (type(self).make_limiter or default_limiter)(self.clock))\n        ok, wait = limiter.allow()\n        if ok:\n            return self.reply(200, {\"ok\": True})\n        # 429 + Retry-After in whole seconds (delay-seconds form), rounded UP so an early retry can't fail\n        self.reply(429, {\"error\": \"too many requests\"}, {\"Retry-After\": str(max(1, math.ceil(wait)))})\n\n\ndef default_limiter(clock):\n    return TokenBucket(RATE, BURST, clock)\n\n\ndef retry_after_seconds(value, now_epoch=0.0):  # RFC 9110 allows delay-seconds OR an HTTP-date\n    if value.strip().isdigit():\n        return int(value)\n    return max(0.0, parsedate_to_datetime(value).timestamp() - now_epoch)\n\n\ndef run(clients, make_limiter=None):\n    \"\"\"clients: {name: (requests_wanted, honor_retry_after)}. Event loop on a simulated clock.\"\"\"\n    clock = SimClock()\n    Api.clock, Api.limiters, Api.make_limiter = clock, {}, make_limiter\n    srv = serve(Api)\n    url = f\"http://127.0.0.1:{srv.server_port}/data\"\n    state = {n: {\"next\": 0.0, \"ok\": 0, \"429\": 0, \"trace\": [], \"want\": w, \"honor\": h} for n, (w, h) in clients.items()}\n    while active := [n for n, s in state.items() if s[\"ok\"] < s[\"want\"]]:\n        name = min(active, key=lambda n: (state[n][\"next\"], n))  # next event in time order\n        s = state[name]\n        clock.t = s[\"next\"]\n        status, _, headers = call(url, headers={\"X-Client-Id\": name})\n        if status == 200:\n            s[\"ok\"] += 1\n            s[\"trace\"].append(\"200\")\n            s[\"done\"] = clock.t\n        else:\n            s[\"429\"] += 1\n            wait = retry_after_seconds(headers[\"Retry-After\"]) if s[\"honor\"] else 0.1  # naive: hammer again\n            s[\"trace\"].append(f\"429(wait {wait:g})\")\n            s[\"next\"] = round(clock.t + wait, 3)\n    srv.shutdown()\n    srv.server_close()\n    return state\n\n\nif __name__ == \"__main__\":\n    out = run({\"alice\": (12, True), \"bob\": (12, False), \"carol\": (3, True)})\n    print(\"alice trace:\", \" \".join(out[\"alice\"][\"trace\"]))\n    for name, s in out.items():\n        print(f\"{name:<5} ({'honors Retry-After' if s['honor'] else 'retries every 0.1 s'}): \"\n              f\"{s['ok']} ok, {s['429']} x 429, done at t={s['done']:g}s\")\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Lazy refill",
+        "detail": "`tokens = min(burst, tokens + (now - last) * rate)`: no timer thread; tokens are computed when a request arrives."
+      },
+      {
+        "title": "Wait until the next token",
+        "detail": "`(1 - tokens) / rate` seconds; the server sends `max(1, ceil(wait))` because delay-seconds is a whole number."
+      },
+      {
+        "title": "Per-client limiter",
+        "detail": "`limiters.setdefault(client, ...)` creates one bucket per X-Client-Id on first use."
+      },
+      {
+        "title": "Both Retry-After forms",
+        "detail": "`retry_after_seconds` accepts delay-seconds or an HTTP-date (parsed with email.utils)."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L200/11-rate-limiting/ratelimit.py",
+        "purpose": "TokenBucket, Api (429 + Retry-After), retry_after_seconds, client event loop"
+      },
+      {
+        "path": "labs/L200/11-rate-limiting/helpers.py",
+        "purpose": "Plumbing: JSON handler, call(), serve(), SimClock"
+      },
+      {
+        "path": "labs/L200/11-rate-limiting/solution_ratelimit.py",
+        "purpose": "Build-task reference (SlidingWindowLog)"
+      },
+      {
+        "path": "labs/L200/11-rate-limiting/test_ratelimit.py",
+        "purpose": "unittest: bucket math, long-run bound, both Retry-After forms, API"
+      },
+      {
+        "path": "labs/L200/11-rate-limiting/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine tests your file)"
+      },
+      {
+        "path": "labs/L200/11-rate-limiting/try_it.py",
+        "purpose": "The two tryIt experiments"
+      },
+      {
+        "path": "labs/L200/11-rate-limiting/serve_realtime.py",
+        "purpose": "Tool target: the lesson's Api on a real clock at 127.0.0.1:8011 for k6; --check = Python cross-check of the k6 load"
+      },
+      {
+        "path": "labs/L200/11-rate-limiting/load_test.js",
+        "purpose": "k6 script: constant-arrival-rate 10 req/s for 10 s (pending a manual k6 run)"
+      },
+      {
+        "path": "labs/L200/11-rate-limiting/test_serve_realtime.py",
+        "purpose": "unittest: real-clock target gives burst + refill and Retry-After on every 429"
+      }
+    ],
+    "expectedResults": [
+      "alice (honors Retry-After): 12 ok, 4 x 429, done at t=4s",
+      "bob   (retries every 0.1 s): 12 ok, 35 x 429, done at t=3.5s",
+      "carol (honors Retry-After): 3 ok, 0 x 429, done at t=0s"
+    ],
+    "testCases": [
+      {
+        "action": "6 requests at t=0 (rate 2, burst 5)",
+        "expected": "5 allowed; 6th refused with wait 0.5 s"
+      },
+      {
+        "action": "A request every 10 ms for 10 s",
+        "expected": "At most 5 + 2 x 10 allowed"
+      },
+      {
+        "action": "retry_after_seconds('120') and an HTTP date 3 s ahead",
+        "expected": "120 and 3.0"
+      },
+      {
+        "action": "SlidingWindowLog(5, 1 s): 5 at t=0.9, one at t=1.0",
+        "expected": "Refused, wait 0.9 s; allowed again at t=1.9"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Send 5 requests at t=0.99 s and 5 at t=1.00 s to a fixed 5-per-second window and to a token bucket (rate 5, burst 5) (`python try_it.py`).",
+        "predict": "How many pass in those 10 ms?",
+        "expected": "fixed window allows 10, token bucket allows 5."
+      },
+      {
+        "task": "BURST 1 instead of 5, same 2 requests/s (`python try_it.py`).",
+        "predict": "How long do alice's 12 requests take?",
+        "expected": "BURST 5 -> 4 x 429, done at t=4s; BURST 1 -> 11 x 429, done at t=11s (each 0.5 s wait is sent as Retry-After: 1)."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Clients still flood after 429s",
+        "action": "They ignore Retry-After; fix the client or limit by connection as well."
+      },
+      {
+        "symptom": "Limit is N times too loose",
+        "action": "Each instance has its own buckets; share the counters (e.g. in Valkey) or divide the limit."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Envoy: the local rate limit filter is a token bucket (max_tokens, tokens_per_fill, fill_interval), returns 429 and can add Retry-After in delay-seconds form.",
+      "Same idea in NGINX: limit_req (leaky bucket, rate + burst); rejected requests get 503 unless `limit_req_status 429`.",
+      "Same idea in Go: golang.org/x/time/rate.Limiter, a token bucket with Allow, Reserve (returns the delay) and Wait.",
+      "Same idea in Valkey: INCR + EXPIRE per client per second (a fixed-window counter)."
+    ],
+    "learningTools": [
+      {
+        "name": "Grafana k6",
+        "role": "CHECK",
+        "exercise": "Start the real-clock target `python serve_realtime.py` (127.0.0.1:8011, same Api and limits as ratelimit.py), then `k6 run load_test.js` (constant-arrival-rate 10 requests/s for 10 s, one X-Client-Id).",
+        "expected": "Should match the local cross-check `python serve_realtime.py --check`, which printed: `100 requests at 10/s for 10 s (limit 2/s, burst 5): 200=24 429=76 -> 429 share 76%; 429 without Retry-After: 0` — so k6 should report http_req_failed ≈ 76% (k6 counts 429 as failed) and both checks at 100%. Pending a manual k6 run.",
+        "mac": "brew install k6",
+        "windows": "winget install k6 --source winget, or official MSI",
+        "licence": "AGPL-3.0 (OSI: yes)",
+        "url": "https://grafana.com/docs/k6/latest/set-up/install-k6/"
+      },
+      {
+        "name": "Grafana OSS",
+        "role": "SEE",
+        "exercise": "Add the core TestData data source and build a Random walk time-series panel; then chart the per-second 200/429 counts of your k6 run once exported to Prometheus or PostgreSQL.",
+        "expected": "Should show 200s flat at about 2 per second (RATE) after a first-second burst of 5 (BURST), with every other request a 429 — the token-bucket shape of the lab's `alice trace`. Pending a manual run.",
+        "mac": "brew install grafana && brew services start grafana; open http://localhost:3000",
+        "windows": "Windows installer or zip (choose the Open Source edition, not Enterprise); open http://localhost:3000",
+        "licence": "AGPL-3.0-only (OSI: yes)",
+        "url": "https://grafana.com/docs/grafana/latest/datasources/"
+      }
+    ],
+    "seeAlso": [
+      "ai-agents L200 #11 Guardrails basics: its build task caps tool calls per session — a rate limit on an agent instead of an HTTP client"
+    ],
+    "inRealSystems": [
+      "Envoy's Retry-After is the seconds until the next token, clamped to at least one second — the same rule as this lab.",
+      "NGINX limits per key such as $binary_remote_addr with a shared-memory zone; its default rejection status is 503."
+    ],
+    "useWhen": "Use per-client rate limits to share capacity fairly and protect a service from one heavy caller; avoid them as the only overload defence (they do not see total load) and avoid client-chosen keys.",
+    "simulatorVsReal": "One process, simulated clock; limits live in memory of one server instance.",
+    "caution": "Key limits on an authenticated identity (API key, user id), never on a header the client can set freely; a spoofed key bypasses or exhausts someone else's limit.",
+    "checkpoint": "PASS if the demo matches the README, 8 tests pass and your SlidingWindowLog passes test_build_task with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "Rate 10/s, burst 20, a client idle for a minute sends 50 requests at once. How many pass immediately?",
+        "a": "20 (the bucket is capped at the burst)."
+      },
+      {
+        "q": "The next token is 0.2 s away. What Retry-After does this lab send, and why?",
+        "a": "1: delay-seconds is a whole number, rounded up so an early retry cannot fail."
+      }
+    ],
+    "buildTask": {
+      "task": "Add SlidingWindowLog(limit, window, clock) with allow() -> (ok, wait): keep accepted timestamps, drop those older than the window, accept while fewer than limit remain, else wait until the oldest leaves.",
+      "hints": [
+        "collections.deque gives O(1) popleft for old timestamps.",
+        "Compare `oldest + window <= now` to avoid float drift (1.9 - 1.0 != 0.9).",
+        "Plug it in with run(..., make_limiter=lambda clock: SlidingWindowLog(5, 2.5, clock))."
+      ],
+      "solution": "labs/L200/11-rate-limiting/solution_ratelimit.py",
+      "check": "labs/L200/11-rate-limiting/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "sources": [
+      {
+        "title": "RFC 6585: Additional HTTP Status Codes (429)",
+        "url": "https://www.rfc-editor.org/rfc/rfc6585.html"
+      },
+      {
+        "title": "RFC 9110: HTTP Semantics (Retry-After, section 10.2.3)",
+        "url": "https://www.rfc-editor.org/rfc/rfc9110.html"
+      },
+      {
+        "title": "MDN: Retry-After header",
+        "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After"
+      },
+      {
+        "title": "Envoy docs: Local rate limit filter",
+        "url": "https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/local_rate_limit_filter"
+      },
+      {
+        "title": "NGINX docs: ngx_http_limit_req_module",
+        "url": "https://nginx.org/en/docs/http/ngx_http_limit_req_module.html"
+      }
+    ],
+    "next": "L300 #12 Replicated log with Raft (simplified): terms, commit index, re-election, election restriction — from protecting one server to keeping one replicated log consistent across failures",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python ratelimit.py`, `python try_it.py` and `python -m unittest -v` (7 tests OK) on Python 3.12.15 (Linux); outputs pasted in the README, identical on repeated runs (simulated clock). BUILD_TARGET=mine against the unmodified ratelimit.py: 3 errors, as intended. The reference solution first failed its own boundary test (float drift) and was fixed. Tools/review pass (2026-10-28, UPDATE-TOOLS-REVIEW-SPEC): added serve_realtime.py + load_test.js for the k6 exercise; ran `python serve_realtime.py --check` twice (both: 200=24 429=76, 0 missing Retry-After) and test_serve_realtime.py (OK); k6 itself not run.",
+      "pendingCi": [
+        "labs/L200/11-rate-limiting/load_test.js under k6 (manual; serve_realtime.py --check ran locally as the cross-check)"
+      ]
+    },
+    "conceptNote": "content/concepts/L200/11-rate-limiting.md",
+    "conceptSummary": "A token bucket per client refills at a fixed rate up to a burst size, capping the average while allowing short bursts. Over the limit the server answers 429 with Retry-After (whole seconds or an HTTP date); clients that honour it waste nothing, clients that hammer only add load.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  }
+]

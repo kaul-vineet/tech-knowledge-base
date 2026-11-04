@@ -1,0 +1,250 @@
+# Root-level CI for the ai-agents topic (GENERATED from ai-agents/.github/workflows/labs.yml by tools/sync_root_ci.py).
+# kb/ is the repository root; every job runs inside ai-agents/. Edit the topic file, then re-run the script.
+name: ai-agents labs
+
+on:
+  push:
+    paths: ['ai-agents/**', 'shared/**', '.github/workflows/ai-agents.yml']
+  pull_request:
+    paths: ['ai-agents/**', 'shared/**', '.github/workflows/ai-agents.yml']
+  workflow_dispatch:
+    inputs:
+      real_model:
+        description: "Also run the labs against a real local model (Ollama + qwen2.5:1.5b + embeddinggemma, ~1.6 GB download)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  fake-model:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]   # macos-latest = Apple silicon (arm64)
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ai-agents
+        shell: bash          # Git Bash on Windows, so one script serves all three OSes
+    env:
+      PYTHONUTF8: "1"        # same text encoding on Windows as on macOS/Linux
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install pinned dependencies (L100 needs requests; L200 adds numpy)
+        run: python -m pip install -r labs/L200/requirements.txt
+      - name: Run every lab test (each starts fake_model_server.py in a thread on 127.0.0.1)
+        run: |
+          set -e
+          for d in labs/L100/*/ labs/L200/*/ labs/L300/*/ labs/L400/*/ labs/L500/*/; do
+            echo "::group::$d"
+            (cd "$d" && python -m unittest -v)
+            echo "::endgroup::"
+          done
+          (cd labs/L300 && python -m unittest -v test_fake_server_l300)
+          (cd labs/L400 && python -m unittest -v test_fake_server_l400)
+      - name: L500 - re-run theorem checks, recompute problem-set/exam numbers, validate and recompute the question banks
+        run: |
+          python research/l500_checks.py
+          python research/check_l500_qbank.py
+          python research/qbank_checks.py
+      - name: Recompute concept-note worked examples and compare with the recorded output
+        run: |
+          python research/concept_examples.py > concept_examples.ci.txt
+          diff --strip-trailing-cr <(grep -v "^$" research/concept_examples.out.txt) <(grep -v "^$" concept_examples.ci.txt)
+          python research/L200_concept_examples.py > l200_examples.ci.txt
+          diff --strip-trailing-cr <(grep -v "^$" research/L200_concept_examples.out.txt) <(grep -v "^$" l200_examples.ci.txt)
+          python research/L300_concept_examples.py > l300_examples.ci.txt
+          diff --strip-trailing-cr <(grep -v "^$" research/L300_concept_examples.out.txt) <(grep -v "^$" l300_examples.ci.txt)
+          python research/L400_concept_examples.py > l400_examples.ci.txt
+          diff --strip-trailing-cr <(grep -v "^$" research/L400_concept_examples.out.txt) <(grep -v "^$" l400_examples.ci.txt)
+      - name: L400 build tasks - the shipped learner files must FAIL (BUILD_TARGET=mine), the solutions pass
+        run: |
+          for d in labs/L400/1*/ labs/L400/2[01]*/; do
+            if (cd "$d" && BUILD_TARGET=mine python -m unittest test_build_task > /dev/null 2>&1); then echo "$d: shipped file should fail"; exit 1; fi
+          done
+      - name: Capstone eval gate as a CI step (decisions vs golden_incidents.jsonl and baseline.json)
+        run: cd labs/L400/22-capstone && python eval_capstone.py
+      - name: L300 regression gate as a CI step (lesson 12) - v1 must pass, the 'cleanup' v2 must be blocked
+        run: |
+          (python labs/L300/fake_server_l300.py --port 8765 > gate-server.log 2>&1 &)
+          sleep 2
+          cd labs/L300/12-eval-golden-set
+          export LOCAL_MODEL_URL=http://127.0.0.1:8765/v1 LOCAL_MODEL=fake-model
+          python eval_gate.py
+          if python eval_gate.py --prompt prompts/v2.txt; then echo "gate should have blocked v2"; exit 1; fi
+
+  # pending-ci cross-checks: python-jsonschema (lesson 8), sqlite-vec (lesson 7), official MCP Python SDK (lesson 10),
+  # OpenTelemetry Python SDK (lesson 13)
+  equivalents:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ai-agents
+        shell: bash
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install pinned dependencies and equivalents
+        run: python -m pip install -r labs/L200/requirements.txt -r labs/L200/requirements-equivalents.txt -r labs/L300/requirements-equivalents.txt
+      - name: Packages must import (otherwise the tests below would only skip)
+        run: |
+          python -c "import jsonschema, sqlite_vec, mcp, opentelemetry.sdk; print('imports ok')"
+          python -c "import sqlite3; print('sqlite', sqlite3.sqlite_version, 'load_extension', hasattr(sqlite3.Connection, 'enable_load_extension'))"
+      - name: jsonschema agrees with schema_check.py
+        run: cd labs/L200/08-multi-tool-agent && python -m unittest -v test_jsonschema_equivalent
+      - name: sqlite-vec returns the same top-k as numpy (skips if this Python cannot load extensions)
+        run: cd labs/L200/07-rag-answers && python -m unittest -v test_sqlite_vec_equivalent
+      - name: Official MCP SDK client <-> SDK server and <-> our stdio server (both eras)
+        run: cd labs/L200/10-mcp-server-client && python -m unittest -v test_sdk_equivalent
+      - name: OpenTelemetry SDK records the same GenAI spans as traced_agent.Tracer (lesson 13)
+        run: cd labs/L300/13-tracing-observability && python -m unittest -v test_otel_sdk_equivalent
+
+  # pending-ci: lesson 18's Temporal equivalent (temporalio SDK; WorkflowEnvironment.start_local downloads a dev server)
+  temporal:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ai-agents
+        shell: bash
+    env:
+      PYTHONUTF8: "1"
+      RUN_TEMPORAL: "1"
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r labs/L200/requirements.txt -r labs/L400/requirements-equivalents.txt
+      - name: Temporal workflow gives the same outcome (1 refund after an activity retry)
+        run: cd labs/L400/18-durable-workflows && python -m unittest -v test_temporal_equivalent
+
+  # pending-ci: promptfoo runs the lesson-12 golden set (exit 0 for v1, 100 for v2)
+  promptfoo:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ai-agents
+        shell: bash
+    env:
+      PYTHONUTF8: "1"
+      RUN_PROMPTFOO: "1"
+      PROMPTFOO_DISABLE_TELEMETRY: "1"   # no usage telemetry from CI (promptfoo telemetry docs)
+      PROMPTFOO_DISABLE_UPDATE: "1"      # no npm update check banner
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6 (pin as shown in promptfoo's CI/CD docs)
+        with:
+          node-version: "24"
+      - run: python -m pip install -r labs/L200/requirements.txt
+      - name: promptfoo eval of the golden set (npx promptfoo@0.125.1)
+        run: cd labs/L300/12-eval-golden-set && python -m unittest -v test_promptfoo_equivalent
+
+  # pending-ci: the same cosine top-k in PostgreSQL + pgvector (Linux service container)
+  pgvector:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-agents
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      LOCAL_MODEL_URL: http://127.0.0.1:8765/v1
+      LOCAL_MODEL: fake-model
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r labs/L200/requirements.txt
+      - name: pgvector top-2 must equal numpy top-2
+        run: |
+          (python labs/L100/01-setup/fake_model_server.py --port 8765 > fake.log 2>&1 &)
+          sleep 2
+          cd labs/L200/07-rag-answers
+          python pgvector_equivalent.py > pg.sql
+          psql -q -At -f pg.sql > got.txt
+          python pgvector_equivalent.py --expected > expected.txt
+          cat got.txt
+          diff expected.txt got.txt
+
+  # Optional manual job: same lab scripts against a real model on a CPU-only Linux runner.
+  # Output varies by model, so it only checks exit codes. GPU paths (Metal, CUDA) are not testable on hosted runners.
+  real-model:
+    if: github.event_name == 'workflow_dispatch' && inputs.real_model
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ai-agents
+    timeout-minutes: 40
+    env:
+      LOCAL_MODEL_URL: http://localhost:11434/v1
+      LOCAL_MODEL: qwen2.5:1.5b
+      EMBED_MODEL: embeddinggemma
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r labs/L200/requirements.txt
+      - name: Install Ollama 0.40.12 and pull the models
+        run: |
+          curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.40.12 sh
+          (ollama serve > ollama.log 2>&1 &)
+          for i in $(seq 1 30); do curl -sf http://localhost:11434/v1/models && break; sleep 2; done
+          ollama pull "$LOCAL_MODEL"
+          ollama pull "$EMBED_MODEL"
+      - name: Run lab scripts against the real model
+        run: |
+          set -e
+          (cd labs/L100/01-setup && python check_endpoint.py)
+          (cd labs/L100/02-call-model-http && python call_model.py)
+          (cd labs/L100/03-prompt-structure && python prompt_structure.py)
+          (cd labs/L100/04-structured-output && python structured_output.py)
+          (cd labs/L100/05-first-tool-call && python first_tool_call.py)
+          (cd labs/L100/06-minimal-agent-loop && python agent_loop.py)
+          (cd labs/L200/07-rag-answers && python rag.py)
+          (cd labs/L200/08-multi-tool-agent && python multi_tool_agent.py)
+          (cd labs/L200/09-state-memory && python memory_agent.py)
+          (cd labs/L200/10-mcp-server-client && python mcp_client.py)
+          (cd labs/L200/11-guardrails && python guarded_agent.py)
+          (cd labs/L300/12-eval-golden-set && python eval_gate.py --write-baseline --baseline real-baseline.json)
+          (cd labs/L300/13-tracing-observability && python traced_agent.py)
+          (cd labs/L300/14-reliability-budgets && FALLBACK_MODEL="$LOCAL_MODEL" python resilient_agent.py)
+          (cd labs/L300/15-safe-tool-execution && python safe_tools.py)
+          (cd labs/L300/16-red-team-injection && python run_suite.py && python agent_assist.py)
+          (cd labs/L400/17-multi-agent-patterns && CONTEXT_LIMIT=4096 python patterns.py)
+          (cd labs/L400/18-durable-workflows && python durable.py)
+          (cd labs/L400/19-cost-latency-model-choice && SMALL_MODEL="$LOCAL_MODEL" LARGE_MODEL="$LOCAL_MODEL" python route_cost.py)
+          (cd labs/L400/20-deterministic-core && python edge.py)

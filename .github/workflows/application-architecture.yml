@@ -1,0 +1,289 @@
+# Root-level CI for the application-architecture topic (GENERATED from application-architecture/.github/workflows/labs.yml by tools/sync_root_ci.py).
+# kb/ is the repository root; every job runs inside application-architecture/. Edit the topic file, then re-run the script.
+# CI for the Application Architecture L100, L200, L300 and L400 labs (+ capstone) and the L500 theory checks.
+# Target hardware: Apple-silicon Mac mini (macos-latest = arm64) and a Windows PC (windows-latest);
+# ubuntu-latest is the reference platform the labs were validated on.
+name: application-architecture labs
+
+on:
+  push:
+    paths: ['application-architecture/**', 'shared/**', '.github/workflows/application-architecture.yml']
+  pull_request:
+    paths: ['application-architecture/**', 'shared/**', '.github/workflows/application-architecture.yml']
+
+env:
+  # Topic folder relative to the repository root (kb/).
+  DOMAIN_DIR: application-architecture
+
+jobs:
+  python-labs:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash   # Git Bash on Windows, so the loops below are the same on every OS
+        working-directory: ${{ env.DOMAIN_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Environment check (prints platform, e.g. Darwin arm64 / Windows AMD64)
+        run: cd labs/L100/01-setup-workspace && python check_env.py
+      - name: Run every lab's unittest suite, L100 + L200 + L300 + L400 (stdlib only, nothing to install)
+        run: |
+          set -e
+          for lab in labs/L100/*/ labs/L200/*/ labs/L300/*/ labs/L400/*/; do
+            echo "::group::$lab"
+            (cd "$lab" && python -m unittest discover -v)
+            echo "::endgroup::"
+          done
+      - name: Vendored local-agent helper tests (fake model server only)
+        run: cd labs/_shared/local_agent && python -m unittest -v
+      - name: Run every lab's tryIt experiments (expected outputs are in each lab README)
+        run: |
+          set -e
+          for lab in labs/L100/*/ labs/L200/*/ labs/L300/*/ labs/L400/*/; do
+            (cd "$lab" && python try_it.py)
+          done
+      - name: Boundary fitness function (lesson 3)
+        run: cd labs/L100/03-modular-monolith && python check_boundaries.py
+      - name: Agent assist against the fake model server (lesson 6)
+        run: cd labs/L100/06-documenting-architecture && python agent_assist.py
+      - name: L200 demos and checks (lessons 7-11; stdlib only)
+        run: |
+          set -e
+          (cd labs/L200/07-hexagonal-architecture && python app.py --storage sqlite)
+          (cd labs/L200/08-aggregates-invariants && python app.py)
+          (cd labs/L200/09-event-driven-integration && python app.py && python asyncapi_check.py && python agent_assist.py)
+          (cd labs/L200/10-oidc-authentication && python app.py)
+          (cd labs/L200/11-testing-pyramid && python pyramid.py)
+      - name: L300 demos, failure labs and gates (lessons 12-16; stdlib only)
+        run: |
+          set -e
+          (cd labs/L300/12-cqrs-read-models && python app.py && python failure_lab.py)
+          (cd labs/L300/13-resilience-patterns && python app.py && python failure_lab.py)
+          (cd labs/L300/14-consumer-driven-contracts && python failure_lab.py)
+          (cd labs/L300/15-slo-error-budgets && python app.py && python failure_lab.py && python agent_assist.py)
+          cd labs/L300/16-performance-fitness-ci
+          python fitness.py --solution
+          if python fitness.py; then echo "expected the base N+1 code to fail the query-count gate"; exit 1; fi
+      - name: L400 demos, failure labs and fitness functions (lessons 17-21; stdlib only)
+        run: |
+          set -e
+          (cd labs/L400/17-strangler-fig && python app.py && python app.py --solution && python failure_lab.py && python fitness_legacy.py)
+          (cd labs/L400/18-multi-tenancy && python app.py --solution && python failure_lab.py)
+          (cd labs/L400/18-multi-tenancy && if python fitness_tenant.py; then echo "expected the unscoped report to fail"; exit 1; fi)
+          (cd labs/L400/19-policy-as-code && python app.py --solution && python failure_lab.py && python fitness_policy.py --solution)
+          (cd labs/L400/20-evolutionary-migrations && python app.py --solution && python dashboard.py --plan expand_contract && python failure_lab.py)
+          (cd labs/L400/21-capacity-planning && python app.py --solution && python failure_lab.py && python fitness_capacity.py --solution && python agent_assist.py)
+      - name: Capstone scorecard (GO without faults, NO-GO with each seeded fault)
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L400/22-capstone
+        run: |
+          set -e
+          python run_capstone.py
+          for fault in fines-rounding cross-tenant-policy unscoped-query duplicate-delivery; do
+            if python run_capstone.py --fault "$fault" > /dev/null; then echo "fault $fault was not caught"; exit 1; fi
+          done
+          python agent_assist.py --fault cross-tenant-policy
+      - name: L500 theory checks (lessons 23-27; theorem checks, problem-set and exam numbers, question banks)
+        run: |
+          set -e
+          for lab in labs/L500/*/; do
+            (cd "$lab" && python -m unittest discover -v)
+          done
+          python research/l500_checks.py
+          python research/check_l500_qbank.py
+          python research/qbank_checks.py
+      - name: Lesson 5 env vars, zsh syntax (Mac mini)
+        if: runner.os == 'macOS'
+        shell: zsh {0}
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L100/05-config-12factor
+        run: |
+          export LOANS_PORT=9000 LOANS_LOG_LEVEL=debug LOANS_SMTP_PASSWORD=example-only
+          python app.py || exit 1
+          unset LOANS_PORT LOANS_LOG_LEVEL LOANS_SMTP_PASSWORD
+          LOANS_PORT=abc LOANS_LOG_LEVEL=LOUD python app.py
+          code=$?
+          echo "exit=$code"
+          test $code -eq 2
+      - name: Lesson 5 env vars, PowerShell syntax (Windows PC)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L100/05-config-12factor
+        run: |
+          $env:LOANS_PORT = "9000"; $env:LOANS_LOG_LEVEL = "debug"; $env:LOANS_SMTP_PASSWORD = "example-only"
+          python app.py
+          if ($LASTEXITCODE -ne 0) { throw "good config should start, got exit $LASTEXITCODE" }
+          Remove-Item Env:\LOANS_*
+          $env:LOANS_PORT = "abc"; $env:LOANS_LOG_LEVEL = "LOUD"
+          python app.py
+          "exit=$LASTEXITCODE"
+          if ($LASTEXITCODE -ne 2) { throw "bad config should exit 2, got $LASTEXITCODE" }
+          cmd /c exit 0   # reset $LASTEXITCODE: the expected 2 is not a step failure
+
+  diagrams:
+    # Lesson 6 Mermaid rendering via npx, the same command the lesson gives for the Mac mini and the Windows PC.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L100/06-documenting-architecture
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Render Mermaid C4 diagrams with mermaid-cli (pinned)
+        run: |
+          for f in doc/arch/*.mmd; do
+            npx --yes -p @mermaid-js/mermaid-cli@11.17.0 mmdc -p puppeteer-config.json -i "$f" -o "${f%.mmd}.svg"
+          done
+          ls -l doc/arch/*.svg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c4-diagrams-svg-${{ matrix.os }}
+          path: ${{ env.DOMAIN_DIR }}/labs/L100/06-documenting-architecture/doc/arch/*.svg
+
+  structurizr:
+    # Linux only: arm64 macOS runners do not support nested virtualization (needed by a Podman/Docker VM),
+    # so the container step cannot run there. Locally the same image runs under Podman on both target machines.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.DOMAIN_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Structurizr DSL (pinned image)
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L100/06-documenting-architecture
+        run: |
+          docker run --rm -v "$PWD/doc/arch:/usr/local/structurizr" \
+            docker.io/structurizr/structurizr:2026.09.19 \
+            validate -workspace /usr/local/structurizr/workspace.dsl
+
+  asyncapi:
+    # Lesson 9: official AsyncAPI CLI (pinned) on Node.js 24 LTS, the version the lessons install.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L200/09-event-driven-integration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Validate asyncapi.json (AsyncAPI 3.1.0) with @asyncapi/cli 6.2.1
+        run: npx --yes @asyncapi/cli@6.2.1 validate asyncapi.json
+
+  keycloak:
+    # Lesson 10: the real OpenID Provider. Linux only (container engine); same image the lesson runs with Podman.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.DOMAIN_DIR }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Start Keycloak 26.8.1 in development mode
+        run: |
+          docker run -d --name kc -p 127.0.0.1:8080:8080 \
+            -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin \
+            quay.io/keycloak/keycloak:26.8.1 start-dev
+      - name: Wait for the discovery document (max 180 s)
+        run: |
+          for i in $(seq 1 90); do
+            curl -sf http://127.0.0.1:8080/realms/master/.well-known/openid-configuration > /dev/null && exit 0
+            sleep 2
+          done
+          docker logs kc
+          exit 1
+      - name: Check code flow, PKCE S256 and RS256 in Keycloak's discovery document
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L200/10-oidc-authentication
+        run: python keycloak_check.py
+
+  testcontainers:
+    # Lesson 11: the store contract against real PostgreSQL. Linux only: Testcontainers needs a container engine.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L200/11-testing-pyramid
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the CI-only test dependencies (pinned)
+        run: pip install -r requirements-ci.txt
+      - name: PostgreSQL integration tests with Testcontainers (postgres:16-alpine)
+        env:
+          LOANS_TESTCONTAINERS: "1"
+        run: python -m unittest -v test_integration_postgres
+
+  pact:
+    # Lesson 14: the same consumer/provider flow with Pact (pact-python 4.2.0 needs Python >= 3.11). Linux only.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L300/14-consumer-driven-contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pact-python (pinned)
+        run: pip install -r requirements-ci.txt
+      - name: Consumer writes the pact, provider verifies it
+        env:
+          LOANS_PACT: "1"
+        run: python -m unittest discover -s pact -v
+
+  k6:
+    # Lesson 16: the response-time budget as k6 thresholds against the stdlib API. Linux only (container image).
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L300/16-performance-fitness-ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Start the overdue-report API on 127.0.0.1:8016
+        run: |
+          python http_api.py 8016 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8016/reports/overdue > /dev/null && exit 0; sleep 1; done
+          exit 1
+      - name: k6 run with thresholds p(95)<200 and http_req_failed rate<0.01 (grafana/k6, pinned)
+        run: docker run --rm -i --network host grafana/k6:2.3.0 run - < k6/overdue.js
+
+  opa:
+    # Lesson 19: the same policy file on Open Policy Agent (Apache-2.0), pinned. Linux only (static binary from the release).
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.DOMAIN_DIR }}/labs/L400/19-policy-as-code
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install OPA 1.21.4 (static Linux binary from the GitHub release)
+        run: |
+          curl -fsSL -o opa https://github.com/open-policy-agent/opa/releases/download/v1.21.4/opa_linux_amd64_static
+          chmod +x opa && sudo mv opa /usr/local/bin/opa && opa version
+      - name: OPA policy tests (fixed policy; the shipped one must fail)
+        run: |
+          mkdir -p ci-fixed && cp solution/loans.rego policy/loans_test.rego policy/cases.json ci-fixed/
+          opa test ci-fixed/ -v
+          if opa test policy/ ; then echo "expected the shipped librarian rule to fail its test"; exit 1; fi
+      - name: OPA and rego_lite give the same decisions
+        run: python opa_parity.py solution

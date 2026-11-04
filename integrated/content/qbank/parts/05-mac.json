@@ -1,0 +1,139 @@
+[
+ {
+  "id": "05-mac-01",
+  "level": "L600",
+  "lesson": 5,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "After precession, Vega's epoch-of-date right ascension for the night is 279.46049 deg. What value does indi_export.py put in EQUATORIAL_EOD_COORD.RA?",
+  "options": [
+   "279.46049",
+   "4.877456",
+   "18.630699",
+   "18.373"
+  ],
+  "answer": 2,
+  "explanation": "INDI's EQUATORIAL_EOD_COORD takes RA in hours, so 279.46049 / 15 = 18.630699. Sending degrees would ask for an RA far outside 0-24 h; 4.877 is the angle in radians.",
+  "source": "integrated/labs/L600/05-observatory-scheduler/mac_mini/README.md Experiment 3; INDI standard properties (RA JNow, hours)"
+ },
+ {
+  "id": "05-mac-02",
+  "level": "L600",
+  "lesson": 5,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The scheduler stores J2000 coordinates, but the exporter precesses them before writing EQUATORIAL_EOD_COORD. Why?",
+  "options": [
+   "The telescope simulator rejects coordinates with more than four decimals",
+   "EQUATORIAL_EOD_COORD is epoch-of-date (JNow); J2000 sent as JNow points 0.09-0.37 deg off here",
+   "Precession converts UTC to the site's local time for the mount",
+   "J2000 coordinates are in radians and INDI expects degrees"
+  ],
+  "answer": 1,
+  "explanation": "The property's frame is the equator and equinox of date; 26.9 years of precession move these targets by up to about 0.37 deg. Precession is a change of reference frame, not of time zone or unit.",
+  "source": "integrated/labs/L600/05-observatory-scheduler/mac_mini/README.md Experiment 3; docs.indilib.org standard properties"
+ },
+ {
+  "id": "05-mac-03",
+  "level": "L600",
+  "lesson": 5,
+  "type": "code-reading",
+  "difficulty": 1,
+  "question": "What does this snippet print?",
+  "code": "dev, prop = \"Telescope Simulator\", \"EQUATORIAL_EOD_COORD\"\nra_deg, dec = 279.46049, 38.808\nprint(f\"{dev}.{prop}.RA;DEC={ra_deg / 15:.4f};{dec:.3f}\")",
+  "options": [
+   "Telescope Simulator.EQUATORIAL_EOD_COORD.RA;DEC=18.6307;38.808",
+   "Telescope Simulator.EQUATORIAL_EOD_COORD.RA=18.6307;DEC=38.808",
+   "Telescope Simulator.EQUATORIAL_EOD_COORD.RA;DEC=279.4605;38.808",
+   "Telescope Simulator.EQUATORIAL_EOD_COORD.RA;DEC=18.6307,38.808"
+  ],
+  "answer": 0,
+  "explanation": "indi_setprop takes device.property.e1;e2=v1;v2, so RA and DEC are set atomically in one command, RA converted to hours. Splitting them into two settings would let the driver act on half a coordinate.",
+  "source": "integrated/labs/L600/05-observatory-scheduler/mac_mini/README.md Experiment 3; docs.indilib.org/scripting (indi_setprop)"
+ },
+ {
+  "id": "05-mac-04",
+  "level": "L600",
+  "lesson": 5,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "A first version of the INDI script waited only for '\"Telescope Simulator.EQUATORIAL_EOD_COORD._STATE\"==1' after each goto, and every slew 'finished' instantly while the mount was still moving. Most likely cause?",
+  "options": [
+   "indi_eval cannot read _STATE of number properties",
+   "The RA was sent in degrees, so the driver ignored the goto",
+   "TRACK must be sent after the coordinates, not before",
+   "The state was still Ok from the previous step; wait for Busy (2) first, then for Ok (1)"
+  ],
+  "answer": 3,
+  "explanation": "Right after the command the property can still show the previous Ok before the driver switches it to Busy, so a single wait for Ok can pass immediately. The exporter therefore waits tolerantly for Busy, then for Ok.",
+  "source": "integrated/labs/L600/05-observatory-scheduler/mac_mini/README.md Experiment 3; indi_export.py (busy-then-Ok waits)"
+ },
+ {
+  "id": "05-mac-05",
+  "level": "L600",
+  "lesson": 5,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "Over 100,000 simulated nights, Betelgeuse's 18-slot block completes 41.00 % of the time; its promise is p_complete = 0.4163. What is z = (observed - p) / sqrt(p(1 - p)/N), and what follows?",
+  "options": [
+   "-4.04: the observed rate is incompatible with the promise",
+   "-0.40: consistent with the promise",
+   "-1.28: consistent at 95 %",
+   "-12.78: the simulation is broken"
+  ],
+  "answer": 0,
+  "explanation": "sqrt(0.4163 x 0.5837 / 100000) = 0.00156, and -0.0063 / 0.00156 = -4.04: at this N a 0.6-point gap is a real mismatch between model and promise. The same gap over the scorecard's 1,000 nights would be z = -0.40 - invisible.",
+  "source": "integrated/labs/L600/05-observatory-scheduler/mac_mini/README.md Overnight; weather_overnight.py block z scores"
+ },
+ {
+  "id": "05-mac-06",
+  "level": "L600",
+  "lesson": 5,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "The --here weather run used 2,000 nights; the Mac runs 100,000. By what factor do the 95 % confidence-interval half-widths shrink?",
+  "options": [
+   "50",
+   "7.07",
+   "2.24",
+   "14.1"
+  ],
+  "answer": 1,
+  "explanation": "Half-widths scale with 1/sqrt(N): sqrt(100000 / 2000) = sqrt(50) = 7.07. Fifty times more nights buys about seven times the precision, not fifty.",
+  "source": "integrated/labs/L600/05-observatory-scheduler/mac_mini/README.md Overnight"
+ },
+ {
+  "id": "05-mac-07",
+  "level": "L600",
+  "lesson": 5,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "astropy_check.py reports ff1_violations_by_reference: [\"Vega\"] with max_dairmass 0.08, while the lab's validator passes the plan. What is the right response?",
+  "options": [
+   "Ignore it: the validator is the authority in this project",
+   "Switch the scheduler to astropy for every computation at once",
+   "Precess the coordinates in sky.py or tighten the scheduling limit by the measured airmass difference",
+   "Raise MAX_AIRMASS to 2.1 so both agree"
+  ],
+  "answer": 2,
+  "explanation": "The validator shares the J2000 shortcut with the scheduler, so agreeing with it does not prove the sky is right; an independent reference found a real FF1 breach. Raising the limit hides the breach instead of fixing the cause.",
+  "source": "integrated/labs/L600/05-observatory-scheduler/mac_mini/README.md Experiment 2 (decides)"
+ },
+ {
+  "id": "05-mac-08",
+  "level": "L600",
+  "lesson": 5,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "stellarium_export.py compares sky.alt_deg with Stellarium's 'altitude-geometric', not its 'altitude'. Why?",
+  "options": [
+   "Stellarium's apparent altitude is in radians",
+   "The geometric value is cheaper for Stellarium to compute",
+   "Apparent altitude ignores the observer's site height",
+   "Ours has no refraction, so geometric is like-for-like; refraction would add a systematic difference"
+  ],
+  "answer": 3,
+  "explanation": "Refraction lifts objects (apparent > geometric), most near the horizon; comparing ours with the apparent value would mix a modelling choice into the error. The script also reports max_refraction_deg so you can see that effect separately.",
+  "source": "integrated/labs/L600/05-observatory-scheduler/mac_mini/README.md Experiment 2; Stellarium StelMainScriptAPI.getObjectInfo keys"
+ }
+]

@@ -1,0 +1,55 @@
+== 01 setup: what 'flash' sends and what the loop does
+main.py bytes: 895
+first 8 bytes (hex): 23 20 4c 61 62 20 30 31
+serial after hello + 3 iterations: 'hello from micro:bit\ntick 1\ntick 2\ntick 3\n'
+stub running_time() after 3 x sleep(1000): 3000 ms
+
+== 02 display: image string -> 25 brightness values
+  [0, 0, 9, 0, 0]
+  [0, 9, 5, 9, 0]
+  [9, 5, 1, 5, 9]
+  [0, 9, 5, 9, 0]
+  [0, 0, 9, 0, 0]
+pixel (x=2, y=1): 5 -> flat index y*5+x = 7
+lit LEDs: 13 of 25; brightness sum: 93
+level_image(5) top-left: 5
+DAL refresh 18 ms -> 55.6 Hz;  15 ms -> 66.7 Hz
+V1 wiring: 3 row pins x 9 column pins = 27 positions, 12 GPIO pins for 25 LEDs
+
+== 03 buttons: three quick clicks between two polls
+poll 1: is_pressed = False | was_pressed = True | get_presses = 3
+poll 2: is_pressed = False | was_pressed = False | get_presses = 0
+lab step(0) after 3 clicks -> 3 'count 3\n'
+
+== 04 sound: note strings -> ticks, ms, Hz
+  c4:2   C4 midi 60   261.63 Hz  2 ticks =  250 ms
+  e      E4 midi 64   329.63 Hz  2 ticks =  250 ms
+  g      G4 midi 67   392.00 Hz  2 ticks =  250 ms
+  c5:4   C5 midi 72   523.25 Hz  4 ticks =  500 ms
+  r:2    rest   2 ticks =  250 ms
+  g4:2   G4 midi 67   392.00 Hz  2 ticks =  250 ms
+  c5:6   C5 midi 72   523.25 Hz  6 ticks =  750 ms
+tick = 125.0 ms; total ticks = 20 -> 2500.0 ms
+SWEEP: 400 -> 2000 Hz in 400 ms
+
+== 05 temperature/light: thresholds and hysteresis
+  classify(21, 128) = ok
+  classify(26, 128) = hot
+  classify(30, 39) = dark
+  classify(25, 40) = ok
+readings: [25, 26, 25, 26, 27, 26, 25, 24]
+plain threshold 26 : ['ok', 'hot', 'ok', 'hot', 'hot', 'hot', 'ok', 'ok'] changes = 4
+hysteresis 27/25   : ['ok', 'ok', 'ok', 'ok', 'hot', 'hot', 'ok', 'ok'] changes = 2
+
+== 06 motion: axes -> strength and tilt
+  xyz=(0, 0, -1024) strength=1024 mg  tilt=flat  angle_from_flat=0.0 deg
+  xyz=(800, 0, -640) strength=1024 mg  tilt=right  angle_from_flat=51.3 deg
+  xyz=(-500, 0, -880) strength=1012 mg  tilt=left  angle_from_flat=-29.6 deg
+shake then 2 polls -> 'shake!' printed 1 time(s)
+lab tilt(300) -> flat
+
+== check-yourself answers
+02: flat index 12 -> (x, y) = (2, 2)
+03: 5 taps during one sleep -> get_presses() = 5 ; second was_pressed() with no new press -> False
+04: 'a4:8' -> 1000.0 ms; A5 (midi 81) -> 880.0 Hz
+05: classify(26, 39) -> dark

@@ -1,0 +1,760 @@
+[
+  {
+    "id": "ag-L200-001",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In the RAG pipeline, which part chooses the passages the model reads?",
+    "options": [
+      "The model, by asking for the files it wants to see",
+      "Code: embeddings and cosine top-k pick the chunks",
+      "The server, which attaches matching files automatically",
+      "The model, by reading every document and ignoring the rest"
+    ],
+    "answer": 1,
+    "explanation": "Retrieval runs in code; the model only reads what code selected. Letting the model browse everything would not fit the context window and gives no checkable sources.",
+    "source": "Lesson 7 Concepts"
+  },
+  {
+    "id": "ag-L200-002",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the lesson normalise every embedding vector to unit length once, at index time?",
+    "options": [
+      "So longer chunks score higher than short ones",
+      "So the vectors take less memory on disk",
+      "So one dot product per chunk equals cosine similarity",
+      "So the embedding model can be swapped without re-embedding"
+    ],
+    "answer": 2,
+    "explanation": "For unit vectors, dot product and cosine are the same, so `vectors @ q` scores every chunk in one matrix product. Normalising does not make different embedding models compatible.",
+    "source": "Lesson 7 Check yourself; Code walkthrough"
+  },
+  {
+    "id": "ag-L200-003",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "When does the lesson's code mark an answer as grounded?",
+    "options": [
+      "It cites at least one id, and every cited id was retrieved",
+      "The answer shares many words with the retrieved chunks",
+      "The model states in its answer that it used only the provided context",
+      "The top retrieval score is above 0.5"
+    ],
+    "answer": 0,
+    "explanation": "grounded = bool(cited) and set(cited) <= retrieved: code checks citations against retrieved ids instead of trusting the model. A high search score says nothing about what the answer cites.",
+    "source": "Lesson 7 Code walkthrough"
+  },
+  {
+    "id": "ag-L200-004",
+    "level": "L200",
+    "lesson": 7,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Two embedding vectors are a = (3, 4) and b = (4, 3). What is their cosine similarity, to two decimals?",
+    "options": [
+      "0.96",
+      "1.00",
+      "24.00",
+      "0.48"
+    ],
+    "answer": 0,
+    "explanation": "Cosine = dot / (|a| x |b|) = 24 / (5 x 5) = 0.96. The raw dot product (24) is not a similarity score until it is divided by the lengths.",
+    "source": "Lesson 7 Glossary (cosine similarity)"
+  },
+  {
+    "id": "ag-L200-005",
+    "level": "L200",
+    "lesson": 7,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Query q = (1, 1, 0). Chunk A = (1, 1, 0) and chunk B = (5, 0, 5) are NOT normalised. How do raw dot product and cosine similarity rank them?",
+    "options": [
+      "Raw dot ranks B first (5 vs 2); cosine ranks A first (1.0 vs 0.5)",
+      "Both rank B first (5 vs 2 and 0.5 vs 1.0)",
+      "Raw dot ranks A first (2 vs 5); cosine ranks B first (0.5 vs 1.0)",
+      "Both rank A first (2 vs 5 and 1.0 vs 0.5)"
+    ],
+    "answer": 0,
+    "explanation": "B's large magnitude inflates its dot product, while cosine compares direction only: A points the same way as q. This is why the lesson normalises before using the dot product.",
+    "source": "Lesson 7 Concepts (normalise once)"
+  },
+  {
+    "id": "ag-L200-006",
+    "level": "L200",
+    "lesson": 7,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Brute-force exact search scores a query against 10,000 chunks with 768-dimensional unit vectors. How many multiply-adds does one query need?",
+    "options": [
+      "768",
+      "10,000",
+      "7,680,000",
+      "76,800,000"
+    ],
+    "answer": 2,
+    "explanation": "Each chunk needs one 768-term dot product: 10,000 x 768 = 7,680,000. That is still fast in numpy, which is why brute force is fine for thousands of chunks.",
+    "source": "Lesson 7 Code walkthrough (argsort, brute force)"
+  },
+  {
+    "id": "ag-L200-007",
+    "level": "L200",
+    "lesson": 7,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Using the lesson's chunk() with max_words=40 and overlap=10, how many chunks does one 1,000-word paragraph produce?",
+    "options": [
+      "25",
+      "32",
+      "33",
+      "100"
+    ],
+    "answer": 2,
+    "explanation": "Windows start every 30 words (0, 30, ..., 960) and the loop stops once a window reaches the end, so 33 chunks. Dividing by 40 forgets that the overlap shortens the stride.",
+    "source": "Lesson 7 Code (chunk)"
+  },
+  {
+    "id": "ag-L200-008",
+    "level": "L200",
+    "lesson": 7,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "This is the lesson's chunk() logic. What does the snippet print for a 70-word paragraph?",
+    "code": "def chunk(words, max_words=20, overlap=5):\n    out = []\n    for start in range(0, len(words), max_words - overlap):\n        out.append(words[start:start + max_words])\n        if start + max_words >= len(words):\n            break\n    return out\n\nprint([len(c) for c in chunk([\"w\"] * 70)])",
+    "options": [
+      "[20, 20, 20, 20, 10, 0]",
+      "[20, 20, 20, 10]",
+      "[20, 20, 20, 20, 10]",
+      "[20, 20, 20, 20]"
+    ],
+    "answer": 2,
+    "explanation": "The stride is 20 - 5 = 15, so windows start at 0, 15, 30, 45 and 60; the last one holds the final 10 words and ends the loop. Each window repeats 5 words of the previous one.",
+    "source": "Lesson 7 Code (chunk); Try it 1"
+  },
+  {
+    "id": "ag-L200-009",
+    "level": "L200",
+    "lesson": 7,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this citation check print?",
+    "code": "import re\nretrieved = {\"context-windows#0\", \"context-windows#1\"}\n\ndef grounded(text):\n    cited = re.findall(r\"\\[([^\\]]+)\\]\", text)\n    return bool(cited) and set(cited) <= retrieved\n\nprint(grounded(\"4096 tokens [context-windows#0]\"),\n      grounded(\"I don't know.\"),\n      grounded(\"Approval needed [tool-safety#1]\"))",
+    "options": [
+      "True True False",
+      "False False False",
+      "True False False",
+      "True False True"
+    ],
+    "answer": 2,
+    "explanation": "The first answer cites a retrieved id; the second cites nothing (bool([]) is False); the third cites an id that was never retrieved. The empty case is the one people forget: no citation is not grounded.",
+    "source": "Lesson 7 Code (grounded)"
+  },
+  {
+    "id": "ag-L200-010",
+    "level": "L200",
+    "lesson": 7,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Someone asks the RAG bot 'What is the capital of France?' and the docs say nothing about it. Search still returns two chunks with scores 0.18 and 0.15. What protects the user from a made-up answer?",
+    "options": [
+      "Asking the model to rate its own confidence from 1 to 10",
+      "Nothing is needed: search returns no chunks for unrelated questions",
+      "Raising top-k so the right document is more likely to appear",
+      "The citation check, plus a minimum score threshold for weak hits"
+    ],
+    "answer": 3,
+    "explanation": "Search always returns something, so weak hits need a threshold, and code must reject answers whose citations were not retrieved. More chunks only add more irrelevant text.",
+    "source": "Lesson 7 Try it 2; Concepts"
+  },
+  {
+    "id": "ag-L200-011",
+    "level": "L200",
+    "lesson": 7,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "After re-indexing, every chunk scores about the same for every question. What is the most likely cause?",
+    "options": [
+      "Chunks and questions were embedded with different models",
+      "top-k is set too low",
+      "The chat model's temperature is above 0, so scores drift between runs",
+      "The chunks overlap by 10 words"
+    ],
+    "answer": 0,
+    "explanation": "Vectors from different embedding models live in different spaces, so similarities become meaningless; re-embed everything with one model. Overlap or top-k change which chunks come back, not the score pattern.",
+    "source": "Lesson 7 Troubleshooting; Check yourself"
+  },
+  {
+    "id": "ag-L200-012",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "With several tools, what decides which tools may run at all?",
+    "options": [
+      "The model, through the tool it chooses",
+      "The tool descriptions, which the model must obey",
+      "The registry in code; unknown names are refused",
+      "The server, which drops tools it does not recognise"
+    ],
+    "answer": 2,
+    "explanation": "The same registry decides what is offered and what may run, so a name not in it is refused whatever the model writes. Descriptions only guide the model's choice.",
+    "source": "Lesson 8 Check yourself; Code walkthrough"
+  },
+  {
+    "id": "ag-L200-013",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does execute() return 'error: invalid arguments ...' as text instead of raising an exception?",
+    "options": [
+      "The server rejects requests that contain tracebacks",
+      "Text errors are cheaper because they use fewer tokens",
+      "Exceptions cannot be caught inside an agent loop that waits on HTTP calls",
+      "The loop keeps running and the model can retry with fixed arguments"
+    ],
+    "answer": 3,
+    "explanation": "A failure turned into a tool message lets the model read what was wrong and correct itself; raising would end the run. The model then retried with a valid unit in the lab.",
+    "source": "Lesson 8 Check yourself"
+  },
+  {
+    "id": "ag-L200-014",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does additionalProperties: false in a tool's JSON Schema prevent?",
+    "options": [
+      "Missing required fields",
+      "Numbers above the declared maximum",
+      "Invented fields reaching your function",
+      "Values outside an enum list"
+    ],
+    "answer": 2,
+    "explanation": "It rejects any field the schema does not declare, which would otherwise cause a TypeError or change behaviour. Missing fields are caught by 'required', and enum or maximum handle the others.",
+    "source": "Lesson 8 Glossary; Check yourself"
+  },
+  {
+    "id": "ag-L200-015",
+    "level": "L200",
+    "lesson": 8,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "This is the lesson's get_weather with its stand-in data. What does the snippet print?",
+    "code": "WEATHER_C = {\"Paris\": 18, \"Oslo\": 4, \"Lima\": 21}\n\ndef get_weather(city, unit=\"celsius\"):\n    c = WEATHER_C.get(city)\n    if c is None:\n        raise ValueError(f\"no data for {city}\")\n    return f\"{c} C\" if unit == \"celsius\" else f\"{c * 9 / 5 + 32:.0f} F\"\n\nprint(get_weather(\"Oslo\", unit=\"fahrenheit\"))",
+    "options": [
+      "39 F",
+      "error: no data for Oslo",
+      "39.2 F",
+      "4 C"
+    ],
+    "answer": 0,
+    "explanation": "4 x 9/5 + 32 = 39.2, and the :.0f format rounds it to 39. The rounding is easy to miss and gives the tempting 39.2.",
+    "source": "Lesson 8 Code (get_weather)"
+  },
+  {
+    "id": "ag-L200-016",
+    "level": "L200",
+    "lesson": 8,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A minimal validator in the style of the lesson's schema_check. What does it print?",
+    "code": "schema = {\"properties\": {\"query\": {\"type\": \"string\"}, \"top_k\": {\"maximum\": 5}},\n          \"additionalProperties\": False}\n\ndef validate(args):\n    out = [f\"$.{k}: {v} is greater than the maximum of {schema['properties'][k]['maximum']}\"\n           for k, v in args.items() if k in schema[\"properties\"]\n           and v > schema[\"properties\"][k].get(\"maximum\", float(\"inf\"))]\n    return out + [f\"$.{k}: unexpected field\" for k in args if k not in schema[\"properties\"]]\n\nprint(validate({\"top_k\": 50, \"unit\": \"kelvin\"}))",
+    "options": [
+      "['$.unit: unexpected field']",
+      "['$.top_k: 50 is greater than the maximum of 5', '$.unit: unexpected field']",
+      "[]",
+      "['$.top_k: 50 is greater than the maximum of 5']"
+    ],
+    "answer": 1,
+    "explanation": "top_k breaks its maximum and 'unit' is not declared, so both problems are reported, in schema order then extras. Reporting only the first problem would hide the invented field.",
+    "source": "Lesson 8 Expected results; Code walkthrough"
+  },
+  {
+    "id": "ag-L200-017",
+    "level": "L200",
+    "lesson": 8,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A tool function crashes with TypeError: get_weather() got an unexpected keyword argument 'country'. What fix does the lesson give?",
+    "options": [
+      "Add a **kwargs parameter to every tool function",
+      "Tell the model in the system prompt that it must never send a 'country' field",
+      "Add additionalProperties: false so the field is rejected before the call",
+      "Wrap the call in try/except and ignore TypeErrors"
+    ],
+    "answer": 2,
+    "explanation": "An undeclared field reached the function without validation; the schema should reject it and report the problem to the model. **kwargs would silently accept invented fields instead.",
+    "source": "Lesson 8 Troubleshooting"
+  },
+  {
+    "id": "ag-L200-018",
+    "level": "L200",
+    "lesson": 8,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "The model keeps calling search_docs when it should call get_weather. What does the lesson recommend first?",
+    "options": [
+      "Remove the JSON Schemas so the model has fewer constraints",
+      "Rewrite the descriptions so each tool's purpose is distinct",
+      "Add more tools with similar names to give the model options",
+      "Raise max_steps so the model has time to find the right tool"
+    ],
+    "answer": 1,
+    "explanation": "The model picks tools by name and description; fewer, clearly different tools beat many similar ones. More steps only let a wrong choice repeat.",
+    "source": "Lesson 8 Troubleshooting; Concepts"
+  },
+  {
+    "id": "ag-L200-019",
+    "level": "L200",
+    "lesson": 8,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Someone raises search_docs' top_k maximum from 5 to 50 'to be safe'. What risk does the original limit protect against?",
+    "options": [
+      "The JSON Schema becoming too long for the model to read in one request",
+      "A single call pulling far more text, and tokens, than intended",
+      "The search returning results in the wrong order",
+      "The model forgetting how to call the tool"
+    ],
+    "answer": 1,
+    "explanation": "Argument limits bound how much data one call can drag into the context; with real data top_k 50 can flood the prompt. The limit is a cost and context control, not a usability issue.",
+    "source": "Lesson 8 Try it 2"
+  },
+  {
+    "id": "ag-L200-020",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Where is a conversation 'remembered' between two model calls?",
+    "options": [
+      "In a session the server keeps for each client",
+      "In the KV cache, which persists across requests",
+      "In the model's weights, which update after each reply",
+      "In the message list your code sends every time"
+    ],
+    "answer": 3,
+    "explanation": "The model keeps nothing; the message list your code resends is the short-term state. Facts that must survive a new conversation go into explicit storage.",
+    "source": "Lesson 9 Check yourself"
+  },
+  {
+    "id": "ag-L200-021",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In summarise-to-fit, which messages are replaced by the summary?",
+    "options": [
+      "Only the middle: not the system prompt, not the last k messages",
+      "The newest messages, since the model has just seen them and needs them least",
+      "Only the system prompt, which is the longest",
+      "Every message, including the system prompt"
+    ],
+    "answer": 0,
+    "explanation": "The code splits messages[0], messages[1:-k] and messages[-k:]; only the middle slice is summarised. Recent turns stay verbatim because summaries lose detail.",
+    "source": "Lesson 9 Code walkthrough"
+  },
+  {
+    "id": "ag-L200-022",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why did the summary in the lab lose the port number 5433?",
+    "options": [
+      "Summaries compress, so exact values belong in explicit memory",
+      "The model was not allowed to see numbers",
+      "The token budget was too large",
+      "SQLite truncated the note when saving it, because the column is too short"
+    ],
+    "answer": 0,
+    "explanation": "A one-line summary keeps the gist and drops detail; facts that must be exact go through save_memory into SQLite. A larger budget would delay summarising, not make it lossless.",
+    "source": "Lesson 9 Check yourself"
+  },
+  {
+    "id": "ag-L200-023",
+    "level": "L200",
+    "lesson": 9,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A model has a 4,096-token window and you reserve 512 tokens for the reply. If one word is about 1.3 tokens, roughly how many words of prompt fit (rounded down)?",
+    "options": [
+      "3584",
+      "3150",
+      "2756",
+      "4659"
+    ],
+    "answer": 2,
+    "explanation": "The prompt budget is 4,096 - 512 = 3,584 tokens, and 3,584 / 1.3 = 2,756 words. Treating words as tokens overestimates what fits, which is why the lab says to calibrate with usage.prompt_tokens.",
+    "source": "Lesson 9 Glossary (token budget); Troubleshooting"
+  },
+  {
+    "id": "ag-L200-024",
+    "level": "L200",
+    "lesson": 9,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "A 4,096-token window with 512 tokens reserved for the reply: what share of the window is left for the prompt?",
+    "options": [
+      "100.0%",
+      "87.5%",
+      "12.5%",
+      "75.0%"
+    ],
+    "answer": 1,
+    "explanation": "3,584 / 4,096 = 87.5 %. The 12.5 % is the reply reserve, not the prompt share.",
+    "source": "Lesson 9 Glossary (token budget)"
+  },
+  {
+    "id": "ag-L200-025",
+    "level": "L200",
+    "lesson": 9,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "This copies the lesson's word-count budget and slicing. What does it print?",
+    "code": "def count_tokens(messages):\n    return sum(len((m.get(\"content\") or \"\").split()) for m in messages)\n\nsizes = [8, 9, 12, 7, 15, 10]\nmessages = [{\"content\": \" \".join([\"w\"] * n)} for n in sizes]\nkeep_last = 2\nold = messages[1:-keep_last]\nprint(count_tokens(messages), len(old))",
+    "options": [
+      "61 3",
+      "61 5",
+      "60 2",
+      "61 4"
+    ],
+    "answer": 0,
+    "explanation": "The words total 8+9+12+7+15+10 = 61, over the budget of 60, and messages[1:-2] holds 3 messages. Summarising the last two as well would break the 'keep recent turns' rule.",
+    "source": "Lesson 9 Code (count_tokens, fit)"
+  },
+  {
+    "id": "ag-L200-026",
+    "level": "L200",
+    "lesson": 9,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this SQLite snippet print?",
+    "code": "import sqlite3\ndb = sqlite3.connect(':memory:')\ndb.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, note TEXT)')\ndb.executemany('INSERT INTO notes (note) VALUES (?)', [('port 5433',), ('likes tea',)])\nevil = \"x' OR '1'='1\"\nsafe = db.execute('SELECT count(*) FROM notes WHERE note = ?', (evil,)).fetchone()[0]\nunsafe = db.execute(f\"SELECT count(*) FROM notes WHERE note = '{evil}'\").fetchone()[0]\nprint(safe, unsafe)",
+    "options": [
+      "0 0",
+      "0 2",
+      "2 0",
+      "2 2"
+    ],
+    "answer": 1,
+    "explanation": "With a ? placeholder the attack text is bound as a value and matches nothing; pasted into the SQL string it becomes OR '1'='1' and matches every row. That is why the lesson's code only uses placeholders.",
+    "source": "Lesson 9 Check yourself; Code walkthrough"
+  },
+  {
+    "id": "ag-L200-027",
+    "level": "L200",
+    "lesson": 9,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A user says 'Remember that the staging database is on port 5433' and an hour later the chat has been summarised twice. How should the fact survive?",
+    "options": [
+      "Ask the model to repeat the port in every reply",
+      "Raise the token budget high enough that summaries never happen in the session",
+      "Put the port in the summary prompt as an instruction",
+      "The agent saves it with save_memory and recalls it later by keyword"
+    ],
+    "answer": 3,
+    "explanation": "Explicit memory tools write the exact fact to SQLite, which survives summaries and new conversations. A bigger budget only postpones the summary and costs memory.",
+    "source": "Lesson 9 Use when; Troubleshooting"
+  },
+  {
+    "id": "ag-L200-028",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The second conversation in the demo answers 'no matching notes' about staging. Both conversations used MemoryStore() with no path. Why?",
+    "options": [
+      "SQLite needs a restart before new rows are visible",
+      "':memory:' databases vanish with their connection, so nothing persisted",
+      "The recall query needs the exact sentence, not a keyword",
+      "The model forgot the fact because the token budget of the first conversation was too small"
+    ],
+    "answer": 1,
+    "explanation": "Long-term memory lives in the file; an in-memory database is a new, empty one each time. Memory lives in storage, not in the model.",
+    "source": "Lesson 9 Try it 2"
+  },
+  {
+    "id": "ag-L200-029",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In MCP 2026-07-28, what replaced the initialize handshake?",
+    "options": [
+      "An HTTP header that the client sends once per connection",
+      "Per-request _meta with protocolVersion and clientCapabilities, plus server/discover",
+      "tools/list, which now also negotiates the protocol version and the client capabilities",
+      "A session cookie returned by the server on the first call"
+    ],
+    "answer": 1,
+    "explanation": "The modern era is stateless: every request says which version it speaks, and server/discover reports supported versions and capabilities. initialize remains only for legacy 2025-11-25 servers.",
+    "source": "Lesson 10 Check yourself; Glossary"
+  },
+  {
+    "id": "ag-L200-030",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A client calls add with arguments {'a': 'two', 'b': 3}. How does the lesson's server report it?",
+    "options": [
+      "By closing the stdio pipe",
+      "As JSON-RPC error -32601 Method not found, since the call cannot run",
+      "As JSON-RPC error -32700 Parse error",
+      "As a normal result with isError: true, so the model can fix it"
+    ],
+    "answer": 3,
+    "explanation": "Bad arguments and failing tools are tool execution errors inside a result; only unknown tools or methods are protocol errors. A parse error means the line was not JSON at all.",
+    "source": "Lesson 10 Check yourself; Code walkthrough"
+  },
+  {
+    "id": "ag-L200-031",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why must a stdio MCP server never print logs to stdout?",
+    "options": [
+      "Printing to stdout disables the server's flush",
+      "The client treats every stdout line as a command and would try to run the log text",
+      "stdout is slower than stderr for large messages",
+      "stdout carries only JSON-RPC messages; anything else breaks the client's parser"
+    ],
+    "answer": 3,
+    "explanation": "One stray line is not JSON-RPC, so the client's json.loads fails. Logs go to stderr, which the protocol ignores.",
+    "source": "Lesson 10 Check yourself; Try it 1"
+  },
+  {
+    "id": "ag-L200-032",
+    "level": "L200",
+    "lesson": 10,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The lesson's server maps exceptions to JSON-RPC error codes like this. What does it print?",
+    "code": "CODES = {NotImplementedError: -32601, RuntimeError: -32022}\n\ndef code_for(exc):\n    return CODES.get(type(exc), -32602)\n\nerrors = [NotImplementedError(\"resources/list\"), LookupError(\"Unknown tool: rm_rf\"),\n          RuntimeError(\"unsupported version\")]\nprint(*[code_for(e) for e in errors])",
+    "options": [
+      "-32601 -32602 -32022",
+      "-32602 -32602 -32602",
+      "-32601 -32602 -32601",
+      "-32601 -32601 -32022"
+    ],
+    "answer": 0,
+    "explanation": "NotImplementedError maps to -32601 and RuntimeError to -32022; anything else, such as the LookupError for an unknown tool, falls back to -32602. An unknown tool is an invalid parameter, not an unknown method.",
+    "source": "Lesson 10 Code (serve); Expected results"
+  },
+  {
+    "id": "ag-L200-033",
+    "level": "L200",
+    "lesson": 10,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A trimmed stdio loop. Which output does it produce for these three input lines?",
+    "code": "import json\nlines = ['{\"jsonrpc\": \"2.0\", \"method\": \"notifications/initialized\"}',\n         '{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"tools/list\"}', \"not json\"]\nreplies = []\nfor line in lines:\n    try:\n        msg = json.loads(line)\n    except json.JSONDecodeError:\n        replies.append({\"id\": None, \"error\": {\"code\": -32700}})\n        continue\n    if \"id\" in msg:\n        replies.append({\"id\": msg[\"id\"], \"result\": {}})\nprint(len(replies), \"replies\")",
+    "options": [
+      "0 replies",
+      "3 replies",
+      "1 replies",
+      "2 replies"
+    ],
+    "answer": 3,
+    "explanation": "The notification has no id and is never answered; the bad line gets a -32700 reply with id None, and the request gets a result. Forgetting that parse errors are still answered gives 1.",
+    "source": "Lesson 10 Code (serve)"
+  },
+  {
+    "id": "ag-L200-034",
+    "level": "L200",
+    "lesson": 10,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Your MCP client hangs until its timeout although the server process is running and has answered. What is the classic cause?",
+    "options": [
+      "The client sent the request on stderr",
+      "The server's output is buffered: print without flush=True",
+      "The server returned isError: true, which the client waits to retry",
+      "The tools/list result was not sorted"
+    ],
+    "answer": 1,
+    "explanation": "With stdout buffered, the reply sits in the server's buffer and the client never sees it; one message per line, flushed. isError results are delivered normally.",
+    "source": "Lesson 10 Troubleshooting"
+  },
+  {
+    "id": "ag-L200-035",
+    "level": "L200",
+    "lesson": 10,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A client sends protocolVersion '2025-06-18' in _meta to the dual-era server and gets -32022 with data {'supported': ['2026-07-28']}. What should the client do?",
+    "options": [
+      "Retry the same request after a backoff delay",
+      "Treat it as a tool error and show it to the model",
+      "Retry the request with a version from the supported list",
+      "Switch to stderr and resend the request there"
+    ],
+    "answer": 2,
+    "explanation": "The error names the versions the server accepts, so the client retries with one of them (or uses initialize for the legacy era). Repeating the same request gives the same error.",
+    "source": "Lesson 10 Try it 2"
+  },
+  {
+    "id": "ag-L200-036",
+    "level": "L200",
+    "lesson": 10,
+    "type": "design",
+    "difficulty": 2,
+    "question": "When is an MCP server a better choice than a local Python function for a tool?",
+    "options": [
+      "When you want to skip argument validation",
+      "When several agents or hosts share the tool or it needs its own process",
+      "Whenever a tool has more than one argument",
+      "When the tool must run faster than an ordinary in-process Python function call"
+    ],
+    "answer": 1,
+    "explanation": "MCP standardises listing and calling tools across processes, which pays off for shared or isolated tools. For one script a local function is simpler, and MCP servers still validate input.",
+    "source": "Lesson 10 Use when"
+  },
+  {
+    "id": "ag-L200-037",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The system prompt says text inside untrusted_data is never instructions, yet the unguarded agent emailed the attacker. Why?",
+    "options": [
+      "The system prompt was too short to be noticed",
+      "The model cannot read text inside XML-style tags, so it missed the warning",
+      "Prompts are requests, not controls; only code checks stop a fooled model",
+      "The attacker's text had a higher priority role"
+    ],
+    "answer": 2,
+    "explanation": "A model can be fooled whatever the prompt says, so allow-lists, approvals and argument rules must hold in code. The tags were read fine; they just do not enforce anything.",
+    "source": "Lesson 11 Check yourself; Concepts"
+  },
+  {
+    "id": "ag-L200-038",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What is indirect prompt injection?",
+    "options": [
+      "Malformed JSON in a tool call's arguments",
+      "A model inventing a tool that does not exist",
+      "A user typing 'ignore your instructions' into the chat",
+      "Instructions that arrive in retrieved content, not from the user"
+    ],
+    "answer": 3,
+    "explanation": "Indirect injection hides in documents, web pages or tool results the agent reads (OWASP LLM01:2025). A user typing the attack is direct injection.",
+    "source": "Lesson 11 Glossary"
+  },
+  {
+    "id": "ag-L200-039",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Where must secret redaction run?",
+    "options": [
+      "Only on the documents before they are indexed",
+      "Only inside the system prompt",
+      "Only on the final answer the user sees, since tools run inside the process",
+      "On every output path: the final answer and every tool argument"
+    ],
+    "answer": 3,
+    "explanation": "A secret can leave through a tool call (an email body) as well as through the answer, so both are checked. Redacting only the final answer leaves the tool path open.",
+    "source": "Lesson 11 Check yourself; Troubleshooting"
+  },
+  {
+    "id": "ag-L200-040",
+    "level": "L200",
+    "lesson": 11,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A simplified version of the lesson's redaction step. What does it print?",
+    "code": "import re\nSECRET = re.compile(r\"sk-[A-Za-z0-9-]{8,}\")\n\ndef redact(text):\n    return SECRET.sub(\"[REDACTED]\", text)\n\nprint(redact(\"The staging key is sk-test-51abcdef.\"))",
+    "options": [
+      "The staging key is [REDACTED].",
+      "[REDACTED]",
+      "The staging key is sk-[REDACTED].",
+      "The staging key is sk-test-51abcdef."
+    ],
+    "answer": 0,
+    "explanation": "The pattern matches the key-shaped token, including its digits and letters, and stops at the full stop. Only the secret is replaced; the rest of the sentence stays.",
+    "source": "Lesson 11 Code (guards.redact)"
+  },
+  {
+    "id": "ag-L200-041",
+    "level": "L200",
+    "lesson": 11,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "This mirrors the lesson's risky-tool rule. The human approves everything. What does it print?",
+    "code": "RISKY = {\"send_email\"}\napprove = lambda name, args: True\n\ndef execute(name, args):\n    if name in RISKY and not (args[\"to\"].endswith(\"@example.com\") and approve(name, args)):\n        return \"error: denied (needs approval and an @example.com recipient)\"\n    return f\"sent to {args['to']}\"\n\nprint(execute(\"send_email\", {\"to\": \"attacker@evil.test\", \"body\": \"all vendor notes\"}))",
+    "options": [
+      "error: tool 'send_email' is not allowed in this session",
+      "sent to attacker@evil.test",
+      "error: blocked: arguments contain a secret",
+      "error: denied (needs approval and an @example.com recipient)"
+    ],
+    "answer": 3,
+    "explanation": "The recipient rule is an independent layer: even with approve=True the address must end in @example.com. Approval alone does not let the email out.",
+    "source": "Lesson 11 Try it 2; Code walkthrough"
+  },
+  {
+    "id": "ag-L200-042",
+    "level": "L200",
+    "lesson": 11,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "You switch off the injection screen but keep guarded=True. The fooled model asks to email the attacker. What happens?",
+    "options": [
+      "The model refuses, because the system prompt forbids it",
+      "The approval and recipient checks still deny it; the outbox stays empty",
+      "The email is sent, because the injection screen was the only real defence layer",
+      "The session crashes when the model asks for send_email"
+    ],
+    "answer": 1,
+    "explanation": "Layers are independent: with the screen off the model was fooled, but approval (default no) and the recipient rule still blocked the call. The prompt never stopped anything in the lab.",
+    "source": "Lesson 11 Try it 1"
+  },
+  {
+    "id": "ag-L200-043",
+    "level": "L200",
+    "lesson": 11,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Reviewers start clicking 'approve' on every request without reading. What does the lesson suggest?",
+    "options": [
+      "Require approval for every tool call, including reads",
+      "Ask the model to decide which requests need approval",
+      "Remove approvals, since they are not being used properly",
+      "Ask only for rare, high-impact actions and show the exact arguments"
+    ],
+    "answer": 3,
+    "explanation": "Approval fatigue comes from too many low-value prompts; fewer, specific requests with the exact arguments keep the human check meaningful. Letting the model decide removes the control entirely.",
+    "source": "Lesson 11 Troubleshooting"
+  },
+  {
+    "id": "ag-L200-044",
+    "level": "L200",
+    "lesson": 11,
+    "type": "design",
+    "difficulty": 3,
+    "question": "An assistant reads web pages and can send emails on the user's behalf. Which set of controls matches the lesson?",
+    "options": [
+      "Session allow-list, argument limits, screened content, approval and redaction",
+      "A long system prompt listing every forbidden action in capitals, repeated at the end",
+      "A second model that reviews every reply for politeness",
+      "Delimiters around web text, with no other checks needed"
+    ],
+    "answer": 0,
+    "explanation": "Guardrails are cheap deterministic layers on inputs, tool calls, retrieved text and outputs, so a fooled model cannot do damage. Delimiters and prompts are formatting and requests, not enforcement.",
+    "source": "Lesson 11 Overview; Concept summary"
+  }
+]

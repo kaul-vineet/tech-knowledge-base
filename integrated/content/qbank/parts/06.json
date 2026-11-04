@@ -1,0 +1,679 @@
+[
+ {
+  "id": "int06-L600-001",
+  "level": "L600",
+  "lesson": 6,
+  "type": "concept",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "Mirror m2 parses each JSON upload and writes it back with its own JSON library. Which contract at the astronomy-cryptography seam does that break?",
+  "options": [
+   "Signed digests cover bytes: re-serialising must give identical bytes",
+   "Mirrors must never hold more than one version of a catalogue at the same time",
+   "Floating-point values must be rounded to 6 decimals before anything is hashed",
+   "Signatures may only cover the manifest file, never the data files themselves"
+  ],
+  "answer": 0,
+  "explanation": "A hash is over bytes, not values: '-3.94153' and '-3.9415300000000002' are the same double but different SHA-256 inputs. Rounding the science values would lose precision without fixing the byte problem.",
+  "source": "Lesson L600 #06 seams S1 / ADR 0001"
+ },
+ {
+  "id": "int06-L600-002",
+  "level": "L600",
+  "lesson": 6,
+  "type": "concept",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "Why does the release manifest carry the licence string and attribution_sha256 instead of leaving LICENSE.txt and ACKNOWLEDGEMENTS.md as ordinary files?",
+  "options": [
+   "So the client can skip downloading both licence files and save bandwidth",
+   "Because CC BY-NC 3.0 IGO forbids keeping the licence text in separate files",
+   "So stripping the credit or relicensing breaks the signature",
+   "So the transparency log can index and search all releases by licence family"
+  ],
+  "answer": 2,
+  "explanation": "Binding licence and attribution into the signed manifest turns a legal requirement into a verifiable property (seam S4: the stripped mirror is rejected). The licence does not forbid separate files; the point is integrity, not bandwidth.",
+  "source": "Lesson L600 #06 seam S4"
+ },
+ {
+  "id": "int06-L600-003",
+  "level": "L600",
+  "lesson": 6,
+  "type": "scenario",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "Mirror m3 was partitioned while v4 spread and still serves a valid, unexpired v3 timestamp. A client that already installed v4 asks m3. What should happen and why?",
+  "options": [
+   "Accept it: the timestamp signature and expiry are both valid, so v3 is trustworthy",
+   "Accept it but log a warning, because m3 is an honest mirror that is only slow",
+   "Refuse it and stop all updates until m3 catches up, to keep the mirrors consistent",
+   "Refuse it as a rollback and fail over to another mirror"
+  ],
+  "answer": 3,
+  "explanation": "TUF's rollback goal: never install something older than what the client knew to be available. Valid signature and expiry are not enough; failing over to a fresh mirror (m1 in the lab) keeps the client updating.",
+  "source": "Lesson L600 #06 seam S3 / TUF 1.5.2"
+ },
+ {
+  "id": "int06-L600-004",
+  "level": "L600",
+  "lesson": 6,
+  "type": "concept",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "After rotating release keys, what must root.json say about the generation-1 keys so that citations of v1-v3 stay checkable?",
+  "options": [
+   "Nothing: delete them, a rotated key must never be trusted again",
+   "Retired, with valid_through_version = 3",
+   "Active: keep them in the release role so both generations can sign",
+   "Timestamp role: move them there, since it may use older keys"
+  ],
+  "answer": 1,
+  "explanation": "A window keeps old signatures valid without letting a stolen retired key sign v5 (seam S2). Deleting them breaks old releases (--inject drop-old-key leaves only [4]); keeping them active lets them sign new versions.",
+  "source": "Lesson L600 #06 seam S2 / ADR 0003"
+ },
+ {
+  "id": "int06-L600-005",
+  "level": "L600",
+  "lesson": 6,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "The timestamp lifetime (TTL) and the anti-entropy lag are owned by different teams. What integration contract links them?",
+  "options": [
+   "TTL must exceed the timestamp re-sign interval plus the worst replication lag plus clock skew",
+   "TTL must be shorter than one gossip round so stale mirrors are always rejected",
+   "TTL and gossip period must be equal so every round carries a fresh timestamp",
+   "The two are independent: freshness is a crypto concern, lag a networking one"
+  ],
+  "answer": 0,
+  "explanation": "If TTL is shorter than the time an honest mirror needs to receive a fresh timestamp, honest mirrors look frozen (tryIt 2: TTL 120 s -> no usable mirror). That is why F2's convergence bound is also a security budget.",
+  "source": "Lesson L600 #06 seam S3 / tryIt 2"
+ },
+ {
+  "id": "int06-L600-006",
+  "level": "L600",
+  "lesson": 6,
+  "type": "concept",
+  "difficulty": 2,
+  "tags": [
+   "seam"
+  ],
+  "question": "In this pipeline, which component decides whether a release may be signed under Gaia's CC BY-NC 3.0 IGO terms?",
+  "options": [
+   "The client, after the download, by reading the CITATION.cff file",
+   "Each mirror, when it ingests the release during the anti-entropy rounds",
+   "The publisher's licence gate, before anything is signed",
+   "The transparency log, which refuses any entry with a restrictive licence"
+  ],
+  "answer": 2,
+  "explanation": "The gate runs before signing so a non-compliant release never gets a valid signature (licence-drop inject: 'refused'). Mirrors and the log are untrusted or licence-agnostic; the client re-checks but cannot prevent publication.",
+  "source": "Lesson L600 #06 seam S4"
+ },
+ {
+  "id": "int06-L600-007",
+  "level": "L600",
+  "lesson": 6,
+  "type": "scenario",
+  "difficulty": 3,
+  "tags": [
+   "seam"
+  ],
+  "question": "A mirror operator 'helpfully' pretty-prints release.json (adds spaces and newlines) before serving it. What does the client do?",
+  "options": [
+   "Accepts it, because all the parsed JSON values are unchanged by whitespace",
+   "Rejects it: hash mismatch and non-canonical bytes",
+   "Accepts it after re-canonicalising, because JCS makes whitespace irrelevant",
+   "Rejects only the ML-DSA-65 signature, because Ed25519 ignores whitespace"
+  ],
+  "answer": 1,
+  "explanation": "The timestamp pins release.json's SHA-256 and loads_strict insists bytes equal the JCS form of their content. Re-canonicalising and accepting would let 'equivalent' edits through, which is what F1 forbids.",
+  "source": "Lesson L600 #06 client.py / ADR 0001"
+ },
+ {
+  "id": "int06-L600-008",
+  "level": "L600",
+  "lesson": 6,
+  "type": "calculation",
+  "difficulty": 2,
+  "tags": [
+   "calc"
+  ],
+  "question": "A release carries one Ed25519 and one ML-DSA-65 signature. How many signature bytes is that (before hex encoding)?",
+  "options": [
+   "3,309 B",
+   "6,746 B",
+   "128 B",
+   "3,373 B"
+  ],
+  "answer": 3,
+  "explanation": "Ed25519 is 64 B and ML-DSA-65 is 3,309 B, so 3,373 B. 6,746 is the hex length stored in release.json, twice the byte count.",
+  "source": "Lesson L600 #06 M3 (sig_bytes [64, 3309])",
+  "check": "sig_bytes"
+ },
+ {
+  "id": "int06-L600-009",
+  "level": "L600",
+  "lesson": 6,
+  "type": "calculation",
+  "difficulty": 2,
+  "tags": [
+   "calc"
+  ],
+  "question": "Star 4000000 has parallax 3.6941 mas and T magnitude 8.445. Using d = 1/parallax and M = m - 5 log10(d / 10 pc), what are its distance and absolute magnitude?",
+  "options": [
+   "270.70 pc and M = 1.28",
+   "270.70 pc and M = 15.61",
+   "3.69 pc and M = 10.61",
+   "2707.0 pc and M = -3.72"
+  ],
+  "answer": 0,
+  "explanation": "1/0.0036941 arcsec = 270.70 pc; 5 log10(27.070) = 7.162, so M = 8.445 - 7.162 = 1.283. Adding the modulus instead of subtracting gives 15.61.",
+  "source": "Lesson L600 #06 M1 (first row)",
+  "check": "distance"
+ },
+ {
+  "id": "int06-L600-010",
+  "level": "L600",
+  "lesson": 6,
+  "type": "calculation",
+  "difficulty": 2,
+  "tags": [
+   "calc"
+  ],
+  "question": "A row has parallax 1.2 mas and parallax error 0.3 mas. What does science.process() do with it?",
+  "options": [
+   "Distance 833.3 pc, method inverse-parallax: the SNR is above 1",
+   "Distance null, method needs-prior: the fractional error is 25 %, above the 20 % limit",
+   "Distance 3333.3 pc, using the error as the parallax",
+   "Distance 833.3 pc with an error bar of +/- 25 %"
+  ],
+  "answer": 1,
+  "explanation": "parallax/error = 4 < 5, so the inversion is not honest (Bailer-Jones 2015: non-trivial beyond ~20 % fractional error). 833.3 pc is 1/0.0012 arcsec, which the pipeline deliberately refuses to publish.",
+  "source": "Lesson L600 #06 science.py",
+  "check": "snr"
+ },
+ {
+  "id": "int06-L600-011",
+  "level": "L600",
+  "lesson": 6,
+  "type": "calculation",
+  "difficulty": 2,
+  "tags": [
+   "calc"
+  ],
+  "question": "The v4 catalogue is 6,536 bytes as JCS and 7,901 bytes when a stack writes doubles with '%.17g'. By what percentage did the bytes grow?",
+  "options": [
+   "17.3 %",
+   "1.2 %",
+   "20.9 %",
+   "36.5 %"
+  ],
+  "answer": 2,
+  "explanation": "(7901 - 6536) / 6536 = 0.209. 17.3 % divides by the larger size; size growth is a cheap CI smell test for 17-digit writers.",
+  "source": "Lesson L600 #06 S1 (jcs_bytes, platform_bytes)",
+  "check": "growth"
+ },
+ {
+  "id": "int06-L600-012",
+  "level": "L600",
+  "lesson": 6,
+  "type": "calculation",
+  "difficulty": 3,
+  "tags": [
+   "calc"
+  ],
+  "question": "The manifest's Merkle tree has 5 leaves (one per file, sorted). How many hashes are in the RFC 9162 inclusion proof for the 5th leaf (index 4)?",
+  "options": [
+   "3",
+   "2",
+   "5",
+   "1"
+  ],
+  "answer": 3,
+  "explanation": "With n = 5 the split is k = 4: leaf 4 is alone on the right, so its path is just MTH(D[0:4]). Leaves 0-3 need 3 hashes each.",
+  "source": "Lesson L600 #06 merkle.py / RFC 9162 2.1.3.1",
+  "check": "incl5"
+ },
+ {
+  "id": "int06-L600-013",
+  "level": "L600",
+  "lesson": 6,
+  "type": "calculation",
+  "difficulty": 2,
+  "tags": [
+   "calc"
+  ],
+  "question": "The timestamp is re-signed every 900 s, gossip needs at most 3 rounds of 60 s to reach every mirror, and clocks may be 60 s apart. What is the smallest TTL that never makes an honest mirror look frozen?",
+  "options": [
+   "More than 1,140 s",
+   "More than 960 s",
+   "More than 180 s",
+   "More than 3,600 s"
+  ],
+  "answer": 0,
+  "explanation": "900 + 3 x 60 + 60 = 1,140 s. 960 s forgets the replication lag; the lab's 3,600 s is a safe choice, not the minimum.",
+  "source": "Lesson L600 #06 ADR 0002",
+  "check": "ttl"
+ },
+ {
+  "id": "int06-L600-014",
+  "level": "L600",
+  "lesson": 6,
+  "type": "calculation",
+  "difficulty": 3,
+  "tags": [
+   "calc"
+  ],
+  "question": "A transparency log holds 1,000,000 releases. Roughly how many SHA-256 hashes does an inclusion proof contain, and how many bytes is that?",
+  "options": [
+   "1,000 hashes, 32,000 bytes",
+   "20 hashes, 640 bytes",
+   "10 hashes, 320 bytes",
+   "6 hashes, 192 bytes"
+  ],
+  "answer": 1,
+  "explanation": "Proofs are about ceil(log2 n) = 20 nodes of 32 bytes. That logarithmic size is why logs scale; 6 would be log10.",
+  "source": "RFC 9162 2.1.3",
+  "check": "log_proof"
+ },
+ {
+  "id": "int06-L600-015",
+  "level": "L600",
+  "lesson": 6,
+  "type": "debugging",
+  "difficulty": 3,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "Anti-entropy never converges: the same key releases/v1/catalogue.json has different SHA-256 values on m0 and m2, and the first differing bytes are '-3.94153' vs '-3.9415300000000002'. Most likely cause?",
+  "options": [
+   "Packet loss truncated the catalogue while it travelled during gossip",
+   "m2's clock is skewed, so it keeps rejecting the newer timestamps",
+   "m2 re-writes doubles with 17 digits; fix with JCS / opaque bytes",
+   "The Merkle bucket count is too small for four mirrors to agree"
+  ],
+  "answer": 2,
+  "explanation": "Same value, longer digit string: a '%.17g' writer (Python before 3.1, printf stacks). Truncation would shorten the file, not lengthen a number, and buckets only speed up comparison.",
+  "source": "Lesson L600 #06 failure lab"
+ },
+ {
+  "id": "int06-L600-016",
+  "level": "L600",
+  "lesson": 6,
+  "type": "debugging",
+  "difficulty": 3,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "Right after a key rotation every client reports 'release v2: no valid Ed25519 signature from a key trusted for v2' for v1-v3, but v4 verifies. What went wrong?",
+  "options": [
+   "Root v2 dropped the old keys instead of retiring them",
+   "The ML-DSA-65 signatures expired, so only Ed25519 is checked now",
+   "The mirrors re-signed all the old releases with the new release key",
+   "The transparency log lost the entries for v1-v3 during the rotation"
+  ],
+  "answer": 0,
+  "explanation": "Signatures do not expire; the verifier simply no longer knows the signer (--inject drop-old-key: old_releases_verify [4]). The fix is retired keys with valid_through_version.",
+  "source": "Lesson L600 #06 S2 / drop-old-key"
+ },
+ {
+  "id": "int06-L600-017",
+  "level": "L600",
+  "lesson": 6,
+  "type": "debugging",
+  "difficulty": 3,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "Clients on one continent start rejecting ALL mirrors with 'timestamp expired' a few minutes after each release, although nobody is attacking. What is the first thing to check?",
+  "options": [
+   "Whether the ML-DSA-65 public key in root.json was corrupted",
+   "TTL vs re-sign interval + lag, and client clocks",
+   "Whether the newest catalogue contains NaN or Infinity values",
+   "Whether the mirrors use enough Merkle buckets for gossip"
+  ],
+  "answer": 1,
+  "explanation": "An expiry failure on every mirror is a freshness budget problem (tryIt 2: TTL 120 s -> none usable), or clock skew. A bad key would fail signatures, not expiry.",
+  "source": "Lesson L600 #06 tryIt 2"
+ },
+ {
+  "id": "int06-L600-018",
+  "level": "L600",
+  "lesson": 6,
+  "type": "debugging",
+  "difficulty": 2,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "A user reports that their client silently downgraded from v4 to v3 after switching to a slower mirror. Which check is missing?",
+  "options": [
+   "Verifying the ML-DSA-65 signature on the timestamp file",
+   "Recomputing the Merkle root over all the release files",
+   "Checking that LICENSE.txt matches the signed manifest",
+   "The highest-version-seen (rollback) check"
+  ],
+  "answer": 3,
+  "explanation": "v3 is genuinely signed, so signature, hash and licence checks pass; only the rollback rule (--inject no-freshness disables it) refuses it.",
+  "source": "Lesson L600 #06 S3 / F3"
+ },
+ {
+  "id": "int06-L600-019",
+  "level": "L600",
+  "lesson": 6,
+  "type": "debugging",
+  "difficulty": 3,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "The Python verifier accepts every release, but a new JavaScript verifier rejects all of them with a signature error. The producer serialises with json.dumps(sort_keys=True, separators=(',', ':')). Most likely cause?",
+  "options": [
+   "JavaScript runtimes cannot verify Ed25519 signatures at all",
+   "Key order differs because JavaScript sorts keys by UTF-8 bytes",
+   "Number layout: 5.0 vs 5, 2.5e-05 vs 0.000025",
+   "The JavaScript client uses a different SHA-256 implementation"
+  ],
+  "answer": 2,
+  "explanation": "The verifiers rebuild the signed bytes from parsed values and disagree on number layout (tryIt 1: 3 of 5 values differ). SHA-256 is the same everywhere; JCS sorts by UTF-16 code units in both.",
+  "source": "Lesson L600 #06 tryIt 1"
+ },
+ {
+  "id": "int06-L600-020",
+  "level": "L600",
+  "lesson": 6,
+  "type": "debugging",
+  "difficulty": 3,
+  "tags": [
+   "diagnose"
+  ],
+  "question": "A client that saw a 2-entry tree head earlier now gets 'log is not an extension of the tree head we saw before'. What does that indicate?",
+  "options": [
+   "The log forked or rewrote its history",
+   "A mirror is lagging behind and serves an old release",
+   "The release keys were rotated since the last fetch",
+   "The new release exceeds the inclusion-proof size limit"
+  ],
+  "answer": 0,
+  "explanation": "A failed consistency proof means the new tree does not extend the old one - the append-only promise was broken. Mirror lag and key rotation do not affect the log's tree.",
+  "source": "Lesson L600 #06 test_m5_client.py"
+ },
+ {
+  "id": "int06-L600-021",
+  "level": "L600",
+  "lesson": 6,
+  "type": "code-reading",
+  "difficulty": 2,
+  "tags": [
+   "code"
+  ],
+  "question": "What does this print? (canonical.py is the lab's RFC 8785 encoder.)",
+  "code": "import canonical as C\nprint(C.dumps({\"b\": 5.0, \"a\": [1e-7, 0.000025]}).decode())",
+  "options": [
+   "{\"b\":5.0,\"a\":[1e-07,2.5e-05]}",
+   "{\"a\":[1e-7,0.000025],\"b\":5}",
+   "{\"a\":[1e-07,2.5e-05],\"b\":5.0}",
+   "{\"a\":[0.0000001,0.000025],\"b\":5}"
+  ],
+  "answer": 1,
+  "explanation": "JCS sorts keys, writes 5.0 as 5, uses plain decimals from 1e-6 upward (0.000025) and exponent form below (1e-7, no zero padding). The second option is Python's json.dumps layout.",
+  "source": "Lesson L600 #06",
+  "check": "code_jcs"
+ },
+ {
+  "id": "int06-L600-022",
+  "level": "L600",
+  "lesson": 6,
+  "type": "code-reading",
+  "difficulty": 2,
+  "tags": [
+   "code"
+  ],
+  "question": "What does this print?",
+  "code": "x = -3.94153\nprint(format(x, '.17g'), repr(x))",
+  "options": [
+   "-3.94153 -3.94153",
+   "-3.9415300000000002 -3.9415300000000002",
+   "-3.94153 -3.9415300000000002",
+   "-3.9415300000000002 -3.94153"
+  ],
+  "answer": 3,
+  "explanation": "'.17g' always prints 17 significant digits (Python's repr before 3.1); repr now prints the shortest string that round-trips. Same double, different bytes.",
+  "source": "Lesson L600 #06",
+  "check": "code_17g"
+ },
+ {
+  "id": "int06-L600-023",
+  "level": "L600",
+  "lesson": 6,
+  "type": "code-reading",
+  "difficulty": 3,
+  "tags": [
+   "code"
+  ],
+  "question": "What does this print? (merkle.py implements RFC 9162.)",
+  "code": "import merkle\nD = [bytes([i]) for i in range(7)]\nprint(len(merkle.inclusion_proof(6, D)), len(merkle.consistency_proof(3, D)))",
+  "options": [
+   "2 4",
+   "3 3",
+   "2 3",
+   "1 4"
+  ],
+  "answer": 0,
+  "explanation": "In a 7-leaf tree d6 needs [MTH(d4,d5), MTH(d0..d3)] = 2 hashes, and PROOF(3, D[7]) = [c, d, g, l] = 4 hashes, as in RFC 9162 2.1.5.",
+  "source": "Lesson L600 #06",
+  "check": "code_merkle"
+ },
+ {
+  "id": "int06-L600-024",
+  "level": "L600",
+  "lesson": 6,
+  "type": "code-reading",
+  "difficulty": 3,
+  "tags": [
+   "code"
+  ],
+  "question": "What does this print? It sorts property names the way RFC 8785 requires.",
+  "code": "keys = ['\\u00f6', '\\U0001F600', '\\ufb33', '\\u20ac']\nprint(sorted(keys, key=lambda k: k.encode('utf-16-be')))",
+  "options": [
+   "['ö', '€', 'דּ', '😀']",
+   "['😀', 'דּ', '€', 'ö']",
+   "['ö', '€', '😀', 'דּ']",
+   "['€', 'ö', 'דּ', '😀']"
+  ],
+  "answer": 2,
+  "explanation": "UTF-16 code units put the emoji's high surrogate (0xD83D) before U+FB33; sorting by code points (Python's default) would put the emoji last - an easy way to break signatures with non-ASCII keys.",
+  "source": "Lesson L600 #06",
+  "check": "code_sort"
+ },
+ {
+  "id": "int06-L600-025",
+  "level": "L600",
+  "lesson": 6,
+  "type": "code-reading",
+  "difficulty": 2,
+  "tags": [
+   "code"
+  ],
+  "question": "This is the client's freeze check. What does it print for a timestamp that expires at 6000 when the fixed update start time is 6000?",
+  "code": "ts = {\"expires\": 6000}\nnow = 6000\nprint(\"rejected\" if ts[\"expires\"] <= now else \"accepted\")",
+  "options": [
+   "accepted",
+   "accepted with warning",
+   "error: TypeError",
+   "rejected"
+  ],
+  "answer": 3,
+  "explanation": "The condition is expires <= now, so the boundary second is already expired (test_seam_freshness checks 5999 accepted, 6000 and 6001 rejected).",
+  "source": "Lesson L600 #06",
+  "check": "code_expiry"
+ },
+ {
+  "id": "int06-L600-026",
+  "level": "L600",
+  "lesson": 6,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "design"
+  ],
+  "question": "Why publish to ONE mirror and let anti-entropy spread the release, instead of uploading to all four?",
+  "options": [
+   "Anti-entropy is faster than direct uploads in every possible case",
+   "No all-or-nothing upload; missed updates self-repair",
+   "Only one mirror is allowed to hold the publisher's signing key",
+   "Direct uploads to all mirrors would bypass the transparency log"
+  ],
+  "answer": 1,
+  "explanation": "Push-pull gossip repairs partitions and missed uploads by itself (m3 catches up in 1 round after returning). It is not always faster, and mirrors never hold signing keys.",
+  "source": "Lesson L600 #06 M4"
+ },
+ {
+  "id": "int06-L600-027",
+  "level": "L600",
+  "lesson": 6,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "design"
+  ],
+  "question": "Mirrors compare a Merkle tree over 16 key buckets before sending anything. What does that buy compared with exchanging the full key list every round?",
+  "options": [
+   "It makes tampering impossible because the buckets are signed",
+   "It removes the need for the client to verify hashes",
+   "It guarantees convergence in exactly one round",
+   "Converged mirrors exchange only a root hash; diverged ones send only the differing buckets"
+  ],
+  "answer": 3,
+  "explanation": "Dynamo uses Merkle trees so replicas can find differences without transferring the data set; the lab's second gossip on converged mirrors moved 0 bytes. The bucket tree is not signed and does not replace client checks.",
+  "source": "Dynamo 4.7 / test_m4_replication.py"
+ },
+ {
+  "id": "int06-L600-028",
+  "level": "L600",
+  "lesson": 6,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "design"
+  ],
+  "question": "Why require BOTH an Ed25519 and an ML-DSA-65 signature on every release rather than switching straight to ML-DSA-65?",
+  "options": [
+   "It stays secure if either scheme holds",
+   "ML-DSA-65 signatures are too large to store on the mirrors",
+   "Ed25519 is required by RFC 9162 for every transparency log",
+   "Two signatures make tamper detection twice as likely"
+  ],
+  "answer": 0,
+  "explanation": "Dual signing (crypto L400 #17's transition phase) hedges against a flaw in the young scheme and a future quantum attack on the old one. Detection is already 100 % with one valid signature over the bytes.",
+  "source": "Lesson L600 #06 ADR 0003"
+ },
+ {
+  "id": "int06-L600-029",
+  "level": "L600",
+  "lesson": 6,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "design"
+  ],
+  "question": "Why is the retired-key window expressed as a release VERSION rather than a calendar date?",
+  "options": [
+   "Calendar dates cannot be encoded in JCS",
+   "TUF forbids dates in root metadata",
+   "The version is signed; a date would need a trusted time",
+   "Versions are shorter, so the manifest stays small"
+  ],
+  "answer": 2,
+  "explanation": "A signer can claim any date, but the version it signs is part of the signed bytes and is ordered by the log. JCS encodes strings fine, and TUF uses expiry dates elsewhere.",
+  "source": "Lesson L600 #06 ADR 0003"
+ },
+ {
+  "id": "int06-L600-030",
+  "level": "L600",
+  "lesson": 6,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "design"
+  ],
+  "question": "The lab rejects distances when parallax/error < 5 rather than publishing 1/parallax for every star. What is the trade-off?",
+  "options": [
+   "More rows are published, but every signature becomes larger",
+   "Fewer distances (10 of 28 null), but none biased",
+   "The catalogue becomes non-canonical, because nulls cannot be hashed",
+   "Nothing at all: 1/parallax is unbiased at any fractional error"
+  ],
+  "answer": 1,
+  "explanation": "Signing makes a number permanent and citable, so honesty matters more; beyond ~20 % fractional error 1/parallax is biased (Bailer-Jones 2015). JSON null hashes fine.",
+  "source": "Lesson L600 #06 science.py"
+ },
+ {
+  "id": "int06-L600-031",
+  "level": "L600",
+  "lesson": 6,
+  "type": "design",
+  "difficulty": 3,
+  "tags": [
+   "design"
+  ],
+  "question": "What can a single transparency log NOT protect against on its own in this design?",
+  "options": [
+   "Split views shown to different clients",
+   "A release being silently removed from the log after a client saw it",
+   "A mirror serving a release that was never added to the log",
+   "An old tree head that is not a prefix of the newer tree head"
+  ],
+  "answer": 0,
+  "explanation": "Consistency proofs catch removal and rewrite for one client's view; inclusion proofs catch unlogged releases. A log that forks per client is only caught by gossiping tree heads (RFC 9162 11.3).",
+  "source": "RFC 9162 11.3 / ADR 0002"
+ },
+ {
+  "id": "int06-L600-032",
+  "level": "L600",
+  "lesson": 6,
+  "type": "design",
+  "difficulty": 2,
+  "tags": [
+   "design"
+  ],
+  "question": "Mirror operators want to store releases in a document database that re-encodes JSON. What is the safest policy?",
+  "options": [
+   "Allow re-encoding as long as it sorts keys",
+   "Re-sign the objects with a mirror key after re-encoding",
+   "Store each object as opaque bytes (a blob) and serve exactly what was uploaded",
+   "Let clients accept any encoding whose parsed values match the manifest"
+  ],
+  "answer": 2,
+  "explanation": "Opaque bytes make the mirror irrelevant to integrity (TUF treats targets as opaque). Mirror keys would make mirrors trusted parties, and value-level acceptance reopens the 'equivalent bytes' hole F1 closes.",
+  "source": "Lesson L600 #06 ADR 0001"
+ },
+ {
+  "id": "int06-L600-033",
+  "level": "L600",
+  "lesson": 6,
+  "type": "concept",
+  "difficulty": 2,
+  "tags": [
+   "concept"
+  ],
+  "question": "What does the push-pull register for timestamp.json keep when two mirrors exchange different timestamps?",
+  "options": [
+   "The one received last, because newer messages win",
+   "Both, so the client can choose",
+   "The one whose expiry is later, regardless of version",
+   "The one with the higher version, which makes the merge commutative and idempotent"
+  ],
+  "answer": 3,
+  "explanation": "Max-version is a join, so gossip order does not matter (distributed L400 #18's merge laws). 'Last received' depends on network order and lets an old timestamp win.",
+  "source": "Lesson L600 #06 mirrors.py"
+ }
+]

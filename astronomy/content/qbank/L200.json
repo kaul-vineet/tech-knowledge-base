@@ -1,0 +1,792 @@
+[
+ {
+  "id": "as-L200-001",
+  "level": "L200",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does the lab convert (RA, Dec) to 3-D unit vectors before matching?",
+  "options": [
+   "Their straight-line distance grows with angle and has no wrap-around at RA 0/360",
+   "Unit vectors store positions in half the memory",
+   "A k-d tree cannot hold negative declinations, so RA/Dec must be shifted to positive values first",
+   "It removes the need for any matching radius"
+  ],
+  "answer": 0,
+  "explanation": "RA 359.9999 and 0.0001 become neighbouring points, and chord length is monotonic in angle, so a plain Euclidean tree works. Memory and radius have nothing to do with it.",
+  "source": "Lesson 7 checkYourself"
+ },
+ {
+  "id": "as-L200-002",
+  "level": "L200",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "To make the point clear, take a huge matching radius of 60 deg. What chord-length threshold must the k-d tree use on the unit sphere?",
+  "options": [
+   "1.0472",
+   "1.0000",
+   "0.8660",
+   "0.5000"
+  ],
+  "answer": 1,
+  "explanation": "chord = 2 sin(r/2), which is 1.0000 for 60 deg. Using the angle in radians (1.0472) works only for tiny radii, where the two agree.",
+  "source": "Lesson 7 code (chord_max)"
+ },
+ {
+  "id": "as-L200-003",
+  "level": "L200",
+  "lesson": 7,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "What is the angular separation between (RA 10.0, Dec 60.0) and (RA 10.5, Dec 60.2), using the Vincenty formula?",
+  "options": [
+   "32.31 arcmin",
+   "30.00 arcmin",
+   "19.17 arcmin",
+   "61.19 arcmin"
+  ],
+  "answer": 2,
+  "explanation": "On the sky an RA step shrinks by cos(Dec), so 0.5 deg of RA at Dec 60 is only ~15 arcmin. Plain hypot(dRA, dDec) treats RA degrees as full-size degrees.",
+  "source": "Lesson 7 code (angular_sep)"
+ },
+ {
+  "id": "as-L200-004",
+  "level": "L200",
+  "lesson": 7,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print (separation in arcsec on the right)?",
+  "code": "import numpy as np\ndef unit(ra, dec):\n    ra, dec = np.radians(ra), np.radians(dec)\n    return np.array([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)])\na, b = unit(359.9999, 28.0), unit(0.0001, 28.0)\nprint(round(abs(359.9999 - 0.0001), 4), round(float(np.linalg.norm(a - b)) * 206264.806, 3))",
+  "options": [
+   "359.9998 359.9998",
+   "0.0002 0.636",
+   "359.9998 0.636",
+   "359.9998 0.72"
+  ],
+  "answer": 2,
+  "explanation": "The raw RA difference is huge across the 0/360 boundary, but the unit vectors are neighbours: 0.0002 deg of RA at Dec 28 is about 0.64 arcsec. Forgetting cos(Dec) would give 0.72 arcsec.",
+  "source": "Lesson 7 codeWalkthrough (unit_vectors)"
+ },
+ {
+  "id": "as-L200-005",
+  "level": "L200",
+  "lesson": 7,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "This matcher works in the middle of the field but loses every match near RA 0. Why?",
+  "code": "ok = (abs(ra_a - ra_b) < r_deg) & (abs(dec_a - dec_b) < r_deg)",
+  "options": [
+   "It compares raw RA values, which jump from 359.99 to 0",
+   "The radius must be in radians, not degrees",
+   "Declination must be compared before RA",
+   "It needs a k-d tree with leaf_size >= 4"
+  ],
+  "answer": 0,
+  "explanation": "Raw RA differences are ~360 deg across the boundary. Use unit vectors or angular_sep(), which handle the wrap-around; leaf size only matters for the tree's recursion.",
+  "source": "Lesson 7 troubleshooting"
+ },
+ {
+  "id": "as-L200-006",
+  "level": "L200",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "How does the k-d tree cut 4.08 million distance evaluations to about 39 thousand?",
+  "options": [
+   "It visits the far branch only if the splitting plane is closer than the best match so far",
+   "It stops after the first source found inside the radius",
+   "It samples 1 % of the catalogue at random",
+   "It rounds coordinates to a coarse grid and compares only the occupied neighbouring cells"
+  ],
+  "answer": 0,
+  "explanation": "Pruning by the splitting plane skips whole subtrees that cannot contain a closer point, so results stay exact. Stopping at the first hit would return a non-nearest match.",
+  "source": "Lesson 7 codeWalkthrough (KDTree._search)"
+ },
+ {
+  "id": "as-L200-007",
+  "level": "L200",
+  "lesson": 7,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does plain nearest-neighbour matching produce duplicates that match_one_to_one() must resolve?",
+  "options": [
+   "The k-d tree returns two nearest points for every query",
+   "Several B sources (blends) can share the same nearest A source",
+   "Unit vectors map two RA values to one point",
+   "The radius is applied twice, once per catalogue"
+  ],
+  "answer": 1,
+  "explanation": "Nearest-neighbour is not one-to-one: a blended neighbour can claim the same A star as the true counterpart. The build task keeps only the closest claim.",
+  "source": "Lesson 7 concepts and codeWalkthrough"
+ },
+ {
+  "id": "as-L200-008",
+  "level": "L200",
+  "lesson": 7,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "You must cross-match a crowded Milky Way field. A colleague suggests a 3-arcsec radius 'to be safe'. What should guide the radius?",
+  "options": [
+   "A larger radius is always safer, since extra matches are harmless and easy to remove",
+   "The catalogues' astrometric errors; larger radii add false matches here",
+   "The pixel size of the k-d tree's leaves",
+   "The brightest star's magnitude"
+  ],
+  "answer": 1,
+  "explanation": "In the lab's sparse field 3 arcsec added nothing, but in crowded fields it adds false matches. Radii should follow the astrometric errors, with proper motion considered.",
+  "source": "Lesson 7 checkYourself and caution"
+ },
+ {
+  "id": "as-L200-009",
+  "level": "L200",
+  "lesson": 7,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "You match a 1991 catalogue to a 2016 one, and a few bright, nearby stars come out unmatched. What is the likely cause?",
+  "options": [
+   "The k-d tree drops bright stars",
+   "Unit vectors fail for bright stars",
+   "High proper motion moved them between the two epochs",
+   "The newer catalogue uses a different magnitude system"
+  ],
+  "answer": 2,
+  "explanation": "Nearby stars can move arcseconds in 25 years; propagate positions to a common epoch first. Brightness does not affect a geometric tree.",
+  "source": "Lesson 7 caution"
+ },
+ {
+  "id": "as-L200-010",
+  "level": "L200",
+  "lesson": 7,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "Building the k-d tree on a catalogue with many duplicate positions raises RecursionError with leaf_size = 1. What fixes it?",
+  "options": [
+   "Convert the positions to radians first",
+   "Switch from unit vectors back to RA/Dec",
+   "Raise Python's recursion limit to 10^6",
+   "Keep leaf_size >= 4 so identical points end in one leaf"
+  ],
+  "answer": 3,
+  "explanation": "Duplicates cannot be split by any plane, so a tree with one point per leaf recurses forever. Raising the limit only delays the crash.",
+  "source": "Lesson 7 troubleshooting"
+ },
+ {
+  "id": "as-L200-011",
+  "level": "L200",
+  "lesson": 8,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A FITS file has a one-block header and a 101 x 101 float32 image (BITPIX = -32). How many bytes is the file?",
+  "options": [
+   "43684",
+   "40804",
+   "46080",
+   "43200"
+  ],
+  "answer": 2,
+  "explanation": "The data (40804 bytes) are padded with zeros to whole 2880-byte blocks, then added to the 2880-byte header. A valid FITS file size is always a multiple of 2880.",
+  "source": "Lesson 8 expectedResults"
+ },
+ {
+  "id": "as-L200-012",
+  "level": "L200",
+  "lesson": 8,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "A header with 36 cards (including END) is 2880 bytes. You add one keyword. Why does the file grow by 2880 bytes, not 80?",
+  "options": [
+   "Every new keyword gets its own 2880-byte block",
+   "FITS stores two copies of the header, and each new card forces both copies to be rewritten",
+   "The data are re-padded from 16-bit to 32-bit",
+   "Headers are padded to whole 2880-byte blocks of 36 cards; card 37 starts a new block"
+  ],
+  "answer": 3,
+  "explanation": "A block holds exactly 36 cards of 80 characters; crossing that boundary adds a full block of space-padding. Only the header changes; the data unit is untouched.",
+  "source": "Lesson 8 checkYourself"
+ },
+ {
+  "id": "as-L200-013",
+  "level": "L200",
+  "lesson": 8,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "A FITS image has NAXIS1 = 200 and NAXIS2 = 100. What shape does numpy give the data array?",
+  "options": [
+   "(200, 100): NAXIS1 comes first",
+   "(100, 200, 1) with a channel axis",
+   "(20000,): FITS images are always flat",
+   "(100, 200): rows = NAXIS2, columns = NAXIS1"
+  ],
+  "answer": 3,
+  "explanation": "NAXIS1 varies fastest, so it is the column (last) axis in numpy's row-major order. Reading NAXIS1 as rows transposes the image.",
+  "source": "Lesson 8 concepts and codeWalkthrough"
+ },
+ {
+  "id": "as-L200-014",
+  "level": "L200",
+  "lesson": 8,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print?",
+  "code": "import numpy as np\nraw = np.array([1.0, 100.0], dtype=\">f4\").tobytes()\nprint(np.frombuffer(raw, \">f4\").tolist(), bool(np.frombuffer(raw, \"<f4\")[0] < 1e-30))",
+  "options": [
+   "[1.0, 100.0] False",
+   "[1.0, 100.0] [1.0, 100.0]",
+   "[1.0, 100.0] True",
+   "[0.0, 0.0] True"
+  ],
+  "answer": 2,
+  "explanation": "FITS data are big-endian; reading the same bytes as little-endian turns 1.0 into a tiny denormal (~5e-41). That is the '1e-38 or 4e+9' symptom in the troubleshooting.",
+  "source": "Lesson 8 troubleshooting"
+ },
+ {
+  "id": "as-L200-015",
+  "level": "L200",
+  "lesson": 8,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this card writer print?",
+  "code": "def card(key, value):\n    return f\"{key:<8}= {value!r:>20}\".ljust(80)\nc = card(\"NAXIS1\", 101)\nprint(len(c), c.index(\"101\") + len(\"101\"))",
+  "options": [
+   "80 23",
+   "80 30",
+   "30 30",
+   "80 80"
+  ],
+  "answer": 1,
+  "explanation": "Every card is padded to exactly 80 characters, and fixed-format numbers are right-aligned so the value ends in column 30.",
+  "source": "Lesson 8 codeWalkthrough (card)"
+ },
+ {
+  "id": "as-L200-016",
+  "level": "L200",
+  "lesson": 8,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "Your detected stars appear exactly one pixel (1 arcsec) off in DS9. What is the most likely cause?",
+  "options": [
+   "The data were read as little-endian",
+   "CD1_1 has the wrong sign",
+   "FITS pixel (1, 1) is numpy [0, 0]; a 1-based/0-based mix-up",
+   "The header was padded with zeros instead of spaces"
+  ],
+  "answer": 2,
+  "explanation": "FITS pixels are 1-based and numpy indices 0-based; convert once at the boundary. A sign error in CD1_1 would mirror the field, not shift it by one pixel.",
+  "source": "Lesson 8 troubleshooting"
+ },
+ {
+  "id": "as-L200-017",
+  "level": "L200",
+  "lesson": 8,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "In a TAN WCS header, CD1_1 is negative. What does that mean for the image?",
+  "options": [
+   "RA increases to the left (east left), as on the sky",
+   "The image is upside down and must be flipped",
+   "Declination decreases upwards",
+   "The pixel scale is negative and the header is invalid"
+  ],
+  "answer": 0,
+  "explanation": "A negative CD1_1 means increasing x goes to smaller RA, i.e. east is on the left, the normal sky orientation. It is valid and expected.",
+  "source": "Lesson 8 checkYourself"
+ },
+ {
+  "id": "as-L200-018",
+  "level": "L200",
+  "lesson": 8,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A TAN WCS has CRVAL = (150.0, +60.0) at CRPIX, CD1_1 = -1/3600 deg/px, no rotation. What RA does the pixel 10 columns right of CRPIX (same row) have?",
+  "options": [
+   "149.99722 deg",
+   "149.99444 deg",
+   "150.00556 deg",
+   "150.00278 deg"
+  ],
+  "answer": 1,
+  "explanation": "xi = -10 arcsec, and at Dec 60 a 10-arcsec step on the sky spans 10/cos 60 = 20 arcsec of RA, so RA = 150 - 0.00556. Forgetting cos(Dec) gives 149.99722.",
+  "source": "Lesson 8 code (pixel_to_sky)"
+ },
+ {
+  "id": "as-L200-019",
+  "level": "L200",
+  "lesson": 8,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "A collaborator sends a tile-compressed FITS file with BSCALE/BZERO and an image extension. What should you read it with?",
+  "options": [
+   "astropy.io.fits; the minimal reader handles one plain primary HDU only",
+   "fitslite.read_fits after renaming it to .fits",
+   "fitslite.read_fits with '<f4' as the dtype so the compressed bytes decode",
+   "Any text editor, since FITS headers are ASCII"
+  ],
+  "answer": 0,
+  "explanation": "The lesson's reader skips extensions, compression, BSCALE/BZERO and SIP; astropy handles them. Changing byte order or the file name does not decompress data.",
+  "source": "Lesson 8 caution"
+ },
+ {
+  "id": "as-L200-020",
+  "level": "L200",
+  "lesson": 9,
+  "type": "calculation",
+  "difficulty": 1,
+  "question": "A star is measured with SNR = 50. What is its magnitude error?",
+  "options": [
+   "0.0200 mag",
+   "0.0500 mag",
+   "0.1535 mag",
+   "0.0217 mag"
+  ],
+  "answer": 3,
+  "explanation": "sigma_m = 2.5 / ln(10) / SNR = 1.0857 / SNR. Using 2.5 / SNR forgets that the derivative of log10 brings in 1/ln(10).",
+  "source": "Lesson 9 concepts"
+ },
+ {
+  "id": "as-L200-021",
+  "level": "L200",
+  "lesson": 9,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Using the CCD equation without the sky-estimate term, what SNR does a star with net 3000 e- get in an r = 6 px aperture (npix = pi r^2), sky 100 e-/px and read noise 5 e-?",
+  "options": [
+   "54.8",
+   "25.1",
+   "24.6",
+   "22.9"
+  ],
+  "answer": 3,
+  "explanation": "noise = sqrt(N + npix (sky + RN^2)); here the sky in 113 pixels dominates. sqrt(3000) alone ignores sky and read noise, and adding RN instead of RN^2 mixes units.",
+  "source": "Lesson 9 codeWalkthrough (CCD equation)"
+ },
+ {
+  "id": "as-L200-022",
+  "level": "L200",
+  "lesson": 9,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "For a circular Gaussian PSF with sigma = 1.5 px, what fraction of the flux falls inside a radius of 3 px?",
+  "options": [
+   "0.6827",
+   "0.8647",
+   "0.9545",
+   "0.3935"
+  ],
+  "answer": 1,
+  "explanation": "For a 2-D Gaussian the enclosed fraction is 1 - exp(-r^2 / 2 sigma^2) = 0.8647 at r = 2 sigma. 0.9545 is the 1-D 2-sigma value, which does not apply in two dimensions.",
+  "source": "Lesson 9 code (aperture fraction print)"
+ },
+ {
+  "id": "as-L200-023",
+  "level": "L200",
+  "lesson": 9,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print (sub-pixel weights vs whole-pixel count for r = 6)?",
+  "code": "import numpy as np\ndef aperture_weights(n, x0, y0, r, sub=5):\n    off = (np.arange(sub) + 0.5) / sub - 0.5\n    yy, xx = np.mgrid[0:n, 0:n]\n    w = sum(((xx + dx - x0) ** 2 + (yy + dy - y0) ** 2 <= r * r) for dy in off for dx in off)\n    return w / sub ** 2\nyy, xx = np.mgrid[0:21, 0:21]\nprint(round(float(aperture_weights(21, 10, 10, 6).sum()), 2), int(((xx - 10) ** 2 + (yy - 10) ** 2 <= 36).sum()))",
+  "options": [
+   "113.1 113",
+   "113 113",
+   "112.84 121",
+   "112.84 113"
+  ],
+  "answer": 3,
+  "explanation": "Sub-sampling each pixel 5 x 5 weights edge pixels by the fraction inside the circle, so the sum approaches pi r^2 = 113.1; counting whole pixel centres gives an integer.",
+  "source": "Lesson 9 codeWalkthrough (aperture_weights)"
+ },
+ {
+  "id": "as-L200-024",
+  "level": "L200",
+  "lesson": 9,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does the lab estimate the sky with the median of the annulus rather than the mean?",
+  "options": [
+   "The median is faster to compute on a GPU",
+   "A neighbour star in the annulus pulls the mean up but barely moves the median",
+   "The mean is biased low by read noise",
+   "The median also removes the star's own light that leaks into the aperture from its wings"
+  ],
+  "answer": 1,
+  "explanation": "A few bright pixels from a neighbour shift the mean but not the median, so the sky stays robust. Read noise is symmetric and does not bias the mean.",
+  "source": "Lesson 9 codeWalkthrough (bkg = np.median)"
+ },
+ {
+  "id": "as-L200-025",
+  "level": "L200",
+  "lesson": 9,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why can a smaller aperture give a better SNR for a faint star?",
+  "options": [
+   "Smaller apertures collect more photons per pixel",
+   "The CCD equation has no sky term inside small apertures",
+   "It drops outer pixels that add more sky and read noise than starlight",
+   "Read noise falls with the square of the radius"
+  ],
+  "answer": 2,
+  "explanation": "In the wings each pixel adds sky + read-noise variance but little signal, so excluding them improves SNR. The cost is a flux loss that needs an aperture correction.",
+  "source": "Lesson 9 checkYourself"
+ },
+ {
+  "id": "as-L200-026",
+  "level": "L200",
+  "lesson": 9,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "Your faintest star's net flux comes out at -40 e- +/- 60 e-. A teammate wants to clip it to zero. What do you do?",
+  "options": [
+   "Clip to zero, since flux cannot be negative",
+   "Report the negative value with its error; it is normal at low SNR",
+   "Discard the star from the catalogue",
+   "Double the aperture radius until the measured flux becomes positive"
+  ],
+  "answer": 1,
+  "explanation": "Noise can push a measured flux below zero, and clipping biases faint-star averages. The honest answer is the value with its uncertainty.",
+  "source": "Lesson 9 troubleshooting"
+ },
+ {
+  "id": "as-L200-027",
+  "level": "L200",
+  "lesson": 9,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "Every star's measured flux is a few percent below its true value, independent of brightness. What is the likely cause?",
+  "options": [
+   "The sky annulus is too far from the star, so it underestimates the sky right next to the star",
+   "The gain is set to 1 e-/ADU",
+   "The aperture is too small for the PSF; enlarge it or apply an aperture correction",
+   "The SNR formula omits read noise"
+  ],
+  "answer": 2,
+  "explanation": "A fixed fractional loss for every star points to light outside the aperture. Noise terms change errors, not the mean flux.",
+  "source": "Lesson 9 troubleshooting"
+ },
+ {
+  "id": "as-L200-028",
+  "level": "L200",
+  "lesson": 9,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "You move from the lab's synthetic image to a real CCD frame straight off the camera. What must happen before aperture photometry?",
+  "options": [
+   "Nothing; the CCD equation already includes calibration",
+   "Convert the image to 8-bit PNG",
+   "Subtract the median of the whole image only",
+   "Bias, dark and flat calibration (lesson 13)"
+  ],
+  "answer": 3,
+  "explanation": "The synthetic image has a known PSF and gain; real frames carry bias, dark current and pixel-to-pixel sensitivity that must be removed first. A single median subtraction leaves the flat-field pattern.",
+  "source": "Lesson 9 caution"
+ },
+ {
+  "id": "as-L200-029",
+  "level": "L200",
+  "lesson": 10,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does the lab use a Lomb-Scargle periodogram rather than a plain FFT?",
+  "options": [
+   "The FFT cannot handle magnitudes, only fluxes",
+   "Lomb-Scargle is the only method that finds transits",
+   "The samples are unevenly spaced, with nightly and cloudy gaps",
+   "An FFT needs at least 30 nights of data"
+  ],
+  "answer": 2,
+  "explanation": "Lomb-Scargle fits a sine at each trial frequency to irregular times; an FFT assumes even sampling. It is in fact poor at transits, which is the lesson's other point.",
+  "source": "Lesson 10 concepts"
+ },
+ {
+  "id": "as-L200-030",
+  "level": "L200",
+  "lesson": 10,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A variable has a true period of 0.5671 d, observed from a single site. At what period does the f - 1 cycle/day alias appear?",
+  "options": [
+   "0.3619 d",
+   "1.3100 d",
+   "1.1342 d",
+   "1.5671 d"
+  ],
+  "answer": 1,
+  "explanation": "f = 1.7634 c/d, so f - 1 = 0.7634 c/d, i.e. 1.3100 d (the lab's peak sits at 1.3074 d). Aliases are spaced in frequency, not by adding a day to the period.",
+  "source": "Lesson 10 expectedResults and checkYourself"
+ },
+ {
+  "id": "as-L200-031",
+  "level": "L200",
+  "lesson": 10,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The transit star (1 % deep, 2.4 h long, P = 3.2127 d) shows only power 0.032 in Lomb-Scargle. Why?",
+  "options": [
+   "Its period is outside the frequency grid",
+   "1 % is below the photometric noise",
+   "Lomb-Scargle ignores dips and sees only brightenings",
+   "A short box-shaped dip projects poorly onto any sine"
+  ],
+  "answer": 3,
+  "explanation": "Lomb-Scargle measures variance explained by a sinusoid; a brief box spreads power over many harmonics. Box searches (BLS) are built for transits.",
+  "source": "Lesson 10 expectedResults and concepts"
+ },
+ {
+  "id": "as-L200-032",
+  "level": "L200",
+  "lesson": 10,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "The transit star's best Lomb-Scargle peak (0.3211 d) has a bootstrap FAP of 0.010. Is 0.3211 d the planet's period?",
+  "options": [
+   "No: a low FAP shows something periodic, not that a sine is the right model",
+   "Yes: FAP 0.010 means 99 % confidence in the period",
+   "Yes, after doubling it to 0.6422 d",
+   "No: FAP must be exactly 0 for a real planet"
+  ],
+  "answer": 0,
+  "explanation": "A low FAP rejects pure noise but cannot say the model is right; the true period is 3.2127 d. Doubling is the eclipsing-binary trick, not a general fix.",
+  "source": "Lesson 10 checkYourself"
+ },
+ {
+  "id": "as-L200-033",
+  "level": "L200",
+  "lesson": 10,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "Five of 100 points are 0.01 mag fainter (an in-transit dip in magnitudes). What does this skewness print?",
+  "code": "import numpy as np\ny = np.array([0.0] * 95 + [0.01] * 5)\nd = y - y.mean()\nprint(round(float((d ** 3).mean() / (d ** 2).mean() ** 1.5), 2))",
+  "options": [
+   "0.0",
+   "0.41",
+   "4.13",
+   "0.05"
+  ],
+  "answer": 2,
+  "explanation": "Rare one-sided excursions to larger magnitudes give a large positive skew; a symmetric pulsation would be near 0. The lab uses this to tell transits from variables.",
+  "source": "Lesson 10 code (skewness)"
+ },
+ {
+  "id": "as-L200-034",
+  "level": "L200",
+  "lesson": 10,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "Your periodogram's best period is 1.31 d, but a colleague with a second site finds 0.567 d. How do you check which is real?",
+  "options": [
+   "Trust the higher-power peak; with clouds removed it is always the true period",
+   "Average the two periods",
+   "Remove every second night and rerun",
+   "Phase-fold at both f and f +/- 1 cycle/day and compare the folded curves"
+  ],
+  "answer": 3,
+  "explanation": "Daily sampling makes f and |f - 1| fit the same points almost equally; folding shows which gives a clean curve. Peak height alone cannot break an alias.",
+  "source": "Lesson 10 troubleshooting"
+ },
+ {
+  "id": "as-L200-035",
+  "level": "L200",
+  "lesson": 10,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "Your numpy Lomb-Scargle takes minutes on a survey light curve with 50,000 points. What is the right move?",
+  "options": [
+   "Lower the oversampling to 1 so peaks are found faster",
+   "Use astropy's fast method; the cost grows as N x number of frequencies",
+   "Delete half the points at random",
+   "Switch the period range to 0.1-0.2 d only"
+  ],
+  "answer": 1,
+  "explanation": "The direct sum costs N x frequencies; fast O(N log N) implementations exist. Cutting oversampling risks missing narrow peaks.",
+  "source": "Lesson 10 troubleshooting"
+ },
+ {
+  "id": "as-L200-036",
+  "level": "L200",
+  "lesson": 10,
+  "type": "design",
+  "difficulty": 3,
+  "question": "You can add a second telescope to reduce aliasing. Where should it be?",
+  "options": [
+   "At a very different longitude, so nights fill the daily gaps",
+   "Next to the first one, to double the signal",
+   "At the same longitude but in the other hemisphere",
+   "Anywhere, as long as it observes on the same nights at the same hours"
+  ],
+  "answer": 0,
+  "explanation": "The 1-day alias comes from the daily sampling pattern; observing when the first site is in daylight breaks it. A co-located telescope improves SNR but keeps the same window function.",
+  "source": "Lesson 10 checkYourself and codeWalkthrough (sample_times)"
+ },
+ {
+  "id": "as-L200-037",
+  "level": "L200",
+  "lesson": 10,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "analyse() reports a 'second' period by skipping every peak within 5 % of the best one. Why?",
+  "options": [
+   "Neighbouring grid points are the same peak; the next distinct one is the real rival",
+   "Peaks within 5 % are always noise and must be deleted",
+   "The 5 % rule removes the 1-day alias automatically, so the second peak is always a clean one",
+   "It makes the periodogram run 5 % faster"
+  ],
+  "answer": 0,
+  "explanation": "With 10x oversampling each peak spans several grid points, so the runner-up would just be the same peak. Skipping them exposes the alias at 1.3074 d instead of hiding it.",
+  "source": "Lesson 10 codeWalkthrough (analyse)"
+ },
+ {
+  "id": "as-L200-038",
+  "level": "L200",
+  "lesson": 11,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why is total energy a good test oracle for an N-body integrator?",
+  "options": [
+   "The physics conserves it exactly, so any change is integrator error",
+   "It is the only quantity numpy can compute exactly",
+   "It decreases at a known rate per orbit",
+   "It needs a reference ephemeris to compare with"
+  ],
+  "answer": 0,
+  "explanation": "With no external forces energy is conserved, so its drift measures numerical error without any reference solution. That is exactly why no ephemeris is needed.",
+  "source": "Lesson 11 checkYourself"
+ },
+ {
+  "id": "as-L200-039",
+  "level": "L200",
+  "lesson": 11,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Leapfrog shows |dE/E| = 4e-10 at dt = 0.002 yr. If you halve the step to 0.001 yr, what do you expect?",
+  "options": [
+   "1e-10",
+   "2e-10",
+   "4e-10",
+   "3e-11"
+  ],
+  "answer": 0,
+  "explanation": "Leapfrog is second order, so its energy error scales as dt^2: halving dt divides it by 4. Halving the error is Euler's first-order behaviour.",
+  "source": "Lesson 11 troubleshooting"
+ },
+ {
+  "id": "as-L200-040",
+  "level": "L200",
+  "lesson": 11,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "A test particle on a circular 1-au orbit is integrated for one year. What does this snippet print?",
+  "code": "import numpy as np\nG = 4 * np.pi ** 2\nacc = lambda r: -G * r / np.linalg.norm(r) ** 3\nenergy = lambda r, v: 0.5 * v @ v - G / np.linalg.norm(r)\nfor name in (\"euler\", \"leapfrog\"):\n    r, v, dt = np.array([1.0, 0.0]), np.array([0.0, 2 * np.pi]), 0.001\n    e0 = energy(r, v)\n    for _ in range(1000):\n        if name == \"euler\":\n            r, v = r + v * dt, v + acc(r) * dt\n        else:\n            v = v + 0.5 * dt * acc(r); r = r + dt * v; v = v + 0.5 * dt * acc(r)\n    print(name, f\"{abs(energy(r, v) / e0 - 1):.3f}\")",
+  "options": [
+   "euler 0.000 | leapfrog 0.000",
+   "euler 0.068 | leapfrog 0.000",
+   "euler 0.000 | leapfrog 0.068",
+   "euler 0.682 | leapfrog 0.068"
+  ],
+  "answer": 1,
+  "explanation": "Euler updates both position and velocity from the old state and gains energy every step; kick-drift-kick leapfrog is symplectic and stays bounded.",
+  "source": "Lesson 11 code (step_euler, step_leapfrog)"
+ },
+ {
+  "id": "as-L200-041",
+  "level": "L200",
+  "lesson": 11,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print? (It is the pairwise trick from accelerations().)",
+  "code": "import numpy as np\npos = np.array([[0.0, 0, 0], [1.0, 0, 0]])\nd = pos[None, :, :] - pos[:, None, :]\nprint(d[0, 1].tolist(), d[1, 0].tolist())",
+  "options": [
+   "[1.0, 0.0, 0.0] [0.0, 0.0, 0.0]",
+   "[0.0, 0.0, 0.0] [0.0, 0.0, 0.0]",
+   "[1.0, 0.0, 0.0] [-1.0, 0.0, 0.0]",
+   "[0.0, 0.0, 0.0] [-1.0, 0.0, 0.0]"
+  ],
+  "answer": 2,
+  "explanation": "d[i, j] = r_j - r_i, so d[0, 1] points from body 0 to body 1 and d[1, 0] is its negative. All pairs come out of one broadcast, with no Python loop.",
+  "source": "Lesson 11 codeWalkthrough"
+ },
+ {
+  "id": "as-L200-042",
+  "level": "L200",
+  "lesson": 11,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "accelerations() prints 'RuntimeWarning: divide by zero' and returns NaN. What fixes it?",
+  "options": [
+   "Use float32 instead of float64",
+   "Add np.eye(N) to the r^3 matrix (or mask the diagonal)",
+   "Start the Sun 1 au from the origin",
+   "Halve the time step"
+  ],
+  "answer": 1,
+  "explanation": "The diagonal separations are zero, giving 0/0 for the self-force. Adding the identity makes the denominator 1 there, and the numerator is zero anyway.",
+  "source": "Lesson 11 troubleshooting and codeWalkthrough"
+ },
+ {
+  "id": "as-L200-043",
+  "level": "L200",
+  "lesson": 11,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "With Euler, the total energy changed only 1.2 %, yet Earth drifted to 1.55 au. How can both be true?",
+  "options": [
+   "Jupiter dominates the total energy, hiding Earth's large error",
+   "Energy is not conserved for three bodies",
+   "Earth's orbit is chaotic on a 12-year scale",
+   "The centre of mass moved by 0.55 au"
+  ],
+  "answer": 0,
+  "explanation": "Jupiter's mass is ~300x Earth's, so a large relative error in Earth's orbit barely moves the total. Check per-body quantities too.",
+  "source": "Lesson 11 checkYourself"
+ },
+ {
+  "id": "as-L200-044",
+  "level": "L200",
+  "lesson": 11,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The shipped start puts the Sun at rest at the origin while Jupiter and Earth move. Why does the whole system drift unless you move to the barycentric frame?",
+  "options": [
+   "Leapfrog adds a small spurious velocity to every body at each step",
+   "Jupiter's orbit is not exactly circular",
+   "G = 4 pi^2 is only approximate",
+   "The total momentum is not zero, so the centre of mass coasts"
+  ],
+  "answer": 3,
+  "explanation": "With the Sun at rest, the planets' momenta are unbalanced, so the centre of mass coasts (about 0.03 au in 12 years). Subtracting the centre-of-mass position and velocity removes it.",
+  "source": "Lesson 11 concepts and expectedResults"
+ },
+ {
+  "id": "as-L200-045",
+  "level": "L200",
+  "lesson": 11,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does Euler's energy error keep growing while leapfrog's stays bounded?",
+  "options": [
+   "Leapfrog uses a smaller time step internally",
+   "Euler ignores Jupiter's mass",
+   "Leapfrog renormalises the total energy back to its start value every step",
+   "Leapfrog is symplectic and time-reversible; Euler uses only the old state"
+  ],
+  "answer": 3,
+  "explanation": "Kick-drift-kick preserves the phase-space structure, so energy oscillates instead of drifting. Leapfrog uses the same dt and never rescales energy.",
+  "source": "Lesson 11 concepts and codeWalkthrough"
+ },
+ {
+  "id": "as-L200-046",
+  "level": "L200",
+  "lesson": 11,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "Why does the N-body lab work in au, years and solar masses?",
+  "options": [
+   "G becomes 4 pi^2 and positions, speeds and masses are numbers near 1",
+   "Numpy cannot store numbers larger than 1e10",
+   "SI units would break energy conservation",
+   "Kepler's third law only holds in these units"
+  ],
+  "answer": 0,
+  "explanation": "In these units Earth's orbit has r = 1 and v = 2 pi, which keeps numbers readable and errors easy to judge. Physics laws hold in any consistent unit system.",
+  "source": "Lesson 11 code docstring"
+ }
+]

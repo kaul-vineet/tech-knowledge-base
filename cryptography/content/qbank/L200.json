@@ -1,0 +1,726 @@
+[
+  {
+    "id": "cr-L200-001",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is it safe to publish release.pub on the project website?",
+    "options": [
+      "The public key is encrypted with the private key",
+      "Verifying needs only the public key; signing needs the private key",
+      "Ed25519 public keys expire after one release",
+      "Verifiers must also hold a shared secret, so the public key alone is useless"
+    ],
+    "answer": 1,
+    "explanation": "Signatures use a key pair: the private key signs and the public key only verifies, with no shared secret. Publishing the public key lets anyone verify but nobody sign.",
+    "source": "Lesson 7 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L200-002",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "You sign the same file twice with the same Ed25519 key and get identical signatures. What does this mean?",
+    "options": [
+      "Nothing is wrong: Ed25519 signatures are deterministic",
+      "The random generator is broken and must be reseeded",
+      "The second signature reused a nonce and so leaks the private key",
+      "The file was not read, so an empty input was signed"
+    ],
+    "answer": 0,
+    "explanation": "RFC 8032 Ed25519 derives its per-signature value from the key and message, so equal inputs give equal signatures. Nonce-reuse worries apply to randomised schemes like ECDSA.",
+    "source": "Lesson 7 checkYourself"
+  },
+  {
+    "id": "cr-L200-003",
+    "level": "L200",
+    "lesson": 7,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "What are the raw sizes of an Ed25519 private key, public key and signature?",
+    "options": [
+      "private 64 B, public 32 B, signature 64 B",
+      "private 32 B, public 64 B, signature 32 B",
+      "private 32 B, public 32 B, signature 32 B",
+      "private 32 B, public 32 B, signature 64 B"
+    ],
+    "answer": 3,
+    "explanation": "Ed25519 uses 32-byte keys and 64-byte signatures. The 64-byte private size comes from formats that store seed and public key together.",
+    "source": "Lesson 7 concepts / expectedResults"
+  },
+  {
+    "id": "cr-L200-004",
+    "level": "L200",
+    "lesson": 7,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "The lab saves the Ed25519 private key as PEM (PKCS#8, unencrypted) and the public key as PEM (SubjectPublicKeyInfo). How large are the two files?",
+    "options": [
+      "private 32 B, public 32 B",
+      "private 113 B, public 119 B",
+      "private 119 B, public 113 B",
+      "private 64 B, public 44 B"
+    ],
+    "answer": 2,
+    "explanation": "PEM adds an ASN.1 wrapper, base64 and header lines around the 32 raw bytes: 119 B private and 113 B public. 44 B is the DER public key without PEM armour.",
+    "source": "Lesson 7 expectedResults"
+  },
+  {
+    "id": "cr-L200-005",
+    "level": "L200",
+    "lesson": 7,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "from cryptography.exceptions import InvalidSignature\nfrom cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey\nk = Ed25519PrivateKey.generate()\nsig = k.sign(b\"app-1.0.tar.gz bytes\")\ntry:\n    k.public_key().verify(sig, b\"app-1.0.tar.gz bytez\")\n    print(\"valid\")\nexcept InvalidSignature:\n    print(\"InvalidSignature\")",
+    "options": [
+      "valid",
+      "InvalidSignature",
+      "ValueError",
+      "valid (with a warning)"
+    ],
+    "answer": 1,
+    "explanation": "The signature covers every byte; changing 's' to 'z' makes verify() raise InvalidSignature. Verification never returns a 'nearly valid' result.",
+    "source": "Lesson 7 concepts"
+  },
+  {
+    "id": "cr-L200-006",
+    "level": "L200",
+    "lesson": 7,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "release.pub is a PEM file. Why does this raise ValueError?",
+    "code": "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey\nwith open(\"release.pub\", \"rb\") as f:\n    pub = Ed25519PublicKey.from_public_bytes(f.read())",
+    "options": [
+      "The file must be opened in text mode for PEM",
+      "Ed25519 public keys must be base64-decoded twice",
+      "The private key is needed to load a public key",
+      "from_public_bytes wants 32 raw bytes; use load_pem_public_key for PEM"
+    ],
+    "answer": 3,
+    "explanation": "PEM and raw formats are different: from_public_bytes takes exactly 32 raw bytes, while a PEM file needs serialization.load_pem_public_key. Text mode would make things worse.",
+    "source": "Lesson 7 troubleshooting"
+  },
+  {
+    "id": "cr-L200-007",
+    "level": "L200",
+    "lesson": 7,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Release signatures verify on macOS and Linux but fail only on Windows. What is the most likely cause?",
+    "options": [
+      "Files are read or written in text mode, which changes line endings",
+      "Windows uses a different Ed25519 curve",
+      "Windows needs the signature in PEM form, not as 64 raw bytes on disk",
+      "Windows clocks make signatures expire early"
+    ],
+    "answer": 0,
+    "explanation": "Text mode on Windows translates line endings, so the verified bytes differ from the signed bytes; use 'rb'/'wb'. Ed25519 is the same everywhere and signatures do not expire.",
+    "source": "Lesson 7 troubleshooting"
+  },
+  {
+    "id": "cr-L200-008",
+    "level": "L200",
+    "lesson": 7,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A CI job signs releases and thousands of users verify them. Where should each key live?",
+    "options": [
+      "Both keys committed to the repo so builds are reproducible",
+      "Private key in CI secrets or an HSM; public key shipped with the installer",
+      "Private key shipped with the installer so users can re-sign",
+      "Public key kept secret in CI; private key published so that anyone can audit releases"
+    ],
+    "answer": 1,
+    "explanation": "Only the signer needs the private key, so keep it in a protected store; verifiers only need the public key. Committing or shipping the private key lets anyone sign.",
+    "source": "Lesson 7 caution / L300 lesson 14 caution"
+  },
+  {
+    "id": "cr-L200-009",
+    "level": "L200",
+    "lesson": 8,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "seal() returns ephemeral public key || ChaCha20-Poly1305 ciphertext with tag. How long is the blob for the 29-byte message 'db password rotation at 02:00'?",
+    "options": [
+      "77 bytes",
+      "61 bytes",
+      "45 bytes",
+      "89 bytes"
+    ],
+    "answer": 0,
+    "explanation": "32 bytes of ephemeral X25519 public key + 29 bytes of ciphertext + 16-byte tag = 77; the zero nonce is not stored. 89 wrongly adds a 12-byte nonce.",
+    "source": "Lesson 8 expectedResults"
+  },
+  {
+    "id": "cr-L200-010",
+    "level": "L200",
+    "lesson": 8,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Using the RFC 7748 §6.1 test keys, what does this print?",
+    "code": "from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey\na = X25519PrivateKey.from_private_bytes(bytes.fromhex(\n    \"77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a\"))\nB = X25519PublicKey.from_public_bytes(bytes.fromhex(\n    \"de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f\"))\nprint(a.exchange(B)[:4].hex())",
+    "options": [
+      "8520f009",
+      "4a5d9d5b",
+      "de9edb7d",
+      "00000000"
+    ],
+    "answer": 1,
+    "explanation": "X25519(a, B) gives the shared secret K = 4a5d9d5b... from the RFC. 8520f009 and de9edb7d are the start of Alice's and Bob's public keys, not the secret.",
+    "source": "Lesson 8 code (RFC 7748 vector)"
+  },
+  {
+    "id": "cr-L200-011",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does seal_box run the X25519 output through HKDF instead of using it as the AEAD key?",
+    "options": [
+      "The raw DH output is not a uniform key; HKDF derives one bound to context",
+      "X25519 outputs 64 bytes and the AEAD needs 32",
+      "HKDF encrypts the shared secret for transport",
+      "HKDF makes the exchange quantum-resistant"
+    ],
+    "answer": 0,
+    "explanation": "A KDF turns the shared secret into a proper key and binds it to the salt (both public keys) and info label. X25519 already outputs 32 bytes, and HKDF adds no quantum resistance.",
+    "source": "Lesson 8 concepts"
+  },
+  {
+    "id": "cr-L200-012",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Lesson 4 forbids fixed nonces, yet seal_box uses an all-zero nonce. Why is that safe here?",
+    "options": [
+      "ChaCha20-Poly1305 does not use its nonce input",
+      "The 16-byte tag protects against nonce reuse",
+      "Each message gets a fresh derived key, so (key, nonce) never repeats",
+      "HKDF scrambles the nonce before encryption"
+    ],
+    "answer": 2,
+    "explanation": "The danger is reusing a (key, nonce) pair; a new ephemeral key per message gives a new key every time. Tags do not prevent damage from nonce reuse.",
+    "source": "Lesson 8 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L200-013",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Bob opens a sealed message with his private key. What does that tell him about the sender?",
+    "options": [
+      "It came from whoever holds the ephemeral private key on file",
+      "It came from someone in his contact list",
+      "Nothing: anyone with his public key could have sealed it",
+      "It came from Alice, because X25519 authenticates both sides"
+    ],
+    "answer": 2,
+    "explanation": "Sealing only needs Bob's public key, so it gives confidentiality, not sender authentication; add a signature for that. The ephemeral key is thrown away and identifies nobody.",
+    "source": "Lesson 8 checkYourself"
+  },
+  {
+    "id": "cr-L200-014",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Opening a message raises ValueError: Error computing shared key. What does this tell you?",
+    "options": [
+      "Bob's private key file is corrupt and must be regenerated",
+      "The peer public key is a small-order point (e.g. all zeros); reject the message",
+      "The HKDF info label differs between sender and receiver",
+      "The ciphertext was truncated in transit"
+    ],
+    "answer": 1,
+    "explanation": "An all-zero or small-order public key gives a zero shared secret, which the library and lab refuse. A wrong info label shows up later as InvalidTag, not at the exchange.",
+    "source": "Lesson 8 troubleshooting"
+  },
+  {
+    "id": "cr-L200-015",
+    "level": "L200",
+    "lesson": 8,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "The sender and receiver were updated separately. Why does the right recipient now get InvalidTag?",
+    "code": "# sender (old build)\nINFO = b\"kb-crypto-l200/v1/X25519\"\n# receiver (new build)\nINFO = b\"kb-crypto-l200/v2/X25519\"\n# both: HKDF(SHA256(), 32, salt=eph_pub + rcpt_pub, info=INFO).derive(shared)",
+    "options": [
+      "The receiver must use the sender's private key",
+      "The two sides use different HKDF info labels, so they derive different keys",
+      "HKDF salt must be random, not the public keys",
+      "ChaCha20-Poly1305 cannot decrypt with a zero nonce"
+    ],
+    "answer": 1,
+    "explanation": "Both sides must derive the key with the same salt and INFO label; any difference gives a different key and InvalidTag. Binding the public keys as salt is deliberate.",
+    "source": "Lesson 8 troubleshooting"
+  },
+  {
+    "id": "cr-L200-016",
+    "level": "L200",
+    "lesson": 8,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "To save CPU, a sender generates one ephemeral key at start-up and reuses it for every message, still with the zero nonce. What breaks?",
+    "options": [
+      "Nothing, because HKDF output differs per message",
+      "Only performance, since key generation is cheap anyway in X25519",
+      "Messages to the same recipient reuse one (key, nonce) pair",
+      "Only forward secrecy for the sender's long-term key"
+    ],
+    "answer": 2,
+    "explanation": "Same ephemeral key and same recipient give the same derived key, and the nonce is fixed, so the nonce-reuse failures from lesson 4 return. HKDF inputs are identical, so its output is too.",
+    "source": "Lesson 8 concepts"
+  },
+  {
+    "id": "cr-L200-017",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What is a certificate, at its core?",
+    "options": [
+      "An encrypted copy of the server's private key",
+      "The CA's signature over a name, a public key, validity dates and usage",
+      "A random token the CA issues to each server",
+      "A hash of the server's private key and hostname"
+    ],
+    "answer": 1,
+    "explanation": "A certificate binds a name and public key with dates and usage, signed by the issuer. It never contains the private key.",
+    "source": "Lesson 9 concepts"
+  },
+  {
+    "id": "cr-L200-018",
+    "level": "L200",
+    "lesson": 9,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A certificate has CN=api.local but its SAN lists only localhost. A client connects to api.local. What happens?",
+    "options": [
+      "It verifies, because the CN matches the hostname being dialled",
+      "It verifies, because SAN entries are only hints",
+      "Verification fails: verifiers match the hostname against the SAN",
+      "It verifies with a warning about the CN"
+    ],
+    "answer": 2,
+    "explanation": "Modern verifiers match names against the SAN extension and ignore the CN. Matching the CN is a legacy behaviour.",
+    "source": "Lesson 9 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L200-019",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Path validation checks more than signatures. Which list matches the lesson?",
+    "options": [
+      "Signatures only, since dates and names are checked by the server",
+      "The leaf's signature and its key size only",
+      "Signatures, dates, extensions and name, against a trust store",
+      "Name and dates; signatures are checked by DNS"
+    ],
+    "answer": 2,
+    "explanation": "A chain is valid only if every signature verifies, every certificate is in date, extensions such as BasicConstraints and KeyUsage fit, and the name matches.",
+    "source": "Lesson 9 concepts"
+  },
+  {
+    "id": "cr-L200-020",
+    "level": "L200",
+    "lesson": 9,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Building a chain to the lab root fails with 'Certificate is missing required extension'. What is the fix?",
+    "options": [
+      "Remove BasicConstraints from the CA certificate so it can sign leaves",
+      "Add the root certificate's SAN to the leaf",
+      "Add a critical KeyUsage extension to the CA certificate",
+      "Make the leaf certificate's validity longer"
+    ],
+    "answer": 2,
+    "explanation": "The verifier's profile requires a CA certificate with KeyUsage (keyCertSign) marked critical. Removing BasicConstraints would make the CA invalid instead.",
+    "source": "Lesson 9 troubleshooting"
+  },
+  {
+    "id": "cr-L200-021",
+    "level": "L200",
+    "lesson": 9,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A brand-new certificate fails with 'cert is not valid at validation time'. What is the likely cause?",
+    "options": [
+      "The CA used the wrong signature hash",
+      "The certificate has already expired and must be reissued by the CA",
+      "The checking machine's clock is behind not_valid_before",
+      "The SAN contains an IP address"
+    ],
+    "answer": 2,
+    "explanation": "A new cert fails this way when the verifier's clock is earlier than notBefore; fix NTP or backdate notBefore a few minutes. An expiry problem needs an old certificate.",
+    "source": "Lesson 9 troubleshooting"
+  },
+  {
+    "id": "cr-L200-022",
+    "level": "L200",
+    "lesson": 9,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "The lab's leaf is valid from 2026-10-28 to 2026-11-27. How long is its lifetime?",
+    "options": [
+      "30 days",
+      "31 days",
+      "28 days",
+      "1 month and 1 day"
+    ],
+    "answer": 0,
+    "explanation": "Subtracting the dates gives 30 days (October has 31 days, so 28 Oct + 30 days = 27 Nov). A short lifetime limits damage from a leaked key.",
+    "source": "Lesson 9 expectedResults"
+  },
+  {
+    "id": "cr-L200-023",
+    "level": "L200",
+    "lesson": 9,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A simplified diagnose() from the lab classifies a time check. What does this print?",
+    "code": "def diagnose(now, not_before, not_after):\n    if now < not_before:\n        return \"NOT_YET_VALID\"\n    if now > not_after:\n        return \"EXPIRED\"\n    return \"OK\"\n\nprint(diagnose(100, 105, 200))",
+    "options": [
+      "EXPIRED",
+      "OK",
+      "None",
+      "NOT_YET_VALID"
+    ],
+    "answer": 3,
+    "explanation": "The check time (100) is before notBefore (105), so the first branch returns NOT_YET_VALID; code decides the label, which is why a clock-skew case is not EXPIRED.",
+    "source": "Lesson 9 checkYourself"
+  },
+  {
+    "id": "cr-L200-024",
+    "level": "L200",
+    "lesson": 9,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "The root (path_length=1) signs an intermediate (path_length=0) that issues the localhost leaf. Verification with only the root in the trust store fails. What is the fix?",
+    "options": [
+      "Set ca=True in the leaf's BasicConstraints so it can chain itself",
+      "Pass the intermediate in intermediates= so the chain can be built",
+      "Raise the intermediate's path_length to 1",
+      "Copy the root's subject into the leaf"
+    ],
+    "answer": 1,
+    "explanation": "The verifier needs the intermediate certificate to link leaf to root; it is passed as an untrusted intermediate. Marking the leaf as a CA would make it an invalid end-entity certificate.",
+    "source": "Lesson 9 buildTask (intermediate CA)"
+  },
+  {
+    "id": "cr-L200-025",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does ssl.create_default_context(cafile='pki/ca.pem') give a client?",
+    "options": [
+      "Encryption only, with no certificate checks",
+      "Certificate checks but no hostname check",
+      "Trust in every CA on the system plus the lab CA, with no name check",
+      "CERT_REQUIRED and hostname checking against the lab CA"
+    ],
+    "answer": 3,
+    "explanation": "The default client context requires a valid certificate and checks the hostname; cafile replaces the default trust store. Turning either check off is the common misconfiguration.",
+    "source": "Lesson 10 concepts"
+  },
+  {
+    "id": "cr-L200-026",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In wrap_socket(sock, server_hostname='localhost'), what is server_hostname used for?",
+    "options": [
+      "Only to choose which network interface to dial",
+      "Only for logging; the IP address is verified instead",
+      "To pick the client certificate to send",
+      "It is sent as SNI and is the name checked against the certificate's SAN"
+    ],
+    "answer": 3,
+    "explanation": "server_hostname is both the SNI value and the identity the client verifies. The dialled IP is not what gets checked.",
+    "source": "Lesson 10 concepts"
+  },
+  {
+    "id": "cr-L200-027",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The client dials 127.0.0.1 with server_hostname='localhost'. Which SAN entry must match?",
+    "options": [
+      "IP:127.0.0.1",
+      "DNS:localhost",
+      "Either one; the client tries both",
+      "The certificate's CN"
+    ],
+    "answer": 1,
+    "explanation": "The name checked is server_hostname, not the address dialled, so DNS:localhost counts. The IP entry would matter only if server_hostname were '127.0.0.1'.",
+    "source": "Lesson 10 checkYourself"
+  },
+  {
+    "id": "cr-L200-028",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A client keeps CERT_REQUIRED but sets check_hostname=False. Why is that dangerous?",
+    "options": [
+      "Any certificate from a trusted CA, for any site, is accepted",
+      "Every handshake now fails with a hostname verification error instead",
+      "The connection falls back to plaintext",
+      "Only expired certificates are accepted"
+    ],
+    "answer": 0,
+    "explanation": "Without the name check the client proves only that someone has a trusted certificate, not that it is the right server. Handshakes still succeed, which is why it is easy to miss.",
+    "source": "Lesson 10 checkYourself"
+  },
+  {
+    "id": "cr-L200-029",
+    "level": "L200",
+    "lesson": 10,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A test client gets CERTIFICATE_VERIFY_FAILED against your local TLS server. What is the right fix?",
+    "code": "import requests\nr = requests.get(\"https://localhost:8443/health\")\n# ssl.SSLCertVerificationError: CERTIFICATE_VERIFY_FAILED",
+    "options": [
+      "Pass verify=False in the test client",
+      "Set check_hostname=False in the test client",
+      "Add the server's private key to the client",
+      "Pass the lab CA: verify='pki/ca.pem'"
+    ],
+    "answer": 3,
+    "explanation": "The client does not trust the lab CA yet, so give it that CA file (or REQUESTS_CA_BUNDLE). verify=False silences all checks and hides real attacks.",
+    "source": "Lesson 10 troubleshooting"
+  },
+  {
+    "id": "cr-L200-030",
+    "level": "L200",
+    "lesson": 10,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "import ssl\nctx = ssl.create_default_context()\nprint(ctx.verify_mode == ssl.CERT_REQUIRED, ctx.check_hostname)",
+    "options": [
+      "True True",
+      "False False",
+      "True False",
+      "False True"
+    ],
+    "answer": 0,
+    "explanation": "create_default_context() builds a client context with verify_mode CERT_REQUIRED and check_hostname True. Only server-side contexts default to not checking peers.",
+    "source": "Lesson 10 concepts"
+  },
+  {
+    "id": "cr-L200-031",
+    "level": "L200",
+    "lesson": 10,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A client is REFUSED with verify_code=20: unable to get local issuer certificate. Which misconfiguration is it?",
+    "options": [
+      "The hostname does not match any of the DNS entries in the certificate's SAN",
+      "The server certificate has expired",
+      "The client requested TLS 1.2 instead of 1.3",
+      "The client does not trust the CA that issued the server certificate"
+    ],
+    "answer": 3,
+    "explanation": "Code 20 means the chain cannot reach a trusted root, so the CA file is wrong or missing. A hostname mismatch is code 62.",
+    "source": "Lesson 10 expectedResults"
+  },
+  {
+    "id": "cr-L200-032",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "When certificate verification fails, what has the client sent to the server?",
+    "options": [
+      "The request, but the server's response is discarded",
+      "The request headers but not the body",
+      "No application data: the handshake aborts first",
+      "Everything, encrypted with a fallback key"
+    ],
+    "answer": 2,
+    "explanation": "TLS verifies before the handshake completes, so the connection fails closed before any data. That is why a refused connection never leaks the request.",
+    "source": "Lesson 10 concepts"
+  },
+  {
+    "id": "cr-L200-033",
+    "level": "L200",
+    "lesson": 10,
+    "type": "design",
+    "difficulty": 2,
+    "question": "You extend the TLS server to require client certificates (mTLS). What must the server's context do?",
+    "options": [
+      "Set check_hostname=True and load the server key twice",
+      "Set verify_mode=CERT_REQUIRED and load the CA that issues client certs",
+      "Use the client's private key as the server key",
+      "Accept any client cert and check its CN later"
+    ],
+    "answer": 1,
+    "explanation": "A server only asks for and verifies client certificates when verify_mode is CERT_REQUIRED and it trusts the client CA. Checking a name after accepting any cert skips path validation.",
+    "source": "Lesson 10 overview (mTLS)"
+  },
+  {
+    "id": "cr-L200-034",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Who decides which algorithm is used to verify a token?",
+    "options": [
+      "The verifier, from its own allow-list with one key per algorithm",
+      "The token header, since the issuer chose it",
+      "Whichever algorithm verifies first",
+      "The client, through a request parameter"
+    ],
+    "answer": 0,
+    "explanation": "The header is attacker-controlled, so trusting it enables alg 'none' and key confusion. The verifier keeps its own algorithm-to-key list.",
+    "source": "Lesson 11 concepts"
+  },
+  {
+    "id": "cr-L200-035",
+    "level": "L200",
+    "lesson": 11,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "import base64, json\ndef b64u(d):\n    return base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b\"=\").decode()\ntok = b64u({\"alg\": \"EdDSA\"}) + \".\" + b64u({\"sub\": \"alice\", \"role\": \"user\"}) + \".c2ln\"\np = tok.split(\".\")[1]\nprint(json.loads(base64.urlsafe_b64decode(p + \"=\" * (-len(p) % 4)))[\"role\"])",
+    "options": [
+      "user",
+      "KeyError",
+      "InvalidSignature",
+      "b'c2ln'"
+    ],
+    "answer": 0,
+    "explanation": "The payload is only base64url-encoded, so anyone can read the claims without a key. Signed is not encrypted; never put secrets in claims.",
+    "source": "Lesson 11 concepts"
+  },
+  {
+    "id": "cr-L200-036",
+    "level": "L200",
+    "lesson": 11,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "How many characters is the third (signature) segment of an EdDSA token, base64url-encoded without padding?",
+    "options": [
+      "64 characters",
+      "86 characters",
+      "88 characters",
+      "43 characters"
+    ],
+    "answer": 1,
+    "explanation": "A 64-byte Ed25519 signature is 512 bits; base64url uses 6 bits per character, so ceil(512/6) = 86. 88 would include the two padding characters.",
+    "source": "Lesson 11 code (sign, b64u)"
+  },
+  {
+    "id": "cr-L200-037",
+    "level": "L200",
+    "lesson": 11,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Five internal APIs verify tokens that one issuer creates. Why is HS256 risky here?",
+    "options": [
+      "HS256 tags are too short to resist brute-force forgery by an API",
+      "HS256 cannot carry exp or aud claims",
+      "HS256 tokens can only be verified once",
+      "Every API holds the secret, so any of them could mint tokens"
+    ],
+    "answer": 3,
+    "explanation": "HMAC is symmetric, so every verifier can also sign; one compromised API can forge tokens for all. With EdDSA only the issuer holds the private key.",
+    "source": "Lesson 11 checkYourself"
+  },
+  {
+    "id": "cr-L200-038",
+    "level": "L200",
+    "lesson": 11,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A token's header says EdDSA, but the verifier's keys map contains only HS256. What does the safe verifier do?",
+    "options": [
+      "Rejects it before any cryptography runs",
+      "Tries HS256 with the same key as a fallback",
+      "Verifies with EdDSA using the HS256 secret",
+      "Accepts it if the claims are still valid"
+    ],
+    "answer": 0,
+    "explanation": "An algorithm that is not in the allow-list is rejected immediately. Falling back to another algorithm is exactly the confusion attack the rule prevents.",
+    "source": "Lesson 11 checkYourself"
+  },
+  {
+    "id": "cr-L200-039",
+    "level": "L200",
+    "lesson": 11,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "PyJWT raised 'The specified alg value is not allowed', so a developer 'fixed' it like this. What is wrong?",
+    "code": "import jwt\n\ndef verify(token, key):\n    alg = jwt.get_unverified_header(token)[\"alg\"]\n    return jwt.decode(token, key, algorithms=[alg], audience=\"orders-api\")",
+    "options": [
+      "get_unverified_header contacts the issuer and is slow",
+      "jwt.decode needs the private key, not the public key",
+      "algorithms= must be a string, not a list",
+      "algorithms= is read from the token, so the attacker picks the algorithm"
+    ],
+    "answer": 3,
+    "explanation": "Pass a fixed list of the algorithms your issuer uses, never one read from the token. Reading the header itself is fine; letting it choose the algorithm is the bug.",
+    "source": "Lesson 11 troubleshooting"
+  },
+  {
+    "id": "cr-L200-040",
+    "level": "L200",
+    "lesson": 11,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The verifier allows 30 s of clock-skew leeway. What does this print?",
+    "code": "def expired(now, exp, leeway=30):\n    return now > exp + leeway\n\nprint(expired(1_000_050, 1_000_000), expired(1_000_020, 1_000_000))",
+    "options": [
+      "True True",
+      "False False",
+      "True False",
+      "False True"
+    ],
+    "answer": 2,
+    "explanation": "50 s past exp is beyond the 30 s leeway, so it is expired; 20 s past exp is inside the leeway. Keep leeway in seconds, not hours.",
+    "source": "Lesson 11 code (verify)"
+  },
+  {
+    "id": "cr-L200-041",
+    "level": "L200",
+    "lesson": 11,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Tokens are rejected as 'not yet valid' right after they are issued. What should you do?",
+    "options": [
+      "Sync the clocks with NTP and keep the leeway at a few seconds",
+      "Raise the leeway to 12 hours",
+      "Stop checking nbf and exp",
+      "Switch the issuer to HS256"
+    ],
+    "answer": 0,
+    "explanation": "Clock skew between issuer and API causes this; fix the clocks and keep leeway small. A huge leeway lets stolen expired tokens keep working.",
+    "source": "Lesson 11 troubleshooting"
+  },
+  {
+    "id": "cr-L200-042",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In the key-confusion test, the naive verifier accepts a forged HS256 token. How does 'one key per algorithm' stop it?",
+    "options": [
+      "HS256 tokens are always shorter than EdDSA ones",
+      "The public key is kept secret, so an attacker cannot guess it",
+      "The verifier hashes the token twice",
+      "The EdDSA public key can never be used as an HMAC secret"
+    ],
+    "answer": 3,
+    "explanation": "The attack signs with HMAC using the public key bytes as the secret; binding each key to one algorithm makes HS256 unknown. Public keys are public, so hiding them is not a defence.",
+    "source": "Lesson 11 concepts / expectedResults"
+  }
+]

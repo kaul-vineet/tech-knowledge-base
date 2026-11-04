@@ -1,0 +1,668 @@
+{
+ "id": "l600-04-microbit-sensor-fleet",
+ "number": 4,
+ "level": "L600",
+ "title": "An offline-first micro:bit sensor fleet",
+ "phase": "Integrate it",
+ "category": "Integrated project",
+ "combines": [
+  "microbit",
+  "distributed-systems",
+  "application-architecture"
+ ],
+ "description": "Twenty simulated micro:bits log temperature and light to flash, sync deltas over a 30 %-loss radio to two gateways, merge into three backend replicas with a dot-keyed delta-state CRDT and gossip, and serve a versioned API checked by consumer contracts - with each seam tested and three seam faults injectable.",
+ "outcome": "You can join constrained devices, a replication protocol and a versioned API so that no reading is lost through loss, partitions, reboots and clock steps, and you can point at the test that guards each seam: frame size, identity, battery, schema, paging.",
+ "environment": "Python 3.12 standard library only (validated on CPython 3.12, Linux). Reuses in place via _kb.py: microbit labs/sim_stub (microbit, radio with seeded faults, labtest.load_boards) and L300/14-power-budget/budget.py; distributed-systems L400/18-crdts-local-first (GCounter, LWWRegister, helpers.shrink); application-architecture L300/14-consumer-driven-contracts/solution/contract.py. Optional (pendingCi): micropython-microbit-v2-simulator for the firmware.",
+ "estimatedTime": "4-6 hours",
+ "overview": [
+  "Twenty boards, two gateways, three replicas and two dashboards, joined at five seams. Each seam has a contract, a way to break it and a test. One seeded run and a JSON-lines scorecard prove them together."
+ ],
+ "prerequisites": [
+  "microbit L300 #12 A reliable radio protocol and #14 Power budgeting (modelled, not measured)",
+  "distributed-systems L400 #18 CRDTs for local-first collaboration",
+  "application-architecture L300 #14 Consumer-driven contract testing and L400 #20 Evolutionary architecture",
+  "Python 3.12 venv from shared/WORKSTATION-SETUP.md"
+ ],
+ "buildsOn": [
+  {
+   "topic": "microbit",
+   "lesson": 5,
+   "title": "Sensing temperature and light",
+   "uses": "temperature() and display.read_light_level() on the stub, with injected values per board and minute"
+  },
+  {
+   "topic": "microbit",
+   "lesson": 7,
+   "title": "Radio between two boards",
+   "uses": "sim_stub radio.Endpoint/Air and labtest.load_boards(): 20 boards with their own microbit module, clock and radio on one shared air; send_bytes truncation to `length`"
+  },
+  {
+   "topic": "microbit",
+   "lesson": 12,
+   "title": "A reliable radio protocol",
+   "uses": "radio.Air(loss, dup, reorder, seed) seeded faults; FleetAir subclasses it to add a radio partition and gateways that answer immediately"
+  },
+  {
+   "topic": "microbit",
+   "lesson": 14,
+   "title": "Power budgeting (modelled, not measured)",
+   "uses": "budget.FIGURES (30 mA awake, 0.5 mA sleep floor, 20 ms per wake-up, 1,250 mAh) and budget.life_h() as the cross-check for the sync-cost model"
+  },
+  {
+   "topic": "distributed-systems",
+   "lesson": 18,
+   "title": "CRDTs for local-first collaboration: counters, OR-Set, LWW-Register and property tests",
+   "uses": "GCounter (per-slot max = the version vector of contiguous marks), LWWRegister (the failure lab's wall-clock rows) and helpers.shrink() for law counterexamples"
+  },
+  {
+   "topic": "application-architecture",
+   "lesson": 14,
+   "title": "Consumer-driven contract testing",
+   "uses": "solution/contract.py: ContractBuilder, like(), mock_provider(), verify_provider() with body matching, imported unchanged"
+  },
+  {
+   "topic": "application-architecture",
+   "lesson": 20,
+   "title": "Evolutionary architecture: expand/contract migrations, API versions, flags, fitness over time",
+   "uses": "the side-by-side /v1 + /v2 pattern with Deprecation (RFC 9745) and Sunset (RFC 8594) headers (pattern reused; code not imported)"
+  }
+ ],
+ "glossary": [
+  {
+   "term": "offline-first",
+   "meaning": "Write locally first (flash log); the network only drains the log. A sync deletes only what was acknowledged."
+  },
+  {
+   "term": "dot",
+   "meaning": "(device, boot, seq): a unique, immutable identity per reading. seq restarts per boot; boot is persisted in flash."
+  },
+  {
+   "term": "delta-state CRDT",
+   "meaning": "A state-based CRDT that ships only the part of its state a peer lacks; merge is still a join (Almeida et al.)."
+  },
+  {
+   "term": "version vector + dot cloud",
+   "meaning": "Compact causal context: contiguous high-water mark per (device, boot) plus the dots received above it."
+  },
+  {
+   "term": "selective ack",
+   "meaning": "Ack that names exact records stored above the contiguous mark, so a permanent gap cannot block later deletes."
+  },
+  {
+   "term": "push-pull anti-entropy",
+   "meaning": "Each node regularly picks a random peer and both swap what the other lacks (Demers et al.)."
+  },
+  {
+   "term": "schema byte",
+   "meaning": "First byte of every radio frame: selects the record layout (1 = 8 B, 2 = 9 B)."
+  },
+  {
+   "term": "stable prefix",
+   "meaning": "Readings at or below the contiguous mark: final, so an API can page through them with a cursor."
+  }
+ ],
+ "concepts": [
+  "Integration fails at the seams: give each a contract, a fault and a test.",
+  "Identity is not time: dots survive reboots and clock steps; wall time is data.",
+  "Ship deltas that fit the link; merge with a join so loss and duplicates only delay.",
+  "Contracts check shape; a fitness function checks completeness."
+ ],
+ "designBrief": {
+  "context": "A school wants 20 battery-powered micro:bits around the building reporting temperature and light every minute to a backend with a dashboard API. Radio coverage is patchy (30 % loss, a wing out of range for hours), gateways are ordinary PCs that crash, drift and get cut off, boards reboot, and four boards will run old firmware for months. Simulator only; one seeded run must be reproducible on a Mac mini and a Windows PC.",
+  "constraints": [
+   "0 readings lost under 30 % per-delivery loss, 5 % duplicates, 5 % reordering, a 3-hour radio partition, a 4-hour gateway partition and a 1-hour gateway crash",
+   "every radio frame <= the configured radio length (32 B default); 0 frames rejected",
+   "replicas agree within 4 push-pull gossip rounds once writes stop",
+   "modelled battery life >= 2,000 h per board at the chosen sync interval (microbit L300 #14 figures)",
+   "a schema-1 board appears in /v2 with \"schema\": 1 and \"light\": null; /v1 keeps working with Deprecation + Sunset",
+   "a client paging /v2 readings never skips a reading that arrives late"
+  ],
+  "question": "Which identity, sync protocol, merge and API contract keep every reading - and how do you prove each seam separately?"
+ },
+ "architecture": {
+  "diagram": "labs/L600/04-microbit-sensor-fleet/architecture.mmd",
+  "summary": "Each board appends readings to a flash log (dot = dev, boot, seq), and every 10 samples it turns the radio on. It sends only unacked records, three per 30-byte frame, then turns the radio off again. Two gateways decode frames by the schema byte, store them in a durable dot store and ack (boot, contiguous mark) plus the exact dots stored above it. Gateways and three backend replicas run push-pull anti-entropy every 5 minutes. They swap deltas computed from each other's digest (version vector + dot cloud). Replica b1 serves /v1 (deprecated) and /v2, which pages only the stable prefix. Two dashboards publish consumer contracts that the provider verifies against the live API."
+ },
+ "seams": [
+  {
+   "between": "microbit ↔ distributed-systems (radio length ↔ CRDT state size)",
+   "contract": "device→gateway traffic is a delta: unacked records only, 3 B header + 3 x 9 B <= radio length 32; a body that is not a whole number of records is rejected",
+   "risk": "a state-based sync (one board's 12 h log = 6,480 B = 224 frames) or frames sized for 251 B with the radio left at 32 B are silently truncated by the sender: --inject oversize-frame loses 14,082 of 14,400",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_seams.py::S1RadioLengthVsDeltaSize"
+  },
+  {
+   "between": "microbit ↔ distributed-systems (device clock ↔ identity and order)",
+   "contract": "a reading's identity is its dot (dev, boot, seq); per-device order is (boot, seq); device wall time is only an attribute",
+   "risk": "running_time() restarts at 0 on reboot and acks from a slow gateway step the epoch back: 1,421 (device, wall-second) keys repeat; a store keyed by them loses exactly those readings",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_failure_lab.py"
+  },
+  {
+   "between": "microbit ↔ distributed-systems (battery ↔ sync frequency)",
+   "contract": "the device starts every sync (Deep Sleep cannot receive), every SYNC_EVERY samples, <= 3 attempts with a 50 ms ack window; awake time is costed with budget.FIGURES",
+   "risk": "frequent or retry-heavy syncs drain the battery; rare syncs need per-sync capacity above the backlog or the flash log overflows",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_seams.py::S3BatteryVsSync"
+  },
+  {
+   "between": "microbit ↔ application-architecture (firmware schema ↔ backend contract)",
+   "contract": "schema byte selects the layout (1: 8 B, 2: 9 B); firmware and gateway tables equal; /v2 returns schema and light null for schema 1",
+   "risk": "a gateway assuming the newest layout rejects every schema-1 frame: --inject schema-drift never acks 2,880 readings and breaks 7 contract checks",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_seams.py::S4SchemaVsContract"
+  },
+  {
+   "between": "distributed-systems ↔ application-architecture (CRDT state ↔ API paging)",
+   "contract": "/v2/devices/{dev}/readings serves only seq <= the version-vector mark of that boot (stableThrough); latest = max (boot, seq)",
+   "risk": "serving the dot cloud lets a cursor pass seq 3 before gossip delivers it - the client never sees it",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_seams.py::S5CrdtVsApiPaging"
+  }
+ ],
+ "milestones": [
+  {
+   "title": "M1 Offline-first devices",
+   "deliverable": "firmware/node.py on 20 stub boards: flash log, dots, boot counter, bounded log",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_milestones.py::M1OfflineFirstDevices (14,400 sampled, 0 dropped, peak log 190 / 400; d07 boot 2, seq 420)"
+  },
+  {
+   "title": "M2 Delta sync over a lossy radio",
+   "deliverable": "frames(), on_ack() with selective acks; gateway.decode_frame() + acks; FleetAir",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_milestones.py::M2DeltaSync (14,400/14,400 at a gateway, 9,752 frames, 2,835 attempts, logs empty)"
+  },
+  {
+   "title": "M3 CRDT merge + gossip",
+   "deliverable": "store.ReadingStore (version vector + dot cloud), laws.py, push-pull gossip over 5 nodes",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_milestones.py::M3CrdtGossip (300/300 law checks; a mutated merge is caught; 5 replicas equal)"
+  },
+  {
+   "title": "M4 Versioned API + consumer contracts",
+   "deliverable": "api.py (/v1 with Deprecation + Sunset, /v2 latest + stable-prefix paging), contracts.py",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_milestones.py::M4ApiContracts (0 contract problems; 14,400 rows paged; latest d07 = boot 2, seq 420)"
+  }
+ ],
+ "rubric": [
+  {
+   "criterion": "Completeness",
+   "measure": "sampled dots missing from replica b1; values differing",
+   "pass": "0 and 0 (observed 0 / 14,400)"
+  },
+  {
+   "criterion": "Radio seam",
+   "measure": "largest device frame; frames rejected by gateways",
+   "pass": "<= 32 B and 0 (observed 30 B, 0)"
+  },
+  {
+   "criterion": "Identity seam",
+   "measure": "repeated (device, wall-second) keys vs lost readings",
+   "pass": "repeats > 0 and lost 0 (observed 1,421 and 0)"
+  },
+  {
+   "criterion": "Convergence",
+   "measure": "push-pull rounds until 5 replicas agree (end of run; 200 seeded experiments)",
+   "pass": "<= 4 (observed 1; max 3, mean 2.27)"
+  },
+  {
+   "criterion": "Battery",
+   "measure": "worst board's modelled life at SYNC_EVERY = 10",
+   "pass": ">= 2,000 h (observed 2,419.7 h)"
+  },
+  {
+   "criterion": "Schema + API contracts",
+   "measure": "schema-1 rows; contract problems; v1 Deprecation header",
+   "pass": "2,880; 0; present (@1798761600)"
+  },
+  {
+   "criterion": "Failure lab reproducible",
+   "measure": "--inject wallclock-lww scorecard and exit code",
+   "pass": "FAIL with lost == wall-key repeats (observed 9/12, 1,421 lost, exit 1)"
+  }
+ ],
+ "fitnessFunctions": [
+  {
+   "what": "Zero lost readings under 30 % loss, duplicates, reordering and partitions",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_fitness.py::F1ZeroLoss + scorecard F1",
+   "threshold": "lost == 0 and wrong values == 0 on seeds 4, 5 and 6"
+  },
+  {
+   "what": "Convergence within N gossip rounds",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_fitness.py::F2Convergence + scorecard F2",
+   "threshold": "N = 4 push-pull rounds for 5 replicas (end of run and every seeded experiment)"
+  },
+  {
+   "what": "Battery life at the chosen sync interval",
+   "test": "labs/L600/04-microbit-sensor-fleet/tests/test_fitness.py::F3Battery + scorecard F3",
+   "threshold": ">= 2,000 h modelled for the worst board at SYNC_EVERY = 10 (seeds 4, 5)"
+  }
+ ],
+ "decisionRecords": [
+  "labs/L600/04-microbit-sensor-fleet/decisions/0001-identify-readings-by-dots-not-wall-time.md",
+  "labs/L600/04-microbit-sensor-fleet/decisions/0002-delta-state-crdt-and-push-pull-gossip.md",
+  "labs/L600/04-microbit-sensor-fleet/decisions/0003-device-initiated-sync-every-10-minutes.md",
+  "labs/L600/04-microbit-sensor-fleet/decisions/0004-version-firmware-schema-and-api-separately.md"
+ ],
+ "failureLab": {
+  "inject": "python run_project.py --inject wallclock-lww (or FLEET_STORE=lww for the test). Gateways and replicas store readings as rows keyed (device, device wall second), last write wins (distributed-systems L400 #18 LWWRegister), as a time-series table does with a duplicate key. The fault exists only because the topics meet. A micro:bit's running_time() restarts at 0 on reboot (d07 at minute 300). Its wall time is built from the epoch in the last gateway ack, and g2's clock is 300 s slow. A backend that trusts that time as a key overwrites readings.",
+  "symptom": "Scorecard FAIL 9/12, exit 1: S2 {wall_key_repeats: 1421, lost: 1421}, F1 lost 1421, S4 2,670 of 2,880 schema-1 rows. M2 still says every reading reached a gateway and the logs are empty, M4's contracts pass, and the replicas converge - on the wrong data.",
+  "diagnose": "Compare sampled dots with stored dots per device: the losses are on d07 after its reboot and on boards that heard g2. Count repeated (device, wall second) pairs in the sampled data: 1,421, exactly the loss. The gateway acked each reading, so the device deleted it, and a later reading with the same key overwrote it.",
+  "fix": "Key by the dot (dev, boot, seq), with boot persisted in flash and one write per boot. Merge as a grow-only map with a version vector plus dot cloud. Keep wall time as a display attribute. Order per device by (boot, seq) (ADR 0001).",
+  "test": "labs/L600/04-microbit-sensor-fleet/tests/test_failure_lab.py: FLEET_STORE=lww -> FAILED (AssertionError: 1421 != 0 : lost 1421 readings with store=lww); default -> OK"
+ },
+ "buildTask": {
+  "task": "Raise the radio frame to 251 bytes in firmware/node.py without breaking the radio seam. Set RADIO_LENGTH to the documented maximum and derive RECORDS_PER_FRAME from it ((251 - 3) // 9 = 27) instead of hard-coding it. Choose MAX_FRAMES so one attempt still covers a normal backlog. Keep the frame format, so the gateway needs no change. The shipped file keeps the 32-byte default, so the check fails on it.",
+  "acceptance": "BUILD_TARGET=mine python -m unittest tests.test_build_task -v passes: RADIO_LENGTH 251 and RECORDS_PER_FRAME derived; 0 lost, 0 dropped, frames <= 251 B, 0 rejected; fewer than half the frames of the 32-byte design; worst-board life >= the 32-byte design. On the shipped file: FAILED (failures=2).",
+  "solution": "labs/L600/04-microbit-sensor-fleet/solution/node_251.py",
+  "check": "labs/L600/04-microbit-sensor-fleet/tests/test_build_task.py (default target = the solution; BUILD_TARGET=mine tests firmware/node.py)"
+ },
+ "scalingLimits": [
+  "Partitions longer than the flash log: 400 records = 6.7 h at one per minute. Signal: dropped_flash_full > 0 and peak_log = MAX_LOG (try it 2: 8 h -> 451 dropped, 450 lost). After that the board's /v2 stableThrough stops at the gap, because a dropped seq never arrives.",
+  "Radio airtime and collisions are not modelled. With hundreds of boards per gateway, signal: attempts per sync rise and p95 time-to-gateway grows even without partitions. Stagger the syncs, add listen-before-talk or more gateways and channels.",
+  "Digest size grows with (device x boot) entries and with gaps in the dot cloud. Signal: gossip bytes per round grow with fleet size even when nothing changed. Shard digests per device range or use Merkle trees."
+ ],
+ "steps": [
+  {
+   "title": "Set up and open the lab",
+   "detail": "Use the KB workstation venv (shared/WORKSTATION-SETUP.md); only the standard library is needed. _kb.py imports the microbit stub, the distributed-systems CRDT lab and the application-architecture contract lab in place.",
+   "mac": "cd kb/integrated/labs/L600/04-microbit-sensor-fleet\npython3.12 -m venv .venv && source .venv/bin/activate\npython -c \"import _kb; print(_kb.crdts().GCounter)\"",
+   "windows": "cd kb\\integrated\\labs\\L600\\04-microbit-sensor-fleet\npy -3.12 -m venv .venv; .venv\\Scripts\\Activate.ps1\npy -c \"import _kb; print(_kb.crdts().GCounter)\"",
+   "expected": "<class 'ds18_crdts.GCounter'>",
+   "ifNot": "Run from the lab folder; _kb.py finds the other topics relative to its own path (kb/microbit, kb/distributed-systems, kb/application-architecture must exist)."
+  },
+  {
+   "title": "Run the fleet and read the scorecard",
+   "detail": "run_project.py runs 12 simulated hours plus a drain (seed 4), then the merge-law check, 200 gossip experiments, the API and both contracts.",
+   "mac": "python3 run_project.py",
+   "windows": "py run_project.py",
+   "expected": "{\"scorecard\": \"PASS\", \"passed\": 12, \"total\": 12, \"seed\": 4, \"inject\": null, \"dashboard\": [\"d01 #1 20 C\", \"d01 1.1 20 C light 100\", \"d17 1.1 20 C light n/a (fw 1)\"]} (exit 0)",
+   "ifNot": "A FAIL line names the milestone, seam or fitness function; read that test first. Loading 20 stub boards can take 30-60 s on network storage."
+  },
+  {
+   "title": "Reproduce the failure lab",
+   "detail": "Swap the dot store for wall-clock LWW rows and watch which lines fail and which still pass.",
+   "mac": "python3 run_project.py --inject wallclock-lww\nFLEET_STORE=lww python3 -m unittest tests.test_failure_lab",
+   "windows": "py run_project.py --inject wallclock-lww\n$env:FLEET_STORE=\"lww\"; py -m unittest tests.test_failure_lab; Remove-Item Env:FLEET_STORE",
+   "expected": "scorecard FAIL 9/12 (lost 1,421 = wall_key_repeats), exit 1; the test fails with 1421 != 0.",
+   "ifNot": "If lost is 0, check that the inject reached fleet_sim.run (make_store('lww'))."
+  },
+  {
+   "title": "Break the other seams",
+   "detail": "oversize-frame sizes frames for 251 B but leaves the radio at 32 B; schema-drift makes gateways ignore the schema byte.",
+   "mac": "python3 run_project.py --inject oversize-frame\npython3 run_project.py --inject schema-drift",
+   "windows": "py run_project.py --inject oversize-frame\npy run_project.py --inject schema-drift",
+   "expected": "FAIL 4/12 (14,082 lost; 32 B frames rejected) and FAIL 5/12 (2,880 schema-1 readings never acked; 7 contract problems).",
+   "ifNot": "Both must exit 1; a PASS means the seam test lost its teeth."
+  },
+  {
+   "title": "Run every test",
+   "detail": "Milestones, seams, failure lab, fitness on seeds 5 and 6, build task (solution).",
+   "mac": "python3 -m unittest discover -s tests -t .",
+   "windows": "py -m unittest discover -s tests -t .",
+   "expected": "Ran 29 tests ... OK",
+   "ifNot": "Tests share one cached run per process; run a single class with -k to iterate faster."
+  },
+  {
+   "title": "Do the build task",
+   "detail": "Edit firmware/node.py for 251-byte frames (see buildTask), then check your file.",
+   "mac": "BUILD_TARGET=mine python3 -m unittest tests.test_build_task -v",
+   "windows": "$env:BUILD_TARGET=\"mine\"; py -m unittest tests.test_build_task -v",
+   "expected": "Shipped file: FAILED (failures=2); after your change: OK.",
+   "ifNot": "If frames are rejected, RECORDS_PER_FRAME and RADIO_LENGTH disagree; derive one from the other."
+  }
+ ],
+ "code": "\"\"\"L600 #04 An offline-first micro:bit sensor fleet: run it end to end and print a JSON-lines scorecard.\n\n20 stub micro:bits (microbit topic) sample into flash and sync deltas over a 30 %-loss radio to 2 gateways;\ngateways and 3 backend replicas merge a dot-keyed delta-state CRDT by gossip (distributed-systems); a versioned\nAPI is verified by consumer-driven contracts (application-architecture). Deterministic: seed 4, simulated time.\nRun:     python run_project.py                      (Windows: py run_project.py)\nFaults:  python run_project.py --inject wallclock-lww | oversize-frame | schema-drift   -> FAIL, exit 1\n\"\"\"\nimport argparse\nimport json\nimport sys\nimport urllib.request\nfrom pathlib import Path\n\nHERE = Path(__file__).resolve().parent\nsys.path.insert(0, str(HERE))\nimport _kb  # noqa: E402\nimport api  # noqa: E402\nimport contracts  # noqa: E402\nimport fleet_sim  # noqa: E402\nimport gateway  # noqa: E402\nimport laws  # noqa: E402\n\nTARGET_LIFE_H = 2000         # one school term on 2 x AAA (model, not a measurement)\nMAX_ROUNDS = 4               # gossip rounds for 5 replicas to agree\nRADIO_LENGTH = 32\n\n\ndef get(url):\n    with urllib.request.urlopen(url, timeout=5) as resp:\n        return json.loads(resp.read().decode(\"utf-8\")), dict(resp.headers)\n\n\ndef api_walk(url, store):\n    \"\"\"Page every device/boot through /v2 readings; the sum must equal the store (no gaps, no repeats).\"\"\"\n    total = 0\n    for dev, boot in sorted({(d[0], d[1]) for d in store.dots()}):\n        after = 0\n        while True:\n            page, _ = get(\"%s/v2/devices/d%02d/readings?boot=%d&after=%d&limit=500\" % (url, dev, boot, after))\n            total += len(page[\"items\"])\n            if page[\"next\"] is None:\n                break\n            after = page[\"next\"]\n    return total\n\n\ndef api_and_contracts(store):\n    paths, tiles = contracts.consumer_side()\n    with api.serve(store) as url:\n        problems = contracts.verify(url)\n        try:\n            _, headers = get(url + \"/v1/devices/d01/latest\")\n        except OSError:\n            headers = {}\n        return problems, tiles, headers.get(\"Deprecation\"), api_walk(url, store)\n\n\ndef scorecard(r, law, conv, problems, deprecation, walked):\n    fw = r[\"boards\"][0].lab\n    v1_rows = [d for d, v in r[\"stores\"][\"b1\"].rows() if v[3] == 1]\n    n_bad = sum(len(p) for p in problems.values())\n    full_state_frames = -(-720 * fw.REC_LEN[2] // (RADIO_LENGTH - fw.HEADER))\n    budget = _kb.budget()\n    return [\n        (\"milestone\", \"M1 offline-first devices\", {\"sampled\": r[\"sampled\"], \"dropped\": r[\"dropped_flash_full\"],\n         \"peak_log\": r[\"peak_log\"]}, \"14400 sampled, 0 dropped, peak <= %d\" % fw.MAX_LOG,\n         r[\"sampled\"] == 14400 and r[\"dropped_flash_full\"] == 0 and r[\"peak_log\"] <= fw.MAX_LOG),\n        (\"milestone\", \"M2 delta sync over a lossy radio\", {\"reached_gateway\": r[\"reached_gateway\"], \"tries\":\n         r[\"tries\"], \"frames\": r[\"frames\"], \"logs_empty\": r[\"logs_empty\"]}, \"every reading at a gateway; logs empty\",\n         r[\"reached_gateway\"] == r[\"sampled\"] and r[\"logs_empty\"]),\n        (\"milestone\", \"M3 CRDT merge + gossip\", {\"laws\": \"%d/%d\" % (law[\"passed\"], law[\"trials\"]),\n         \"replicas_equal\": r[\"replicas_equal\"], \"wrong_values\": r[\"wrong_values\"]}, \"laws all pass; 5 replicas equal\",\n         law[\"passed\"] == law[\"trials\"] and r[\"replicas_equal\"] and r[\"wrong_values\"] == 0),\n        (\"milestone\", \"M4 versioned API + contracts\", {\"contract_problems\": n_bad, \"v1_deprecation\": deprecation,\n         \"api_rows\": walked}, \"0 problems; v1 deprecated; API rows == stored\", n_bad == 0 and bool(deprecation)\n         and walked == r[\"stored_b1\"]),\n        (\"seam\", \"S1 radio length <-> CRDT delta size\", {\"max_frame_bytes\": r[\"max_frame_bytes\"], \"rejected\":\n         r[\"rejected\"], \"full_state_frames_per_device\": full_state_frames}, \"frames <= %d B, 0 rejected\" %\n         RADIO_LENGTH, r[\"max_frame_bytes\"] <= RADIO_LENGTH and sum(r[\"rejected\"].values()) == 0),\n        (\"seam\", \"S2 device clock <-> identity/order\", {\"wall_key_repeats\": r[\"wall_key_repeats\"], \"lost\":\n         r[\"lost\"]}, \"repeats exist, 0 lost\", r[\"wall_key_repeats\"] > 0 and r[\"lost\"] == 0),\n        (\"seam\", \"S3 battery <-> sync interval\", {\"firmware_active_ms\": fw.ACTIVE_MS, \"model_active_ms\":\n         budget.FIGURES[\"ACTIVE_MS\"], \"life_h_min\": r[\"life_h_min\"]}, \"same ACTIVE_MS; life >= %d h\" %\n         TARGET_LIFE_H, fw.ACTIVE_MS == budget.FIGURES[\"ACTIVE_MS\"] and r[\"life_h_min\"] >= TARGET_LIFE_H),\n        (\"seam\", \"S4 firmware schema <-> backend contract\", {\"schema1_rows\": len(v1_rows), \"rec_len_equal\":\n         fw.REC_LEN == gateway.REC_LEN}, \"2880 schema-1 rows; layouts equal\", len(v1_rows) == 2880 and\n         fw.REC_LEN == gateway.REC_LEN),\n        (\"seam\", \"S5 CRDT state <-> API paging\", {\"api_rows\": walked, \"stored\": r[\"stored_b1\"]},\n         \"paged rows == stored\", walked == r[\"stored_b1\"]),\n        (\"fitness\", \"F1 zero lost readings (30% loss + partitions)\", {\"lost\": r[\"lost\"], \"sampled\": r[\"sampled\"]},\n         \"lost == 0\", r[\"lost\"] == 0 and r[\"wrong_values\"] == 0),\n        (\"fitness\", \"F2 convergence within N gossip rounds\", {\"end_of_run\": r[\"convergence_rounds\"],\n         \"experiment_max\": conv[\"max\"], \"experiment_mean\": conv[\"mean\"]}, \"<= %d rounds\" % MAX_ROUNDS,\n         r[\"convergence_rounds\"] <= MAX_ROUNDS and conv[\"max\"] <= MAX_ROUNDS),\n        (\"fitness\", \"F3 battery life at the chosen sync interval\", {\"sync_every_min\": fw.SYNC_EVERY,\n         \"life_h_min\": r[\"life_h_min\"]}, \">= %d h\" % TARGET_LIFE_H, r[\"life_h_min\"] >= TARGET_LIFE_H),\n    ]\n\n\ndef main(argv=None):\n    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])\n    ap.add_argument(\"--inject\", choices=fleet_sim.INJECTS)\n    ap.add_argument(\"--seed\", type=int, default=4)\n    args = ap.parse_args(argv)\n    r = fleet_sim.run(seed=args.seed, inject=args.inject)\n    problems, tiles, deprecation, walked = api_and_contracts(r[\"stores\"][\"b1\"])\n    rows = scorecard(r, laws.check(args.seed), fleet_sim.convergence_experiment(seed=args.seed), problems,\n                     deprecation, walked)\n    for kind, name, value, threshold, ok in rows:\n        print(json.dumps({\"kind\": kind, \"check\": name, \"value\": value, \"threshold\": threshold, \"pass\": bool(ok)}))\n    passed = sum(bool(row[-1]) for row in rows)\n    print(json.dumps({\"scorecard\": \"PASS\" if passed == len(rows) else \"FAIL\", \"passed\": passed, \"total\": len(rows),\n                      \"seed\": args.seed, \"inject\": args.inject, \"dashboard\": tiles[:3]}))\n    return 0 if passed == len(rows) else 1\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+ "codeLanguage": "python",
+ "codeWalkthrough": [
+  {
+   "title": "_kb + imports",
+   "detail": "_kb.py loads the microbit stub, budget.py, the L400 #18 CRDTs and the L300 #14 contract solution under unique module names; nothing is copied."
+  },
+  {
+   "title": "fleet_sim.run()",
+   "detail": "20 stub boards via labtest.load_boards on a FleetAir (stub Air + gateways that answer at once + radio partition). One loop per simulated minute applies the scenario: reboot, drift, partitions, gossip every 5 min. A drain follows. It returns counts plus the stores."
+  },
+  {
+   "title": "api_and_contracts()",
+   "detail": "The consumer side writes two contracts after running the dashboards against mock providers. The provider side then verifies them against the live API on 127.0.0.1 and pages every device and boot through /v2 readings."
+  },
+  {
+   "title": "scorecard() milestones",
+   "detail": "M1-M4 turn run counts into pass/fail: sampled and dropped, reached gateway and empty logs, law checks and equal replicas, contract problems and the paged row count."
+  },
+  {
+   "title": "scorecard() seams",
+   "detail": "One line per seam: frame bytes vs 32, wall-key repeats vs lost, firmware ACTIVE_MS == budget ACTIVE_MS, schema-1 rows and layout tables, paged rows == stored."
+  },
+  {
+   "title": "scorecard() fitness + main()",
+   "detail": "F1 lost == 0, F2 <= 4 rounds, F3 >= 2,000 h. main() prints one JSON line per check, then the summary, and returns exit 1 on any failure. --inject picks a fault from fleet_sim.INJECTS."
+  }
+ ],
+ "projectFiles": [
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/run_project.py",
+   "purpose": "scorecard (lesson code): 4 milestones, 5 seams, 3 fitness functions; --inject"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/firmware/node.py",
+   "purpose": "board program: flash log, dots, delta frames, selective acks"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/gateway.py",
+   "purpose": "frame decoder + acks; FleetAir"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/store.py",
+   "purpose": "ReadingStore (delta-state CRDT) and WallClockLWWStore (failure lab)"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/fleet_sim.py",
+   "purpose": "seeded scenario, gossip, convergence experiment, battery model"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/laws.py",
+   "purpose": "merge-law property test"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/api.py",
+   "purpose": "/v1 + /v2 API (127.0.0.1)"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/contracts.py",
+   "purpose": "dashboards + consumer contracts"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/_kb.py",
+   "purpose": "imports reused labs in place"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/tests/",
+   "purpose": "milestones, seams, failure lab, fitness, build task"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/try_it/",
+   "purpose": "sync_interval.py, partition_capacity.py"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/solution/node_251.py",
+   "purpose": "build-task solution"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/decisions/",
+   "purpose": "ADRs 0001-0004"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/architecture.mmd",
+   "purpose": "Mermaid diagram"
+  },
+  {
+   "path": "labs/L600/04-microbit-sensor-fleet/README.md",
+   "purpose": "commands and observed output"
+  }
+ ],
+ "expectedResults": [
+  "Scorecard PASS 12/12 (seed 4), exit 0: 14,400 sampled, 14,400 stored, 0 lost, 5 replicas equal.",
+  "9,752 frames (max 30 B) in 2,835 attempts through 30 % loss; peak flash log 190 of 400.",
+  "Worst-board modelled life 2,419.7 h at SYNC_EVERY = 10; gossip agreed in <= 3 rounds in 200 experiments.",
+  "--inject wallclock-lww: FAIL 9/12, 1,421 lost (= repeated wall keys), exit 1."
+ ],
+ "testCases": [
+  {
+   "action": "python run_project.py",
+   "expected": "{\"scorecard\": \"PASS\", \"passed\": 12, \"total\": 12, \"seed\": 4, \"inject\": null, \"dashboard\": [\"d01 #1 20 C\", \"d01 1.1 20 C light 100\", \"d17 1.1 20 C light n/a (fw 1)\"]}, exit 0"
+  },
+  {
+   "action": "python run_project.py --inject wallclock-lww",
+   "expected": "{\"scorecard\": \"FAIL\", \"passed\": 9, \"total\": 12, ...}, exit 1"
+  },
+  {
+   "action": "python -m unittest discover -s tests -t .",
+   "expected": "Ran 29 tests ... OK"
+  },
+  {
+   "action": "FLEET_STORE=lww python -m unittest tests.test_failure_lab",
+   "expected": "FAILED (failures=1): 1421 != 0"
+  },
+  {
+   "action": "BUILD_TARGET=mine python -m unittest tests.test_build_task",
+   "expected": "FAILED (failures=2) on the shipped firmware"
+  }
+ ],
+ "tryIt": [
+  {
+   "task": "Sync every 1, 10 and 60 samples: python try_it/sync_interval.py",
+   "predict": "Which interval misses 2,000 h? Which is freshest? Does the hourly sync lose anything?",
+   "expected": "{\"sync_every_min\": 1, \"life_h_min\": 2212.4, \"tries\": 21816, \"frames\": 39841, \"p95_to_gateway_s\": 2280, \"lost\": 0, \"dropped_flash_full\": 0, \"peak_log\": 181}\n{\"sync_every_min\": 10, \"life_h_min\": 2419.7, \"tries\": 2835, \"frames\": 9752, \"p95_to_gateway_s\": 4020, \"lost\": 0, \"dropped_flash_full\": 0, \"peak_log\": 190}\n{\"sync_every_min\": 60, \"life_h_min\": 2445.1, \"tries\": 871, \"frames\": 6750, \"p95_to_gateway_s\": 14940, \"lost\": 0, \"dropped_flash_full\": 0, \"peak_log\": 305}\nAll three meet 2,000 h in the model (the 0.5 mA sleep floor dominates); hourly sync keeps up only because selective acks waste no frames."
+  },
+  {
+   "task": "Partition d15-d19 for 3 h and 8 h, then 8 h with cumulative-only acks: python try_it/partition_capacity.py",
+   "predict": "How much is lost after 8 h with a 400-record log? Does the ack format matter?",
+   "expected": "{\"partition_h\": 3.0, \"selective_ack\": true, \"peak_log\": 190, \"dropped_flash_full\": 0, \"lost\": 0, ...}\n{\"partition_h\": 8.0, \"selective_ack\": true, \"peak_log\": 400, \"dropped_flash_full\": 451, \"lost\": 450, \"logs_empty\": true, ...}\n{\"partition_h\": 8.0, \"selective_ack\": false, \"peak_log\": 400, \"dropped_flash_full\": 1039, \"lost\": 2330, \"logs_empty\": false, ...}\nWith cumulative acks, one dropped seq blocks every later ack: the board resends forever and keeps overflowing."
+  }
+ ],
+ "troubleshooting": [
+  {
+   "symptom": "ValueError: firmware patch ... does not match exactly once",
+   "action": "fleet_sim patches SCHEMA/SYNC_EVERY/RECORDS_PER_FRAME by exact text; keep those constant lines (and their trailing space) in firmware/node.py."
+  },
+  {
+   "symptom": "M4 fails with 'mock provider: unexpected ...'",
+   "action": "A dashboard called a path its contract does not declare; add the interaction in contracts.build() or fix the client."
+  },
+  {
+   "symptom": "S1 fails with rejected > 0",
+   "action": "A frame body is not a whole number of records: RECORDS_PER_FRAME, RADIO_LENGTH and REC_LEN disagree."
+  },
+  {
+   "symptom": "Run takes minutes",
+   "action": "Loading 20 stub boards reads files 20 times; on network or synced folders that dominates. CPU time is a few seconds."
+  }
+ ],
+ "learningTools": [
+  {
+   "name": "micro:bit Python Editor v3 (with V2 simulator)",
+   "role": "SEE / CHECK",
+   "exercise": "Paste firmware/node.py into python.microbit.org, set SAMPLE_MS = 2000 and add print(len(f)) for each frame in sync(); run main(1) and watch the serial output while you move the temperature and light sliders.",
+   "expected": "Pending a manual run. Should match the lab: frames of 12, 21 and 30 B (1-3 schema-2 records), never more than 32 B.",
+   "mac": "Browser (python.microbit.org); installable as an offline app",
+   "windows": "same",
+   "licence": "MIT (OSI: yes)",
+   "url": "https://github.com/microbit-foundation/python-editor-v3"
+  },
+  {
+   "name": "micropython-microbit-v2-simulator (standalone)",
+   "role": "CHECK",
+   "exercise": "Serve demo.html locally, flash firmware/node.py with SYNC_EVERY = 1, and inject an ack packet as a 'second board': 02 41 01 6a b1 3b 80 01 01 00 05 (dev 1, boot 1, hw 5).",
+   "expected": "Pending (pendingCi). Should match on_ack() here: records with boot 1 and seq <= 5 leave the log; the epoch becomes 1,790,000,000 - running_time() // 1000.",
+   "mac": "Build/serve demo.html locally in a browser",
+   "windows": "same",
+   "licence": "MIT (OSI: yes)",
+   "url": "https://github.com/microbit-foundation/micropython-microbit-v2-simulator"
+  }
+ ],
+ "inRealSystems": [
+  "InfluxDB identifies a point by measurement, tag set and timestamp, and a duplicate point takes the new field values - the failure lab's last-writer-wins by timestamp. Its docs suggest a unique tag or timestamp nudge; this lab uses a dot.",
+  "Delta-state CRDTs with a compact causal context (version vector + dot cloud) are specified by Almeida, Shoker and Baquero; this lab's ReadingStore is the simplest member: a grow-only map of immutable readings.",
+  "Anti-entropy by random peer exchange was implemented in Xerox's Clearinghouse servers (Demers et al. 1987), which reported it solved long-standing database inconsistency there.",
+  "HTTP APIs announce deprecation with Deprecation (RFC 9745) and Sunset (RFC 8594) headers and protect consumers with consumer-driven contracts (e.g. Pact)."
+ ],
+ "useWhen": "Use this shape when devices that sleep, reboot and lose packets feed a replicated backend that other teams read through an API. Give readings an identity that never depends on a clock, ship deltas that fit the link, merge with a join, version the device schema and the API separately, and test every seam on its own line.",
+ "simulatorVsReal": "Device parts are validated-stub: the firmware runs on the microbit topic's CPython stub (no MicroPython VM, no real timing). The radio stub has seeded per-delivery loss, duplicates and reordering, but no airtime, collisions, range or length-dependent loss. The flash log is a dict (a file on a board, with flash wear not modelled). Battery hours are the microbit L300 #14 model, with an assumed 0.5 mA sleep floor and an assumed 50 ms ack window, not measurements. Gateways and replicas run in one process with simulated partitions. The official micro:bit V2 simulator run is pendingCi.",
+ "caution": "The API binds 127.0.0.1 only and has no authentication. Do not expose it, and add auth before real use (application-architecture L200 #10). Radio frames here are unauthenticated: anyone in range can forge a reading (see microbit L400 #19 for authenticated frames). Classroom sensor data can reveal occupancy patterns, so keep it on site (microbit L500 #26).",
+ "checkpoint": "Pass if run_project.py prints PASS 12/12 (exit 0), each --inject prints FAIL (exit 1), and the test suite passes, including F1 on seeds 5 and 6.",
+ "checkYourself": [
+  {
+   "q": "Why did the LWW store lose readings that every gateway had acknowledged?",
+   "a": "The ack was correct, because the gateway received the reading. The row key (device, wall second) repeated after d07's reboot and after acks from the slow g2. A later write with the same key replaced the row. Identity must not depend on a clock (ADR 0001)."
+  },
+  {
+   "q": "Why does a device need selective acks if gateways already ack a contiguous mark?",
+   "a": "A record dropped from a full log never arrives, so the mark stops at the gap forever and nothing above it is ever deleted. Exact acks let the board free what is stored. Without them an 8 h partition lost 2,330 readings instead of 450."
+  },
+  {
+   "q": "Contracts passed in the failure lab. Were they wrong?",
+   "a": "No: they check shape and the schema seam. Completeness is a fitness function (F1) comparing sampled dots with stored dots."
+  },
+  {
+   "q": "Why serve only the contiguous prefix in /v2 readings?",
+   "a": "Gossip delivers dots out of order. A cursor that passed seq 4 would never return for a late seq 3. Below the mark nothing can arrive later."
+  }
+ ],
+ "sources": [
+  {
+   "title": "MicroPython for micro:bit V2 docs: Radio (length default 32, up to 251; queue; full queue drops)",
+   "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/radio.html"
+  },
+  {
+   "title": "MicroPython for micro:bit V2 docs: microbit module (running_time since switched on or restarted)",
+   "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/microbit.html"
+  },
+  {
+   "title": "MicroPython for micro:bit V2 docs: Power Management (Deep Sleep wake sources)",
+   "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/power.html"
+  },
+  {
+   "title": "micro:bit tech site: Power supply (30 mA worst-case on-board budget)",
+   "url": "https://tech.microbit.org/hardware/power-supply/"
+  },
+  {
+   "title": "Almeida, Shoker, Baquero: Delta State Replicated Data Types (JPDC 2018; arXiv 1603.01529)",
+   "url": "https://arxiv.org/abs/1603.01529"
+  },
+  {
+   "title": "Shapiro et al.: A comprehensive study of CRDTs (INRIA RR-7506, 2011)",
+   "url": "https://perso.lip6.fr/Marc.Shapiro/papers/2011/Comprehensive-CRDTs-RR7506-2011-01.pdf"
+  },
+  {
+   "title": "Demers et al.: Epidemic algorithms for replicated database maintenance (PODC 1987)",
+   "url": "https://www.cis.upenn.edu/~bcpierce/courses/dd/papers/demers-epidemic.pdf"
+  },
+  {
+   "title": "Kulkarni et al.: Logical Physical Clocks and Consistent Snapshots (HLC; UB tech report 2014-04)",
+   "url": "https://cse.buffalo.edu/tech-reports/2014-04.pdf"
+  },
+  {
+   "title": "InfluxDB OSS v2 docs: Handle duplicate data points",
+   "url": "https://docs.influxdata.com/influxdb/v2/write-data/best-practices/duplicate-points/"
+  },
+  {
+   "title": "RFC 9745: The Deprecation HTTP Response Header Field",
+   "url": "https://www.rfc-editor.org/rfc/rfc9745.html"
+  },
+  {
+   "title": "RFC 8594: The Sunset HTTP Header Field",
+   "url": "https://www.rfc-editor.org/rfc/rfc8594.html"
+  },
+  {
+   "title": "Ian Robinson: Consumer-Driven Contracts: A Service Evolution Pattern",
+   "url": "https://martinfowler.com/articles/consumerDrivenContracts.html"
+  },
+  {
+   "title": "Michael Nygard: Documenting Architecture Decisions",
+   "url": "https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions"
+  }
+ ],
+ "next": "Back to the L600 project list. For further study, authenticate the frames (microbit L400 #19 Securing constrained devices: authenticated radio frames), add a hybrid logical clock for causal cross-device order (Kulkarni et al.), and report dropped ranges so stableThrough can pass a gap.",
+ "validation": {
+  "status": "validated-stub",
+  "how": "Ran here on CPython 3.12 (Linux): run_project.py PASS 12/12, exit 0 (seed 4). --inject wallclock-lww FAIL 9/12, oversize-frame FAIL 4/12, schema-drift FAIL 5/12, each exit 1. python -m unittest discover -s tests -t . gave Ran 29 tests OK. FLEET_STORE=lww failed (failures=1), and BUILD_TARGET=mine on the shipped firmware failed (failures=2). Both tryIts ran, and integrated/research/checks_04.py exited 0. Boards are the microbit topic's CPython stub with simulated time, so the device parts are validated-stub; the API and contracts ran over real HTTP on 127.0.0.1. Tests use simulated time only, so none is wall-clock sensitive.",
+  "pendingCi": [
+   "firmware/node.py in micropython-microbit-v2-simulator (radio packets injected as a second board)",
+   "CI matrix macos-latest + windows-latest (platforms 'expected')",
+   "real boards: radio loss vs frame length, airtime/collisions, flash wear, measured sleep current"
+  ]
+ },
+ "conceptNote": "content/concepts/L600/04-microbit-sensor-fleet.md",
+ "conceptSummary": "Join sleeping, rebooting radio devices to a replicated backend and a versioned API. Identify readings by dots, not clocks. Ship deltas that fit a 32-byte frame, ack exactly what is stored, merge with a join and gossip. Version the firmware schema and the API separately. Prove each seam with its own test and fault.",
+ "platforms": {
+  "mac": "expected",
+  "windows": "expected"
+ },
+ "macMini": {
+  "gains": "The fleet node firmware runs for the first time outside the CPython stub - in the official MicroPython micro:bit V2 simulator, driven by the microbit topic's own Playwright harness on two bridged boards - and a week of simulated time at 100-500 boards runs overnight in parallel processes, measuring loss, convergence, drain and battery at fleet sizes the 12-hour lab run never reaches.",
+  "needs": {
+   "minRamGB": 16,
+   "tools": [
+    {
+     "name": "Python 3.12",
+     "licence": "PSF-2.0",
+     "install": "brew install python@3.12 (or the python.org macOS installer: https://www.python.org/downloads/macos/)"
+    },
+    {
+     "name": "numpy 2.5.3",
+     "licence": "BSD-3-Clause",
+     "install": "python3.12 -m pip install numpy==2.5.3"
+    },
+    {
+     "name": "Node.js 24",
+     "licence": "MIT",
+     "install": "brew install node@24 (keg-only: add $(brew --prefix node@24)/bin to PATH), or the macOS installer from https://nodejs.org"
+    },
+    {
+     "name": "@playwright/test 1.64.1 + Chromium",
+     "licence": "Apache-2.0",
+     "install": "cd integrated/labs/L600/04-microbit-sensor-fleet/mac_mini/sim && npm install && npx playwright install chromium"
+    },
+    {
+     "name": "MicroPython micro:bit V2 simulator (hosted)",
+     "licence": "MIT",
+     "install": "nothing to install: https://python-simulator.usermbit.org/v/0.1/simulator.html, embedded by microbit/harness/host.html (needs internet)"
+    }
+   ]
+  },
+  "experiments": [
+   {
+    "title": "The firmware in real MicroPython (two simulator boards)",
+    "why": "The lab's status is validated-stub: the stub is CPython, not MicroPython. The simulator runs the real micro:bit MicroPython build as WebAssembly, so byte handling, dicts, running_time and the radio API meet the real runtime.",
+    "steps": [
+     {
+      "title": "Generate the programs and check them on the stub",
+      "detail": "node_sim.py = firmware/node.py with only main() replaced (30 samples 200 ms apart, final sync, one 'stats' line); variants with ACK_WAIT_MS 500 and the oversize-frame fault; gateway_sim.py = a minimal device-side gateway for the simulator only.",
+      "mac": "cd integrated/labs/L600/04-microbit-sensor-fleet\npython mac_mini/make_sim_programs.py --here",
+      "expected": "Stub: node_sim and node_sim_wait500 sampled 30, acked 30, left 0, maxframe 30; node_sim_oversize maxframe 102 with 32 bytes on air (truncated)."
+     },
+     {
+      "title": "Run the three simulator tests",
+      "detail": "mac_mini/sim reuses microbit/harness host.html, serve.js and sim-helpers.js by path; board 0 = gateway, board 1 = node; the harness bridges radio_output to radio_input between the iframes.",
+      "mac": "cd mac_mini/sim && npm install && npx playwright install chromium && npx playwright test; cd ../..",
+      "expected": "Test 1 (500 ms ack wait) passes: 30 sampled, all frames <= 32 B, 30 acked, 0 left. Test 2 records acked with the shipped 50 ms window (fewer than 30 = the iframe bridge is slower than 50 ms). Test 3 records max bytes on air for the oversize frame: 32 confirms the stub's truncation rule."
+     }
+    ],
+    "measure": "acked/left with 500 ms and 50 ms windows; max bytes on air for an oversize frame",
+    "decides": "Test 1 passing is the first observed MicroPython run of the firmware (validation note in 04.json). Test 3 showing more than 32 bytes would mean the stub's truncation rule is wrong and the failure lab's explanation must be rewritten. Test 2 is not a radio measurement: ADR 0003's 50 ms stays an assumption until two real boards are timed."
+   },
+   {
+    "title": "A simulated week at 250 boards",
+    "why": "The lab runs 20 boards for 12 hours. Drain time after outages, gossip volume and log growth only show at fleet scale and over days.",
+    "steps": [
+     {
+      "title": "One 250-board site for 7 days",
+      "detail": "soak.py sets fleet_sim.N_DEV = 250 and runs fleet_sim.run(hours=168) unchanged: 30 % loss + duplicates + reordering all week, the scenario's partition/reboot/outage on day 1.",
+      "mac": "cd integrated/labs/L600/04-microbit-sensor-fleet\ncaffeinate -i python mac_mini/soak.py --boards 250 --days 7 --out ~/kb-runs/04-soak.jsonl",
+      "expected": "lost 0, wrong_values 0, logs_empty true, replicas_equal true, dropped_flash_full 0, life_h_min far above 168 h (sandbox, 20 boards x 12 h: 2,419.7 h). Watch drain_min (sandbox: 2) and p95_to_gateway_s."
+     }
+    ],
+    "measure": "lost, drain_min, p95_to_gateway_s, gossip_bytes, peak_log, life_h_min, wall_s",
+    "decides": "If drain_min reaches the 240-minute cap (logs_empty false) or p95_to_gateway_s grows beyond the 10-minute sync design, ADR 0003 (sync every 10 minutes, two gateways) gets a fleet-size limit or more gateways."
+   },
+   {
+    "title": "500 boards = 2 sites, and the memory per board",
+    "why": "The frame header carries the device id in one byte, so one radio group holds at most 255 boards; and how many boards one process can simulate for a week is a RAM question.",
+    "steps": [
+     {
+      "title": "Two sites in parallel processes",
+      "detail": "soak.py proves the 255 limit by packing device 256 (ValueError), splits 500 boards into 2 sites of 250 and runs them with a spawn pool (one per performance core, mac_profile.py).",
+      "mac": "caffeinate -i python mac_mini/soak.py --boards 500 --days 7 --out ~/kb-runs/04-soak500.jsonl",
+      "expected": "device_id_max_per_radio_group 255, sites 2, boards_per_site 250; both sites pass like experiment 2; the memory line gives B_per_board_hour and max_boards_per_site_for_7_days_by_ram_GB (reliable: true on the Mac run)."
+     }
+    ],
+    "measure": "peak_rss_B per site, B_per_board_hour, max boards per site by RAM",
+    "decides": "A fleet beyond 255 boards needs a schema-3 frame with a 2-byte device id or (site, device) identities in the backend - an ADR 0004 change (firmware, schema and API versions move separately)."
+   }
+  ],
+  "overnight": "caffeinate -i python mac_mini/soak.py --boards 500 --days 7: two 250-board sites x 10,080 simulated minutes in parallel. The stub delivers every frame to every endpoint (O(boards^2) per minute), so it takes hours. It reveals week-scale effects: drain after outages at 12x the fleet, gossip volume per day, and whether every device still empties its flash log after a week of 30 % loss.",
+  "validation": {
+   "here": "Ran in the Linux sandbox (Python 3.12.15, microbit CPython stub, 2026-11-02): make_sim_programs.py --here (3 programs on two stub boards: acked 30/30, oversize frame 102 B truncated to 32 B on air); soak.py --here (20 boards x 12 h: 14,400 sampled, 0 lost, replicas equal, life_h_min 2,419.7, device id limit 255, seq wraps after 45.5 days); mac_mini/tests: 6 tests OK; research/checks_04_mac.py OK. Not MicroPython and not the simulator.",
+   "pendingMac": [
+    "mac_mini/sim Playwright tests in the MicroPython micro:bit V2 simulator (needs internet)",
+    "soak.py --boards 250 --days 7 and --boards 500 --days 7 (overnight)",
+    "memory per board-hour measured at fleet size (the 20-board figure is dominated by start-up)"
+   ]
+  }
+ }
+}

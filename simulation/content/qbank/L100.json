@@ -1,0 +1,727 @@
+[
+  {
+    "id": "sim-L100-001",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Why does every lab pass an explicit seed to its random number generator?",
+    "options": [
+      "So the random numbers become more evenly spread than unseeded ones",
+      "So the generator runs faster on every operating system",
+      "So a rerun gives the same numbers and the result can be checked",
+      "So the numbers are safe to use as passwords and tokens"
+    ],
+    "answer": 2,
+    "explanation": "A seed fixes the sequence, so anyone can rerun the experiment and get identical output. Seeding does not make numbers 'more random' or secure; it only makes them repeatable.",
+    "source": "Lesson 1 concepts"
+  },
+  {
+    "id": "sim-L100-002",
+    "level": "L100",
+    "lesson": 1,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "What does this print?",
+    "code": "import numpy as np\n\na = np.random.default_rng(42).random(3)\nb = np.random.default_rng(42).random(3)\nprint(bool((a == b).all()))",
+    "options": [
+      "True",
+      "False",
+      "True False",
+      "It raises an error: seeds must be positive"
+    ],
+    "answer": 0,
+    "explanation": "Two generators built from the same seed produce the same sequence, so the comparison is True. Reproducibility is exactly why the labs seed every generator.",
+    "source": "Lesson 1 code (seeded_draws)"
+  },
+  {
+    "id": "sim-L100-003",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "random.Random(42) and numpy's default_rng(42) give different first numbers. Why?",
+    "options": [
+      "One of the two libraries ignores the seed and uses the clock instead",
+      "numpy adds operating-system entropy to every seed it is given",
+      "They are different generators (Mersenne Twister vs PCG64)",
+      "The first number is always discarded by one of the two libraries"
+    ],
+    "answer": 2,
+    "explanation": "Each library uses its own generator, so the same seed starts a different sequence. Both are still fully reproducible when reseeded with 42.",
+    "source": "Lesson 1 checkYourself"
+  },
+  {
+    "id": "sim-L100-004",
+    "level": "L100",
+    "lesson": 1,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "A colleague wants to use a seeded default_rng to generate password-reset tokens 'so they can be reproduced in tests'. What should you advise?",
+    "options": [
+      "Fine, as long as the seed is a large number such as 2**63",
+      "Fine, but reseed from the current time before each token",
+      "Use random.Random instead because it is cryptographically secure",
+      "Use the secrets module: seeded simulation generators are predictable"
+    ],
+    "answer": 3,
+    "explanation": "Simulation generators are designed to be repeatable, which makes their output guessable. Security tokens need the secrets module; a bigger seed or a time seed does not fix predictability.",
+    "source": "Lesson 1 caution"
+  },
+  {
+    "id": "sim-L100-005",
+    "level": "L100",
+    "lesson": 1,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "On Windows after a git checkout, this pin parser builds keys like 'numpy' but values like '2.5.3\\r'. Which change fixes it?",
+    "code": "def parse_pins(text):\n    pins = {}\n    for line in text.split('\\n'):\n        if line and not line.startswith('#'):\n            name, version = line.split('==')\n            pins[name] = version\n    return pins",
+    "options": [
+      "Strip each line before splitting it on '=='",
+      "Open the file in binary mode and split on b'=='",
+      "Replace '==' with '>=' so any version matches",
+      "Sort the lines before building the dictionary"
+    ],
+    "answer": 0,
+    "explanation": "CRLF line endings leave a trailing '\\r' on each line; stripping the line removes it, which is what the lab's parse_pins() does. Loosening the pin hides the symptom and loses reproducibility.",
+    "source": "Lesson 1 code (parse_pins)"
+  },
+  {
+    "id": "sim-L100-006",
+    "level": "L100",
+    "lesson": 2,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "What is the core idea of a Monte Carlo estimate?",
+    "options": [
+      "Solve the model once using the most likely value of every uncertain input",
+      "Run the model once with each input at its minimum and maximum",
+      "Fit a formula to historical data and evaluate it at the mean",
+      "Sample the uncertain inputs many times and summarise the outputs"
+    ],
+    "answer": 3,
+    "explanation": "Monte Carlo samples the uncertain inputs repeatedly and reads probabilities and means from the spread of results. Using only most-likely values gives one point and hides the uncertainty.",
+    "source": "Lesson 2 overview"
+  },
+  {
+    "id": "sim-L100-007",
+    "level": "L100",
+    "lesson": 2,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "Two tasks run back to back with triangular durations (min, mode, max) of (3, 5, 10) and (4, 6, 11) days. What is the exact mean total duration?",
+    "options": [
+      "11.000 days",
+      "14.000 days",
+      "13.500 days",
+      "13.000 days"
+    ],
+    "answer": 3,
+    "explanation": "The mean of a triangular distribution is (min + mode + max)/3, so 6 + 7 = 13 days. Adding the modes (11 days) understates it because both distributions are skewed right.",
+    "source": "Lesson 2 code (exact_mean)"
+  },
+  {
+    "id": "sim-L100-008",
+    "level": "L100",
+    "lesson": 2,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "With N = 1,000 samples the 95% CI half-width is +/-0.150 days. Roughly how many samples give +/-0.050 days?",
+    "options": [
+      "3,000 samples",
+      "27,000 samples",
+      "100,000 samples",
+      "9,000 samples"
+    ],
+    "answer": 3,
+    "explanation": "The half-width shrinks like 1/sqrt(N): a 3x narrower interval needs 3^2 = 9x the samples. Tripling N only narrows it by sqrt(3).",
+    "source": "Lesson 2 checkYourself"
+  },
+  {
+    "id": "sim-L100-009",
+    "level": "L100",
+    "lesson": 2,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The project's mean duration is 17.3 days and the deadline is 20 days. Why does the lab also report P(done <= 20 days)?",
+    "options": [
+      "The mean is biased in Monte Carlo, so a probability corrects it",
+      "Probabilities converge faster than means, so they need fewer samples",
+      "The deadline question is about the tail, which the mean does not describe",
+      "The mean cannot be computed when durations are triangular"
+    ],
+    "answer": 2,
+    "explanation": "A mean below the deadline says nothing about how often you will miss it; the lab finds about 14% of projects late. The sample mean is unbiased, so it does not need correcting.",
+    "source": "Lesson 2 checkYourself"
+  },
+  {
+    "id": "sim-L100-010",
+    "level": "L100",
+    "lesson": 2,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "import math\n\ndef half_width(sd, n):\n    return 1.96 * sd / math.sqrt(n)\n\nratio = half_width(2.0, 100_000) / half_width(2.0, 1_000)\nprint(round(ratio, 3))",
+    "options": [
+      "0.1",
+      "0.01",
+      "0.316",
+      "0.032"
+    ],
+    "answer": 0,
+    "explanation": "The half-width is proportional to 1/sqrt(N), so 100x more samples gives sqrt(100) = 10x narrower: ratio 0.1. Expecting 0.01 assumes error falls like 1/N.",
+    "source": "Lesson 2 code (summarise)"
+  },
+  {
+    "id": "sim-L100-011",
+    "level": "L100",
+    "lesson": 2,
+    "type": "debugging",
+    "difficulty": 1,
+    "question": "Every run of this estimator prints a slightly different mean. What is the fix?",
+    "code": "import numpy as np\n\ndef estimate(n):\n    rng = np.random.default_rng()\n    return rng.triangular(2, 4, 8, size=n).mean()\n\nprint(estimate(10_000))",
+    "options": [
+      "Pass a fixed seed: np.random.default_rng(seed)",
+      "Increase n until the mean stops changing at all",
+      "Round the mean to two decimals before printing",
+      "Use rng.uniform instead of rng.triangular"
+    ],
+    "answer": 0,
+    "explanation": "An unseeded generator draws fresh entropy each run, so results differ. More samples shrink the differences but never make reruns identical.",
+    "source": "Lesson 2 troubleshooting"
+  },
+  {
+    "id": "sim-L100-012",
+    "level": "L100",
+    "lesson": 2,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A team quotes 'release in 17.33 +/- 0.02 days' from 100,000 samples, but every task range was a guess in a meeting. What is the main problem?",
+    "options": [
+      "100,000 samples is too few for a three-task project to converge",
+      "The CI covers only sampling error, not the guessed input ranges",
+      "The CI should use 2.58 instead of 1.96 for a project schedule",
+      "Triangular distributions cannot be summed in Monte Carlo"
+    ],
+    "answer": 1,
+    "explanation": "The interval measures how well the simulation estimated the mean of the assumed model, not whether the inputs are right. Precise output from guessed inputs is still guesswork.",
+    "source": "Lesson 2 caution"
+  },
+  {
+    "id": "sim-L100-013",
+    "level": "L100",
+    "lesson": 3,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "How does the clock advance in a discrete-event simulation?",
+    "options": [
+      "It advances in fixed one-minute ticks and checks for events",
+      "It runs in real time so events happen at wall-clock speed",
+      "It advances by the mean service time on every iteration",
+      "It jumps straight to the time of the next scheduled event"
+    ],
+    "answer": 3,
+    "explanation": "Nothing changes between events, so the simulation jumps the clock from one event to the next, which is exact and fast. Fixed ticks waste work and add timing error.",
+    "source": "Lesson 3 concepts"
+  },
+  {
+    "id": "sim-L100-014",
+    "level": "L100",
+    "lesson": 3,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Events are (time, seq, kind) tuples in a heap. What does this print?",
+    "code": "import heapq\n\nevents = []\nfor seq, (t, kind) in enumerate([(3.5, 'depart'), (2.0, 'arrive'), (2.0, 'depart')]):\n    heapq.heappush(events, (t, seq, kind))\nprint(' '.join(heapq.heappop(events)[2] for _ in range(3)))",
+    "options": [
+      "arrive depart arrive",
+      "arrive depart depart",
+      "depart arrive arrive",
+      "arrive arrive depart"
+    ],
+    "answer": 1,
+    "explanation": "heapq orders by time first, then by the seq tie-breaker, so the two events at t=2.0 come out in the order they were scheduled. The depart at 3.5 is last.",
+    "source": "Lesson 3 code (schedule)"
+  },
+  {
+    "id": "sim-L100-015",
+    "level": "L100",
+    "lesson": 3,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "An M/M/1 queue has arrival rate 0.9 per minute and service rate 1.0 per minute. What is the mean wait in the queue, Wq = lam / (mu (mu - lam))?",
+    "options": [
+      "10.0 min",
+      "0.9 min",
+      "9.0 min",
+      "4.0 min"
+    ],
+    "answer": 2,
+    "explanation": "Wq = 0.9 / (1.0 x 0.1) = 9 minutes. 10 minutes is the mean time in the system (wait plus service), a common mix-up.",
+    "source": "Lesson 3 code (mm1_wq)"
+  },
+  {
+    "id": "sim-L100-016",
+    "level": "L100",
+    "lesson": 3,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "An M/M/1 queue has lam = 0.75 and mu = 1.0 per minute. Using Little's law Lq = lam x Wq, how many customers wait in line on average?",
+    "options": [
+      "2.25 customers",
+      "3.00 customers",
+      "0.75 customers",
+      "4.00 customers"
+    ],
+    "answer": 0,
+    "explanation": "Wq = 0.75 / (1 x 0.25) = 3 minutes, and Lq = 0.75 x 3 = 2.25 customers. 3.00 is the wait in minutes, not the number in line.",
+    "source": "Lesson 3 code (mm1_wq)"
+  },
+  {
+    "id": "sim-L100-017",
+    "level": "L100",
+    "lesson": 3,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Arrivals at a one-server café rise from 0.90 to 0.95 per minute (mu = 1.0). By how much does the M/M/1 mean wait Wq increase?",
+    "options": [
+      "+6%",
+      "+50%",
+      "+111%",
+      "+11%"
+    ],
+    "answer": 2,
+    "explanation": "Wq goes from 9 to 19 minutes, +111%. Near full utilisation a small rise in load causes a disproportionate rise in waiting; it is not proportional to the 6% rise in arrivals.",
+    "source": "Lesson 3 checkYourself"
+  },
+  {
+    "id": "sim-L100-018",
+    "level": "L100",
+    "lesson": 3,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Pushing (time, kind, customer) tuples into heapq sometimes raises TypeError. Why, and what is the fix?",
+    "options": [
+      "Times must be integers; round every event time to whole minutes",
+      "On equal times heapq compares the next fields; add a seq counter",
+      "heapq cannot hold tuples; store the events in a sorted list instead",
+      "The kind strings must be shorter; use 'a' and 'd' instead"
+    ],
+    "answer": 1,
+    "explanation": "When two events share a time, tuple comparison moves on to the next field and may hit values that cannot be compared. A seq number makes every key unique and keeps equal-time events FIFO.",
+    "source": "Lesson 3 troubleshooting"
+  },
+  {
+    "id": "sim-L100-019",
+    "level": "L100",
+    "lesson": 3,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Your queue simulation's mean wait keeps growing as you simulate more customers and never settles. What is the most likely cause?",
+    "options": [
+      "Arrival rate is at or above service rate, so the queue is unstable",
+      "The seed is too small, so the random numbers repeat",
+      "The event list was not sorted after each push",
+      "Too few customers were simulated to see the steady state"
+    ],
+    "answer": 0,
+    "explanation": "With lam >= mu the server cannot keep up and the queue grows without bound, so there is no steady state to converge to. More customers only make the growth more visible.",
+    "source": "Lesson 3 troubleshooting"
+  },
+  {
+    "id": "sim-L100-020",
+    "level": "L100",
+    "lesson": 3,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why compare the simulated mean wait with the M/M/1 formula before using the model on a harder case?",
+    "options": [
+      "The formula is more accurate than simulation for every queue",
+      "The comparison calibrates the arrival rate to real data",
+      "It proves that the real café has exponential service times",
+      "A known exact answer catches code bugs before harder cases"
+    ],
+    "answer": 3,
+    "explanation": "Matching the formula (3.871 vs 4.000 min) verifies the code; then the model can be extended where no formula exists. It says nothing about whether the real café follows M/M/1.",
+    "source": "Lesson 3 concepts"
+  },
+  {
+    "id": "sim-L100-021",
+    "level": "L100",
+    "lesson": 4,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "What three things define a time-stepped simulation?",
+    "options": [
+      "A state, its rates of change, and a step size dt",
+      "An event list, a clock and a random seed",
+      "A set of agents, a grid and a movement rule",
+      "A distribution, a sample size and a confidence level"
+    ],
+    "answer": 0,
+    "explanation": "Each step updates the state using its rates of change over dt. Event lists belong to discrete-event simulation, grids and rules to agent-based models.",
+    "source": "Lesson 4 concepts"
+  },
+  {
+    "id": "sim-L100-022",
+    "level": "L100",
+    "lesson": 4,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Explicit Euler on the no-drag drop has an error of 1.47 m at t = 3 s with dt = 0.1 s. What is its error with dt = 0.02 s?",
+    "options": [
+      "0.059 m",
+      "0.294 m",
+      "1.470 m",
+      "0.147 m"
+    ],
+    "answer": 1,
+    "explanation": "Explicit Euler's global error is proportional to dt, so a 5x smaller step gives a 5x smaller error. 0.059 m would follow from an error proportional to dt^2.",
+    "source": "Lesson 4 checkYourself"
+  },
+  {
+    "id": "sim-L100-023",
+    "level": "L100",
+    "lesson": 4,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "The lab's 2 kg parcel has terminal velocity 18.40 m/s. Keeping the box size, what is the terminal velocity of an 8 kg parcel (v_t = sqrt(2 m g / (Cd rho A)))?",
+    "options": [
+      "18.40 m/s",
+      "73.60 m/s",
+      "36.80 m/s",
+      "26.02 m/s"
+    ],
+    "answer": 2,
+    "explanation": "Terminal velocity grows with the square root of mass: 4x the mass gives 2x the speed. Scaling linearly to 73.60 m/s ignores the square root.",
+    "source": "Lesson 4 code (terminal_velocity)"
+  },
+  {
+    "id": "sim-L100-024",
+    "level": "L100",
+    "lesson": 4,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Explicit Euler for a falling object (y in m, v in m/s, g = 10). What does this print?",
+    "code": "y, v, dt = 100.0, 0.0, 0.5\nfor _ in range(2):\n    y, v = y + v * dt, v - 10.0 * dt\nprint((round(y, 2), round(v, 2)))",
+    "options": [
+      "(95.0, -10.0)",
+      "(100.0, -5.0)",
+      "(97.5, -10.0)",
+      "(97.5, -5.0)"
+    ],
+    "answer": 2,
+    "explanation": "Both updates use the old velocity: step 1 leaves y at 100 because v was 0, step 2 moves y by -5 x 0.5 = -2.5. The exact height at t = 1 s is 95.0 m, so Euler lags behind.",
+    "source": "Lesson 4 code (step_euler)"
+  },
+  {
+    "id": "sim-L100-025",
+    "level": "L100",
+    "lesson": 4,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the lab test the no-drag drop before adding air resistance?",
+    "options": [
+      "Drag makes RK4 unstable, so it must be added gradually",
+      "The no-drag case is the more realistic one for parcels",
+      "It has an exact answer, so any error belongs to the method or the code",
+      "Drag cannot be simulated with a fixed time step"
+    ],
+    "answer": 2,
+    "explanation": "With an exact solution y = h - g t^2/2 you can measure the method's error directly. Drag has no simple closed form, so it is added after the integrator is verified.",
+    "source": "Lesson 4 checkYourself"
+  },
+  {
+    "id": "sim-L100-026",
+    "level": "L100",
+    "lesson": 4,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "With drag switched on, the simulated parcel keeps speeding up past its terminal velocity. What is the most likely bug?",
+    "code": "def accel(v):\n    drag = 0.5 * 1.05 * 1.225 * 0.09 * v * abs(v) / 2.0\n    return -9.8 + drag",
+    "options": [
+      "The drag term has the wrong sign, so it adds to gravity",
+      "The time step is too small, so rounding error accumulates",
+      "RK4 should be replaced by explicit Euler for drag",
+      "The mass should be divided into the gravity term too"
+    ],
+    "answer": 0,
+    "explanation": "Drag must always oppose the velocity (v*|v| keeps the sign right). If it points the same way as gravity the parcel accelerates forever; a smaller dt would not change that.",
+    "source": "Lesson 4 troubleshooting"
+  },
+  {
+    "id": "sim-L100-027",
+    "level": "L100",
+    "lesson": 4,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Your drop simulation reports time-to-ground that jumps by exactly dt whenever you change the drop height slightly. What is the best fix?",
+    "options": [
+      "Switch from RK4 to explicit Euler for the final step",
+      "Use a smaller dt or locate the ground crossing with a solver event",
+      "Round the drop height to a whole number of metres",
+      "Increase dt so the jumps become less frequent"
+    ],
+    "answer": 1,
+    "explanation": "The loop only checks y > 0 at step boundaries, so the reported time is rounded up to a multiple of dt. Smaller steps or event location (interpolating the crossing) fix it.",
+    "source": "Lesson 4 troubleshooting"
+  },
+  {
+    "id": "sim-L100-028",
+    "level": "L100",
+    "lesson": 4,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "At dt = 0.1 s RK4's error on the no-drag drop is about 1e-13 m while Euler's is 1.47 m. Why is RK4 so accurate here?",
+    "options": [
+      "RK4 uses a smaller internal step chosen from the tolerance",
+      "The exact path is a quadratic, which RK4 integrates exactly",
+      "RK4 uses double precision while Euler uses single precision",
+      "RK4 ignores gravity in its middle two slope samples"
+    ],
+    "answer": 1,
+    "explanation": "For constant acceleration the true trajectory is a polynomial that a 4th-order method integrates exactly, so only rounding remains. RK4 here uses the same fixed dt as Euler.",
+    "source": "Lesson 4 expectedResults"
+  },
+  {
+    "id": "sim-L100-029",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "In the Schelling model each agent only wants at least 30% similar neighbours, yet the town ends near 75% similar. What explains the gap?",
+    "options": [
+      "Each move changes other agents' neighbourhoods and triggers further moves",
+      "Agents secretly prefer 75% but report a lower threshold",
+      "A central planner assigns agents to clusters at each step",
+      "The grid edges push agents of one type into the corners"
+    ],
+    "answer": 0,
+    "explanation": "Local moves cascade: a relocation makes some neighbours unhappy, and they move too, so clustering emerges. No agent wants 75% and nobody plans it.",
+    "source": "Lesson 5 checkYourself"
+  },
+  {
+    "id": "sim-L100-030",
+    "level": "L100",
+    "lesson": 5,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A 3x3 torus grid (0 empty, 1 and 2 agent types). How many type-1 neighbours does the centre cell have in its 8-cell Moore neighbourhood?",
+    "code": "import numpy as np\n\ngrid = np.array([[1, 2, 0], [2, 1, 1], [0, 2, 1]])\nmask = (grid == 1).astype(int)\ncounts = sum(np.roll(np.roll(mask, dy, 0), dx, 1)\n             for dy in (-1, 0, 1) for dx in (-1, 0, 1) if (dy, dx) != (0, 0))\nprint(counts[1, 1])",
+    "options": [
+      "4",
+      "2",
+      "3",
+      "5"
+    ],
+    "answer": 2,
+    "explanation": "The centre's eight neighbours are every other cell of the 3x3 grid; three of them are type 1, so the count is 3. Counting the centre itself would wrongly give 4.",
+    "source": "Lesson 5 code (neighbour_counts)"
+  },
+  {
+    "id": "sim-L100-031",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why should Schelling results be reported across several seeds rather than from one run?",
+    "options": [
+      "The model only converges when several seeds are averaged together",
+      "Each seed models a different city, so one seed is meaningless",
+      "Seeds change the agents' preference threshold between runs",
+      "Setup and move order are random: one run is one sample"
+    ],
+    "answer": 3,
+    "explanation": "Different seeds give different initial layouts and orders; seeds 1-5 end between 72.3% and 76.3% similar. Reporting the spread shows how much is chance.",
+    "source": "Lesson 5 checkYourself"
+  },
+  {
+    "id": "sim-L100-032",
+    "level": "L100",
+    "lesson": 5,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "After a few steps the number of agents on the grid shrinks. What is wrong with this move?",
+    "code": "def move(grid, y, x, ey, ex):\n    grid[y, x] = 0\n    grid[ey, ex] = grid[y, x]",
+    "options": [
+      "It should pick the empty cell with the most similar neighbours",
+      "It empties the old cell before copying from it; swap the two cells in one step",
+      "It must move all unhappy agents simultaneously, not one by one",
+      "It should shuffle the empties list before choosing a cell"
+    ],
+    "answer": 1,
+    "explanation": "Clearing grid[y, x] first means the target receives 0, so the agent disappears. The lab swaps both cells in one assignment; the choice of target cell is not the bug.",
+    "source": "Lesson 5 troubleshooting"
+  },
+  {
+    "id": "sim-L100-033",
+    "level": "L100",
+    "lesson": 5,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "You raise each agent's wanted similarity to 80% and the model never settles before max_steps. What does that tell you?",
+    "options": [
+      "The random generator has run out of numbers and repeats",
+      "Some agents may never be satisfied; max_steps is the guard",
+      "The grid must be enlarged until every agent can be happy",
+      "The model is broken because it should always reach 0% unhappy"
+    ],
+    "answer": 1,
+    "explanation": "With very demanding preferences there may be no arrangement that satisfies everyone, so agents keep moving. A step limit is the intended safeguard, not a sign of a bug.",
+    "source": "Lesson 5 troubleshooting"
+  },
+  {
+    "id": "sim-L100-034",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "When is agent-based modelling the right choice?",
+    "options": [
+      "When a closed-form formula for the average behaviour exists",
+      "When the system changes continuously and smoothly in time",
+      "When only the mean of a single random quantity is needed",
+      "When individuals differ and interact locally"
+    ],
+    "answer": 3,
+    "explanation": "ABMs shine when heterogeneous individuals with local rules produce emergent patterns. A cheap exact formula or a smooth continuous system is better served by other methods.",
+    "source": "Lesson 5 useWhen"
+  },
+  {
+    "id": "sim-L100-035",
+    "level": "L100",
+    "lesson": 5,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "A city council member cites the 30x30 Schelling run as proof of how their city segregates. What is the right response?",
+    "options": [
+      "It is a toy that shows a mechanism, not evidence about a real city",
+      "It is valid if the run used at least 50 steps",
+      "It is valid once the grid size matches the city's population",
+      "It is valid because 75% similarity is close to census data"
+    ],
+    "answer": 0,
+    "explanation": "The model demonstrates that mild preferences can produce strong clustering; it says nothing about the causes in a specific city without real data and validation.",
+    "source": "Lesson 5 caution"
+  },
+  {
+    "id": "sim-L100-036",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "What is the difference between verification and validation?",
+    "options": [
+      "Verification: results match measured data; validation: all unit tests pass",
+      "Verification: the model runs fast; validation: it runs without any errors",
+      "Verification: the seed is fixed; validation: the sample size is large enough",
+      "Verification: code matches the model; validation: model fits its purpose"
+    ],
+    "answer": 3,
+    "explanation": "Verification checks that you built the model right (unit tests, known formulas); validation checks you built the right model (comparison with trusted data). The second option reverses the two.",
+    "source": "Lesson 6 concepts"
+  },
+  {
+    "id": "sim-L100-037",
+    "level": "L100",
+    "lesson": 6,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "All unit tests pass, but the model's predicted waits are twice what staff measured last month. Which kind of problem is it?",
+    "options": [
+      "Verification: the tests must have missed a coding bug",
+      "Reproducibility: the seed must have changed between runs",
+      "Validation: the model itself does not match reality",
+      "Precision: more replications would close the gap"
+    ],
+    "answer": 2,
+    "explanation": "Passing tests means the code does what the model says; a 2x gap with measurements means the model's assumptions are wrong. More replications only tighten the estimate of the wrong number.",
+    "source": "Lesson 6 checkYourself"
+  },
+  {
+    "id": "sim-L100-038",
+    "level": "L100",
+    "lesson": 6,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "Lindley's rule computes each customer's wait. What does this print?",
+    "code": "def next_wait(w, service, gap):\n    return max(0.0, w + service - gap)\n\nw, out = 0.0, []\nfor service, gap in [(3.0, 1.0), (1.0, 4.0), (2.0, 1.0)]:\n    out.append(w)\n    w = next_wait(w, service, gap)\nprint(out)",
+    "options": [
+      "[0.0, 3.0, 0.0]",
+      "[0.0, 2.0, 0.0]",
+      "[0.0, 2.0, -1.0]",
+      "[2.0, 0.0, 1.0]"
+    ],
+    "answer": 1,
+    "explanation": "W starts at 0; next = max(0, 0 + 3 - 1) = 2; then max(0, 2 + 1 - 4) = 0 because a wait is never negative. Without the max you would get -1.",
+    "source": "Lesson 6 code (next_wait)"
+  },
+  {
+    "id": "sim-L100-039",
+    "level": "L100",
+    "lesson": 6,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Ten independent replications give mean waits with sample standard deviation 0.40 min. What is the 95% CI half-width, t(0.975, 9) x s / sqrt(n)?",
+    "options": [
+      "0.248 min",
+      "0.090 min",
+      "0.905 min",
+      "0.286 min"
+    ],
+    "answer": 3,
+    "explanation": "2.262 x 0.40 / sqrt(10) = 0.286 min. Using 1.96 (0.248) ignores that the standard deviation is estimated from only 10 values; dividing by n instead of sqrt(n) gives 0.090.",
+    "source": "Lesson 6 code (replicate)"
+  },
+  {
+    "id": "sim-L100-040",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the lab use 10 independent replications instead of one very long run for its confidence interval?",
+    "options": [
+      "Replication means are independent, so the t-interval is valid",
+      "One long run cannot reach steady state at 80% utilisation",
+      "Ten runs are always faster to compute than one long run of equal length",
+      "The formula for Wq only applies to short runs"
+    ],
+    "answer": 0,
+    "explanation": "Waits within one run are correlated, so treating them as independent understates the error. Each replication's mean is one independent observation.",
+    "source": "Lesson 6 checkYourself"
+  },
+  {
+    "id": "sim-L100-041",
+    "level": "L100",
+    "lesson": 6,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Two runs with seed 7 give different results. The model draws service times from one generator and arrival gaps from module-level random. What is the fix?",
+    "code": "import random\n\ndef waits(n, seed):\n    rng = random.Random(seed)\n    return [rng.expovariate(1.0) - random.expovariate(0.8) for _ in range(n)]",
+    "options": [
+      "Call random.seed(7) once at the end of each run",
+      "Pass one seeded Random object to every place that draws numbers",
+      "Use a larger seed so that both streams are covered",
+      "Average the two runs and report the mean instead"
+    ],
+    "answer": 1,
+    "explanation": "Any unseeded or global source of randomness breaks reproducibility. Routing every draw through one seeded generator (or seeded streams) restores identical reruns.",
+    "source": "Lesson 6 troubleshooting"
+  },
+  {
+    "id": "sim-L100-042",
+    "level": "L100",
+    "lesson": 6,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Validation passes at lam = 0.5-0.8 but fails only at lam = 0.9 with the same run length. What should you try first?",
+    "options": [
+      "Reject the model, because it is clearly invalid near full load",
+      "Longer runs with warm-up deletion: high load converges slowly",
+      "Replace the exponential service times with constant ones",
+      "Lower the confidence level from 95% to 80%"
+    ],
+    "answer": 1,
+    "explanation": "At 90% utilisation waits are highly autocorrelated and the empty start biases them, so short runs miss the formula. Lowering the confidence level just hides the problem.",
+    "source": "Lesson 6 troubleshooting"
+  }
+]

@@ -1,0 +1,40 @@
+== 01-setup-workspace
+01-setup-workspace 6 tests
+02-layered-structure 12 tests
+03-modular-monolith 8 tests
+04-api-first-openapi 4 tests
+05-config-12factor 9 tests
+06-documenting-architecture 16 tests
+lab 02 breakdown: 5 rule tests x 2 repositories + 1 HTTP + 1 dependency = 12
+== 02-layered-structure
+borrow b1 -> loan id 1
+borrow b2 -> loan id 2
+borrow b3 -> loan id 3
+borrow b4 -> LoanLimitReached - member m1 already has 3 loans
+give back loan 2 -> returned = True
+borrow b4 -> loan id 4
+active rows: [(1, 'b1'), (3, 'b3'), (4, 'b4')]
+placeholder-bound evil bookId stored as text, id 5
+table still exists, rows = 5
+== 03-modular-monolith
+file package: library.loans, statement: from ..catalog.internal import store
+resolved targets: [(1, ['library.catalog.internal', 'library.catalog.internal.store'])]
+violations: ["library/loans/service.py:1 'loans' imports internals of 'catalog' (library.catalog.internal)"]
+public import ok: []
+== 04-api-first-openapi
+openapi = 3.1.2
+GET /loans/42 matches template: /loans/{loanId}
+declared (operation, status) pairs: 6
+problem: GET /loans/{loanId} 200: missing required field 'memberId'
+problem: GET /loans/{loanId} 200: 'id' is not integer
+problem: GET /loans/{loanId} 200: 'status'='lost' not in enum
+status 422 on POST /loans: ['POST /loans: status 422 not declared']
+== 05-config-12factor
+ConfigError: LOANS_PORT=70000 must be between 1 and 65535; LOANS_LOG_LEVEL='WARN' must be one of ['DEBUG', 'ERROR', 'INFO', 'WARNING']
+Settings(port=9000, db_path='loans.db', max_active_loans=3, log_level='WARNING')
+== 06-documenting-architecture
+c4-context.mmd elements: ['member', 'librarian', 'loans', 'email'] relationships: 4
+c4-container.mmd elements: ['member', 'librarian', 'email', 'loans', 'api', 'db'] relationships: 4
+DSL relationships: [('member', 'api'), ('librarian', 'api'), ('api', 'db'), ('api', 'email'), ('email', 'member')]
+system-level (implied) relationships for the context view: [('email', 'member'), ('librarian', 'loans'), ('loans', 'email'), ('member', 'loans')]
+next ADR file: adr-002-<title>.md

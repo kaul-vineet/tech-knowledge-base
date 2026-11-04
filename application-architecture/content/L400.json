@@ -1,0 +1,2125 @@
+[
+ {
+  "id": "strangler-fig-decomposition",
+  "number": 17,
+  "level": "L400",
+  "title": "Strangler-fig decomposition: facade, branch by abstraction, parallel run, cut-over",
+  "phase": "Design",
+  "category": "decomposition",
+  "description": "Move the monolith's fine rule into its own service behind a strangler facade, compare both in a parallel run, and cut over only when a measured mismatch rate allows it.",
+  "outcome": "You can design an incremental extraction (seam, facade, shadow, canary, service), turn cut-over criteria into code, measure a mismatch rate and keep new code from calling the legacy module with a ratchet fitness function.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux, SQLite 3.44.0); unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100.",
+  "estimatedTime": "75 minutes",
+  "overview": [
+   "strangler.py routes fine calls legacy -> shadow -> canary -> service; the parallel run returns the legacy answer and logs differences.",
+   "The extracted service rounds half-cents to even, the monolith rounds them up: 108 of 2,000 seeded requests differ."
+  ],
+  "prerequisites": [
+   "Lesson 3 (module boundaries and their fitness function)",
+   "Lesson 7 (ports and adapters)",
+   "Lesson 16 (fitness functions in CI)"
+  ],
+  "designBrief": {
+   "context": "The fines rule lives in the Library Loans monolith with two direct callers. A team wants to own and deploy it as a service; nobody documented all its rules.",
+   "constraints": [
+    "0 members charged a different fine because of the migration",
+    "cut over only with >= 1,000 compared requests, mismatch rate <= 0.1 %, 0 candidate errors",
+    "no new code may import legacy_monolith (callers may only decrease)",
+    "trunk stays releasable during the change"
+   ],
+   "question": "How do we move fine traffic from the monolith to the extracted service, and when is it safe to switch?"
+  },
+  "options": [
+   {
+    "name": "Big-bang switch",
+    "description": "Deploy the service and point all callers at it at once.",
+    "evidence": "failure_lab.py: 108 of 2,000 seeded requests (5.4 %) would get a different fine; found only after members are charged.",
+    "verdict": "Rejected: the rounding difference reaches members."
+   },
+   {
+    "name": "Facade + parallel run (shadow) + canary",
+    "description": "Branch by abstraction (FinesPort), facade routes legacy/shadow/canary/service; shadow returns legacy and logs differences.",
+    "evidence": "app.py: shadow found the same 108 mismatches, members saw 0; after the fix 0 mismatches over 2,000 -> cutover ready; canary 10 % = 34 of 500 requests (sticky per member). Over HTTP 3.0-26.6 s per 2,000 shadow calls on this shared host.",
+    "verdict": "Chosen (ADR 0001)."
+   },
+   {
+    "name": "Branch by abstraction only, in-process",
+    "description": "Keep the new implementation inside the monolith behind the port and flip a flag.",
+    "evidence": "Same comparison results in-process (failure_lab.py, no network); but no independent deploy, which was the goal.",
+    "verdict": "Kept as the first step (the seam); not the end state."
+   }
+  ],
+  "decisionRecord": "labs/L400/17-strangler-fig/adr/0001-strangle-fines-behind-a-facade.md",
+  "fitnessFunction": {
+   "what": "No new code imports legacy_monolith; the known callers in legacy_callers.json may only shrink (ratchet).",
+   "test": "labs/L400/17-strangler-fig/fitness_legacy.py (test_strangler.FitnessTest)",
+   "threshold": "0 new callers; <= 2 known callers"
+  },
+  "scalingLimits": [
+   "Shadow mode doubles work; at high traffic sample the shadow calls or run them asynchronously - signal: p99 of the facade rises while shadowing.",
+   "Only side-effect-free operations can be shadowed; writes need idempotent dual writes and reconciliation - signal: duplicate emails or charges.",
+   "Non-deterministic outputs (timestamps, ordering) inflate the mismatch rate - signal: mismatches without a business pattern in mismatches.jsonl."
+  ],
+  "glossary": [
+   {
+    "term": "Strangler fig",
+    "meaning": "Replace a system gradually by growing new code around it and moving traffic slice by slice."
+   },
+   {
+    "term": "Branch by abstraction",
+    "meaning": "Put an interface between callers and a supplier so two implementations coexist on trunk."
+   },
+   {
+    "term": "Parallel run",
+    "meaning": "Run old and new, return the old answer, compare and record differences."
+   },
+   {
+    "term": "Ratchet",
+    "meaning": "A fitness baseline that may only improve, e.g. a list of legacy callers that can only shrink."
+   }
+  ],
+  "concepts": [
+   "Move traffic, not code: a facade decides per request who answers.",
+   "Cut-over criteria are code: evidence count, mismatch rate, errors.",
+   "Transitional architecture must be removed; a ratchet keeps it shrinking."
+  ],
+  "steps": [
+   {
+    "title": "Shadow the extracted service",
+    "detail": "cd labs/L400/17-strangler-fig && python app.py",
+    "expected": "shadow: comparisons 2000, mismatches 108; cutover ready False (mismatch rate 5.40% > 0.10%); first mismatch student, 7 days late, control 0.63, candidate 0.62.",
+    "ifNot": "Counts are seeded; different numbers mean traffic.py or fines_service.py changed."
+   },
+   {
+    "title": "Read the mismatch log",
+    "detail": "Open the first lines of out/mismatches.jsonl and look for the pattern.",
+    "expected": "One JSON object per difference: days_late, member_type, control, candidate - all students, odd chargeable days.",
+    "ifNot": "Run step 1 first.",
+    "mac": "head -3 out/mismatches.jsonl",
+    "windows": "Get-Content out\\mismatches.jsonl -TotalCount 3"
+   },
+   {
+    "title": "Big bang vs parallel run (failureLab)",
+    "detail": "python failure_lab.py",
+    "expected": "base: big-bang would charge 108 of 2000 wrong, members saw 0 in shadow; solution: 0 and cutover ready True.",
+    "ifNot": "Compare with the README."
+   },
+   {
+    "title": "Run the fitness function",
+    "detail": "python fitness_legacy.py",
+    "expected": "{\"gate\": \"no-new-legacy-callers\", \"ok\": true, ... \"callers\": 2, \"new\": []}; exit code 0.",
+    "ifNot": "A new file imports legacy_monolith: route it through FinesPort instead.",
+    "mac": "python fitness_legacy.py; echo \"exit $?\"",
+    "windows": "python fitness_legacy.py; \"exit $LASTEXITCODE\""
+   },
+   {
+    "title": "Harden it (build task)",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "Before your change 2 of 3 tests fail; after it, OK. Without CHECK_MINE the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   },
+   {
+    "title": "Cut over",
+    "detail": "python app.py --solution (or plain python app.py after your fix)",
+    "expected": "mismatches 0, cutover ready True, canary 10% routed 34 of 500 to the service, canary 50% 245.",
+    "ifNot": "If ready is False, read the reasons list."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 12 tests ... OK.",
+    "ifNot": "Run from the lab folder."
+   }
+  ],
+  "code": "\"\"\"Strangler-fig decomposition of the fines module (lesson 17 lab code).\n\nBranch by abstraction: callers depend on FinesPort, never on the monolith. A facade routes each call to the\nlegacy code, to the extracted service, or to both (parallel run: legacy answers, the service is compared).\ncutover_decision() turns the measured mismatch rate into a go/no-go. Run the demo: python app.py\n\"\"\"\nimport hashlib\nimport json\nimport time\nimport urllib.parse\nimport urllib.request\nfrom typing import Protocol\n\nimport legacy_monolith  # the ONLY new-code import of the monolith (fitness: legacy_callers.json)\n\nCUTOVER = {\"min_comparisons\": 1000, \"max_mismatch_rate\": 0.001, \"max_candidate_errors\": 0}\n\n\nclass FinesPort(Protocol):  # branch by abstraction: the seam every caller uses\n    def fine(self, days_late: int, member_type: str) -> str: ...\n\n\nclass LegacyFines:\n    def fine(self, days_late, member_type):\n        return legacy_monolith.calculate_fine(days_late, member_type)\n\n\nclass ServiceFines:\n    \"\"\"Calls the extracted service: over HTTP (base_url) or in-process (fn) for fast tests.\"\"\"\n\n    def __init__(self, base_url=None, fn=None, timeout=2.0):\n        self.base_url, self.fn, self.timeout = base_url, fn, timeout\n\n    def fine(self, days_late, member_type):\n        if self.fn:\n            return self.fn(days_late, member_type)\n        query = urllib.parse.urlencode({\"days_late\": days_late, \"member_type\": member_type})\n        with urllib.request.urlopen(f\"{self.base_url}/fines?{query}\", timeout=self.timeout) as resp:\n            return json.loads(resp.read().decode(\"utf-8\"))[\"fine\"]\n\n\nclass ParallelRun:\n    \"\"\"Run control (legacy) and candidate (service); ALWAYS return the control; record every difference.\"\"\"\n\n    def __init__(self, control, candidate, log_path=None):\n        self.control, self.candidate, self.log_path = control, candidate, log_path\n        self.stats = {\"comparisons\": 0, \"mismatches\": 0, \"candidate_errors\": 0}\n        self.mismatches = []\n\n    def fine(self, days_late, member_type):\n        expected = self.control.fine(days_late, member_type)\n        try:\n            actual = self.candidate.fine(days_late, member_type)\n        except Exception as exc:  # a broken candidate must never break the member's request\n            self.stats[\"candidate_errors\"] += 1\n            self._record({\"days_late\": days_late, \"member_type\": member_type, \"error\": repr(exc)})\n            return expected\n        self.stats[\"comparisons\"] += 1\n        if actual != expected:\n            self.stats[\"mismatches\"] += 1\n            self._record({\"days_late\": days_late, \"member_type\": member_type, \"control\": expected,\n                          \"candidate\": actual})\n        return expected  # users only ever see the legacy answer while we compare\n\n    def _record(self, row):\n        self.mismatches.append(row)\n        if self.log_path:  # JSON lines: one mismatch per line, for diagnosis\n            with open(self.log_path, \"a\", encoding=\"utf-8\") as f:\n                f.write(json.dumps(row, sort_keys=True) + \"\\n\")\n\n    def mismatch_rate(self):\n        return self.stats[\"mismatches\"] / self.stats[\"comparisons\"] if self.stats[\"comparisons\"] else 0.0\n\n\ndef bucket(member_id):\n    \"\"\"Stable 0-99 bucket per member: a canary member stays in the canary on every request.\"\"\"\n    return int(hashlib.sha256(member_id.encode(\"utf-8\")).hexdigest(), 16) % 100\n\n\nclass Facade:\n    \"\"\"The strangler facade. mode: legacy | shadow (parallel run) | canary (pct % to service) | service.\"\"\"\n\n    def __init__(self, legacy, service, mode=\"legacy\", canary_pct=0, log_path=None):\n        self.legacy, self.service, self.mode, self.canary_pct = legacy, service, mode, canary_pct\n        self.shadow = ParallelRun(legacy, service, log_path)\n        self.routed = {\"legacy\": 0, \"service\": 0}\n\n    def fine(self, member_id, days_late, member_type):\n        if self.mode == \"service\" or (self.mode == \"canary\" and bucket(member_id) < self.canary_pct):\n            self.routed[\"service\"] += 1\n            return self.service.fine(days_late, member_type)\n        self.routed[\"legacy\"] += 1\n        if self.mode == \"shadow\":\n            return self.shadow.fine(days_late, member_type)\n        return self.legacy.fine(days_late, member_type)\n\n\ndef cutover_decision(stats, criteria=CUTOVER):\n    \"\"\"Cut-over criteria as code: enough evidence, mismatch rate under budget, no candidate errors.\"\"\"\n    rate = stats[\"mismatches\"] / stats[\"comparisons\"] if stats[\"comparisons\"] else 1.0\n    reasons = []\n    if stats[\"comparisons\"] < criteria[\"min_comparisons\"]:\n        reasons.append(f\"only {stats['comparisons']} comparisons (< {criteria['min_comparisons']})\")\n    if rate > criteria[\"max_mismatch_rate\"]:\n        reasons.append(f\"mismatch rate {rate:.2%} > {criteria['max_mismatch_rate']:.2%}\")\n    if stats[\"candidate_errors\"] > criteria[\"max_candidate_errors\"]:\n        reasons.append(f\"{stats['candidate_errors']} candidate errors\")\n    return {\"ready\": not reasons, \"mismatch_rate\": round(rate, 4), \"reasons\": reasons}\n\n\ndef replay(facade, requests):\n    \"\"\"Send seeded traffic through the facade; returns elapsed seconds (informational only).\"\"\"\n    start = time.perf_counter()\n    for r in requests:\n        facade.fine(r[\"member_id\"], r[\"days_late\"], r[\"member_type\"])\n    return time.perf_counter() - start\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`class FinesPort(Protocol)`",
+    "detail": "The seam: callers depend on this interface, so legacy and service implementations can coexist (branch by abstraction)."
+   },
+   {
+    "title": "`import legacy_monolith` only here",
+    "detail": "The single allowed new-code import; LegacyFines wraps it. The fitness function keeps it that way."
+   },
+   {
+    "title": "`ParallelRun.fine`",
+    "detail": "Computes the control, tries the candidate, catches its exceptions, counts and logs differences - and always returns the control."
+   },
+   {
+    "title": "`bucket(member_id)`",
+    "detail": "SHA-256 of the member id mod 100: a canary member stays in the canary on every request."
+   },
+   {
+    "title": "`Facade.fine` modes",
+    "detail": "legacy | shadow | canary | service: one switch per stage of the strangling."
+   },
+   {
+    "title": "`cutover_decision`",
+    "detail": "Evidence (>= 1,000 comparisons), quality (mismatch rate <= 0.1 %) and safety (0 candidate errors) as code with reasons."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/17-strangler-fig/strangler.py",
+    "purpose": "Port, adapters, parallel run, facade, cut-over criteria (lesson code)"
+   },
+   {
+    "path": "labs/L400/17-strangler-fig/fines_service.py",
+    "purpose": "Extracted service (seeded rounding fault), in-process or HTTP"
+   },
+   {
+    "path": "labs/L400/17-strangler-fig/legacy_monolith.py",
+    "purpose": "The monolith's fine rule"
+   },
+   {
+    "path": "labs/L400/17-strangler-fig/fitness_legacy.py",
+    "purpose": "Fitness function: no new legacy callers (ratchet)"
+   },
+   {
+    "path": "labs/L400/17-strangler-fig/app.py",
+    "purpose": "Shadow over HTTP, cut-over, canary"
+   },
+   {
+    "path": "labs/L400/17-strangler-fig/failure_lab.py",
+    "purpose": "Big bang vs parallel run"
+   },
+   {
+    "path": "labs/L400/17-strangler-fig/adr/0001-strangle-fines-behind-a-facade.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/17-strangler-fig/solution/fines_service.py",
+    "purpose": "Build task solution"
+   },
+   {
+    "path": "labs/L400/17-strangler-fig/test_build_task.py",
+    "purpose": "Fail before / pass after"
+   }
+  ],
+  "expectedResults": [
+   "shadow: 108 mismatches of 2,000 (5.4 %), members saw 0; cut-over refused",
+   "solution: 0 mismatches, cut-over ready; canary sticky per member",
+   "Ran 12 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "Student, 3 days late (1 chargeable day = 0.125)",
+    "expected": "monolith 0.13; base service 0.12; parallel run returns 0.13 and counts 1 mismatch"
+   },
+   {
+    "action": "Candidate raises TimeoutError",
+    "expected": "member gets the legacy answer; candidate_errors 1; cut-over refused"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Mismatches that only differ in format (2.0 vs 2.00)",
+    "action": "Compare cleaned values (Decimal), log both raw values."
+   },
+   {
+    "symptom": "Fitness gate reports `migrated`",
+    "action": "Remove that caller from legacy_callers.json: the ratchet only shrinks."
+   }
+  ],
+  "equivalents": [
+   "GitHub Scientist (Ruby, MIT): use/try blocks, compare, clean, ignore, publish - the parallel run pattern; ports exist for Python (laboratory), .NET, Java, Go, Node.",
+   "Facade at the edge: a reverse proxy or API gateway (NGINX, Envoy) routing by path or header instead of the in-process Facade.",
+   "Feature-flag services (OpenFeature SDKs) for the canary percentage.",
+   "import-linter 2.15 `forbidden` contract with `ignore_imports` for the known callers = fitness_legacy.py."
+  ],
+  "checkpoint": "PASS if failure_lab.py shows 0 mismatches and cutover ready for the solution, fitness_legacy.py exits 0, and test_build_task passes on your fines_service.py.",
+  "checkYourself": [
+   {
+    "q": "Why may shadow mode only wrap operations without side effects?",
+    "a": "Both implementations run; a write would happen twice (two emails, two charges). Writes need idempotent dual writes and reconciliation."
+   },
+   {
+    "q": "The fixed service has 0 mismatches after 300 requests. Why does the gate still say no?",
+    "a": "Too little evidence: the criteria require >= 1,000 comparisons, because rare cases (students at odd chargeable days) may not have appeared yet."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Plant new_feature.py that imports legacy_monolith and run the fitness function.",
+    "predict": "Does the gate notice an import that 'just reuses the old rule'?",
+    "expected": "[1] ... 'ok': False, 'value': {'new': ['new_feature.py'], 'migrated': [], 'callers': 3}"
+   },
+   {
+    "task": "Shadow the FIXED service on only 300 requests and ask for the cut-over decision.",
+    "predict": "0 mismatches: ready or not?",
+    "expected": "[2] {'ready': False, 'mismatch_rate': 0.0, 'reasons': ['only 300 comparisons (< 1000)']}"
+   }
+  ],
+  "buildTask": {
+   "task": "Make fine_for() in fines_service.py match the monolith exactly, so the parallel run allows the cut-over.",
+   "hints": [
+    "Use Decimal: Decimal('0.25') * chargeable * (Decimal('0.5') if student else 1).",
+    "Cap at Decimal('10.00') and quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)."
+   ],
+   "solution": "labs/L400/17-strangler-fig/solution/fines_service.py",
+   "check": "labs/L400/17-strangler-fig/test_build_task.py (3 tests)"
+  },
+  "failureLab": {
+   "fault": "fines_service.py computes fines with float maths and round(), which rounds half to even (seeded traffic: 2,000 requests, 30 % students).",
+   "symptom": "Big bang would charge 108 of 2,000 members (5.4 %) a different fine (students at 3, 7, 11 ... days late: 0.12 instead of 0.13); unit tests on adult fines pass.",
+   "fix": "Decimal arithmetic with ROUND_HALF_UP, the monolith's rule; parallel run shows 0 mismatches and the cut-over gate opens.",
+   "proof": "test_build_task.py: 2 of 3 FAIL with CHECK_MINE=1 on the base fines_service.py, 3 of 3 PASS on solution/fines_service.py."
+  },
+  "tradeOffs": [
+   {
+    "option": "Big-bang replacement",
+    "gains": "No transitional code",
+    "costs": "Every behaviour difference reaches users at once",
+    "chooseWhen": "Small, fully specified components with cheap rollback"
+   },
+   {
+    "option": "Facade + parallel run",
+    "gains": "Differences found with zero user impact",
+    "costs": "2x work, transitional code, only for side-effect-free calls",
+    "chooseWhen": "Under-specified legacy behaviour, costly wrong answers"
+   },
+   {
+    "option": "Canary by sticky bucket",
+    "gains": "Real users, limited blast radius",
+    "costs": "Needs metrics per cohort; some users do see the new behaviour",
+    "chooseWhen": "After shadow mode is clean"
+   }
+  ],
+  "inRealSystems": [
+   "The facade is usually the API gateway or a routing layer; shadow traffic is mirrored asynchronously.",
+   "Teams track the strangling as a burndown of legacy routes and callers, the same idea as the ratchet."
+  ],
+  "useWhen": "Use a strangler with a parallel run when replacing behaviour you cannot fully specify; avoid shadowing calls with side effects.",
+  "next": "L400 #18 Multi-tenancy: shared schema vs schema per tenant vs database per tenant",
+  "sources": [
+   {
+    "title": "Martin Fowler - Strangler Fig (2024)",
+    "url": "https://martinfowler.com/bliki/StranglerFigApplication.html"
+   },
+   {
+    "title": "Martin Fowler - Branch By Abstraction",
+    "url": "https://martinfowler.com/bliki/BranchByAbstraction.html"
+   },
+   {
+    "title": "Cartwright, Horn, Lewis - Transitional Architecture (Patterns of Legacy Displacement)",
+    "url": "https://martinfowler.com/articles/patterns-legacy-displacement/transitional-architecture.html"
+   },
+   {
+    "title": "github/scientist - carefully refactoring critical paths (README)",
+    "url": "https://github.com/github/scientist"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py and app.py --solution (shadow over HTTP, 3 runs; HTTP time as a range), failure_lab.py, fitness_legacy.py, try_it.py, `python -m unittest -v` (12 tests OK) and test_build_task with CHECK_MINE=1 (2 failures before the fix) on Python 3.12.15, 2026-10-28.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "learningTools exercises (import-linter contract, Structurizr view): manual"
+   ]
+  },
+  "conceptNote": "content/concepts/L400/17-strangler-fig-decomposition.md",
+  "conceptSummary": "Grow the new service behind a facade, compare it with the old code on real traffic while users still get the old answer, and cut over when measured criteria say so.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "import-linter",
+    "role": "CHECK",
+    "exercise": "Write a forbidden contract (source_modules = the lab's modules, forbidden_modules = legacy_monolith, ignore_imports for strangler and monolith_reports) and run lint-imports; then plant try-it 1's new_feature.py.",
+    "expected": "Pending a manual run. Should agree with fitness_legacy.py: kept with the 2 known callers ignored, broken by new_feature.py. Whether lint-imports accepts these top-level single-file modules is unverified (see KNOWN-GAPS).",
+    "mac": "pip install import-linter",
+    "windows": "pip install import-linter",
+    "licence": "BSD-2-Clause (OSI: yes)",
+    "url": "https://github.com/seddonym/import-linter"
+   },
+   {
+    "name": "Structurizr (local)",
+    "role": "SEE",
+    "exercise": "Model the transitional architecture as a container view: Library Loans monolith, Fines service, the facade between them, with a note on the cut-over criteria; add ADR 0001 to the workspace.",
+    "expected": "Pending a manual run. The view should show the same three routes as Facade (legacy, service, shadow both) and the decision explorer should list ADR 0001.",
+    "mac": "docker run -it --rm -p 8080:8080 -v PATH:/usr/local/structurizr structurizr/structurizr local (Docker or Java 21+)",
+    "windows": "same",
+    "licence": "Apache-2.0, open-core: 'local' is free (OSI: yes)",
+    "url": "https://github.com/structurizr/structurizr"
+   }
+  ],
+  "seeAlso": [
+   "application-architecture L200 #7 Hexagonal architecture: ports and adapters: the port is the seam that makes branch by abstraction possible."
+  ]
+ },
+ {
+  "id": "multi-tenancy",
+  "number": 18,
+  "level": "L400",
+  "title": "Multi-tenancy: shared schema vs schema per tenant vs database per tenant",
+  "phase": "Design",
+  "category": "data",
+  "description": "Store 50 libraries in three tenancy layouts on SQLite files, measure isolation, noisy neighbour and migration effort, and enforce tenant-scoped queries with a static fitness test and a runtime guard.",
+  "outcome": "You can compare tenancy layouts with measured evidence, choose one with an ADR, and make 'no query without a tenant id' a fitness function that fails the build.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux, SQLite 3.44.0); unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100.",
+  "estimatedTime": "75 minutes",
+  "overview": [
+   "tenancy.py builds the same loans data as shared schema, schema per tenant and database per tenant and measures each.",
+   "A new overdue report forgot `WHERE tenant_id`: 686 of 700 rows it returns belong to other libraries."
+  ],
+  "prerequisites": [
+   "Lesson 2 (repository)",
+   "Lesson 10 (identity: where the tenant id comes from)",
+   "Lesson 16 (gates in CI)"
+  ],
+  "designBrief": {
+   "context": "Library Loans becomes a hosted service: 50 small libraries now, a few large ones later, one codebase.",
+   "constraints": [
+    "0 rows of another library visible to any query",
+    "one schema change must not need 50 migrations for small libraries",
+    "a bulk import of one library must not block other libraries that need write isolation",
+    "every query provably tenant-scoped (CI gate)"
+   ],
+   "question": "Which data layout per tenant, and how do we guarantee that no query crosses tenants?"
+  },
+  "options": [
+   {
+    "name": "Shared schema (tenant_id column)",
+    "description": "One table; every query filters by tenant_id; tenant first in every index.",
+    "evidence": "app.py, 50 libraries: one missing filter leaked 686 of 700 rows; 20 of 20 neighbour writes blocked during a bulk import; 1 DDL statement / 1 file per schema change.",
+    "verdict": "Chosen as the default tier, with both guards (ADR 0002)."
+   },
+   {
+    "name": "Schema per tenant (table per tenant in one file)",
+    "description": "Names separate tenants; SQLite has no CREATE SCHEMA, ATTACH allows 10 databases by default.",
+    "evidence": "0 leaked rows (guard still flags the query); 20 of 20 writes blocked (same file); 50 DDL statements; try-it: the 11th ATTACH fails 'too many attached databases - max 10'.",
+    "verdict": "Rejected: migration fan-out without write isolation."
+   },
+   {
+    "name": "Database per tenant (one SQLite file each)",
+    "description": "The connection is the boundary.",
+    "evidence": "0 leaked rows; 0 of 20 writes blocked; 50 DDL statements / 50 files (0.45-4.5 s here vs 9-54 ms shared).",
+    "verdict": "Premium tier for libraries that need write isolation or their own restore."
+   }
+  ],
+  "decisionRecord": "labs/L400/18-multi-tenancy/adr/0002-shared-schema-with-tenant-guard.md",
+  "fitnessFunction": {
+   "what": "No SQL on a tenant table without `WHERE tenant_id = ?` (static, AST over string constants) and no executed statement without the current tenant's id (TenantGuard, runtime).",
+   "test": "labs/L400/18-multi-tenancy/fitness_tenant.py (+ test_build_task.py guard test)",
+   "threshold": "0 unscoped queries, 0 guard violations"
+  },
+  "scalingLimits": [
+   "Shared SQLite file: one writer at a time for all tenants - signal: 'database is locked' and rising write latency during imports.",
+   "Database per tenant: migrations and connections fan out (5,000 tenants = 5,000 migrations) - signal: tenants on different schema versions.",
+   "Hot tenant in the shared schema - signal: one tenant_id dominates rows, writes or p99."
+  ],
+  "glossary": [
+   {
+    "term": "Tenant",
+    "meaning": "A customer whose data must be isolated (here: a library)."
+   },
+   {
+    "term": "Noisy neighbour",
+    "meaning": "One tenant's load degrading others that share a resource."
+   },
+   {
+    "term": "Tenant guard",
+    "meaning": "A runtime check that every statement carries the current tenant's id."
+   },
+   {
+    "term": "Expanded SQL",
+    "meaning": "The statement with bound values filled in; sqlite3's trace callback reports it."
+   }
+  ],
+  "concepts": [
+   "The tenancy boundary is a WHERE clause, a name, or a connection.",
+   "Measure isolation, noisy neighbour and migration effort before choosing.",
+   "Guard tenant scoping twice: statically in CI and at runtime."
+  ],
+  "steps": [
+   {
+    "title": "Measure the three layouts",
+    "detail": "cd labs/L400/18-multi-tenancy && python app.py",
+    "expected": "shared: rows 700, leaked 686, blocked 20, DDL 1/1; schema-per-tenant: leaked 0, blocked 20, DDL 50/1; db-per-tenant: leaked 0, blocked 0, DDL 50/50.",
+    "ifNot": "Counts are deterministic; `ms` varies with the disk."
+   },
+   {
+    "title": "Read the measurements",
+    "detail": "Open out/tenancy.jsonl: one JSON line per layout.",
+    "expected": "isolation, noisy_neighbour and migration objects per layout.",
+    "ifNot": "Run step 1 first.",
+    "mac": "cat out/tenancy.jsonl",
+    "windows": "Get-Content out\\tenancy.jsonl"
+   },
+   {
+    "title": "The unscoped report (failureLab)",
+    "detail": "python failure_lab.py",
+    "expected": "base: 700 rows, 686 from other libraries, guard violations 1, static gate ok=False; solution: 14 rows, 0, 0, True.",
+    "ifNot": "Compare with the README."
+   },
+   {
+    "title": "Run the static gate",
+    "detail": "python fitness_tenant.py",
+    "expected": "ok false, value lists repository.py:8 ... WHERE due < ?; exit code 1.",
+    "ifNot": "Exit 0 means the report is already scoped.",
+    "mac": "python fitness_tenant.py; echo \"exit $?\"",
+    "windows": "python fitness_tenant.py; \"exit $LASTEXITCODE\""
+   },
+   {
+    "title": "Harden it (build task)",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "Before your change 3 of 3 tests fail; after it, OK. Without CHECK_MINE the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 9 tests ... OK (5-15 s: SQLite files on disk).",
+    "ifNot": "Run from the lab folder."
+   }
+  ],
+  "code": "\"\"\"Three multi-tenancy layouts for Library Loans on SQLite files, measured side by side (lesson 18 lab code).\n\nshared-schema      one file, one loans table, a tenant_id column on every row (isolation = a WHERE clause)\nschema-per-tenant  one file, one loans table per tenant (SQLite has no CREATE SCHEMA: table name = namespace)\ndb-per-tenant      one SQLite file per tenant (isolation = the connection)\nTenantGuard checks at runtime that every statement on a tenant table names the CURRENT tenant id.\nRun the comparison: python app.py\n\"\"\"\nimport re\nimport sqlite3\nfrom datetime import date, timedelta\n\nimport repository\n\nCOLUMNS = \"id INTEGER PRIMARY KEY, tenant_id TEXT NOT NULL, member_id TEXT NOT NULL, book_id TEXT NOT NULL, due TEXT\"\n\n\nclass Session:\n    \"\"\"What a request gets: a connection, the table to use and the tenant it acts for.\"\"\"\n\n    def __init__(self, conn, table, tenant):\n        self.conn, self.table, self.tenant = conn, table, tenant\n\n\nclass SharedSchema:\n    kind = \"shared-schema\"\n\n    def __init__(self, folder):\n        self.path = folder / \"shared.sqlite\"\n\n    def session(self, tenant, timeout=5.0):\n        conn = sqlite3.connect(self.path, isolation_level=None, timeout=timeout)\n        conn.execute(f\"CREATE TABLE IF NOT EXISTS loans ({COLUMNS})\")\n        conn.execute(\"CREATE INDEX IF NOT EXISTS loans_tenant ON loans (tenant_id, member_id)\")  # tenant first\n        return Session(conn, \"loans\", tenant)\n\n    def files(self, tenants):\n        return 1\n\n    def tables(self, tenants):\n        return [(\"main\", \"loans\")]\n\n\nclass SchemaPerTenant(SharedSchema):\n    kind = \"schema-per-tenant\"\n\n    def session(self, tenant, timeout=5.0):\n        conn = sqlite3.connect(self.path, isolation_level=None, timeout=timeout)\n        conn.execute(f\"CREATE TABLE IF NOT EXISTS loans__{tenant} ({COLUMNS})\")\n        return Session(conn, f\"loans__{tenant}\", tenant)\n\n    def tables(self, tenants):\n        return [(\"main\", f\"loans__{t}\") for t in tenants]\n\n\nclass DbPerTenant:\n    kind = \"db-per-tenant\"\n\n    def __init__(self, folder):\n        self.folder = folder / \"tenants\"\n        self.folder.mkdir(exist_ok=True)\n\n    def session(self, tenant, timeout=5.0):\n        conn = sqlite3.connect(self.folder / f\"{tenant}.sqlite\", isolation_level=None, timeout=timeout)\n        conn.execute(f\"CREATE TABLE IF NOT EXISTS loans ({COLUMNS})\")\n        return Session(conn, \"loans\", tenant)\n\n    def files(self, tenants):\n        return len(tenants)\n\n    def tables(self, tenants):\n        return [(t, \"loans\") for t in tenants]\n\n\nLAYOUTS = [SharedSchema, SchemaPerTenant, DbPerTenant]\nTENANT_TABLE = re.compile(r\"\\b(FROM|UPDATE|INTO|JOIN)\\s+(loans\\w*)\", re.I)\n\n\nclass TenantGuard:\n    \"\"\"Runtime tenant scoping: the trace callback sees each statement with its bound values (expanded SQL).\"\"\"\n\n    def __init__(self, session):\n        self.session, self.violations = session, []\n\n    def __enter__(self):\n        self.session.conn.set_trace_callback(self.check)\n        return self\n\n    def __exit__(self, *exc):\n        self.session.conn.set_trace_callback(None)\n\n    def check(self, sql):\n        if not TENANT_TABLE.search(sql) or sql.lstrip().upper().startswith((\"CREATE\", \"BEGIN\", \"COMMIT\")):\n            return\n        if f\"'{self.session.tenant}'\" not in sql:  # every tenant-table statement must carry THIS tenant's id\n            self.violations.append(sql)\n\n\ndef seed(layout, tenants, loans_per_tenant=40, today=date(2026, 10, 28)):\n    for t_index, tenant in enumerate(tenants):\n        s = layout.session(tenant)\n        s.conn.execute(\"BEGIN\")\n        for i in range(loans_per_tenant):  # every 3rd loan is overdue: due 1-5 days before today\n            due = today - timedelta(days=1 + i % 5) if i % 3 == 0 else today + timedelta(days=7 + i % 14)\n            repository.borrow(s, f\"{tenant}-m{i % 12}\", f\"b{t_index}-{i}\", due.isoformat())\n        s.conn.execute(\"COMMIT\")\n        s.conn.close()\n\n\ndef leak_check(layout, tenant, today=\"2026-10-28\"):\n    \"\"\"Isolation: rows from OTHER tenants returned by the overdue report, plus the guard's verdict.\"\"\"\n    s = layout.session(tenant)\n    with TenantGuard(s) as guard:\n        rows = repository.overdue(s, today)\n    s.conn.close()\n    return {\"rows\": len(rows), \"leaked\": sum(r[1].split(\"-\")[0] != tenant for r in rows),\n            \"guard_violations\": len(guard.violations)}\n\n\ndef noisy_neighbour(layout, busy_tenant, victim, attempts=20):\n    \"\"\"Tenant A holds a write transaction (bulk import); tenant B tries to borrow with no lock wait.\"\"\"\n    a = layout.session(busy_tenant)\n    a.conn.execute(\"BEGIN IMMEDIATE\")  # SQLite: one writer per FILE\n    for i in range(500):\n        repository.borrow(a, f\"{busy_tenant}-bulk\", f\"bulk-{i}\", \"2026-12-01\")\n    b, blocked = layout.session(victim, timeout=0), 0\n    for i in range(attempts):\n        try:\n            repository.borrow(b, f\"{victim}-m1\", f\"new-{i}\", \"2026-11-11\")\n        except sqlite3.OperationalError:  # \"database is locked\": the neighbour's import blocks us\n            blocked += 1\n    a.conn.execute(\"ROLLBACK\")\n    a.conn.close()\n    b.conn.close()\n    return {\"attempts\": attempts, \"blocked\": blocked}\n\n\ndef migrate(layout, tenants, ddl=\"ALTER TABLE {db}.{table} ADD COLUMN renewals INTEGER NOT NULL DEFAULT 0\"):\n    \"\"\"Migration effort: DDL statements to run and files to touch for ONE schema change.\"\"\"\n    statements = 0\n    for db, table in layout.tables(tenants):\n        s = layout.session(db if db != \"main\" else tenants[0])\n        s.conn.execute(ddl.format(db=\"main\", table=table))\n        s.conn.close()\n        statements += 1\n    return {\"ddl_statements\": statements, \"files\": layout.files(tenants)}\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`Session(conn, table, tenant)`",
+    "detail": "What a request gets; the repository never decides the tenant itself."
+   },
+   {
+    "title": "`SharedSchema` / `SchemaPerTenant` / `DbPerTenant`",
+    "detail": "Same interface, three boundaries: WHERE clause, table name, file."
+   },
+   {
+    "title": "`CREATE INDEX ... (tenant_id, member_id)`",
+    "detail": "Tenant first: every shared-schema query starts by narrowing to one tenant."
+   },
+   {
+    "title": "`TenantGuard.check(sql)`",
+    "detail": "sqlite3's trace callback gives the expanded SQL; a tenant-table statement without the current tenant's quoted id is a violation."
+   },
+   {
+    "title": "`noisy_neighbour`",
+    "detail": "BEGIN IMMEDIATE holds the file's write lock; the victim's writes with timeout 0 fail with 'database is locked' when they share the file."
+   },
+   {
+    "title": "`migrate`",
+    "detail": "One ALTER per table: 1 for shared, N for per-tenant layouts; counts the files touched."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/18-multi-tenancy/tenancy.py",
+    "purpose": "Layouts, guard, measurements (lesson code)"
+   },
+   {
+    "path": "labs/L400/18-multi-tenancy/repository.py",
+    "purpose": "Loans SQL (seeded unscoped report)"
+   },
+   {
+    "path": "labs/L400/18-multi-tenancy/fitness_tenant.py",
+    "purpose": "Fitness function: tenant-scoped SQL"
+   },
+   {
+    "path": "labs/L400/18-multi-tenancy/app.py",
+    "purpose": "Measures all layouts -> out/tenancy.jsonl"
+   },
+   {
+    "path": "labs/L400/18-multi-tenancy/failure_lab.py",
+    "purpose": "Unscoped report, base vs solution"
+   },
+   {
+    "path": "labs/L400/18-multi-tenancy/adr/0002-shared-schema-with-tenant-guard.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/18-multi-tenancy/solution/repository.py",
+    "purpose": "Build task solution"
+   },
+   {
+    "path": "labs/L400/18-multi-tenancy/test_build_task.py",
+    "purpose": "Fail before / pass after"
+   }
+  ],
+  "expectedResults": [
+   "shared schema leaks 686 of 700 rows with one missing filter; per-tenant layouts leak 0 but the guard flags all three",
+   "bulk import blocks 20 of 20 neighbour writes in a shared file, 0 with separate files",
+   "Ran 9 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "6 libraries, overdue report without tenant filter, shared schema",
+    "expected": "84 rows, 70 leaked, 1 guard violation"
+   },
+   {
+    "action": "lib00 session runs a query with tenant_id = 'lib01'",
+    "expected": "6 rows returned, guard records the statement"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "`database is locked` in your own runs",
+    "action": "Keep write transactions short (batches) or give the connection a busy timeout; move very busy tenants to their own file."
+   },
+   {
+    "symptom": "PermissionError deleting the scratch folder on Windows",
+    "action": "A connection is still open; close every connection first."
+   }
+  ],
+  "equivalents": [
+   "PostgreSQL row-level security: ENABLE + FORCE ROW LEVEL SECURITY with a policy on tenant_id (current_setting per session) - a database-side guard.",
+   "Hibernate/Spring multi-tenancy (discriminator, schema, database strategies); EF Core global query filters.",
+   "Citus distributes a shared schema by tenant_id (shard key)."
+  ],
+  "caution": "Take the tenant id from the verified token (lesson 10), never from the request body or a URL the caller controls.",
+  "checkpoint": "PASS if fitness_tenant.py exits 0 on your repository.py, failure_lab.py's solution line shows 0 rows from other libraries, and test_build_task passes with CHECK_MINE=1.",
+  "checkYourself": [
+   {
+    "q": "Per-tenant tables hid the bug (0 leaked rows). Why still fix the query?",
+    "a": "The guard shows the query is unscoped; a later move to a shared tier, or a report across tables, would leak. Layout is not a substitute for scoping."
+   },
+   {
+    "q": "Why did database-per-tenant isolate the bulk import while schema-per-tenant did not?",
+    "a": "SQLite locks the whole file for writing; separate tables in one file share the lock, separate files do not."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "ATTACH one SQLite file per library into one connection (schema per tenant via ATTACH).",
+    "predict": "How many libraries can one connection see?",
+    "expected": "[1] attached 10 tenant files, then: too many attached databases - max 10"
+   },
+   {
+    "task": "In lib00's session, run a query scoped to tenant_id 'lib01' (hard-coded).",
+    "predict": "It has a tenant_id filter - will the guard accept it?",
+    "expected": "[2] ... -> 6 rows; guard violations [\"SELECT id FROM loans WHERE tenant_id = 'lib01'\"]"
+   }
+  ],
+  "buildTask": {
+   "task": "Scope the overdue report in repository.py so it passes the static gate and the runtime guard.",
+   "hints": [
+    "OVERDUE: `... WHERE tenant_id = ? AND due < ? ORDER BY id`.",
+    "Bind (session.tenant, today) in overdue()."
+   ],
+   "solution": "labs/L400/18-multi-tenancy/solution/repository.py",
+   "check": "labs/L400/18-multi-tenancy/test_build_task.py (3 tests)"
+  },
+  "failureLab": {
+   "fault": "A new overdue report in repository.py: `SELECT ... FROM {table} WHERE due < ?` (no tenant filter); 50 libraries x 40 loans.",
+   "symptom": "In the shared schema lib00's report returns 700 rows, 686 of them other libraries'; in per-tenant layouts it returns 14 and looks fine.",
+   "fix": "`WHERE tenant_id = ? AND due < ?` bound to the session's tenant.",
+   "proof": "fitness_tenant.py exits 1 before, 0 after; test_build_task.py: 3 of 3 FAIL with CHECK_MINE=1 on the base repository.py, 3 of 3 PASS on the solution."
+  },
+  "tradeOffs": [
+   {
+    "option": "Shared schema",
+    "gains": "1 migration, cheapest to run, simple analytics",
+    "costs": "One bug leaks everything; shared locks",
+    "chooseWhen": "Many small tenants, strong guards in CI"
+   },
+   {
+    "option": "Schema per tenant",
+    "gains": "Names separate data",
+    "costs": "N migrations, catalog growth, still shared resources",
+    "chooseWhen": "Server databases with real schemas and moderate tenant counts"
+   },
+   {
+    "option": "Database per tenant",
+    "gains": "Strong isolation, per-tenant restore and placement",
+    "costs": "N databases to migrate, pool and monitor",
+    "chooseWhen": "Few large or regulated tenants"
+   }
+  ],
+  "inRealSystems": [
+   "Most SaaS products mix tiers: pooled tenants in a shared schema, large ones in silos, same code via tenant-scoped data access.",
+   "Server databases add row-level security as a third guard; per-tenant dashboards (p99, lock waits) find noisy neighbours."
+  ],
+  "useWhen": "Use a shared schema with enforced scoping for many small tenants; give a tenant its own database when it needs write isolation, its own restore or residency.",
+  "next": "L400 #19 Policy as code: RBAC vs ABAC, policy tests and decision logs",
+  "sources": [
+   {
+    "title": "PostgreSQL 18 docs - Row Security Policies",
+    "url": "https://www.postgresql.org/docs/current/ddl-rowsecurity.html"
+   },
+   {
+    "title": "SQLite - Implementation Limits (SQLITE_MAX_ATTACHED)",
+    "url": "https://www.sqlite.org/limits.html"
+   },
+   {
+    "title": "Google SRE Book - Handling Overload (per-customer limits)",
+    "url": "https://sre.google/sre-book/handling-overload/"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py and app.py --solution (2 runs each; ms as ranges), failure_lab.py, fitness_tenant.py, try_it.py, `python -m unittest -v` (9 tests OK) and test_build_task with CHECK_MINE=1 (3 failures before the fix) on Python 3.12.15 / SQLite 3.44.0, 2026-10-28.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "SQLite locking on macOS (APFS) and Windows (NTFS) local disks; this sandbox's disk is a network mount",
+    "learningTools exercise (JupyterLab): manual"
+   ]
+  },
+  "conceptNote": "content/concepts/L400/18-multi-tenancy.md",
+  "conceptSummary": "Isolation lives in a WHERE clause, a name or a connection; measure leaks, noisy neighbours and migration effort, then guard every query's tenant id in CI and at runtime.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "JupyterLab (+ JupyterLab Desktop)",
+    "role": "CHECK",
+    "exercise": "Load out/tenancy.jsonl into a notebook, make a bar chart of leaked rows, blocked writes and DDL statements per layout, and recompute leaked/rows for the shared schema.",
+    "expected": "Pending a manual run. Should match app.py: 686/700 leaked (98 %), blocked 20/20/0, DDL 1/50/50.",
+    "mac": "pip install jupyterlab",
+    "windows": "pip install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   }
+  ],
+  "seeAlso": [
+   "distributed-systems L200 #9 Sharding with consistent hashing: virtual nodes, key movement, hot keys: tenant_id as the shard key, and the hot-tenant problem at larger scale.",
+   "distributed-systems L200 #11 Rate limiting: token bucket, per-client limits, 429 and Retry-After: per-tenant quotas are the request-side answer to a noisy neighbour.",
+   "application-architecture L400 #19 Policy as code: RBAC vs ABAC, policy tests and decision logs: the policy checks the tenant too - two guards for the same boundary."
+  ]
+ },
+ {
+  "id": "policy-as-code",
+  "number": 19,
+  "level": "L400",
+  "title": "Policy as code: RBAC vs ABAC, policy tests and decision logs",
+  "phase": "Design",
+  "category": "security",
+  "description": "Move Library Loans' authorization rules into a Rego policy file evaluated by a decision point, test it with requirement cases, log every decision, and compare RBAC with ABAC.",
+  "outcome": "You can separate enforcement (PEP) from decisions (PDP), express attribute rules as policy, prove them with policy tests and coverage, write privacy-safe decision logs, and know when RBAC is enough.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux, SQLite 3.44.0); unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100. Optional: OPA 1.21.4 (Apache-2.0; brew install opa, or opa_windows_amd64.exe from the GitHub releases) for opa test / opa_parity.py.",
+  "estimatedTime": "75 minutes",
+  "overview": [
+   "rego_lite.py evaluates policy/loans.rego (a Rego v1 subset) for 14 requirement cases; handlers call authorize() first.",
+   "A new librarian rule forgot the library check: a librarian of lib01 may view lib00's loans."
+  ],
+  "prerequisites": [
+   "Lesson 10 (OIDC: who the subject is)",
+   "Lesson 18 (tenants)",
+   "Lesson 15 (structured logs)"
+  ],
+  "designBrief": {
+   "context": "Rules depend on attributes: own loans, same library, loan limit 5, suspended accounts, waivers above 20.00 need a manager. They are spread over handlers.",
+   "constraints": [
+    "14 of 14 requirement cases decided correctly",
+    "every public handler enforces a decision",
+    "every allow/deny rule covered by a case",
+    "no email address in decision logs",
+    "rules reviewable in one file"
+   ],
+   "question": "Where do authorization rules live, which model (RBAC or ABAC), and how do we prove and audit them?"
+  },
+  "options": [
+   {
+    "name": "RBAC role table",
+    "description": "Roles -> permitted actions (NIST RBAC model).",
+    "evidence": "app.py: 7 of 14 cases; cannot express own-loan, same-library, loan-limit, suspension or waiver-size rules.",
+    "verdict": "Rejected as the only model; roles remain an attribute."
+   },
+   {
+    "name": "ABAC policy file + in-process decision point",
+    "description": "loans.rego evaluated per request; deny overrides allow; decision log with masking.",
+    "evidence": "14 of 14 after the fix (13 of 14 with the seeded librarian rule); 290-1,145 us per decision in rego_lite on this shared host.",
+    "verdict": "Chosen (ADR 0003)."
+   },
+   {
+    "name": "Same policy on OPA (library or sidecar)",
+    "description": "OPA 1.21.4 evaluates the same .rego file; opa test runs the cases.",
+    "evidence": "Not run here (pending-ci: opa test policy/, opa_parity.py).",
+    "verdict": "Production equivalent; adopt when rules grow beyond the learning subset."
+   }
+  ],
+  "decisionRecord": "labs/L400/19-policy-as-code/adr/0003-policy-as-code-abac.md",
+  "fitnessFunction": {
+   "what": "Policy tests (all requirement cases), rule coverage (every allow/deny rule matched by a case) and PEP coverage (every public handler calls authorize() first).",
+   "test": "labs/L400/19-policy-as-code/fitness_policy.py",
+   "threshold": "14/14 cases, 100 % rules covered, 0 handlers without authorize()"
+  },
+  "scalingLimits": [
+   "rego_lite re-parses expressions per decision (290-1,145 us here) - signal: authorization shows up in latency profiles; compile once (OPA) or cache.",
+   "Remote PDP per request adds a hop and a dependency - signal: 403/500 spikes when the PDP is down; run it as a sidecar or library.",
+   "Per-row decisions for list queries do not scale - signal: N decisions per page; push the filter into the query."
+  ],
+  "glossary": [
+   {
+    "term": "PEP",
+    "meaning": "Policy enforcement point: the code that asks and enforces (here handlers.authorize)."
+   },
+   {
+    "term": "PDP",
+    "meaning": "Policy decision point: evaluates the policy and returns the decision."
+   },
+   {
+    "term": "ABAC",
+    "meaning": "Attribute-based access control: rules over subject, resource, action and environment attributes."
+   },
+   {
+    "term": "Decision log",
+    "meaning": "One structured record per decision: id, policy revision, masked input, result."
+   }
+  ],
+  "concepts": [
+   "Ask in the handler, decide in the policy.",
+   "RBAC sees roles; ABAC sees attributes.",
+   "Policy tests, coverage and decision logs make rules provable and auditable."
+  ],
+  "steps": [
+   {
+    "title": "Run the requirement cases",
+    "detail": "cd labs/L400/19-policy-as-code && python app.py",
+    "expected": "policy policy/loans.rego: 13/14; RBAC role table: 7/14; WRONG: librarian of another library; decision log 14 lines with email erased.",
+    "ifNot": "The revision hash changes if you edit the policy - that is expected."
+   },
+   {
+    "title": "Read the decision log",
+    "detail": "Open the first line of out/decisions.jsonl.",
+    "expected": "decision_id, revision, input without subject.email, result, matched (e.g. allow@12), erased ['/input/subject/email'].",
+    "ifNot": "Run step 1 first.",
+    "mac": "head -1 out/decisions.jsonl",
+    "windows": "Get-Content out\\decisions.jsonl -TotalCount 1"
+   },
+   {
+    "title": "The cross-library librarian (failureLab)",
+    "detail": "python failure_lab.py",
+    "expected": "base: allowed=True matched ['allow@27', 'allowed@44']; solution: allowed=False.",
+    "ifNot": "Compare with the README."
+   },
+   {
+    "title": "Run the policy gates",
+    "detail": "python fitness_policy.py",
+    "expected": "policy-tests ok false ['librarian of another library']; rule-coverage ok; pep-coverage ok; exit code 1.",
+    "ifNot": "Exit 0 means your policy is already fixed.",
+    "mac": "python fitness_policy.py; echo \"exit $?\"",
+    "windows": "python fitness_policy.py; \"exit $LASTEXITCODE\""
+   },
+   {
+    "title": "Harden it (build task)",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "Before your change 2 of 3 tests fail; after it, OK. Without CHECK_MINE the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   },
+   {
+    "title": "Same policy on OPA (pending-ci)",
+    "detail": "Install OPA 1.21.4 and run the Rego tests and the parity check.",
+    "expected": "opa test: PASS for loans_test.rego; opa_parity.py: 0 differences on 14 cases (CI job 'opa').",
+    "ifNot": "opa_parity.py exits 2 when opa is not on PATH.",
+    "mac": "brew install opa && opa test policy/ -v && python opa_parity.py solution",
+    "windows": "# download opa_windows_amd64.exe from https://github.com/open-policy-agent/opa/releases, rename to opa.exe\nopa test policy/ -v; python opa_parity.py solution"
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 12 tests ... OK.",
+    "ifNot": "Run from the lab folder."
+   }
+  ],
+  "code": "\"\"\"A tiny Rego-like policy engine plus a decision point with decision logs (lesson 19 lab code).\n\nFOR LEARNING ONLY: it reads a small subset of Rego v1 (default, `name if {...}`, `name contains \"msg\" if {...}`,\n==, !=, <, <=, >, >=, in, not, count(), input./data. paths, string/number/bool/array literals). The same\npolicy file runs on OPA in CI. Policy = data the service loads; the service code only asks \"allowed?\".\n\"\"\"\nimport hashlib\nimport json\nimport operator\nimport re\n\nRULE = re.compile(r'^(\\w+)(?:\\s+contains\\s+(\"[^\"]*\"))?\\s+if\\s*\\{(.*?)^\\}', re.S | re.M)\nDEFAULT = re.compile(r\"^default\\s+(\\w+)\\s*:=\\s*(.+)$\", re.M)\nOPS = [\" == \", \" != \", \" <= \", \" >= \", \" < \", \" > \", \" in \"]\nCOMPARE = dict(zip(OPS, [operator.eq, operator.ne, operator.le, operator.ge, operator.lt, operator.gt,\n                         lambda left, right: left in right]))\nUNDEFINED = object()  # Rego: a missing path is undefined, and an undefined expression is false\n\n\nclass Policy:\n    def __init__(self, text):\n        self.text = text\n        self.revision = hashlib.sha256(text.encode(\"utf-8\")).hexdigest()[:12]  # logged with every decision\n        self.defaults = {name: json.loads(value) for name, value in DEFAULT.findall(text)}\n        self.rules = []  # (rule id, name, message or None, [conditions])\n        for m in RULE.finditer(text):\n            name, message, body = m.groups()\n            line = text[:m.start()].count(\"\\n\") + 1\n            conditions = [c.strip() for c in body.replace(\";\", \"\\n\").splitlines()\n                          if c.strip() and not c.strip().startswith(\"#\")]\n            self.rules.append((f\"{name}@{line}\", name, json.loads(message) if message else None, conditions))\n\n    def evaluate(self, inp, data=None):\n        \"\"\"Returns (value of every rule name, ids of the rule bodies that matched).\"\"\"\n        doc, matched, cache = {\"input\": inp, \"data\": data or {}}, [], {}\n\n        def rule_value(name):\n            if name not in cache:\n                cache[name] = UNDEFINED  # guards against recursion\n                bodies = [r for r in self.rules if r[1] == name]\n                if bodies and bodies[0][2] is not None:  # partial set rule: collect messages\n                    hits = [r for r in bodies if all(cond(c) for c in r[3])]\n                    matched.extend(r[0] for r in hits)\n                    cache[name] = sorted({r[2] for r in hits})\n                else:  # boolean rule: any body true (bodies are OR-ed), else the default\n                    hit = next((r for r in bodies if all(cond(c) for c in r[3])), None)\n                    if hit:\n                        matched.append(hit[0])\n                    cache[name] = True if hit else self.defaults.get(name, UNDEFINED)\n            return cache[name]\n\n        def term(t):\n            t = t.strip()\n            if t.startswith(\"count(\") and t.endswith(\")\"):\n                value = term(t[6:-1])\n                return UNDEFINED if value is UNDEFINED else len(value)\n            if t.startswith((\"input.\", \"data.\")):\n                value = doc\n                for part in t.split(\".\"):\n                    value = value.get(part, UNDEFINED) if isinstance(value, dict) else UNDEFINED\n                return value\n            if re.fullmatch(r\"\\w+\", t) and t not in (\"true\", \"false\") and not t.isdigit():\n                return rule_value(t)\n            return json.loads(t)  # \"text\", 5, 2.5, true, false, [\"a\", \"b\"]\n\n        def cond(c):\n            if c.startswith(\"not \"):\n                return not cond(c[4:])\n            op = next((o for o in OPS if o in c), None)\n            if op is None:\n                return term(c) is True\n            left, right = (term(x) for x in c.split(op, 1))\n            if UNDEFINED in (left, right):\n                return False\n            try:\n                return COMPARE[op](left, right)\n            except TypeError:  # comparing e.g. a string with a number: undefined in Rego, false here\n                return False\n\n        values = {name: rule_value(name) for name in {r[1] for r in self.rules} | set(self.defaults)}\n        return values, matched\n\n\nMASK = [\"/input/subject/email\"]  # like OPA's system.log.mask: never write these fields to the decision log\n\n\nclass DecisionPoint:\n    \"\"\"PDP: evaluate the policy, return allowed + reasons, append one JSON line per decision.\n    log_path: a file (opened per decision) or a list that collects the lines for a batched write.\"\"\"\n\n    def __init__(self, policy, log_path=None, clock=lambda: \"2026-10-28T12:00:00Z\"):\n        self.policy, self.log_path, self.clock, self.count = policy, log_path, clock, 0\n\n    def decide(self, inp):\n        values, matched = self.policy.evaluate(inp)\n        self.count += 1\n        decision = {\"allowed\": values.get(\"allowed\") is True, \"deny\": values.get(\"deny\") or [],\n                    \"matched\": matched}\n        if self.log_path is not None:\n            masked = json.loads(json.dumps(inp))\n            erased = [p for p in MASK if _erase(masked, p.split(\"/\")[2:])]\n            event = {\"decision_id\": f\"{self.policy.revision}-{self.count:06d}\", \"timestamp\": self.clock(),\n                     \"path\": \"loans/authz/allowed\", \"revision\": self.policy.revision, \"input\": masked,\n                     \"result\": decision[\"allowed\"], \"deny\": decision[\"deny\"], \"matched\": matched, \"erased\": erased}\n            if isinstance(self.log_path, list):\n                self.log_path.append(json.dumps(event, sort_keys=True))\n            else:\n                with open(self.log_path, \"a\", encoding=\"utf-8\") as f:\n                    f.write(json.dumps(event, sort_keys=True) + \"\\n\")\n        return decision\n\n\ndef _erase(obj, parts):\n    for part in parts[:-1]:\n        obj = obj.get(part) if isinstance(obj, dict) else None\n    return isinstance(obj, dict) and obj.pop(parts[-1], None) is not None\n\n\ndef load_policy(path):\n    with open(path, encoding=\"utf-8\") as f:\n        return Policy(f.read())\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`RULE` regex + `Policy.__init__`",
+    "detail": "Reads `name if {...}` and `name contains \"msg\" if {...}` bodies with their line numbers; rule ids look like allow@12."
+   },
+   {
+    "title": "`UNDEFINED` sentinel",
+    "detail": "As in Rego, a missing path is undefined and an undefined expression is false, so a missing attribute never allows anything."
+   },
+   {
+    "title": "`rule_value`: OR of bodies, default",
+    "detail": "Boolean rules are true if any body matches, else their default; partial set rules collect messages (deny reasons)."
+   },
+   {
+    "title": "`COMPARE[op]`",
+    "detail": "Comparisons via the operator module: evaluated lazily (an earlier version evaluated all comparisons eagerly and failed on str < list)."
+   },
+   {
+    "title": "`DecisionPoint.decide`",
+    "detail": "allowed = the `allowed` rule (allow and no deny); returns deny reasons and matched rules."
+   },
+   {
+    "title": "`MASK` + `_erase`",
+    "detail": "Like OPA's system.log.mask: /input/subject/email is removed before the line is written and listed under `erased`."
+   },
+   {
+    "title": "`revision`",
+    "detail": "SHA-256 of the policy text; logged with each decision so it can be replayed against the exact policy."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/19-policy-as-code/rego_lite.py",
+    "purpose": "Rego-subset engine, decision point, decision log (lesson code)"
+   },
+   {
+    "path": "labs/L400/19-policy-as-code/policy/loans.rego",
+    "purpose": "The policy (seeded librarian rule)"
+   },
+   {
+    "path": "labs/L400/19-policy-as-code/policy/cases.json",
+    "purpose": "14 requirement cases"
+   },
+   {
+    "path": "labs/L400/19-policy-as-code/policy/loans_test.rego",
+    "purpose": "OPA tests (CI)"
+   },
+   {
+    "path": "labs/L400/19-policy-as-code/handlers.py",
+    "purpose": "Policy enforcement points"
+   },
+   {
+    "path": "labs/L400/19-policy-as-code/rbac.py",
+    "purpose": "RBAC comparison"
+   },
+   {
+    "path": "labs/L400/19-policy-as-code/fitness_policy.py",
+    "purpose": "Fitness gates"
+   },
+   {
+    "path": "labs/L400/19-policy-as-code/opa_parity.py",
+    "purpose": "OPA vs rego_lite (CI)"
+   },
+   {
+    "path": "labs/L400/19-policy-as-code/adr/0003-policy-as-code-abac.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/19-policy-as-code/solution/loans.rego",
+    "purpose": "Build task solution"
+   },
+   {
+    "path": "labs/L400/19-policy-as-code/test_build_task.py",
+    "purpose": "Fail before / pass after"
+   }
+  ],
+  "expectedResults": [
+   "RBAC 7/14, shipped policy 13/14, fixed policy 14/14",
+   "decision log: 14 lines, email erased, revision and matched rules",
+   "Ran 12 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "Suspended librarian borrows for a member",
+    "expected": "denied: deny ['account suspended'] overrides allow@27"
+   },
+   {
+    "action": "Librarian waives 25.00 without the manager role",
+    "expected": "denied: 'waivers above 20.00 need a manager'"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "A rule never matches",
+    "action": "Check the attribute name in the input: missing paths are undefined (false)."
+   },
+   {
+    "symptom": "rule-coverage lists a rule",
+    "action": "Add a requirement case it decides; untested rules are where wrong allows hide."
+   }
+  ],
+  "equivalents": [
+   "Open Policy Agent 1.21.4 (Apache-2.0, CNCF graduated): Rego, opa test (--coverage), decision logs with system.log.mask, REST API, Go SDK, Wasm.",
+   "Cedar (AWS, Apache-2.0) and Casbin (Apache-2.0): other policy engines with RBAC/ABAC models.",
+   "Spring Security method security / ASP.NET Core policy-based authorization: in-framework PEPs.",
+   "XACML (OASIS): the older standard that defined PEP/PDP terminology."
+  ],
+  "caution": "Build the policy input from trusted sources (verified token, database) - never from fields the caller sends. Decision logs contain personal data: mask fields and set a retention period.",
+  "checkpoint": "PASS if fitness_policy.py exits 0 on your policy and test_build_task passes with CHECK_MINE=1.",
+  "checkYourself": [
+   {
+    "q": "Why does RBAC miss 'member borrows for someone else'?",
+    "a": "Both are members with the borrow permission; the rule depends on an attribute relation (subject.id == resource.member_id), which a role table cannot see."
+   },
+   {
+    "q": "Why log the policy revision with each decision?",
+    "a": "To replay or audit a decision against the exact policy that made it, even after the policy changed."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Add a renew() handler that does its work without calling authorize().",
+    "predict": "Will any test catch a handler that forgot the check?",
+    "expected": "[1] {'gate': 'pep-coverage', 'ok': False, 'value': ['renew'], ...}"
+   },
+   {
+    "task": "A suspended librarian borrows for member m2 in the same library.",
+    "predict": "R3 allows librarians - allowed?",
+    "expected": "[2] {'allowed': False, 'deny': ['account suspended'], 'matched': ['allow@27', 'deny@34']}"
+   }
+  ],
+  "buildTask": {
+   "task": "Make librarians act only inside their own library in policy/loans.rego (rule R3).",
+   "hints": [
+    "Add `input.subject.tenant == input.resource.tenant` to the R3 body.",
+    "Re-run fitness_policy.py: policy-tests and rule-coverage must both be ok."
+   ],
+   "solution": "labs/L400/19-policy-as-code/solution/loans.rego",
+   "check": "labs/L400/19-policy-as-code/test_build_task.py (3 tests)"
+  },
+  "failureLab": {
+   "fault": "New rule R3 lets anyone with role librarian borrow/return/view/waive - without checking the library (tenant).",
+   "symptom": "A librarian of lib01 may view lib00's loans (allowed=True, matched allow@27); 13 of 14 policy cases pass, all handler code is unchanged.",
+   "fix": "Add the tenant condition to R3.",
+   "proof": "fitness_policy.py exits 1 before, 0 after; test_build_task.py: 2 of 3 FAIL with CHECK_MINE=1 on policy/loans.rego, 3 of 3 PASS on solution/loans.rego."
+  },
+  "tradeOffs": [
+   {
+    "option": "Inline checks",
+    "gains": "Fast to write",
+    "costs": "Rules drift and cannot be tested or audited together",
+    "chooseWhen": "Prototypes with one or two rules"
+   },
+   {
+    "option": "RBAC",
+    "gains": "Simple administration and audit",
+    "costs": "Role explosion for attribute rules",
+    "chooseWhen": "Permissions depend only on job function"
+   },
+   {
+    "option": "ABAC policy + PDP",
+    "gains": "Expressive, testable, logged",
+    "costs": "Attribute quality, a policy language, latency",
+    "chooseWhen": "Ownership, tenant or amount rules"
+   }
+  ],
+  "inRealSystems": [
+   "OPA runs as a sidecar or library next to each service; policies ship as signed bundles; decision logs go to a log pipeline.",
+   "Roles from the identity provider become one attribute among many (lesson 10 tokens carry them)."
+  ],
+  "useWhen": "Use policy as code once rules depend on attributes or must be audited; keep plain RBAC when job function alone decides.",
+  "next": "L400 #20 Evolutionary architecture: expand/contract migrations, API versions, flags, fitness over time",
+  "sources": [
+   {
+    "title": "OPA docs - Policy Testing",
+    "url": "https://www.openpolicyagent.org/docs/policy-testing"
+   },
+   {
+    "title": "OPA docs - Decision Logs (masking, drop)",
+    "url": "https://www.openpolicyagent.org/docs/management-decision-logs"
+   },
+   {
+    "title": "NIST SP 800-162 - Guide to ABAC Definition and Considerations",
+    "url": "https://csrc.nist.gov/pubs/sp/800/162/upd2/final"
+   },
+   {
+    "title": "NIST CSRC - Role Based Access Control project (INCITS 359)",
+    "url": "https://csrc.nist.gov/projects/role-based-access-control"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py and app.py --solution (decision time as a range), failure_lab.py, fitness_policy.py (exit 1) and --solution (exit 0), opa_parity.py (skipped: no opa), try_it.py, `python -m unittest -v` (12 tests OK) and test_build_task with CHECK_MINE=1 (2 failures before the fix) on Python 3.12.15, 2026-10-28.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "opa test policy/ -v and python opa_parity.py solution with OPA 1.21.4 (CI job opa)",
+    "learningTools exercise (Keycloak): manual"
+   ]
+  },
+  "conceptNote": "content/concepts/L400/19-policy-as-code.md",
+  "conceptSummary": "Handlers ask, a policy decides: rules over attributes in one file, proven by requirement cases and coverage, and every decision logged without personal data.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "Keycloak",
+    "role": "BUILD WITHOUT CODE",
+    "exercise": "In realm 'learn', create realm roles member and librarian and two users; give each a 'tenant' user attribute (lib00 / lib01). Inspect a token and map its roles and tenant into the policy input of failure_lab.py's request by hand.",
+    "expected": "Pending a manual run. With the lib01 librarian's claims, the shipped policy allows the view of lib00 (allow@27) and the fixed policy denies it - the same as failure_lab.py. How the attribute is mapped into the token (mapper type) was not verified here.",
+    "mac": "docker run -p 127.0.0.1:8080:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:26.8.1 start-dev (or zip + OpenJDK 25)",
+    "windows": "same container, or zip: bin\\kc.bat start-dev",
+    "licence": "Apache-2.0 (OSI: yes)",
+    "url": "https://github.com/keycloak/keycloak"
+   }
+  ],
+  "seeAlso": [
+   "cryptography L200 #11 Tokens done right: signed JWT-style tokens: the verified claims (sub, roles, tenant) are the only trustworthy policy input.",
+   "ai-agents L300 #15 Safe tool execution: the same split - code decides whether a tool call may run before it runs.",
+   "application-architecture L200 #10 Authentication with OpenID Connect (code flow + PKCE): authentication says who the subject is; this lesson decides what it may do.",
+   "application-architecture L400 #18 Multi-tenancy: shared schema vs schema per tenant vs database per tenant: the tenant boundary in the data, guarded independently of the policy."
+  ]
+ },
+ {
+  "id": "evolutionary-migrations",
+  "number": 20,
+  "level": "L400",
+  "title": "Evolutionary architecture: expand/contract migrations, API versions, flags, fitness over time",
+  "phase": "Design",
+  "category": "evolution",
+  "description": "Split a column with expand/contract while 4 instances keep serving, keep API v1 working with Deprecation/Sunset headers, gate release flags by expiry, and track fitness metrics per step as JSON lines.",
+  "outcome": "You can plan a zero-downtime schema and API change, write the guard that makes the contract step safe, and use a fitness history to fail CI on any step that breaks a threshold.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux, SQLite 3.44.0); unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100.",
+  "estimatedTime": "75 minutes",
+  "overview": [
+   "rollout.py upgrades 4 instances one by one while a migration plan runs; every phase serves 100 seeded requests.",
+   "The shipped contract guard checks only the backfill and drops the old column while v2 instances still write it."
+  ],
+  "prerequisites": [
+   "Lesson 4 (API-first)",
+   "Lesson 14 (consumer contracts)",
+   "Lesson 16 (fitness functions)"
+  ],
+  "designBrief": {
+   "context": "members.name must become given_name + family_name, and the API gets a v2 shape; 4 instances deploy one at a time, so old and new code overlap.",
+   "constraints": [
+    "0 failed requests during the change",
+    "API v1 consumers keep working until the announced sunset",
+    "release flags removed before their expiry date",
+    "every rollout step recorded and judged by CI"
+   ],
+   "question": "In which steps do we change schema, code and API so that every intermediate state is compatible with the running code?"
+  },
+  "options": [
+   {
+    "name": "Big-bang schema change",
+    "description": "Migrate (expand + backfill + drop) in one step, then roll out v3.",
+    "evidence": "rollout.py: 36 of 100 requests failed ('v1: no such column: name').",
+    "verdict": "Rejected."
+   },
+   {
+    "name": "Expand/contract, contract when backfilled",
+    "description": "Expand, dual-write v2, backfill, flag on, drop when no NULLs remain.",
+    "evidence": "62 of 700 failed: 50 while v2 still dual-wrote, 12 during the v3 rollout.",
+    "verdict": "Rejected: the guard asks the wrong question."
+   },
+   {
+    "name": "Expand/contract with a guarded contract",
+    "description": "can_contract() also refuses while any running version uses the old column.",
+    "evidence": "0 of 700 failed; the guard refused at 'try contract' (fleet v2v2v2v2) and allowed after v3.",
+    "verdict": "Chosen (ADR 0004)."
+   }
+  ],
+  "decisionRecord": "labs/L400/20-evolutionary-migrations/adr/0004-expand-contract-migrations.md",
+  "fitnessFunction": {
+   "what": "Fitness history: one JSON line per rollout step (errors, unbackfilled rows, columns, fleet, flags); the dashboard fails on any step with errors > 0 or expired flags.",
+   "test": "labs/L400/20-evolutionary-migrations/dashboard.py --plan expand_contract (+ flags.gate_flags)",
+   "threshold": "errors = 0 and flags_expired = 0 at every step"
+  },
+  "scalingLimits": [
+   "Backfill of millions of rows: batch size x transaction time blocks writers - signal: lock waits and p99 during the backfill; throttle and resume.",
+   "Unknown readers of the old column (reports, ETL) - signal: errors after the contract outside the service; find readers first.",
+   "Many concurrent migrations and flags interact - signal: flag count and age grow in the fitness history."
+  ],
+  "glossary": [
+   {
+    "term": "Expand/contract",
+    "meaning": "Parallel change: add the new shape, migrate users, then remove the old shape."
+   },
+   {
+    "term": "Dual write",
+    "meaning": "Code writes old and new columns so both kinds of readers stay correct."
+   },
+   {
+    "term": "Release toggle",
+    "meaning": "A short-lived flag that separates deploy from release; it must be removed."
+   },
+   {
+    "term": "Fitness history",
+    "meaning": "Fitness metrics recorded per step or commit, judged over time."
+   }
+  ],
+  "concepts": [
+   "Every intermediate state must work with every running version.",
+   "The contract step is guarded by who still uses the column, not by the calendar.",
+   "Track fitness per step; a single green build hides trends."
+  ],
+  "steps": [
+   {
+    "title": "Run both plans",
+    "detail": "cd labs/L400/20-evolutionary-migrations && python app.py",
+    "expected": "big_bang: 36 failed of 100 (v1: no such column: name); expand_contract: 62 failed of 700 (v2: table members has no column named name).",
+    "ifNot": "Seeded and in memory: numbers must match exactly."
+   },
+   {
+    "title": "Read the fitness history",
+    "detail": "python dashboard.py",
+    "expected": "9 steps, 3 broke a fitness function: big_bang/deploy v3 (36), try contract: dropped name (50), deploy v3 (12); exit code 1.",
+    "ifNot": "Run step 1 first (it writes out/fitness.jsonl).",
+    "mac": "python dashboard.py; echo \"exit $?\"; tail -2 out/fitness.jsonl",
+    "windows": "python dashboard.py; \"exit $LASTEXITCODE\"; Get-Content out\\fitness.jsonl -Tail 2"
+   },
+   {
+    "title": "Premature contract (failureLab)",
+    "detail": "python failure_lab.py",
+    "expected": "base: 62 failed of 700; solution: try contract refused (instances on v2 still use members.name), 0 failed.",
+    "ifNot": "Compare with the README."
+   },
+   {
+    "title": "Harden it (build task)",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "Before your change 2 of 3 tests fail; after it, OK. Without CHECK_MINE the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   },
+   {
+    "title": "Gate the chosen plan",
+    "detail": "python app.py --solution, then python dashboard.py --plan expand_contract",
+    "expected": "expand_contract: 0 failed of 700; 7 steps, 0 broke a fitness function; exit code 0.",
+    "ifNot": "Read the step marked <--."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 10 tests ... OK.",
+    "ifNot": "Run from the lab folder."
+   }
+  ],
+  "code": "\"\"\"Expand/contract (parallel change) for splitting members.name into given_name + family_name (lesson 20 lab code).\n\nexpand   add the new columns (old code keeps working: it never names them)\nbackfill copy old -> new in small batches (short transactions; dual-writing code keeps new rows in sync)\ncontract drop the old column - only when NOTHING still reads or writes it (can_contract)\nWeakness (the failureLab): can_contract() only checks the backfill, not which code versions still run.\n\"\"\"\nimport sqlite3\n\nUSES_OLD_COLUMN = {1: True, 2: True, 3: False}  # app version -> reads/writes members.name ?\n\n\ndef connect():\n    db = sqlite3.connect(\":memory:\", isolation_level=None)\n    db.execute(\"CREATE TABLE members (id INTEGER PRIMARY KEY, name TEXT)\")  # nullable: v3 stops writing it\n    return db\n\n\ndef columns(db):\n    return [row[1] for row in db.execute(\"PRAGMA table_info(members)\")]\n\n\ndef expand(db):\n    if \"given_name\" not in columns(db):  # idempotent: safe to re-run after a failed deploy\n        db.execute(\"ALTER TABLE members ADD COLUMN given_name TEXT\")\n        db.execute(\"ALTER TABLE members ADD COLUMN family_name TEXT\")\n\n\ndef split(name):\n    given, _, family = name.partition(\" \")\n    return given, family\n\n\ndef backfill(db, batch=50):\n    \"\"\"Copy name -> given/family for rows not yet migrated, one short transaction per batch.\"\"\"\n    done = 0\n    while True:\n        rows = db.execute(\"SELECT id, name FROM members WHERE given_name IS NULL LIMIT ?\", (batch,)).fetchall()\n        if not rows:\n            return done\n        db.execute(\"BEGIN\")\n        for member_id, name in rows:\n            db.execute(\"UPDATE members SET given_name = ?, family_name = ? WHERE id = ?\", (*split(name), member_id))\n        db.execute(\"COMMIT\")  # short transactions: readers and writers are never blocked for long\n        done += len(rows)\n\n\ndef missing_new_values(db):\n    if \"given_name\" not in columns(db):\n        return None\n    return db.execute(\"SELECT COUNT(*) FROM members WHERE given_name IS NULL\").fetchone()[0]\n\n\ndef can_contract(db, fleet_versions):\n    \"\"\"Is it safe to drop members.name? Returns (ok, reasons).\"\"\"\n    reasons = []\n    if missing_new_values(db) != 0:\n        reasons.append(f\"{missing_new_values(db)} rows not backfilled\")\n    return not reasons, reasons  # weakness: running v1/v2 instances still use members.name\n\n\ndef contract(db):\n    if \"name\" in columns(db):\n        db.execute(\"ALTER TABLE members DROP COLUMN name\")  # rewrites the table: time grows with rows\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`USES_OLD_COLUMN`",
+    "detail": "Which code version touches members.name: v1 and v2 do (v2 dual-writes), v3 does not."
+   },
+   {
+    "title": "`name TEXT` (nullable)",
+    "detail": "The old column must stay writable by code that no longer knows it; try-it 1 shows NOT NULL breaking v3 inserts."
+   },
+   {
+    "title": "`expand`",
+    "detail": "Additive and idempotent: old code never names the new columns, and a failed deploy can re-run it."
+   },
+   {
+    "title": "`backfill(batch=50)`",
+    "detail": "Short transactions of 50 rows; dual-writing code keeps new rows in sync meanwhile."
+   },
+   {
+    "title": "`can_contract`",
+    "detail": "The guard: backfill complete AND (after the fix) no running version that uses the column."
+   },
+   {
+    "title": "`contract`",
+    "detail": "DROP COLUMN rewrites the table: only after the guard says yes."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/20-evolutionary-migrations/migrations.py",
+    "purpose": "Expand, backfill, guard, contract (lesson code)"
+   },
+   {
+    "path": "labs/L400/20-evolutionary-migrations/rollout.py",
+    "purpose": "Rolling-deploy simulation + fitness rows"
+   },
+   {
+    "path": "labs/L400/20-evolutionary-migrations/app_versions.py",
+    "purpose": "v1/v2/v3 data access"
+   },
+   {
+    "path": "labs/L400/20-evolutionary-migrations/api.py",
+    "purpose": "/v1 (Deprecation, Sunset, Link) and /v2"
+   },
+   {
+    "path": "labs/L400/20-evolutionary-migrations/flags.py",
+    "purpose": "Release flag + expiry gate (flags.json)"
+   },
+   {
+    "path": "labs/L400/20-evolutionary-migrations/dashboard.py",
+    "purpose": "Fitness history dashboard"
+   },
+   {
+    "path": "labs/L400/20-evolutionary-migrations/adr/0004-expand-contract-migrations.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/20-evolutionary-migrations/solution/migrations.py",
+    "purpose": "Build task solution"
+   },
+   {
+    "path": "labs/L400/20-evolutionary-migrations/test_build_task.py",
+    "purpose": "Fail before / pass after"
+   }
+  ],
+  "expectedResults": [
+   "big bang 36/100 failed; expand/contract with backfill-only guard 62/700; guarded 0/700",
+   "dashboard --plan expand_contract: 7 steps, 0 broke a fitness function",
+   "Ran 10 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "Member created by v2, column dropped, GET /v1",
+    "expected": "{'id': n, 'name': 'Barbara Liskov'} with Deprecation @1793491200 and a Sunset date"
+   },
+   {
+    "action": "Flags evaluated on 2026-12-01",
+    "expected": "no-expired-flags gate fails: ['read_split_name']"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "NOT NULL constraint failed after deploying v3",
+    "action": "The old column must be nullable or defaulted; SQLite 3.53+ supports ALTER COLUMN ... DROP NOT NULL, older versions need the documented table rebuild."
+   },
+   {
+    "symptom": "no such column from old instances",
+    "action": "Something dropped or renamed the column before all code stopped using it; run can_contract first."
+   }
+  ],
+  "equivalents": [
+   "Flyway / Liquibase / Alembic: versioned migrations; expand and contract become separate migrations deployed in different releases.",
+   "gh-ost / pt-online-schema-change (MySQL) and pgroll (PostgreSQL): online schema changes for large tables.",
+   "OpenFeature (CNCF) SDKs: vendor-neutral flag API; Unleash and Flagsmith are open-source flag servers.",
+   "API evolution: OpenAPI `deprecated: true` plus RFC 9745 Deprecation and RFC 8594 Sunset headers."
+  ],
+  "checkpoint": "PASS if dashboard.py --plan expand_contract exits 0 after app.py with your migrations.py, and test_build_task passes with CHECK_MINE=1.",
+  "checkYourself": [
+   {
+    "q": "The backfill is complete. Why is it still unsafe to drop the column?",
+    "a": "Running v2 instances still write it; dropping it breaks their inserts (50 errors in the lab). The column can go only when no running code uses it."
+   },
+   {
+    "q": "Why keep /v1 and rebuild 'name' from the new columns instead of keeping the old column?",
+    "a": "The API contract is separate from storage: v1 consumers keep their shape while the schema moves on; the sunset date ends v1 deliberately."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Make the original column `name TEXT NOT NULL` and run the guarded plan.",
+    "predict": "The guard is fixed - any errors?",
+    "expected": "[1] name TEXT NOT NULL -> 38 failed requests {'deploy v3 (new columns only)': 38}; first: v3: NOT NULL constraint failed: members.name"
+   },
+   {
+    "task": "Evaluate the flags with today = 2026-12-01.",
+    "predict": "Does the build care that a flag outlived its date?",
+    "expected": "[2] {'gate': 'no-expired-flags', 'ok': False, 'value': ['read_split_name'], 'budget': 0}"
+   }
+  ],
+  "buildTask": {
+   "task": "Fix can_contract() in migrations.py: also refuse while any running instance's version still uses members.name.",
+   "hints": [
+    "`old = sorted({v for v in fleet_versions if USES_OLD_COLUMN[v]})`",
+    "Append a reason naming the versions; return (not reasons, reasons)."
+   ],
+   "solution": "labs/L400/20-evolutionary-migrations/solution/migrations.py",
+   "check": "labs/L400/20-evolutionary-migrations/test_build_task.py (3 tests)"
+  },
+  "failureLab": {
+   "fault": "can_contract() only checks that no row is left to backfill; the plan tries to contract right after the flag flips, while all 4 instances run v2 (dual write).",
+   "symptom": "The column is dropped; 50 v2 writes fail in that phase and 12 more during the v3 rollout: 62 of 700 requests ('table members has no column named name').",
+   "fix": "Refuse while any running version uses the old column; contract after the v3 rollout.",
+   "proof": "test_build_task.py: 2 of 3 FAIL with CHECK_MINE=1 on the base migrations.py, 3 of 3 PASS on the solution; dashboard --plan expand_contract exits 0 only with the fix."
+  },
+  "tradeOffs": [
+   {
+    "option": "Big bang with downtime",
+    "gains": "One step, simple",
+    "costs": "Downtime or failed requests (36 % here)",
+    "chooseWhen": "Internal tools with a maintenance window"
+   },
+   {
+    "option": "Expand/contract",
+    "gains": "Zero downtime, reversible steps",
+    "costs": "Several deploys, dual writes, a backfill job",
+    "chooseWhen": "Anything behind an SLO"
+   },
+   {
+    "option": "Copy table + sync + swap",
+    "gains": "Works for huge tables",
+    "costs": "Extra tooling and storage",
+    "chooseWhen": "Tables too big to alter in place"
+   }
+  ],
+  "inRealSystems": [
+   "Each phase is a separate migration and release; the contract migration waits for a deploy-registry check that no old version runs.",
+   "API gateways count calls per version so v1 is retired when its traffic reaches zero, not on a date alone."
+  ],
+  "useWhen": "Use expand/contract for every breaking schema or API change on a service that deploys while serving; skip it only with a real maintenance window.",
+  "next": "L400 #21 Cost and capacity planning: Little's law, benchmarks, headroom, cost per request",
+  "sources": [
+   {
+    "title": "Danilo Sato (martinfowler.com) - Parallel Change",
+    "url": "https://martinfowler.com/bliki/ParallelChange.html"
+   },
+   {
+    "title": "Pete Hodgson (martinfowler.com) - Feature Toggles (aka Feature Flags)",
+    "url": "https://martinfowler.com/articles/feature-toggles.html"
+   },
+   {
+    "title": "RFC 9745 - The Deprecation HTTP Response Header Field",
+    "url": "https://www.rfc-editor.org/rfc/rfc9745.html"
+   },
+   {
+    "title": "RFC 8594 - The Sunset HTTP Header Field",
+    "url": "https://www.rfc-editor.org/rfc/rfc8594.html"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py, dashboard.py (exit 1), app.py --solution, dashboard.py --plan expand_contract (exit 0), failure_lab.py, try_it.py, `python -m unittest -v` (10 tests OK) and test_build_task with CHECK_MINE=1 (2 failures before the fix) on Python 3.12.15 / SQLite 3.44.0, 2026-10-28.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "learningTools exercises (Swagger Editor, JupyterLab): manual"
+   ]
+  },
+  "conceptNote": "content/concepts/L400/20-evolutionary-migrations.md",
+  "conceptSummary": "Change schemas and APIs through states that every running version understands: expand, dual-write, backfill, switch, then contract when no code uses the old shape - and judge every step.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "Swagger Editor v5 / Swagger UI",
+    "role": "CHECK",
+    "exercise": "Write an OpenAPI 3.1 file with GET /v1/members/{id} (deprecated: true; response name) and GET /v2/members/{id} (givenName, familyName), document the Deprecation and Sunset response headers, and validate it in Editor v5.",
+    "expected": "Pending a manual run. No validation errors; v1 shows as deprecated. The header values should match api.py: Deprecation @1793491200, Sunset Tue, 30 Mar 2027 00:00:00 GMT.",
+    "mac": "Browser or docker run -p 8080:80 docker.swagger.io/swaggerapi/swagger-editor:latest",
+    "windows": "same",
+    "licence": "Apache-2.0 (OSI: yes)",
+    "url": "https://github.com/swagger-api/swagger-editor"
+   },
+   {
+    "name": "JupyterLab (+ JupyterLab Desktop)",
+    "role": "SEE",
+    "exercise": "Read out/fitness.jsonl after `python app.py` and plot errors and unbackfilled rows per step for both plans.",
+    "expected": "Pending a manual run. Should show the lab's history: big_bang 36 errors at deploy v3; expand_contract 50 at 'try contract' and 12 at 'deploy v3'; unbackfilled 250 -> 262 -> 0.",
+    "mac": "pip install jupyterlab",
+    "windows": "pip install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   }
+  ],
+  "seeAlso": [
+   "application-architecture L300 #14 Consumer-driven contract testing: consumer contracts prove that API v1 still serves its old consumers during the change.",
+   "application-architecture L300 #16 Performance and architecture fitness functions in CI: this lesson keeps those gate results as a history instead of a single pass/fail."
+  ]
+ },
+ {
+  "id": "capacity-planning",
+  "number": 21,
+  "level": "L400",
+  "title": "Cost and capacity planning: Little's law, benchmarks, headroom, cost per request",
+  "phase": "Design",
+  "category": "capacity",
+  "description": "Turn the lesson 15 request log into a load model, apply Little's law, benchmark one instance with a seeded queue simulation, compare sync email, async email and a cache by instances and cost per request, and let a local model draft the memo that code checks.",
+  "outcome": "You can size a service for its peak with headroom and a spare, compute cost per request, decide between scaling, caching and async work with evidence, and keep the plan true with a capacity fitness gate.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux, SQLite 3.44.0); unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100. Agent assist: optional local model (Ollama, qwen2.5:1.5b); tests use the fake server.",
+  "estimatedTime": "75 minutes",
+  "overview": [
+   "capacity.py derives demand (400 libraries, peak 120 req/s) and per-instance capacity (75 req/s at p99 <= 300 ms) from the L300 log.",
+   "The shipped sizing uses the average at 100 % utilization: 1 instance, p99 58 s at the peak."
+  ],
+  "prerequisites": [
+   "Lesson 15 (SLOs; its request log is the input)",
+   "Lesson 9 (outbox for async work)",
+   "Lesson 16 (benchmarks and gates)"
+  ],
+  "designBrief": {
+   "context": "Library Loans grows to 400 libraries. A new confirmation email (150 ms per send) must be added. How many instances, and do we need a cache or async work?",
+   "constraints": [
+    "p99 <= 300 ms at peak with one instance down (lesson 15 SLO)",
+    "plan at <= 80 % of benchmarked capacity",
+    "lowest cost per million requests that meets both",
+    "every number in the memo traceable to code"
+   ],
+   "question": "How many instances do we run, and do we send emails synchronously, asynchronously, or add a cache?"
+  },
+  "options": [
+   {
+    "name": "Email inside POST /loans",
+    "description": "Scale out only.",
+    "evidence": "app.py --solution: mean service 75.1 ms, capacity 35 req/s, 6 instances, p99 230.8 / 239.1 ms, 4.17 USD per 1M requests.",
+    "verdict": "Rejected: twice the cost."
+   },
+   {
+    "name": "Email via the outbox (async)",
+    "description": "Outbox + 5 sender slots (Little's law: 3.6 in flight).",
+    "evidence": "45.2 ms, 75 req/s, 3 instances, p99 102.4 / 130.4 ms, 2.08 USD per 1M.",
+    "verdict": "Chosen (ADR 0005)."
+   },
+   {
+    "name": "Async + LRU cache for GET /books",
+    "description": "Hit ratio measured: 0.65.",
+    "evidence": "32.6 ms, 105 req/s, still 3 instances, 2.08 USD per 1M; at 800 libraries 4 instead of 5 (try-it 1).",
+    "verdict": "Deferred until about 600-800 libraries."
+   }
+  ],
+  "decisionRecord": "labs/L400/21-capacity-planning/adr/0005-capacity-plan.md",
+  "fitnessFunction": {
+   "what": "The plan still meets the SLO with one instance down and stays under the headroom at peak.",
+   "test": "labs/L400/21-capacity-planning/fitness_capacity.py",
+   "threshold": "p99 <= 300 ms with one instance down; peak <= 80 % of capacity with one down"
+  },
+  "scalingLimits": [
+   "Beyond 2 x 60 req/s per serving pair the 4th instance is needed (about 400+ libraries) - signal: peak share of capacity > 80 % in the gate.",
+   "A shared database or one SQLite writer caps throughput regardless of instances - signal: more instances, same p99.",
+   "The model is only as good as its service-time sample - signal: real p99 above the simulated one after a release (re-measure, lesson 16)."
+  ],
+  "glossary": [
+   {
+    "term": "Little's law",
+    "meaning": "L = λW: average items in the system = arrival rate x average time in the system."
+   },
+   {
+    "term": "Headroom",
+    "meaning": "Planned unused capacity at peak for spikes, GC and deploys (here 20 %)."
+   },
+   {
+    "term": "N+1",
+    "meaning": "One spare instance so the SLO holds while one is down."
+   },
+   {
+    "term": "Capacity (SLO-safe)",
+    "meaning": "Highest arrival rate one instance serves within the latency SLO."
+   }
+  ],
+  "concepts": [
+   "Plan for the peak, measure capacity at the SLO, keep headroom and a spare.",
+   "Little's law sizes concurrency for requests and for async workers.",
+   "Compare options by cost per request; the agent drafts, code checks every number."
+  ],
+  "steps": [
+   {
+    "title": "Build the plan",
+    "detail": "cd labs/L400/21-capacity-planning && python app.py --solution",
+    "expected": "load model avg 40.0 / peak 120.0 req/s, mean 45.2 ms; Little: 5.4 in flight, emails 3.6 -> 5 sender slots; options 6 / 3 / 3 instances at 4.17 / 2.08 / 2.08 USD per 1M.",
+    "ifNot": "Seeded simulation: numbers must match; lesson 15's traffic.py is the input."
+   },
+   {
+    "title": "Read the options",
+    "detail": "Open out/capacity.jsonl: one JSON line per option.",
+    "expected": "capacity_rps, instances, p99_at_peak_ms, p99_one_down_ms, cost_per_million_usd per option.",
+    "ifNot": "Run step 1 first.",
+    "mac": "cat out/capacity.jsonl",
+    "windows": "Get-Content out\\capacity.jsonl"
+   },
+   {
+    "title": "Average sizing at the peak (failureLab)",
+    "detail": "python failure_lab.py",
+    "expected": "base: 1 instance, utilization 1.35, p99 58210.3 ms; solution: 3 instances, p99 102.4 ms, one down 130.4 ms.",
+    "ifNot": "Compare with the README."
+   },
+   {
+    "title": "Harden it (build task)",
+    "detail": "Do the buildTask in your own file, then check it.",
+    "expected": "Before your change 3 of 3 tests fail; after it, OK. Without CHECK_MINE the check runs on the solution.",
+    "ifNot": "Read the failing assertion; the hints name the line to change.",
+    "mac": "CHECK_MINE=1 python -m unittest -v test_build_task",
+    "windows": "$env:CHECK_MINE = \"1\"; python -m unittest -v test_build_task; Remove-Item Env:\\CHECK_MINE"
+   },
+   {
+    "title": "Agent assist: capacity memo",
+    "detail": "python agent_assist.py (fake model).",
+    "expected": "attempt 1: REJECTED (peak_rps is 120.0, the memo says 40.0; the plan is 3 instances, the memo says 1); attempt 2: OK.",
+    "ifNot": "See agentAssist below."
+   },
+   {
+    "title": "Run the gate and the tests",
+    "detail": "python fitness_capacity.py --solution, then python -m unittest -v",
+    "expected": "capacity-n-plus-1 ok true (instances 3, p99_one_down_ms 130.4, peak_share_one_down 0.8); Ran 10 tests ... OK (10-16 s).",
+    "ifNot": "Run from the lab folder."
+   }
+  ],
+  "code": "\"\"\"Capacity and cost planning from the lesson 15 request log (lesson 21 lab code).\n\nload model    route mix + service times measured in the L300 log, scaled by the stated growth (libraries, peak)\nLittle's law  L = lambda x W: requests in flight = arrival rate x time in the system\nbenchmark     a seeded queue simulation of ONE instance (c workers, measured service times): the highest\n              arrival rate whose p99 stays inside the SLO is the instance's capacity\nsizing        instances_needed(); cost per million requests from a stated (hypothetical) instance price\nWeakness (the failureLab): instances_needed() sizes on the AVERAGE rate at 100 % utilization.\n\"\"\"\nimport heapq\nimport math\nimport random\nimport statistics\n\nSLO_P99_MS = 300  # lesson 15: 99 % of requests under 300 ms\nWORKERS = 4  # concurrent requests one instance serves (threads/processes)\nHEADROOM = 0.8  # plan to use at most 80 % of the benchmarked capacity at peak (spikes, GC, deploys)\n\n\ndef load_model(records, libraries=400, peak_factor=3.0, seconds=3 * 86400):\n    \"\"\"records: the L300 log (one library). Returns the demand for `libraries` libraries.\"\"\"\n    per_library = len(records) / seconds  # 25,920 requests in 3 days = 0.1 req/s\n    avg = per_library * libraries\n    requests = [(r[\"route\"], r[\"ms\"]) for r in records]  # at 0.1 req/s nothing queues: latency = service time\n    mix = {route: round(sum(q == route for q, _ in requests) / len(requests), 3) for route in sorted(set(\n        q for q, _ in requests))}\n    return {\"avg_rps\": round(avg, 1), \"peak_rps\": round(avg * peak_factor, 1), \"mix\": mix,\n            \"requests\": requests, \"mean_service_ms\": round(statistics.fmean(ms for _, ms in requests), 1)}\n\n\ndef littles_law(rate_per_s, time_in_system_ms):\n    return rate_per_s * time_in_system_ms / 1000  # L = lambda x W\n\n\ndef simulate(rate, service_ms, workers=WORKERS, n=20000, seed=21):\n    \"\"\"FCFS queue with `workers` servers, Poisson arrivals: returns latency percentiles and utilization.\"\"\"\n    rng, t, free = random.Random(seed), 0.0, [0.0] * workers  # heap of the times each worker becomes free\n    latencies, busy = [], 0.0\n    for _ in range(n):\n        t += rng.expovariate(rate)  # next arrival (seconds)\n        s = rng.choice(service_ms) / 1000\n        start = max(t, heapq.heappop(free))  # wait for the first free worker\n        heapq.heappush(free, start + s)\n        latencies.append((start + s - t) * 1000)\n        busy += s\n    latencies.sort()\n    return {\"rate\": rate, \"p50_ms\": round(latencies[n // 2], 1), \"p99_ms\": round(latencies[int(n * 0.99)], 1),\n            \"utilization\": round(busy / (t * workers), 2), \"in_flight\": round(sum(latencies) / 1000 / t, 2)}\n\n\ndef benchmark(model, workers=WORKERS, step=5, high=200):\n    \"\"\"Capacity of ONE instance: the highest arrival rate (multiple of `step`) whose simulated p99 meets the SLO.\n    Binary search: p99 grows with the rate.\"\"\"\n    service, rows = [ms for _, ms in model[\"requests\"]], {}\n    low, high = 1, high // step  # in units of `step` req/s\n    while low <= high:\n        mid = (low + high) // 2\n        rows[mid * step] = simulate(mid * step, service, workers)\n        low, high = (mid + 1, high) if rows[mid * step][\"p99_ms\"] <= SLO_P99_MS else (low, mid - 1)\n    return {\"capacity_rps\": high * step, \"rows\": [rows[k] for k in sorted(rows)]}\n\n\ndef instances_needed(model, capacity_rps):\n    \"\"\"How many instances to run. Base version: average rate, every worker 100 % busy (the failureLab).\"\"\"\n    raw_capacity = WORKERS / (model[\"mean_service_ms\"] / 1000)  # c / S: requests per second at 100 %\n    return math.ceil(model[\"avg_rps\"] / raw_capacity)\n\n\ndef cost_per_million(instances, avg_rps, price_per_hour=0.10):\n    \"\"\"Hypothetical price (stated assumption, not a vendor quote): USD per instance-hour.\"\"\"\n    return round(instances * price_per_hour / (avg_rps * 3600) * 1e6, 2)\n\n\ndef change(model, route, new_ms):\n    \"\"\"Option helper: give `route` a new service time new_ms(old_ms, rng); recompute the mean.\"\"\"\n    rng = random.Random(211)\n    requests = [(q, new_ms(ms, rng) if q == route else ms) for q, ms in model[\"requests\"]]\n    return {**model, \"requests\": requests, \"mean_service_ms\": round(statistics.fmean(ms for _, ms in requests), 1)}\n\n\ndef with_sync_email(model, email_ms=150.0):\n    \"\"\"The new LoanCreated email sent INSIDE POST /loans (stated relay time 150 ms per email).\"\"\"\n    return change(model, \"POST /loans\", lambda ms, rng: ms + email_ms)\n\n\ndef with_cache(model, hit_ratio, hit_ms=2.0):\n    \"\"\"Cache GET /books: a hit costs hit_ms instead of the measured service time.\"\"\"\n    return change(model, \"GET /books\", lambda ms, rng: hit_ms if rng.random() < hit_ratio else ms)\n\n\ndef lru_hit_ratio(size=500, books=5000, requests=20000, seed=212):\n    \"\"\"Measured, not assumed: a seeded Zipf-like book popularity through an LRU cache of `size` entries.\"\"\"\n    rng, cache, hits = random.Random(seed), {}, 0\n    weights = [1 / (rank + 1) for rank in range(books)]\n    for book in rng.choices(range(books), weights, k=requests):\n        if book in cache:\n            hits += 1\n            cache[book] = cache.pop(book)  # move to the most-recent end\n        else:\n            cache[book] = True\n            if len(cache) > size:\n                cache.pop(next(iter(cache)))  # evict the least recently used\n    return round(hits / requests, 3)\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`load_model`",
+    "detail": "25,920 requests in 3 days = 0.1 req/s per library; at that rate nothing queues, so logged latency = service time."
+   },
+   {
+    "title": "`littles_law`",
+    "detail": "L = λW in requests: 120 req/s x 45.2 ms = 5.4 in flight."
+   },
+   {
+    "title": "`simulate`",
+    "detail": "FCFS queue with c workers: each arrival takes the earliest free worker (a heap of free times); exact for M/G/c."
+   },
+   {
+    "title": "`benchmark`",
+    "detail": "Binary search over rates in steps of 5 for the highest rate with p99 <= 300 ms: 75 req/s (80 req/s gives 342.3 ms)."
+   },
+   {
+    "title": "`instances_needed`",
+    "detail": "The weakness: average rate / (c / S) = 40 / 88.5 -> 1. The fix: ceil(peak / (capacity x 0.8)) + 1 = 3."
+   },
+   {
+    "title": "`cost_per_million`",
+    "detail": "instances x price / requests per hour x 1e6, with a stated hypothetical price."
+   },
+   {
+    "title": "`with_sync_email` / `with_cache` / `lru_hit_ratio`",
+    "detail": "Options change the service-time sample; the cache hit ratio is measured with a seeded LRU, not assumed."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/21-capacity-planning/capacity.py",
+    "purpose": "Load model, Little, simulation, benchmark, sizing (lesson code)"
+   },
+   {
+    "path": "labs/L400/21-capacity-planning/l300_log.py",
+    "purpose": "Reuses lesson 15's traffic.py"
+   },
+   {
+    "path": "labs/L400/21-capacity-planning/app.py",
+    "purpose": "The plan -> out/capacity.jsonl"
+   },
+   {
+    "path": "labs/L400/21-capacity-planning/fitness_capacity.py",
+    "purpose": "Capacity N+1 gate"
+   },
+   {
+    "path": "labs/L400/21-capacity-planning/agent_assist.py",
+    "purpose": "Local model drafts the memo; code checks numbers"
+   },
+   {
+    "path": "labs/L400/21-capacity-planning/adr/0005-capacity-plan.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/21-capacity-planning/solution/capacity.py",
+    "purpose": "Build task solution"
+   },
+   {
+    "path": "labs/L400/21-capacity-planning/test_build_task.py",
+    "purpose": "Fail before / pass after"
+   }
+  ],
+  "expectedResults": [
+   "capacity per instance 75 req/s (async) / 35 (sync) / 105 (cache)",
+   "3 instances, p99 130.4 ms with one down, 2.08 USD per 1M requests",
+   "agent memo: attempt 1 rejected, attempt 2 OK",
+   "Ran 10 tests ... OK"
+  ],
+  "testCases": [
+   {
+    "action": "Simulate 40 req/s on one instance",
+    "expected": "in_flight close to 40 x W (Little's law), utilization 0.45"
+   },
+   {
+    "action": "Size the sync-email option with the fixed formula",
+    "expected": "6 instances"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "p99 jumps from 245 ms to seconds between two rates",
+    "action": "That is the knee of the queue (utilization near 1); plan below it with headroom."
+   },
+   {
+    "symptom": "The plan changed after a code change elsewhere",
+    "action": "Service times changed; re-run fitness_capacity.py (that is what it is for)."
+   }
+  ],
+  "equivalents": [
+   "Grafana k6 constant-arrival-rate scenarios confirm the knee against the real service.",
+   "Erlang C (M/M/c) gives the same kind of answer analytically for exponential service times; queueing simulators (SimPy, JaamSim) for richer models.",
+   "Cloud provider pricing calculators turn instance-hours into money; this lab uses a stated hypothetical price instead."
+  ],
+  "caution": "The agent only words numbers that code computed; it never decides the instance count. Do not put credentials or customer data in the prompt.",
+  "checkpoint": "PASS if fitness_capacity.py passes with your capacity.py and test_build_task passes with CHECK_MINE=1.",
+  "checkYourself": [
+   {
+    "q": "c / S = 88.5 req/s. Why plan with 75 req/s, and then only 80 % of it?",
+    "a": "88.5 is 100 % busy, where the queue (and p99) explodes; 75 is the highest rate that meets the p99 SLO; 80 % of it leaves room for spikes and deploys."
+   },
+   {
+    "q": "Why does the cache not change the decision at 400 libraries?",
+    "a": "It raises capacity to 105 req/s but ceil(120 / 84) + 1 is still 3 instances; at 800 libraries it saves one (4 vs 5)."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Grow to 800 libraries and size async email with and without the cache.",
+    "predict": "Does the cache pay off now?",
+    "expected": "[1] 800 libraries (peak 240.0 req/s), async email: 5 instances, 1.74 USD per million requests / + cache: 4 instances, 1.39 USD"
+   },
+   {
+    "task": "Drop the spare (N instead of N+1) and take one instance down at peak.",
+    "predict": "2 instances carry 120 req/s - what happens when one fails?",
+    "expected": "[2] 2 instances (no spare), one down at peak: 120 req/s on the survivor, utilization 1.35, p99 58210.3 ms"
+   }
+  ],
+  "buildTask": {
+   "task": "Rewrite instances_needed() in capacity.py: size for the peak with the SLO-safe capacity, 80 % headroom and one spare.",
+   "hints": [
+    "serving = math.ceil(model['peak_rps'] / (capacity_rps * HEADROOM))",
+    "return serving + 1"
+   ],
+   "solution": "labs/L400/21-capacity-planning/solution/capacity.py",
+   "check": "labs/L400/21-capacity-planning/test_build_task.py (3 tests)"
+  },
+  "failureLab": {
+   "fault": "instances_needed() divides the AVERAGE rate (40 req/s) by the 100 %-busy rate c / S (88.5 req/s): 1 instance.",
+   "symptom": "At the daily peak (120 req/s) that instance runs at utilization 1.35; p99 58,210 ms against a 300 ms SLO; fitness_capacity.py exits 1.",
+   "fix": "ceil(peak / (75 x 0.8)) + 1 = 3 instances: p99 102.4 ms, 130.4 ms with one down.",
+   "proof": "test_build_task.py: 3 of 3 FAIL with CHECK_MINE=1 on the base capacity.py, 3 of 3 PASS on solution/capacity.py; fitness_capacity.py exits 1 / 0."
+  },
+  "tradeOffs": [
+   {
+    "option": "Scale out",
+    "gains": "No code change",
+    "costs": "Linear cost; shared bottlenecks remain",
+    "chooseWhen": "CPU-bound stateless services"
+   },
+   {
+    "option": "Async via outbox",
+    "gains": "Shorter request path, fewer instances (6 -> 3)",
+    "costs": "Eventual delivery, worker pool to run",
+    "chooseWhen": "Slow side effects the user need not wait for"
+   },
+   {
+    "option": "Cache",
+    "gains": "Lower service time for hits",
+    "costs": "Staleness, invalidation, memory",
+    "chooseWhen": "Measured hit ratio cuts instances or latency enough to pay for itself"
+   }
+  ],
+  "agentAssist": {
+   "task": "A local model drafts the capacity memo from the plan computed by code (peak, average, Little's law, capacity, instances, p99s, cost, email senders, rejected option).",
+   "prompt": "[[CAPACITY-MEMO]] Draft a short capacity memo for the architecture review. Use only the numbers in the brief, each with its label; recommend the instance count given. <brief>peak_rps, avg_rps, mean_service_ms, in_flight_at_peak, capacity_rps, instances, p99_at_peak_ms, p99_one_down_ms, cost_per_million_usd, email_senders, rejected_option, rejected_instances</brief>",
+   "check": "check_memo(): every number must be a fact; 'peak of', 'capacity of', 'gives' (Little) and 'cost of' must be followed by THAT fact; 'N instances' must be the plan or the rejected option; peak, instances and p99 with one down must appear. One retry with the findings.",
+   "expected": "attempt 1: REJECTED (number 1.8 is not in the facts; peak_rps is 120.0, the memo says 40.0; the plan is 3 instances, the memo says 1). attempt 2: OK.",
+   "realModelNote": "Not run here. `python agent_assist.py --real` with Ollama (qwen2.5:1.5b) on the Mac mini or Windows PC; wording varies, the checks do not."
+  },
+  "inRealSystems": [
+   "Capacity reviews run quarterly or before launches from production metrics; load tests confirm the knee per instance type.",
+   "Autoscalers keep headroom with target utilization; N+1 (or N+2 across zones) is set as a minimum replica count."
+  ],
+  "useWhen": "Plan capacity whenever expected demand or service time changes; size for the peak with headroom and a spare, and compare options by cost per request.",
+  "next": "Capstone #22 Capstone: Library Loans, production-ready",
+  "sources": [
+   {
+    "title": "Little & Graves - Little's Law (Building Intuition, Springer, ch. 5)",
+    "url": "https://link.springer.com/content/pdf/10.1007/978-0-387-73699-0_5.pdf"
+   },
+   {
+    "title": "Google SRE Book - Handling Overload (capacity in resources, not QPS)",
+    "url": "https://sre.google/sre-book/handling-overload/"
+   },
+   {
+    "title": "Google SRE Workbook - Alerting on SLOs (the SLO this plan protects)",
+    "url": "https://sre.google/workbook/alerting-on-slos/"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran app.py and app.py --solution, failure_lab.py, fitness_capacity.py (exit 1) and --solution (exit 0), agent_assist.py (fake model), try_it.py, `python -m unittest -v` (10 tests OK) and test_build_task with CHECK_MINE=1 (3 failures before the fix) on Python 3.12.15, 2026-10-28.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "agent_assist.py --real (real local model)",
+    "k6 constant-arrival-rate run against the real service to confirm the simulated knee (manual)"
+   ]
+  },
+  "conceptNote": "content/concepts/L400/21-capacity-planning.md",
+  "conceptSummary": "Demand from logs, concurrency from Little's law, capacity from a benchmark at the SLO, then peak / (capacity x headroom) + 1 spare - and compare options by cost per request.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "Grafana k6",
+    "role": "CHECK",
+    "exercise": "Start lesson 16's API (`python http_api.py 8016` in labs/L300/16-performance-fitness-ci) and run a constant-arrival-rate scenario at increasing rates; record the rate where http_req_duration p(99) crosses 300 ms.",
+    "expected": "Pending a manual run. The real knee depends on the machine; compare its shape with the lab's simulated one (p99 245.2 ms at 75 req/s, 342.3 ms at 80) and replace the benchmark if they differ.",
+    "mac": "brew install k6",
+    "windows": "winget install k6 --source winget",
+    "licence": "AGPL-3.0 (OSI: yes)",
+    "url": "https://github.com/grafana/k6"
+   },
+   {
+    "name": "JupyterLab (+ JupyterLab Desktop)",
+    "role": "SEE",
+    "exercise": "Plot p99 against arrival rate from capacity.benchmark(model)['rows'] and mark the 300 ms SLO and the 80 % headroom line.",
+    "expected": "Pending a manual run. Should show the knee between 75 and 85 req/s (245.2 -> 575.5 ms) as in the README.",
+    "mac": "pip install jupyterlab",
+    "windows": "pip install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   }
+  ],
+  "seeAlso": [
+   "distributed-systems L300 #16 Backpressure and load shedding: bounded queues, 503 + Retry-After, AIMD concurrency limits: what to do when demand exceeds the plan anyway.",
+   "simulation L200 #8 Resources and queues: c desks, one line, Erlang C: the analytic M/M/c answer to the same sizing question.",
+   "application-architecture L300 #15 SLOs and error budgets: burn-rate alerts from request logs: its request log is this lesson's load model."
+  ]
+ },
+ {
+  "id": "capstone-production-ready",
+  "number": 22,
+  "level": "Capstone",
+  "title": "Capstone: Library Loans, production-ready",
+  "phase": "Capstone",
+  "category": "integration",
+  "description": "Evolve Library Loans into a production-ready system: strangle the fines module, add tenancy, policy, events through an outbox, SLOs, contract tests and fitness functions, and let a scorecard decide the release.",
+  "outcome": "You can integrate architectural decisions into one system, prove each with a measured criterion, run seeded faults to show the gates work, and keep the release decision in code while a local model only explains it.",
+  "environment": "Python 3.12 standard library only (validated on 3.12.15 / Linux, SQLite 3.44.0); unittest. Targets: Apple-silicon Mac mini (zsh) and Windows 11 PC (PowerShell); no new packages beyond L100. Reuses labs L200 #9, L300 #14-15 and L400 #17-21 by path. Agent assist: optional local model; tests use the fake server.",
+  "estimatedTime": "2-3 hours",
+  "overview": [
+   "run_capstone.py runs the system on seeded traffic (5 libraries, 600 requests) and prints 19 criteria as JSON lines plus a GO/NO-GO summary.",
+   "Four seeded faults (fines rounding, cross-library policy, unscoped query, non-idempotent consumer) must each turn the verdict NO-GO."
+  ],
+  "prerequisites": [
+   "Lessons 17-21",
+   "Lesson 9 (outbox)",
+   "Lessons 14-15 (contracts, SLOs)"
+  ],
+  "designBrief": {
+   "context": "Library Loans serves several libraries from one service, with a fines module extracted from the monolith, events for notifications and read models, and an SLO.",
+   "constraints": [
+    "release only if every criterion passes (19/19)",
+    "0 rows or decisions across libraries",
+    "0 members charged differently by the fines extraction",
+    "every committed change has exactly one event, applied once",
+    "availability >= 99.9 %, latency SLI >= 99 %, 0 burn-rate alerts",
+    "consumer contract green; capacity N+1 holds; ADRs in Nygard format"
+   ],
+   "question": "How do the pieces fit, and how do we prove before each release that the decisions still hold?"
+  },
+  "architecture": {
+   "diagram": "labs/L400/22-capstone/architecture.mmd",
+   "summary": "A member-portal request (contract-tested) reaches the HTTP adapter and LoansService. The service asks the policy decision point first (lesson 19 policy, decision log without email), then runs SQL bound to :tenant on the shared schema while TenantGuard watches every statement (lesson 18). Returns ask the strangler facade for the fine; it shadows the extracted fines service on 2,000 requests and switches to it only when the mismatch rate is 0 (lesson 17). Loan rows and events are written in one transaction to the outbox; a relay publishes at least once and idempotent consumers apply each event once (lesson 9). The request log feeds the lesson 15 SLIs; CI adds the contract, the capacity gate (lesson 21) and the ADR check, and run_capstone.py turns everything into GO or NO-GO."
+  },
+  "milestones": [
+   {
+    "title": "M1 Strangle the fines module",
+    "deliverable": "Facade in shadow mode on 2,000 requests, cut over by cutover_decision; no capstone file imports the monolith",
+    "test": "labs/L400/22-capstone/test_milestones.py M1StrangleTest"
+   },
+   {
+    "title": "M2 Tenancy",
+    "deliverable": "Shared schema, every statement bound to :tenant, TenantGuard + static gate, cross-library probes",
+    "test": "test_milestones.py M2TenancyTest"
+   },
+   {
+    "title": "M3 Policy",
+    "deliverable": "PEP in every public method, lesson 19 policy 14/14, decision log without email",
+    "test": "test_milestones.py M3PolicyTest"
+   },
+   {
+    "title": "M4 Events and outbox",
+    "deliverable": "Loan + event in one transaction, relay, idempotent consumers survive full redelivery",
+    "test": "test_milestones.py M4EventsTest"
+   },
+   {
+    "title": "M5 SLOs, contracts and fitness in CI",
+    "deliverable": "SLIs and burn-rate alerts from the request log, member-portal contract, capacity gate, ADR log, scorecard GO",
+    "test": "test_milestones.py M5CiTest + test_faults.py"
+   }
+  ],
+  "rubric": [
+   {
+    "criterion": "fines parallel run / cut over",
+    "measure": "mismatch rate over 2,000 shadow requests; facade mode",
+    "pass": "<= 0.001 and mode service"
+   },
+   {
+    "criterion": "no new legacy callers",
+    "measure": "capstone files importing legacy_monolith",
+    "pass": "none"
+   },
+   {
+    "criterion": "tenant guard / tenant-scoped SQL / cross-library reads",
+    "measure": "guard violations; unscoped loans queries; rows of another library",
+    "pass": "0 / none / 0"
+   },
+   {
+    "criterion": "policy requirement cases / probes / PEP coverage",
+    "measure": "cases decided as specified; cross-library probes allowed; public methods without _authorize",
+    "pass": "14/14 / 0 / none"
+   },
+   {
+    "criterion": "decision log privacy",
+    "measure": "decision log lines containing an email field",
+    "pass": "0"
+   },
+   {
+    "criterion": "outbox completeness / relay / idempotent consumers",
+    "measure": "committed changes vs outbox rows; unpublished rows; projection rows wrong after redelivering everything",
+    "pass": "equal / 0 / 0"
+   },
+   {
+    "criterion": "availability SLI / latency SLI / burn-rate alerts",
+    "measure": "good/valid over the run; alerts at the end",
+    "pass": ">= 0.999 / >= 0.99 / 0"
+   },
+   {
+    "criterion": "consumer contract",
+    "measure": "member-portal contract problems against the real provider",
+    "pass": "none"
+   },
+   {
+    "criterion": "capacity N+1",
+    "measure": "p99 with one instance down (lesson 21 plan)",
+    "pass": "<= 300 ms"
+   },
+   {
+    "criterion": "ADR log",
+    "measure": "ADRs 0001-0009 in Nygard format (title, Status, Context, Decision, Consequences)",
+    "pass": "all 9"
+   }
+  ],
+  "fitnessFunctions": [
+   {
+    "what": "Scorecard verdict without faults",
+    "test": "labs/L400/22-capstone/test_milestones.py (test_scorecard_is_go)",
+    "threshold": "19/19, GO, exit 0"
+   },
+   {
+    "what": "Every seeded fault is caught by exactly the expected criteria",
+    "test": "labs/L400/22-capstone/test_faults.py",
+    "threshold": "4 faults -> NO-GO, exit 1"
+   },
+   {
+    "what": "Reused gates: no new legacy callers, tenant-scoped SQL, policy tests, capacity N+1",
+    "test": "run_capstone.py criteria (fitness_legacy, fitness_tenant rule, fitness_policy, fitness_capacity)",
+    "threshold": "as in the rubric"
+   }
+  ],
+  "decisionRecords": [
+   "labs/L400/22-capstone/adr/0006-modular-service-with-one-extracted-module.md",
+   "labs/L400/22-capstone/adr/0007-layered-guards-policy-then-tenant.md",
+   "labs/L400/22-capstone/adr/0008-outbox-events-and-async-email.md",
+   "labs/L400/22-capstone/adr/0009-release-gates-decide-agent-explains.md"
+  ],
+  "steps": [
+   {
+    "title": "Run the capstone",
+    "detail": "cd labs/L400/22-capstone && python run_capstone.py",
+    "expected": "19 JSON lines, all pass true; summary {\"passed\": 19, \"total\": 19, \"verdict\": \"GO\"}; exit code 0.",
+    "ifNot": "Read the first line with pass false.",
+    "mac": "python run_capstone.py; echo \"exit $?\"",
+    "windows": "python run_capstone.py; \"exit $LASTEXITCODE\""
+   },
+   {
+    "title": "Read the evidence files",
+    "detail": "out/scorecard.jsonl, out/requests.jsonl (615 requests), out/decisions.jsonl (615 decisions).",
+    "expected": "Request lines {ts, route, status, ms}; decision lines with erased ['/input/subject/email'].",
+    "ifNot": "Run step 1 first.",
+    "mac": "tail -1 out/scorecard.jsonl; head -2 out/requests.jsonl",
+    "windows": "Get-Content out\\scorecard.jsonl -Tail 1; Get-Content out\\requests.jsonl -TotalCount 2"
+   },
+   {
+    "title": "Inject each fault",
+    "detail": "python run_capstone.py --fault <name> for fines-rounding, cross-tenant-policy, unscoped-query, duplicate-delivery.",
+    "expected": "Each: verdict NO-GO, exit 1; failed criteria as in the README table (e.g. unscoped-query: tenant guard 135, tenant-scoped SQL, cross-library reads 20).",
+    "ifNot": "A fault that still says GO means a gate was weakened."
+   },
+   {
+    "title": "Agent assist: release note",
+    "detail": "python agent_assist.py --fault cross-tenant-policy (fake model).",
+    "expected": "attempt 1: REJECTED (verdict is NO-GO, the note says GO; failed criteria not named); attempt 2: OK.",
+    "ifNot": "See agentAssist below."
+   },
+   {
+    "title": "Explore the API by hand",
+    "detail": "python serve.py, then call it with Bruno or curl and an X-Subject header.",
+    "expected": "member m1 of lib00: 200 with one loan; librarian of lib01: 403.",
+    "ifNot": "Port 8022 busy: python serve.py 8023.",
+    "mac": "python serve.py &\ncurl -H 'X-Subject: {\"id\": \"m1\", \"tenant\": \"lib00\", \"roles\": [\"member\"]}' http://127.0.0.1:8022/tenants/lib00/members/m1/loans\nkill %1",
+    "windows": "$s = Start-Process python -ArgumentList 'serve.py' -PassThru\nInvoke-RestMethod -Uri http://127.0.0.1:8022/tenants/lib00/members/m1/loans -Headers @{'X-Subject'='{\"id\": \"m1\", \"tenant\": \"lib00\", \"roles\": [\"member\"]}'}\nStop-Process -Id $s.Id"
+   },
+   {
+    "title": "Run the tests",
+    "detail": "python -m unittest -v",
+    "expected": "Ran 12 tests ... OK (30-170 s here; mostly disk I/O).",
+    "ifNot": "Run from the capstone folder."
+   }
+  ],
+  "code": "\"\"\"Capstone: Library Loans, production-ready. Runs everything end to end and prints the scorecard as JSON lines.\n\nRun: python run_capstone.py                      all milestones, no faults (exit 0 = GO)\n     python run_capstone.py --fault cross-tenant-policy   one seeded fault (exit 1 = NO-GO); see scorecard.FAULTS\nWrites out/scorecard.jsonl, out/requests.jsonl, out/decisions.jsonl. The verdict comes from code, never from a model.\n\"\"\"\nimport argparse\nimport functools\nimport json\nimport pathlib\nimport sys\n\nimport loans_service\nimport scorecard\nfrom http_api import start\nfrom reuse import capacity, contract, fitness_capacity, fitness_legacy, fitness_policy, rego_lite, slo\n\nHERE = pathlib.Path(__file__).resolve().parent\nADR_FILES = sorted(HERE.parent.glob(\"*/adr/0*.md\"))  # the topic's ADR log: lessons 17-21 + the capstone\n\n\n@functools.lru_cache(maxsize=1)  # deterministic (seeded simulation): compute once per process\ndef capacity_gate():\n    return fitness_capacity.gate(capacity)\n\n\ndef row(milestone, criterion, measure, value, threshold, ok):\n    return {\"milestone\": milestone, \"criterion\": criterion, \"measure\": measure, \"value\": value,\n            \"threshold\": threshold, \"pass\": bool(ok)}\n\n\ndef criteria(e):\n    s, rows = e[\"service\"], []\n    stats = e[\"cutover\"]\n    rows.append(row(\"M1 strangle\", \"fines parallel run\", \"mismatch rate over 2,000 shadow requests\",\n                    stats[\"mismatch_rate\"], \"<= 0.001\", stats[\"ready\"]))\n    rows.append(row(\"M1 strangle\", \"fines cut over\", \"facade mode after the run\", e[\"facade_mode\"], \"service\",\n                    e[\"facade_mode\"] == \"service\"))\n    callers = sorted(fitness_legacy.legacy_callers(HERE))\n    rows.append(row(\"M1 strangle\", \"no new legacy callers\", \"capstone files importing legacy_monolith\", callers, \"[]\",\n                    not callers))\n    rows.append(row(\"M2 tenancy\", \"tenant guard\", \"statements without the current tenant id\",\n                    len(s.guard_violations), 0, not s.guard_violations))\n    unscoped = scorecard.unscoped_sql()\n    rows.append(row(\"M2 tenancy\", \"tenant-scoped SQL\", \"loans queries without WHERE tenant_id\", unscoped, \"[]\",\n                    not unscoped))\n    p = e[\"probes\"]\n    rows.append(row(\"M2 tenancy\", \"cross-library reads\", \"rows of another library returned\", p[\"cross_rows\"], 0,\n                    p[\"cross_rows\"] == 0))\n    failed = fitness_policy.gate_policy_tests(s.pdp.policy)[\"value\"]\n    rows.append(row(\"M3 policy\", \"policy requirement cases\", \"cases decided as specified\",\n                    f\"{len(fitness_policy.CASES) - len(failed)}/{len(fitness_policy.CASES)}\", \"14/14\", not failed))\n    rows.append(row(\"M3 policy\", \"cross-library probes denied\", \"probes allowed across libraries\",\n                    p[\"cross_allowed\"], 0, p[\"cross_allowed\"] == 0))\n    gaps = scorecard.pep_gaps()\n    rows.append(row(\"M3 policy\", \"every entry point enforces policy\", \"public methods without _authorize\", gaps,\n                    \"[]\", not gaps))\n    leaked = sum('\"email\"' in line for line in e[\"decision_log\"])\n    rows.append(row(\"M3 policy\", \"decision log privacy\", f\"decisions logged {len(e['decision_log'])}, with email\",\n                    leaked, 0, leaked == 0 and e[\"decision_log\"]))\n    ev = e[\"events\"]\n    rows.append(row(\"M4 events\", \"outbox completeness\", \"committed changes vs outbox rows\",\n                    f\"{ev['committed_changes']}/{ev['outbox_rows']}\", \"equal\", ev[\"committed_changes\"] == ev[\"outbox_rows\"]))\n    rows.append(row(\"M4 events\", \"relay published\", \"unpublished outbox rows\", ev[\"unpublished\"], 0,\n                    ev[\"unpublished\"] == 0))\n    rows.append(row(\"M4 events\", \"idempotent consumers\", \"projection rows wrong after redelivering every event\",\n                    ev[\"projection_mismatches\"], 0, ev[\"projection_mismatches\"] == 0))\n    records = slo.parse(s.request_log)\n    now = records[-1][\"t\"] + 1\n    for sli in (\"availability\", \"latency\"):\n        good = 1 - slo.bad_ratio(records, sli)\n        rows.append(row(\"M5 SLO + CI\", f\"{sli} SLI\", f\"good / valid over {len(records)} requests\", round(good, 4),\n                        f\">= {slo.SLOS[sli]}\", good >= slo.SLOS[sli]))\n    alerts = slo.alerts(records, now)\n    rows.append(row(\"M5 SLO + CI\", \"burn-rate alerts\", \"alerts firing at the end of the run\", len(alerts), 0, not alerts))\n    contract_pdp = rego_lite.DecisionPoint(s.pdp.policy)  # same policy; contract traffic is not logged\n    server, url = start(lambda: loans_service.LoansService(contract_pdp, s.fines))\n    try:\n        problems = contract.verify_provider(HERE / \"contracts\" / \"member-portal--loans-service.json\", url)\n    finally:\n        server.shutdown()\n        server.server_close()\n    rows.append(row(\"M5 SLO + CI\", \"consumer contract\", \"member-portal contract problems\", problems, \"[]\", not problems))\n    cap = capacity_gate()\n    rows.append(row(\"M5 SLO + CI\", \"capacity N+1\", \"p99 ms with one instance down\", cap[\"value\"][\"p99_one_down_ms\"],\n                    \"<= 300\", cap[\"ok\"]))\n    bad_adrs = [f.name for f in ADR_FILES if scorecard.adr_problems(f.read_text(encoding=\"utf-8\"))]\n    rows.append(row(\"M5 SLO + CI\", \"ADR log\", f\"ADRs in Nygard format of {len(ADR_FILES)}\", bad_adrs, \"[]\",\n                    not bad_adrs and len(ADR_FILES) >= 4))\n    return rows\n\n\ndef main(argv=None, out=sys.stdout):\n    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])\n    parser.add_argument(\"--fault\", choices=scorecard.FAULTS)\n    args = parser.parse_args(argv)\n    rows = criteria(scorecard.build(args.fault))\n    passed = sum(r[\"pass\"] for r in rows)\n    summary = {\"summary\": True, \"fault\": args.fault, \"passed\": passed, \"total\": len(rows),\n               \"failed\": [r[\"criterion\"] for r in rows if not r[\"pass\"]],\n               \"verdict\": \"GO\" if passed == len(rows) else \"NO-GO\"}  # deterministic: code decides the release\n    lines = [json.dumps(r) for r in rows + [summary]]\n    (HERE / \"out\" / \"scorecard.jsonl\").write_text(\"\\n\".join(lines) + \"\\n\", encoding=\"utf-8\")\n    print(\"\\n\".join(lines), file=out)\n    return 0 if summary[\"verdict\"] == \"GO\" else 1\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "`reuse.py`",
+    "detail": "Earlier labs are imported by path, so the capstone runs the lessons' own code (and their fixes)."
+   },
+   {
+    "title": "`scorecard.build(fault)`",
+    "detail": "Wires policy, facade (shadow -> cut-over), service and outbox; one optional seeded fault; seeded workload with cross-library probes."
+   },
+   {
+    "title": "`criteria(e)`",
+    "detail": "19 rows {milestone, criterion, measure, value, threshold, pass}, each computed from the run."
+   },
+   {
+    "title": "`contract.verify_provider(...)`",
+    "detail": "Lesson 14's hardened verifier replays the member-portal contract against the real HTTP adapter."
+   },
+   {
+    "title": "`capacity_gate()` (cached)",
+    "detail": "Lesson 21's gate; deterministic, so computed once per process."
+   },
+   {
+    "title": "`verdict`",
+    "detail": "GO only if every criterion passes; the exit code is the CI contract. No model is involved."
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/22-capstone/run_capstone.py",
+    "purpose": "Scorecard runner (capstone code)"
+   },
+   {
+    "path": "labs/L400/22-capstone/scorecard.py",
+    "purpose": "System wiring, workload, faults, gates"
+   },
+   {
+    "path": "labs/L400/22-capstone/loans_service.py",
+    "purpose": "PEP -> tenant-bound SQL -> outbox; request log"
+   },
+   {
+    "path": "labs/L400/22-capstone/http_api.py",
+    "purpose": "Member-portal adapter + provider states"
+   },
+   {
+    "path": "labs/L400/22-capstone/consumer.py",
+    "purpose": "Consumer side, writes the contract"
+   },
+   {
+    "path": "labs/L400/22-capstone/reuse.py",
+    "purpose": "Imports earlier labs by path"
+   },
+   {
+    "path": "labs/L400/22-capstone/agent_assist.py",
+    "purpose": "Local model explains; code checks"
+   },
+   {
+    "path": "labs/L400/22-capstone/architecture.mmd",
+    "purpose": "Architecture diagram"
+   },
+   {
+    "path": "labs/L400/22-capstone/adr/README.md",
+    "purpose": "ADR log 0001-0009"
+   },
+   {
+    "path": "labs/L400/22-capstone/test_milestones.py",
+    "purpose": "One test class per milestone"
+   },
+   {
+    "path": "labs/L400/22-capstone/test_faults.py",
+    "purpose": "Every seeded fault caught"
+   }
+  ],
+  "expectedResults": [
+   "19/19 criteria, verdict GO, exit 0",
+   "each seeded fault: NO-GO, exit 1, the expected criteria fail",
+   "Ran 12 tests ... OK"
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "ModuleNotFoundError for a lesson module",
+    "action": "Run from labs/L400/22-capstone; reuse.py finds the other labs relative to it."
+   },
+   {
+    "symptom": "A --fault run says GO",
+    "action": "A gate or threshold was weakened (try-it 2); test_faults.py pins the expected failures."
+   }
+  ],
+  "equivalents": [
+   "Production: the same scorecard as CI gates (GitHub Actions or GitLab jobs) plus deployment policies (OPA/Conftest, Pact Broker can-i-deploy).",
+   "Real infrastructure: PostgreSQL with row-level security, a message broker (Kafka, RabbitMQ) behind the outbox relay, OPA as a sidecar, Prometheus for the SLIs."
+  ],
+  "checkpoint": "PASS if run_capstone.py exits 0 with 19/19, every --fault run exits 1, and all 12 capstone tests pass.",
+  "checkYourself": [
+   {
+    "q": "Why does the cross-tenant policy fault also fail 'cross-library reads', a tenancy criterion?",
+    "a": "The policy let the librarian in, and the SQL correctly returned that library's rows to a caller from another library. Tenant-scoped SQL cannot know the caller was not allowed; the policy must."
+   },
+   {
+    "q": "Why may the agent explain the scorecard but not decide the release?",
+    "a": "Its output is text that can be fluent and wrong; the verdict is a deterministic function of measured criteria, and the checker rejects notes that disagree."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Run the capstone with lesson 19's unfixed policy (--fault cross-tenant-policy).",
+    "predict": "Which criteria fail - only the policy tests?",
+    "expected": "[1] librarian rule without the library check -> NO-GO, 16/19, failed ['cross-library reads', 'policy requirement cases', 'cross-library probes denied']"
+   },
+   {
+    "task": "Loosen the cut-over budget to 6 % and run with the buggy fines service.",
+    "predict": "Will the scorecard still stop the rounding bug?",
+    "expected": "[2] cut-over budget 6 %, buggy fines service -> GO, mismatch rate 0.054, facade service"
+   }
+  ],
+  "agentAssist": {
+   "task": "A local model writes a two-sentence release note from the scorecard summary (passed, total, failed criteria, verdict).",
+   "prompt": "[[GO-NO-GO]] Write a two-sentence release note from the scorecard summary in the brief. <brief>passed, total, failed, verdict</brief>",
+   "check": "check_note(): the verdict word must equal the code's verdict; numbers must be passed or total; a NO-GO note must name every failed criterion. One retry; nothing is posted.",
+   "expected": "With --fault cross-tenant-policy: attempt 1 REJECTED (verdict is NO-GO, the note says GO; 3 failed criteria not named); attempt 2 OK: 'Release summary: NO-GO. 16 of 19 criteria passed; failed: ...'.",
+   "realModelNote": "Not run here. `python agent_assist.py --real` with Ollama on the Mac mini or Windows PC; the verdict stays the code's."
+  },
+  "inRealSystems": [
+   "Release checklists become automated scorecards; a failing criterion blocks the deploy and links to the evidence.",
+   "Seeded-fault (chaos/mutation) runs in CI prove that the gates still fail when they should."
+  ],
+  "useWhen": "Use a scorecard of measured criteria whenever several architectural decisions must hold together at release time.",
+  "next": "L500 lesson 23 – Foundations I: modularity theory – information hiding, dependency graphs and Martin's metrics (theory behind the course; further L400 candidates are in KNOWN-GAPS)",
+  "sources": [
+   {
+    "title": "Cartwright, Horn, Lewis - Patterns of Legacy Displacement",
+    "url": "https://martinfowler.com/articles/patterns-legacy-displacement/"
+   },
+   {
+    "title": "OPA docs - Decision Logs",
+    "url": "https://www.openpolicyagent.org/docs/management-decision-logs"
+   },
+   {
+    "title": "Documenting Architecture Decisions (M. Nygard)",
+    "url": "https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions"
+   }
+  ],
+  "validation": {
+   "status": "validated-local",
+   "how": "Ran run_capstone.py (GO, exit 0) and each --fault (NO-GO, exit 1), consumer.py, agent_assist.py --fault cross-tenant-policy and without fault (fake model), try_it.py, serve.py with a scripted client (200 / 403), `python -m unittest -v` (12 tests OK, 3 full runs) on Python 3.12.15, 2026-10-28.",
+   "pendingCi": [
+    "macOS (arm64) and Windows 11 runs of this lab (platforms: expected until the CI matrix runs)",
+    "agent_assist.py --real (real local model)",
+    "learningTools exercises (Structurizr, Bruno, promtool): manual"
+   ]
+  },
+  "conceptNote": "content/concepts/L400/22-capstone.md",
+  "conceptSummary": "One system, every decision proven by a measured criterion; seeded faults show the gates work; code decides the release and a local model only explains it.",
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "learningTools": [
+   {
+    "name": "Structurizr (local)",
+    "role": "SEE",
+    "exercise": "Turn architecture.mmd into a Structurizr workspace (containers: HTTP adapter, LoansService, policy decision point, SQLite, fines service, relay/consumers) and add ADRs 0006-0009.",
+    "expected": "Pending a manual run. The container view should show the same arrows as architecture.mmd; the decision explorer lists ADRs 0006-0009.",
+    "mac": "docker run -it --rm -p 8080:8080 -v PATH:/usr/local/structurizr structurizr/structurizr local (Docker or Java 21+)",
+    "windows": "same",
+    "licence": "Apache-2.0, open-core: 'local' is free (OSI: yes)",
+    "url": "https://github.com/structurizr/structurizr"
+   },
+   {
+    "name": "Bruno",
+    "role": "CHECK",
+    "exercise": "Run `python serve.py`, create a collection with GET /tenants/lib00/members/m1/loans twice: X-Subject member m1 of lib00 (assert 200, body.loans length 1) and librarian of lib01 (assert 403).",
+    "expected": "Pending a manual run. Should match the README: 200 {\"memberId\": \"m1\", \"loans\": [{\"loanId\": 1, \"bookId\": \"b1\"}]} and 403 {\"error\": \"view denied for s9 in lib00\"}.",
+    "mac": "brew install --cask bruno",
+    "windows": "winget install Bruno.Bruno",
+    "licence": "MIT, open-core (OSI: yes)",
+    "url": "https://github.com/usebruno/bruno"
+   },
+   {
+    "name": "Prometheus (+ expression browser, promtool)",
+    "role": "CHECK",
+    "exercise": "Write a promtool test for the availability burn-rate page rule with input_series built from out/requests.jsonl (615 requests, 0 with status >= 500).",
+    "expected": "Pending a manual run. No alert fires, matching the scorecard's burn-rate alerts 0 and availability SLI 1.0.",
+    "mac": "prometheus-3.15.1.darwin-arm64.tar.gz (contains prometheus and promtool)",
+    "windows": "prometheus-3.15.1.windows-amd64.zip",
+    "licence": "Apache-2.0 (OSI: yes)",
+    "url": "https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/"
+   }
+  ],
+  "seeAlso": [
+   "distributed-systems L300 #14 Sagas with compensation: orchestration vs choreography, idempotent steps, saga log: when a loan spans several services, the outbox events become saga steps.",
+   "ai-agents L300 #12 Evaluating agents with a golden set: the release-note checker is a tiny evaluation with a hard pass/fail rule."
+  ]
+ }
+]

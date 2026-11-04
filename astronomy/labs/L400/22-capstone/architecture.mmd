@@ -1,0 +1,17 @@
+flowchart LR
+  subgraph Data["data/ (seeded, synthetic TESS-like)"]
+    L[S01..S12.csv<br/>27 d, 10-min cadence, gap]
+    T[truth.json<br/>scoring only]
+  end
+  L --> D[M1 detrend<br/>running median 0.75 d<br/>ADR 0001]
+  D --> B[M2 BLS-lite<br/>6000 frequencies x 4 durations<br/>SNR + SDE]
+  B --> R[re-detrend with<br/>transit masked]
+  R --> V[M3 vetting - code decides<br/>SNR/SDE, >=2 transits,<br/>odd/even, secondary, duration<br/>ADR 0002]
+  V -->|planet_candidate| F[M4 fit<br/>L300 #15 trapezoid + LM<br/>Metropolis, free noise scale]
+  V -->|rejected + reasons| S
+  F --> S[(scorecard.jsonl)]
+  L --> P[M5 provenance<br/>SHA-256 + params<br/>L300 #16 idea]
+  P --> S
+  V --> A[M6 agent_explain.py<br/>local model explains,<br/>code checks numbers + claims<br/>ADR 0003]
+  A --> S
+  T -.-> S

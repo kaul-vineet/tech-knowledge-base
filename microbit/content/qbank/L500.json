@@ -1,0 +1,777 @@
+[
+ {
+  "id": "mb-L500-001",
+  "level": "L500",
+  "lesson": 23,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which 8-bit two's-complement value has no 8-bit negation (invert-and-add-one returns the same pattern)?",
+  "options": [
+   "127",
+   "0",
+   "-1",
+   "-128"
+  ],
+  "answer": 3,
+  "explanation": "The range is -128..127, so +128 does not exist; NOT 0x80 + 1 = 0x80 again. Zero also maps to itself, but its negation (0) is correct, so it is not an exception.",
+  "source": "Lesson 23 theorem 1"
+ },
+ {
+  "id": "mb-L500-002",
+  "level": "L500",
+  "lesson": 23,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "A 12-bit sensor register (as in lesson 10) holds 0xF38. What does this decode print, and what is wrong?",
+  "code": "raw = 0xF38          # 12-bit register value\nvalue = raw - 65536 if raw & 0x8000 else raw\nprint(value)",
+  "options": [
+   "-200: the decode is correct, because Python integers are already signed",
+   "200: the code forgets to invert the bits first",
+   "3896: it tests bit 15, but the sign bit of a 12-bit value is bit 11",
+   "4096: the subtraction should use 4096 instead"
+  ],
+  "answer": 2,
+  "explanation": "0xF38 = 3896 and bit 15 is clear, so the value comes back positive. For 12 bits the sign bit is 0x800 and the correction is -4096, giving -200 (lesson 10's decode_temp does exactly that).",
+  "source": "Lesson 23 theorem 1; lesson 10 decode_temp"
+ },
+ {
+  "id": "mb-L500-003",
+  "level": "L500",
+  "lesson": 23,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this print?",
+  "code": "def decode(u, n):\n    return u - (1 << n) if u & (1 << (n - 1)) else u\n\nprint(decode(0x800, 12), decode(0x7FF, 12))",
+  "options": [
+   "-2048 2047",
+   "-2047 2047",
+   "-2048 -1",
+   "0 2047"
+  ],
+  "answer": 0,
+  "explanation": "0x800 has bit 11 set, so it decodes to 0x800 - 4096 = -2048, the most negative 12-bit value; 0x7FF is the largest positive, 2047.",
+  "source": "Lesson 23 theorem 1"
+ },
+ {
+  "id": "mb-L500-004",
+  "level": "L500",
+  "lesson": 23,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A red LED (assume Vf = 2.0 V) on a 3.3 V pin should draw at most 10 mA. Which E12 resistor do you fit?",
+  "options": [
+   "120 ohm",
+   "150 ohm",
+   "130 ohm",
+   "330 ohm"
+  ],
+  "answer": 1,
+  "explanation": "R = (3.3 - 2.0)/0.010 = 130 ohm, which is not an E12 value; the next value up is 150 ohm, so the current stays under 10 mA. 120 ohm would exceed the target.",
+  "source": "Lesson 23 theorem 2"
+ },
+ {
+  "id": "mb-L500-005",
+  "level": "L500",
+  "lesson": 23,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why round an LED resistor UP to the next standard value rather than to the nearest one?",
+  "options": [
+   "A larger R means less current, so the limit is never exceeded",
+   "Standard values below the exact result are not manufactured",
+   "Rounding up raises the LED's forward voltage to match",
+   "A larger R dissipates more power, which protects the micro:bit pin"
+  ],
+  "answer": 0,
+  "explanation": "I = (Vs - Vf)/R decreases as R grows, so rounding up keeps the current at or below the target. A larger R actually dissipates less power at the lower current; Vf is set by the LED, not by R.",
+  "source": "Lesson 23 theorem 2 proof"
+ },
+ {
+  "id": "mb-L500-006",
+  "level": "L500",
+  "lesson": 23,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this print for read_analog()'s 10-bit converter at 3.3 V?",
+  "code": "step = 3.3 / 1024\nrms = step / 12 ** 0.5\nprint(f\"{step * 1000:.2f} {rms * 1000:.2f}\")",
+  "options": [
+   "3.22 0.93",
+   "3.22 0.27",
+   "1.61 0.47",
+   "3.30 0.95"
+  ],
+  "answer": 0,
+  "explanation": "The step is 3.3/1024 = 3.22 mV and the RMS quantisation error is step/sqrt(12) = 0.93 mV. 0.27 mV would come from dividing by 12 instead of sqrt(12).",
+  "source": "Lesson 23 theorem 3"
+ },
+ {
+  "id": "mb-L500-007",
+  "level": "L500",
+  "lesson": 23,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "When does the quantisation-noise model e ~ U(-Delta/2, Delta/2), variance Delta^2/12, fail?",
+  "options": [
+   "When the converter has more than 10 bits",
+   "When the input spans most of the converter's range",
+   "When the input is constant or slowly varying",
+   "When the reference voltage is lower than 3.3 V"
+  ],
+  "answer": 2,
+  "explanation": "The model assumes the input's position inside a step is uniformly spread (a busy input). A constant input gives a deterministic error that averaging cannot remove; dither restores the assumption. Resolution and range do not break it.",
+  "source": "Lesson 23 theorem 3; problem 23.8"
+ },
+ {
+  "id": "mb-L500-008",
+  "level": "L500",
+  "lesson": 23,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "pin1.write_analog(255) drives a 3.3 V PWM output. What is its average voltage?",
+  "options": [
+   "1.65 V",
+   "2.47 V",
+   "0.21 V",
+   "0.82 V"
+  ],
+  "answer": 3,
+  "explanation": "D = 255/1023 = 0.249, so the average is D x 3.3 V = 0.82 V. 1.65 V is the RMS-style mistake of using sqrt(D); the LED itself still sees 3.3 V or 0 V at any instant.",
+  "source": "Lesson 23 theorem 4"
+ },
+ {
+  "id": "mb-L500-009",
+  "level": "L500",
+  "lesson": 23,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "Lesson 14's model once printed 9,600.5 h for the adaptive design at the 0.05 mA floor, but its stated inputs (483 wake-ups x 20 ms at 30 mA in one hour, 1,250 mAh) give 9,588.4 h. What caused it?",
+  "options": [
+   "It rounded avg_ma to four decimals before dividing the capacity",
+   "It read the 0.05 mA floor as 0.5 mA for the final sleep",
+   "It averaged over the stub clock (3,607,400 ms), not one hour",
+   "It derated the 1,250 mAh capacity by 0.1 % for self-discharge"
+  ],
+  "answer": 2,
+  "explanation": "The last 8 s Deep Sleep started at 3,599,400 ms and ran the clock past the hour; dividing by 3,607,400 ms adds 7.4 s of sleep and gives 9,600.5 h. Rounding to four decimals moves the result by far less than 12 h.",
+  "source": "Lesson 23 problem 23.7; labs/L300/14-power-budget/README.md"
+ },
+ {
+  "id": "mb-L500-010",
+  "level": "L500",
+  "lesson": 24,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "What does the sampling theorem require for samples to determine a signal exactly?",
+  "options": [
+   "A sampling rate twice the frequency you care about",
+   "At least two samples per period of the slowest component",
+   "A sampling rate that is a multiple of the mains frequency",
+   "No frequency content above half the sampling rate"
+  ],
+  "answer": 3,
+  "explanation": "The condition is on the highest frequency PRESENT: content above fs/2 aliases into the band, whatever you care about. Two samples per period of the slowest component says nothing about faster ones.",
+  "source": "Lesson 24 theorem 1; Shannon 1949 Theorem 1"
+ },
+ {
+  "id": "mb-L500-011",
+  "level": "L500",
+  "lesson": 24,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A lamp flickers at 100 Hz and the light sensor is sampled at 30 Hz. At what frequency does the flicker appear in the samples?",
+  "options": [
+   "70 Hz",
+   "100 Hz",
+   "10 Hz",
+   "40 Hz"
+  ],
+  "answer": 2,
+  "explanation": "|100 - round(100/30) x 30| = |100 - 90| = 10 Hz. 70 Hz is above the 15 Hz Nyquist frequency and cannot appear; the check finds the FFT peak of the stub light data at 10.0 Hz.",
+  "source": "Lesson 24 theorem 1, check output"
+ },
+ {
+  "id": "mb-L500-012",
+  "level": "L500",
+  "lesson": 24,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this print?",
+  "code": "def apparent(f, fs):\n    return abs(f - round(f / fs) * fs)\n\nprint(apparent(35, 50), apparent(260, 100))",
+  "options": [
+   "35 60",
+   "15 60",
+   "15 40",
+   "25 40"
+  ],
+  "answer": 2,
+  "explanation": "35 Hz at 50 Hz: |35 - 1 x 50| = 15. 260 Hz at 100 Hz: |260 - 3 x 100| = 40. Subtracting only once (260 - 200 = 60) misses that the nearest multiple is 300.",
+  "source": "Lesson 24 theorem 1"
+ },
+ {
+  "id": "mb-L500-013",
+  "level": "L500",
+  "lesson": 24,
+  "type": "code-reading",
+  "difficulty": 1,
+  "question": "What does this moving average print?",
+  "code": "x = [0, 3, 6, 9, 12]\nN = 3\ny = [sum(x[i - N + 1:i + 1]) / N for i in range(N - 1, len(x))]\nprint(y)",
+  "options": [
+   "[6.0, 9.0, 12.0]",
+   "[0.0, 3.0, 6.0]",
+   "[3.0, 6.0, 9.0, 12.0]",
+   "[3.0, 6.0, 9.0]"
+  ],
+  "answer": 3,
+  "explanation": "Windows of 3 ending at indices 2, 3, 4 are [0,3,6], [3,6,9], [6,9,12] with means 3, 6, 9. A 'valid' moving average has len(x) - N + 1 outputs, not len(x) - 1.",
+  "source": "Lesson 24 theorem 2"
+ },
+ {
+  "id": "mb-L500-014",
+  "level": "L500",
+  "lesson": 24,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Accelerometer noise has a standard deviation of 40 mg, independent between samples. What is the smallest moving-average length that brings it to 10 mg?",
+  "options": [
+   "4",
+   "16",
+   "8",
+   "64"
+  ],
+  "answer": 1,
+  "explanation": "The standard deviation falls by sqrt(N): 40/sqrt(N) <= 10 gives N >= 16. 4 is the factor, not the length; 64 would reach 5 mg.",
+  "source": "Lesson 24 theorem 2"
+ },
+ {
+  "id": "mb-L500-015",
+  "level": "L500",
+  "lesson": 24,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Why can a digital low-pass filter applied after read_light_level() not remove the aliased 100 Hz flicker?",
+  "options": [
+   "After sampling, the alias is a real low-frequency component",
+   "Digital filters cannot attenuate frequencies below 15 Hz",
+   "The light sensor's 0-255 quantisation hides the flicker from the filter",
+   "Filtering only works on integers, not on light levels"
+  ],
+  "answer": 0,
+  "explanation": "Sampling maps 100 Hz onto 10 Hz exactly; afterwards nothing distinguishes it from a real 10 Hz change. Prevention means sampling faster or filtering before the sampler. Quantisation is unrelated.",
+  "source": "Lesson 24 theorem 1, problem 24.7"
+ },
+ {
+  "id": "mb-L500-016",
+  "level": "L500",
+  "lesson": 24,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this exponential filter print?",
+  "code": "y = 0.0\nfor x in [1, 1, 1]:\n    y = y + 0.5 * (x - y)\nprint(y)",
+  "options": [
+   "0.875",
+   "0.5",
+   "1.0",
+   "0.75"
+  ],
+  "answer": 0,
+  "explanation": "With alpha = 0.5 the step response is 1 - 0.5^(n+1): 0.5, 0.75, 0.875 after three samples. The filter approaches 1 but never jumps there.",
+  "source": "Lesson 24 theorem 3"
+ },
+ {
+  "id": "mb-L500-017",
+  "level": "L500",
+  "lesson": 24,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Which EMA coefficient alpha gives the same white-noise reduction as a 9-point moving average?",
+  "options": [
+   "0.11",
+   "0.9",
+   "0.2",
+   "0.5"
+  ],
+  "answer": 2,
+  "explanation": "alpha = 2/(N+1) = 2/10 = 0.2, since alpha/(2 - alpha) = 1/N. 0.11 = 1/9 confuses alpha with the variance ratio.",
+  "source": "Lesson 24 theorem 3"
+ },
+ {
+  "id": "mb-L500-018",
+  "level": "L500",
+  "lesson": 24,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "Lesson 14's logger samples every 8 s when steady and must notice a 1 C change within 10 s. A teammate adds an EMA (alpha = 0.2 per sample) to the temperature before the change test. What should you do?",
+  "options": [
+   "Keep it: the EMA time constant is 0.45 s, far below 10 s",
+   "Raise alpha to 0.9 so the filter removes more of the noise",
+   "Replace it with a 64-point moving average for less lag",
+   "Test for change on raw values; smooth only what is logged"
+  ],
+  "answer": 3,
+  "explanation": "The EMA lag is per sample: about 4.5 samples, i.e. roughly 36 s at 8 s intervals, so the filtered value may not cross 1 C in time. 0.45 s is the lag only at 0.1 s sampling; a 64-point average lags even more.",
+  "source": "Lesson 24 problem 24.8"
+ },
+ {
+  "id": "mb-L500-019",
+  "level": "L500",
+  "lesson": 25,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The heater's real gain is 16 C at full duty, but the controller was designed for 20 C. Why does closed-loop control cope better than open loop?",
+  "options": [
+   "It uses a more accurate model of the heater's gain",
+   "It switches the heater faster, which increases the heater's effective gain",
+   "It removes the need for a temperature sensor",
+   "It acts on the measured error, correcting part of the mismatch"
+  ],
+  "answer": 3,
+  "explanation": "Open loop sets u = r/K from the model and leaves error r(1 - 16/20) = 1 C; feedback measures x and reduces the error to r/(1 + K Kp). It needs a sensor and uses no better model.",
+  "source": "Lesson 25 theorem 1"
+ },
+ {
+  "id": "mb-L500-020",
+  "level": "L500",
+  "lesson": 25,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A first-order plant with DC gain K = 20 is under P control with Kp = 1.5 and set-point +4 C. What steady-state error remains?",
+  "options": [
+   "0.13 C",
+   "0.19 C",
+   "0.27 C",
+   "0.00 C"
+  ],
+  "answer": 0,
+  "explanation": "e = r/(1 + K Kp) = 4/31 = 0.13 C. Zero error needs integral action; P control always leaves some.",
+  "source": "Lesson 25 theorem 1"
+ },
+ {
+  "id": "mb-L500-021",
+  "level": "L500",
+  "lesson": 25,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "What does this unsaturated P loop print?",
+  "code": "a, b, kp, r = 0.9, 0.5, 4.0, 1.0\nx = 0.0\nfor k in range(120):\n    x = a * x + b * kp * (r - x)\nprint(\"diverges\" if abs(x) > 1000 else round(x, 3))",
+  "options": [
+   "0.952",
+   "1.0",
+   "0.667",
+   "diverges"
+  ],
+  "answer": 3,
+  "explanation": "The pole is a - b Kp = 0.9 - 2.0 = -1.1, outside the unit circle, so x oscillates with growing amplitude. 0.952 would be the steady state if the loop were stable (Kp below (1 + a)/b = 3.8).",
+  "source": "Lesson 25 theorem 1"
+ },
+ {
+  "id": "mb-L500-022",
+  "level": "L500",
+  "lesson": 25,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this P loop print?",
+  "code": "a, b, kp, r = 0.5, 1.0, 1.0, 2.0\nx = 0.0\nfor k in range(30):\n    x = a * x + b * kp * (r - x)\nprint(round(x, 3))",
+  "options": [
+   "1.333",
+   "2.0",
+   "0.667",
+   "1.0"
+  ],
+  "answer": 0,
+  "explanation": "The pole is 0.5 - 1.0 = -0.5, so it converges to b Kp r/(1 - a + b Kp) = 2/1.5 = 1.333. It never reaches the set-point 2.0 because P control leaves an error.",
+  "source": "Lesson 25 theorem 1"
+ },
+ {
+  "id": "mb-L500-023",
+  "level": "L500",
+  "lesson": 25,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Integral action guarantees zero steady-state error for a constant disturbance under which conditions?",
+  "options": [
+   "The proportional gain is set above the open-loop stability limit",
+   "The disturbance is smaller than the set-point",
+   "The integral gain equals the proportional gain",
+   "The closed loop is stable and the actuator does not saturate"
+  ],
+  "answer": 3,
+  "explanation": "At an equilibrium the integrator is constant, so the error must be zero; but an equilibrium is reached only if the augmented loop is stable and the duty is not pinned at 0 or 1023 (wind-up).",
+  "source": "Lesson 25 theorem 1, problem 25.3"
+ },
+ {
+  "id": "mb-L500-024",
+  "level": "L500",
+  "lesson": 25,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "What is the Liu & Layland utilisation bound for two tasks, to three decimals?",
+  "options": [
+   "0.693",
+   "1.000",
+   "0.780",
+   "0.828"
+  ],
+  "answer": 3,
+  "explanation": "n(2^(1/n) - 1) = 2(sqrt 2 - 1) = 0.828. 0.693 is the large-n limit ln 2; 0.780 is the n = 3 bound.",
+  "source": "Lesson 25 theorem 2"
+ },
+ {
+  "id": "mb-L500-025",
+  "level": "L500",
+  "lesson": 25,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "Tasks (10, 50), (20, 100), (90, 200) ms have U = 0.85, above the three-task bound 0.780. What can you conclude?",
+  "options": [
+   "The set is unschedulable under rate-monotonic priorities",
+   "The set is schedulable because U is below 1",
+   "Nothing yet: the bound is only sufficient; simulate it",
+   "The set becomes schedulable only with deadline-driven priorities"
+  ],
+  "answer": 2,
+  "explanation": "Exceeding a sufficient bound is inconclusive. Simulation shows the third task finishing at 170 <= 200 ms (the periods are harmonic). U <= 1 alone does not guarantee RM schedulability: (2,4),(5,10) fails.",
+  "source": "Lesson 25 problem 25.5"
+ },
+ {
+  "id": "mb-L500-026",
+  "level": "L500",
+  "lesson": 25,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this CRC-16 (as in lesson 12) print?",
+  "code": "def crc16(data):\n    crc = 0xFFFF\n    for byte in data:\n        crc ^= byte << 8\n        for _ in range(8):\n            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else crc << 1\n            crc &= 0xFFFF\n    return crc\n\nprint(hex(crc16(b\"123456789\")))",
+  "options": [
+   "0x31c3",
+   "0xffff",
+   "0x29b1",
+   "0x1021"
+  ],
+  "answer": 2,
+  "explanation": "0x29B1 is the published check value of CRC-16/CCITT-FALSE for '123456789'. 0x31C3 is the check value of the same polynomial with initial value 0 (CRC-16/XMODEM).",
+  "source": "Lesson 25 theorem 3; CRC RevEng catalogue"
+ },
+ {
+  "id": "mb-L500-027",
+  "level": "L500",
+  "lesson": 25,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which errors is a 16-bit CRC with G(0) = 1 guaranteed to detect?",
+  "options": [
+   "Every error pattern of 16 flipped bits or fewer",
+   "Every error, as long as the frame is under 16 bytes",
+   "Every burst error of any length",
+   "Every burst error of length 16 bits or less"
+  ],
+  "answer": 3,
+  "explanation": "A burst x^i B(x) with deg B < 16 cannot be a multiple of G because G is coprime to x. Scattered errors with few flipped bits can still be multiples of G; 17-bit bursts escape with probability 2^-15.",
+  "source": "Lesson 25 theorem 3"
+ },
+ {
+  "id": "mb-L500-028",
+  "level": "L500",
+  "lesson": 26,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "When does a micro:bit's room-temperature reading become personal data about a pupil?",
+  "options": [
+   "Only when it is stored in a cloud service outside the school's network",
+   "Whenever it is logged more often than once per minute",
+   "When it can be linked to a pupil, e.g. desk tag + seating plan",
+   "Never, because temperature is not information about a person"
+  ],
+  "answer": 2,
+  "explanation": "Personal data relates to an identifiable person; linkability is the test, not where it is stored or how often. A desk-tagged value plus a seating plan places one pupil.",
+  "source": "Lesson 26 concept note; problem 26.1"
+ },
+ {
+  "id": "mb-L500-029",
+  "level": "L500",
+  "lesson": 26,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Under India's DPDP Act 2023 section 9, which processing of children's personal data is barred even with verifiable parental consent?",
+  "options": [
+   "Storing the data on a server outside the school",
+   "Tracking or behavioural monitoring of children",
+   "Any processing by an educational institution",
+   "Recording aggregated room temperature"
+  ],
+  "answer": 1,
+  "explanation": "Section 9(3) prohibits tracking, behavioural monitoring and targeted advertising directed at children; it is not a consent requirement. Section 9(1) requires verifiable parental consent for other processing; exemptions only as prescribed.",
+  "source": "https://www.meity.gov.in/static/uploads/2024/06/2bf1f0e9f04e6fb4f8fef35e82c42aa5.pdf (s.9)"
+ },
+ {
+  "id": "mb-L500-030",
+  "level": "L500",
+  "lesson": 26,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which two ICO Children's code standards most directly address a per-desk micro:bit sound logger?",
+  "options": [
+   "Nudge techniques, and online tools",
+   "Data minimisation, and connected toys and devices",
+   "Parental controls, and geolocation",
+   "Policies and community standards, and transparency"
+  ],
+  "answer": 1,
+  "explanation": "Standard 8 (data minimisation) limits what is collected; standard 14 brings connected devices into scope. The others exist but target different risks.",
+  "source": "https://ico.org.uk/ (Age appropriate design code, standards 8 and 14)"
+ },
+ {
+  "id": "mb-L500-031",
+  "level": "L500",
+  "lesson": 26,
+  "type": "calculation",
+  "difficulty": 1,
+  "question": "A school year is 6,552 h of logging. Lesson 14's always-on logger lasts 41.7 h per set of 2 x AAA. How many sets does one board need per year?",
+  "options": [
+   "157",
+   "79",
+   "4",
+   "158"
+  ],
+  "answer": 3,
+  "explanation": "6,552/41.7 = 157.1, so 158 sets: rounding down leaves the board flat before the year ends. 4 sets is the adaptive design (2,158.3 h per set).",
+  "source": "Lesson 26 problem 26.4"
+ },
+ {
+  "id": "mb-L500-032",
+  "level": "L500",
+  "lesson": 26,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "According to the Global E-waste Monitor 2024, about what share of the e-waste generated in 2022 was documented as formally collected and recycled?",
+  "options": [
+   "About 62 %",
+   "About 82 %",
+   "About 22 %",
+   "About 2 %"
+  ],
+  "answer": 2,
+  "explanation": "22.3 % of 62 million tonnes was documented as properly collected and recycled. 62 and 82 are the tonnages for 2022 and the 2030 projection, not percentages.",
+  "source": "https://www.itu.int/en/ITU-D/Environment/Pages/Publications/The-Global-E-waste-Monitor-2024.aspx"
+ },
+ {
+  "id": "mb-L500-033",
+  "level": "L500",
+  "lesson": 26,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "A blind pupil is asked to pair a micro:bit over Bluetooth and read the result on the LEDs. Which adaptation removes both barriers?",
+  "options": [
+   "Transfer the program over USB and output results as sound or serial text",
+   "Use a frosted case so the LEDs are easier to see",
+   "Pair over Bluetooth with a sighted partner and read the LEDs aloud each time",
+   "Switch to MakeCode blocks so pairing is not needed"
+  ],
+  "answer": 0,
+  "explanation": "The Foundation's guidance notes pairing relies on seeing a pattern and suggests USB; sound and serial text (read by a screen reader) replace the LED output. A diffusing case helps low vision, not blindness.",
+  "source": "https://microbit.org/accessibility/visual-impairment/"
+ },
+ {
+  "id": "mb-L500-034",
+  "level": "L500",
+  "lesson": 26,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Which design best meets the purpose 'keep the classroom comfortable' with the least data about pupils?",
+  "options": [
+   "Room-level averages every 10 min on the gateway, no desk ids, 30-day retention",
+   "Per-desk temperature, light and sound every second, kept indefinitely for future analysis",
+   "Per-desk readings pseudonymised with a hash of the pupil's name, kept for one year",
+   "Room-level readings every second plus a per-desk 'engagement score' for teachers"
+  ],
+  "answer": 0,
+  "explanation": "Minimisation means collecting only what the purpose needs: room-level, aggregated, short retention. A hashed name is still linkable (pseudonymous, not anonymous); an engagement score is profiling of children.",
+  "source": "Lesson 26 case study model answer"
+ },
+ {
+  "id": "mb-L500-035",
+  "level": "L500",
+  "lesson": 26,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which ACM Code of Ethics principle's guidance says computing professionals should promote environmental sustainability?",
+  "options": [
+   "1.6 Respect privacy",
+   "1.1 Contribute to society and to human well-being",
+   "2.9 Design and implement systems that are robustly and usably secure",
+   "4.1 Uphold, promote, and respect the principles of the Code"
+  ],
+  "answer": 1,
+  "explanation": "Principle 1.1's guidance says human well-being requires a safe natural environment, so professionals should promote environmental sustainability. 1.6 is about privacy, 2.9 about security.",
+  "source": "https://www.acm.org/code-of-ethics"
+ },
+ {
+  "id": "mb-L500-036",
+  "level": "L500",
+  "lesson": 26,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "A vendor offers a free dashboard that computes a per-desk 'engagement score' from sound and motion. What is the strongest objection?",
+  "options": [
+   "It costs nothing, so the vendor's business model is unclear",
+   "It profiles identifiable children, close to behavioural monitoring",
+   "Sound levels are far too noisy and variable to compute a reliable score",
+   "The dashboard may not meet WCAG 2.2 contrast requirements"
+  ],
+  "answer": 1,
+  "explanation": "Profiling children (ICO standard 12, off by default) and behavioural monitoring (DPDP s.9(3)) are the core problem regardless of accuracy or price. The other points are real but secondary.",
+  "source": "Lesson 26 case study"
+ },
+ {
+  "id": "mb-L500-037",
+  "level": "L500",
+  "lesson": 27,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "In Shannon's 1949 statement of the sampling theorem, how far apart must the samples of a function band-limited to W be?",
+  "options": [
+   "1/W seconds",
+   "1/(2W) seconds",
+   "2W seconds",
+   "1/(4W) seconds"
+  ],
+  "answer": 1,
+  "explanation": "Theorem 1: a function with no frequencies above W is determined by ordinates spaced 1/(2W) s apart, i.e. a rate of 2W. 1/W is half that rate and would alias.",
+  "source": "Shannon 1949, Theorem 1 (https://ieeexplore.ieee.org/document/1697831)"
+ },
+ {
+  "id": "mb-L500-038",
+  "level": "L500",
+  "lesson": 27,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Using Shannon's capacity formula C = W log2(1 + P/N), what is C for W = 2 MHz and P/N = 15?",
+  "options": [
+   "30 Mbit/s",
+   "4 Mbit/s",
+   "8 Mbit/s",
+   "2 Mbit/s"
+  ],
+  "answer": 2,
+  "explanation": "log2(16) = 4, so C = 2 MHz x 4 = 8 Mbit/s. 30 Mbit/s multiplies W by the ratio instead of its logarithm.",
+  "source": "Lesson 27 reading 1"
+ },
+ {
+  "id": "mb-L500-039",
+  "level": "L500",
+  "lesson": 27,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "Why does Shannon need the sampling theorem to argue about the number of distinguishable signals?",
+  "options": [
+   "It proves that noise is band-limited to W",
+   "It makes T seconds of W-band signal about 2TW numbers (points)",
+   "It shows that every signal must be sampled at 2W to be transmitted",
+   "It fixes the signal power P needed for a given bandwidth"
+  ],
+  "answer": 1,
+  "explanation": "Samples every 1/(2W) s over T give about 2TW numbers, so signals become points in a 2TW-dimensional space where geometry (packing spheres of noise) counts distinguishable signals.",
+  "source": "Lesson 27 reading 1; problem 27.3"
+ },
+ {
+  "id": "mb-L500-040",
+  "level": "L500",
+  "lesson": 27,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "What is the 'critical instant' in Liu & Layland (1973)?",
+  "options": [
+   "Release with all higher-priority tasks: the longest response",
+   "The moment utilisation first exceeds the bound",
+   "The time at which the lowest-priority task misses its deadline",
+   "The instant all tasks finish and the processor goes idle"
+  ],
+  "answer": 0,
+  "explanation": "A task's response time is longest when it is released together with every higher-priority task, so checking that case is enough. This turns an infinite schedule into a finite test.",
+  "source": "Liu & Layland 1973, Theorem 1 (https://doi.org/10.1145/321738.321743)"
+ },
+ {
+  "id": "mb-L500-041",
+  "level": "L500",
+  "lesson": 27,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which assumption of Liu & Layland's task model does lesson 13's MicroPython scheduler most clearly violate?",
+  "options": [
+   "Tasks can be preempted at any time",
+   "Each task has a fixed period",
+   "A task's deadline is the end of its period",
+   "Priorities are fixed"
+  ],
+  "answer": 0,
+  "explanation": "Lesson 13's loop is cooperative: a running task keeps the processor until it returns, which adds blocking (24 ms for the button task). Periods, deadlines and fixed priorities match the model reasonably well.",
+  "source": "Lesson 27 reading 2; lesson 25 problem 25.6"
+ },
+ {
+  "id": "mb-L500-042",
+  "level": "L500",
+  "lesson": 27,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this print?",
+  "code": "import math\nfor n in (2, 4, 1000):\n    print(round(n * (2 ** (1 / n) - 1), 3))\nprint(round(math.log(2), 3))",
+  "options": [
+   "0.828 / 0.757 / 0.693 / 0.693",
+   "0.828 / 0.780 / 0.693 / 0.693",
+   "1.0 / 1.0 / 1.0 / 0.693",
+   "0.828 / 0.757 / 0.500 / 0.693"
+  ],
+  "answer": 0,
+  "explanation": "n(2^(1/n) - 1) is 0.828 for n = 2, 0.757 for n = 4 and approaches ln 2 = 0.693 for large n. 0.780 is the n = 3 value.",
+  "source": "Liu & Layland 1973; lesson 25 theorem 2"
+ },
+ {
+  "id": "mb-L500-043",
+  "level": "L500",
+  "lesson": 27,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "What does Liu & Layland's deadline-driven (dynamic-priority) scheduler achieve that fixed priorities cannot?",
+  "options": [
+   "No context switches between tasks",
+   "All deadlines met up to full utilisation",
+   "Deadlines met even when utilisation exceeds 1",
+   "No need to know task periods in advance"
+  ],
+  "answer": 1,
+  "explanation": "Assigning priority by nearest deadline reaches U = 1; above 1 nothing can meet every deadline. It still needs periods and run times, and it switches context.",
+  "source": "Liu & Layland 1973 abstract"
+ },
+ {
+  "id": "mb-L500-044",
+  "level": "L500",
+  "lesson": 27,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "You find a course web page hosting a PDF of the Liu & Layland paper with no licence statement. How should you use it in your critical response?",
+  "options": [
+   "Attach the PDF to your submission so the marker can check quotes",
+   "Cite the DOI and paraphrase; do not redistribute the PDF",
+   "Copy the key proofs verbatim, because the paper is from 1973",
+   "Avoid citing the paper and cite the course page instead"
+  ],
+  "answer": 1,
+  "explanation": "The paper is copyrighted by ACM; the DOI is the stable reference. Age does not remove copyright, and redistributing an unlicensed copy is not allowed.",
+  "source": "Lesson 27 concept note (licence and access)"
+ },
+ {
+  "id": "mb-L500-045",
+  "level": "L500",
+  "lesson": 27,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Which plan makes the strongest critical response to Shannon (1949) for this course?",
+  "options": [
+   "Summarise each section of the paper in order, as faithfully as possible",
+   "Test the band-limit assumption with lesson 24's numbers; price a fix",
+   "Argue that the theorem is obsolete because modern ADCs are fast",
+   "List the paper's citations and count how often it has been cited"
+  ],
+  "answer": 1,
+  "explanation": "The rubric rewards testing an assumption against a lab with its own numbers and drawing a costed design consequence. A section-by-section summary restates; 'obsolete' ignores that aliasing still happens on the board.",
+  "source": "Lesson 27 rubric"
+ }
+]

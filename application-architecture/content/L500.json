@@ -1,0 +1,1156 @@
+[
+  {
+    "id": "modularity-theory",
+    "number": 23,
+    "level": "L500",
+    "phase": "Theory & rigour",
+    "title": "Foundations I: modularity theory – information hiding, dependency graphs and Martin's metrics",
+    "category": "theory",
+    "description": "Why Parnas's information hiding works, what a dependency graph can prove, why a strict layering rule rules out cycles, and what Martin's instability and abstractness metrics say about the real Library Loans code.",
+    "outcome": "You can model a code base as a directed graph, prove that strict layering implies acyclicity (and the converse), compute Ca, Ce, I, A and Dn from source code, and critique what these numbers can and cannot tell you.",
+    "environment": "Python 3.12 standard library only (ast, random, math). No packages to install.",
+    "estimatedTime": "4-6 hours (reading 1 h, lecture 1.5 h, lab 0.5 h, problem set 2-3 h)",
+    "prerequisites": [
+      "Discrete mathematics: directed graphs, paths, cycles, strongly connected components",
+      "Proof techniques: proof by contradiction, induction on path length",
+      "Coordinate geometry: distance from a point to a line",
+      "Lessons 2, 3 and 7 (the Library Loans code that is analysed)"
+    ],
+    "learningObjectives": [
+      "Explain Parnas's information-hiding criterion and contrast it with decomposition by processing steps, using the KWIC example.",
+      "Prove that a strict layering rule implies an acyclic dependency graph, and prove the converse with a longest-path layering.",
+      "Derive the distance of a component from Martin's main sequence and compute Ca, Ce, I, A and Dn for real modules.",
+      "Analyze a real dependency graph for cycles and strongly connected components, and evaluate whether a detected cycle is architectural.",
+      "Critique the use of coupling metrics as quality predictors in the light of the empirical evidence (size confounding, network measures)."
+    ],
+    "glossary": [
+      {
+        "term": "information hiding",
+        "meaning": "Parnas's criterion: each module hides one design decision that is likely to change behind an interface that does not reveal it."
+      },
+      {
+        "term": "dependency graph",
+        "meaning": "Directed graph G = (V, E); an edge u → v means module u depends on (imports, calls) module v."
+      },
+      {
+        "term": "strict layering",
+        "meaning": "A function ℓ: V → ℕ with ℓ(u) > ℓ(v) for every edge u → v: every dependency points to a strictly lower layer."
+      },
+      {
+        "term": "strongly connected component (SCC)",
+        "meaning": "A maximal set of modules in which every module can reach every other; a cycle lives inside one SCC."
+      },
+      {
+        "term": "condensation",
+        "meaning": "The graph whose nodes are the SCCs of G; it is always acyclic."
+      },
+      {
+        "term": "Ca / Ce",
+        "meaning": "Afferent couplings (who depends on me) / efferent couplings (whom I depend on) – Martin 1994."
+      },
+      {
+        "term": "instability I",
+        "meaning": "Ce / (Ca + Ce): 0 = maximally stable (hard to change), 1 = maximally unstable."
+      },
+      {
+        "term": "abstractness A, distance Dn",
+        "meaning": "A = abstract classes / all classes; Dn = |A + I − 1|, the normalised distance from the main sequence A + I = 1."
+      }
+    ],
+    "conceptNote": "content/concepts/L500/23-modularity-theory.md",
+    "conceptSummary": "A module hides a decision; a dependency graph makes 'who must change' computable. Strict layering ⇔ acyclic, cycles collapse into SCCs, and Martin's I/A/Dn turn imports into numbers – useful signals, weak evidence on their own.",
+    "theorems": [
+      {
+        "name": "T23.1 Strict layering ⇔ acyclic dependency graph",
+        "statement": "Let G = (V, E) be a finite dependency graph. (a) If G has a strict layering ℓ (ℓ(u) > ℓ(v) for every edge u → v), then G has no cycle. (b) Conversely, every finite acyclic G has a strict layering, for example ℓ(v) = length of the longest path that starts at v.",
+        "proof": "(a) Suppose G had a cycle v₀ → v₁ → … → v_k = v₀ with k ≥ 1. Applying the layering rule to each edge gives ℓ(v₀) > ℓ(v₁) > … > ℓ(v_k) = ℓ(v₀), so ℓ(v₀) > ℓ(v₀), a contradiction. Hence no cycle exists.\n\n(b) Let G be finite and acyclic. A path cannot repeat a vertex (the repeated part would be a cycle), so every path has length ≤ |V| − 1 and ℓ(v) = max{length of a path starting at v} is a well-defined natural number (0 for a sink). Take an edge u → v and a longest path P from v. Prefixing u gives a walk u → P; u is not on P (otherwise u → v ⇝ u would be a cycle), so it is a path of length ℓ(v) + 1. Therefore ℓ(u) ≥ ℓ(v) + 1 > ℓ(v). ∎\n\nCorollary: a rule that also allows dependencies *within* a layer (ℓ(u) ≥ ℓ(v)) does not guarantee acyclicity – two modules of the same layer may import each other. Strictness is what the proof uses.",
+        "check": "labs/L500/23-modularity-theory/check_modularity.py",
+        "checkOutput": "T1 strict layering <=> acyclic\n  [OK] 2000/2000 random strictly layered graphs are acyclic\n      (same-layer edges allowed: 1659/2000 graphs have a cycle - strictness matters)\n  [OK] converse: longest-path layering of 2000 random DAGs has 0 violations\n  [OK] layered (L100 #2): 4 edges, acyclic, layers {0: ['repository', 'service'], 1: ['handler'], 2: ['app']}\n  [OK] hexagonal (L200 #7): 10 edges, acyclic, layers {0: ['ports'], 1: ['domain'], 2: ['driven_memory', 'driven_sqlite', 'driving_cli', 'driving_http'], 3: ['app']}"
+      },
+      {
+        "name": "T23.2 The condensation of any dependency graph is acyclic",
+        "statement": "Partition V into strongly connected components (SCCs). The condensation G*, with one node per SCC and an edge C → D (C ≠ D) whenever some u ∈ C depends on some v ∈ D, is acyclic. Hence every cycle lies inside one SCC, and by T23.1(b) the SCCs can always be strictly layered.",
+        "proof": "Suppose G* had a cycle C₀ → C₁ → … → C_k = C₀ with C₀ ≠ C₁. For an edge Cᵢ → Cᵢ₊₁ there are u ∈ Cᵢ, v ∈ Cᵢ₊₁ with u → v; because each SCC is strongly connected, every x ∈ Cᵢ reaches u, and v reaches every y ∈ Cᵢ₊₁. So every node of Cᵢ reaches every node of Cᵢ₊₁. Chaining around the cycle, every node of C₀ reaches every node of C₁ and vice versa, so C₀ ∪ C₁ is strongly connected – contradicting the maximality of the SCC C₀. ∎\n\nDesign reading: modules in one non-trivial SCC must be understood, tested and released together; for change propagation they behave as one module. Tarjan's algorithm finds all SCCs in time linear in |V| + |E|.",
+        "check": "labs/L500/23-modularity-theory/check_modularity.py",
+        "checkOutput": "T2 the condensation (SCC graph) of any directed graph is acyclic\n  [OK] 2000/2000 condensations acyclic (1634 of the inputs had cycles)\n  [OK] hexagonal lab read WITH its __main__ blocks: cycle component [['app', 'driving_cli']] (driving_cli's entry block imports app, app imports driving_cli)\n  [OK] seeded edge domain -> driving_http creates the cycle component [['domain', 'driving_http']]"
+      },
+      {
+        "name": "T23.3 Martin's metrics: ranges and the distance to the main sequence",
+        "statement": "For a component with Ca + Ce > 0, Nc classes of which Na are abstract: I = Ce / (Ca + Ce) ∈ [0, 1], A = Na / Nc ∈ [0, 1], and the Euclidean distance from the point (I, A) to the main sequence A + I = 1 is |A + I − 1| / √2 ∈ [0, 1/√2]. Martin's normalised distance is Dn = |A + I − 1| ∈ [0, 1].",
+        "proof": "Ranges: 0 ≤ Ce ≤ Ca + Ce and 0 ≤ Na ≤ Nc, so both ratios lie in [0, 1]. Distance: the distance from (x₀, y₀) to the line ax + by + c = 0 is |ax₀ + by₀ + c| / √(a² + b²) (project the point onto the unit normal (a, b)/√(a² + b²)). With x = I, y = A, a = b = 1, c = −1 this is |I + A − 1| / √2. On the unit square |I + A − 1| ≤ 1, with equality only at the corners (0, 0) ('zone of pain': stable and concrete) and (1, 1) ('zone of uselessness': abstract and unused). ∎\n\nNote on the source: Martin's 1994 paper prints the distance as |(A + I − 1) ÷ 2| but states its range as [0, ~0.707], which matches division by √2; the check computes the distance by brute force and confirms the √2 form. A module with no classes has A undefined; the lab uses the convention A = 0 (concrete).",
+        "check": "labs/L500/23-modularity-theory/check_modularity.py",
+        "checkOutput": "T3 Martin metrics on Library Loans (L200 #7 hexagonal): I, A in [0,1]; distance to A + I = 1 is Dn / sqrt(2)\n      module         Ca Ce      I     A     Dn  numeric d\n      app             0  5  1.000  0.00  0.000     0.0000\n      domain          5  1  0.167  0.00  0.833     0.5893\n      driven_memory   1  1  0.500  0.00  0.500     0.3536\n      driven_sqlite   1  1  0.500  0.00  0.500     0.3536\n      driving_cli     1  1  0.500  0.00  0.500     0.3536\n      driving_http    1  1  0.500  0.00  0.500     0.3536\n      ports           1  0  0.000  1.00  0.000     0.0000\n  [OK] all I and A in [0, 1]\n  [OK] max |numeric distance - Dn/sqrt(2)| = 4.7e-12 (< 1e-5)\n      mean Dn = 0.405; furthest from the main sequence: domain (stable and concrete: the 'zone of pain' corner)"
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "P23-1",
+        "type": "proof",
+        "difficulty": 1,
+        "marks": 5,
+        "problem": "Prove T23.1(a) in your own words: if every dependency of a code base points to a strictly lower layer, the dependency graph contains no cycle.",
+        "solution": "Assume a cycle v₀ → … → v_k = v₀ (k ≥ 1). Each edge strictly decreases the layer, so ℓ(v₀) > ℓ(v₁) > … > ℓ(v_k). Since v_k = v₀ this gives ℓ(v₀) > ℓ(v₀), impossible. So no cycle exists. Marks: set-up of the cycle (1), use of strictness on every edge (2), the contradiction (1), conclusion (1)."
+      },
+      {
+        "id": "P23-2",
+        "type": "proof",
+        "difficulty": 2,
+        "marks": 8,
+        "problem": "(a) Prove that every finite acyclic dependency graph admits a strict layering. (b) Show by a two-module example that the rule 'depend only on your own layer or lower' does not guarantee acyclicity.",
+        "solution": "(a) Define ℓ(v) as the length of a longest path starting at v; in a finite acyclic graph paths cannot repeat vertices, so lengths are bounded by |V| − 1 and ℓ is well defined. For an edge u → v, prefix u to a longest path from v; u is not on that path (else there would be a cycle through u), so ℓ(u) ≥ ℓ(v) + 1 > ℓ(v). (b) Put modules a and b in the same layer with a → b and b → a: both edges satisfy ℓ(a) ≥ ℓ(b) and ℓ(b) ≥ ℓ(a), yet a → b → a is a cycle. The lab confirms the pattern at scale: with same-layer edges allowed, 1659 of 2000 random graphs had a cycle; with strict layering 0 of 2000."
+      },
+      {
+        "id": "P23-3",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 4,
+        "problem": "A component has 3 afferent and 1 efferent couplings and contains 4 classes, 1 of them abstract. Compute I, A and Dn, and say which zone it is closest to.",
+        "numericAnswer": "I = 0.25, A = 0.25, Dn = 0.50",
+        "solution": "I = Ce / (Ca + Ce) = 1 / 4; A = 1 / 4; Dn = |A + I − 1| = |0.5 − 1|. Result: I = 0.25, A = 0.25, Dn = 0.50. It lies below the main sequence towards (0, 0), the 'zone of pain': fairly stable but mostly concrete, so changes to it are both likely to be needed and expensive. Recomputed by research/l500_checks.py."
+      },
+      {
+        "id": "P23-4",
+        "type": "calculation",
+        "difficulty": 3,
+        "marks": 8,
+        "problem": "In the L200 #7 hexagonal lab, driving_cli and driving_http import only exception classes from domain. A refactor moves the four exception classes (LoanError, BookAlreadyOnLoan, LoanLimitReached, LoanNotFound) into ports, so both driving adapters import ports instead of domain. Using the lab's measured graph (domain: 6 classes, Ca 5, Ce 1; ports: 2 abstract Protocols, Ca 1, Ce 0), recompute I, A and Dn for domain and ports and the mean Dn over all 7 modules. Is the refactor an improvement by Martin's measure?",
+        "numericAnswer": "domain I = 0.25, Dn = 0.75; ports A = 0.33, Dn = 0.67; mean Dn 0.405 -> 0.488",
+        "solution": "After the move: domain keeps Loan and LoanService (2 concrete classes, A = 0); Ca = 3 (app, driven_memory, driven_sqlite), Ce = 1 (ports), I = 1/4 = 0.25, Dn = |0 + 0.25 − 1| = 0.75. ports has 6 classes, 2 abstract, A = 1/3; Ca = 3 (domain and the two driving adapters), Ce = 0, I = 0, Dn = |1/3 + 0 − 1| = 2/3. The other modules are unchanged. Result: domain I = 0.25, Dn = 0.75; ports A = 0.33, Dn = 0.67; mean Dn 0.405 -> 0.488. The domain moves slightly towards the main sequence but ports leaves it (concrete exceptions in a stable package), so the average gets worse. Lesson: a metric judges one dimension; a better move would be a separate stable 'errors' contract or translating errors at the port. Recomputed from the real graph by research/l500_checks.py."
+      },
+      {
+        "id": "P23-5",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Using the lab's model of Parnas's KWIC example (modularity.KWIC_CONVENTIONAL and KWIC_HIDING), count, over the five design decisions, how many module changes each decomposition needs in total and per decision on average.",
+        "numericAnswer": "14 vs 5 module changes (2.8 vs 1.0 per decision)",
+        "solution": "Conventional: input format 1, all lines in core 4, packing 4, index of shifts 3, alphabetize once 2 → 14. Information hiding: each decision is known by exactly one module → 5. Result: 14 vs 5 module changes (2.8 vs 1.0 per decision). Caveat: the knows-sets are our model of the paper's argument (lesson 27 asks you to check them against the paper), and the count ignores how large each change is."
+      },
+      {
+        "id": "P23-6",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Read with its `if __name__ == \"__main__\":` blocks, the hexagonal lab has the cycle {app, driving_cli}; without them it is acyclic. Is this an architectural cycle? Argue both sides and propose a fix that a fitness function can keep.",
+        "solution": "For 'not architectural': the import is executed only when driving_cli runs as a script, after app is fully loaded, so there is no import-time cycle and the library code is layered (T23.1 check). For 'architectural': the source text couples an adapter to the composition root; a static tool that reads every import (and a reader) sees a cycle, and the CLI cannot be reused without app. Fix: move the CLI entry point into the composition root (e.g. `python app.py cli …`) or a separate `main_cli.py` that imports both, so adapters never import app. Keep it with a fitness function that builds the graph *including* __main__ blocks and asserts the condensation has only singleton SCCs (labs/L500/23-modularity-theory/modularity.py, include_main=True)."
+      },
+      {
+        "id": "P23-7",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "Nine modules are placed in three layers of sizes 2, 3 and 4. How many directed dependency edges between distinct modules are possible in principle, and how many does a strict layering rule allow?",
+        "numericAnswer": "72 possible edges, 26 allowed",
+        "solution": "Possible ordered pairs: 9 × 8 = 72. Strict layering allows only edges from a higher to a strictly lower layer: 2·3 + 2·4 + 3·4 = 6 + 8 + 12 = 26 (direction fixed by the layer order). Result: 72 possible edges, 26 allowed. The rule removes all same-layer and upward edges – exactly the edges that can close a cycle."
+      },
+      {
+        "id": "P23-8",
+        "type": "derivation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Derive the Euclidean distance from (I, A) to the line A + I = 1 without quoting the point-to-line formula (minimise over the points (t, 1 − t)). Evaluate it for the lab's domain module (I = 1/6, A = 0).",
+        "solution": "Squared distance f(t) = (I − t)² + (A − 1 + t)². f′(t) = −2(I − t) + 2(A − 1 + t) = 0 ⇒ t* = (I − A + 1)/2. Then I − t* = (I + A − 1)/2 and A − 1 + t* = (I + A − 1)/2, so f(t*) = (I + A − 1)²/2 and the distance is |I + A − 1|/√2. For domain: |1/6 − 1|/√2 = (5/6)/√2 ≈ 0.5893 – the value the lab's brute-force search printed."
+      },
+      {
+        "id": "P23-9",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "'Low coupling causes fewer defects, so we should gate merges on Martin's Dn.' Critically evaluate this claim in ≤ 600 words, using at least two empirical studies from the concept note.",
+        "solution": "A strong answer: (1) separates correlation from causation – Zimmermann & Nagappan (2008) found that network measures on dependency graphs predicted defect-prone Windows Server 2003 binaries with recall about 10 percentage points higher than complexity metrics, which supports dependency structure as a *predictor*, not as a lever; (2) raises confounding – El Emam et al. (2001) showed that after controlling for class size, the object-oriented metrics they studied were no longer associated with fault-proneness, so any coupling–defect claim must control for size; (3) notes external validity – single systems, specific languages; (4) notes Martin's own caveat that his metrics measure conformance to a pattern he believes is good; (5) proposes a proportionate use: track Dn and cycles as signals and ratchets (no new cycles; no new edges into unstable modules), review outliers, and do not treat a threshold as proof of quality. Marked with the lesson rubric."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Proof correctness",
+        "excellent": "Every step justified; hypotheses (finiteness, strictness) used explicitly",
+        "adequate": "Correct idea, one step asserted without justification",
+        "inadequate": "Circular or missing the key step",
+        "weight": 35
+      },
+      {
+        "criterion": "Computation",
+        "excellent": "Correct numbers with the graph or formula shown and checked in code",
+        "adequate": "Minor slip that does not change the conclusion",
+        "inadequate": "Wrong counts of Ca/Ce or classes",
+        "weight": 25
+      },
+      {
+        "criterion": "Use of evidence",
+        "excellent": "Cites studies accurately, states what they did and did not show",
+        "adequate": "Cites studies but overstates their conclusion",
+        "inadequate": "No evidence or misrepresented evidence",
+        "weight": 25
+      },
+      {
+        "criterion": "Design judgement",
+        "excellent": "Proposes a fix and a fitness function that keeps it true",
+        "adequate": "Proposes a fix without a way to keep it",
+        "inadequate": "No actionable recommendation",
+        "weight": 15
+      }
+    ],
+    "code": "\"\"\"Numerical checks for the lesson 23 theorems. Run: python check_modularity.py  (exit 0 = every check holds).\"\"\"\nimport math\nimport random\nimport sys\n\nimport modularity as m\n\nFAILURES = []\n\n\ndef check(label, ok):\n    print(f\"  [{'OK' if ok else 'FAIL'}] {label}\")\n    if not ok:\n        FAILURES.append(label)\n\n\ndef theorem_layering(rng, trials=2000):\n    print(\"T1 strict layering <=> acyclic\")\n    strict_acyclic = sum(m.is_acyclic(*m.random_graph(rng, 12, 0.3, strict=True)[:2]) for _ in range(trials))\n    check(f\"{strict_acyclic}/{trials} random strictly layered graphs are acyclic\", strict_acyclic == trials)\n    loose_cyclic = sum(not m.is_acyclic(*m.random_graph(rng, 12, 0.3, strict=False)[:2]) for _ in range(trials))\n    print(f\"      (same-layer edges allowed: {loose_cyclic}/{trials} graphs have a cycle - strictness matters)\")\n    dags = violations = 0\n    for _ in range(trials):\n        order = list(range(12))\n        rng.shuffle(order)\n        pos = {v: k for k, v in enumerate(order)}\n        edges = [(a, b) for a in order for b in order if pos[a] < pos[b] and rng.random() < 0.3]\n        level = m.longest_path_layering(order, edges)\n        dags += 1\n        violations += len(m.strict_layering_violations(edges, level))\n    check(f\"converse: longest-path layering of {dags} random DAGs has {violations} violations\", violations == 0)\n    for name, lab in ((\"layered (L100 #2)\", m.LAYERED), (\"hexagonal (L200 #7)\", m.HEXAGONAL)):\n        nodes, edges, _ = m.module_graph(lab)\n        level = m.longest_path_layering(nodes, edges)\n        layers = {}\n        for node, lv in sorted(level.items()):\n            layers.setdefault(lv, []).append(node)\n        check(f\"{name}: {len(edges)} edges, acyclic, layers {dict(sorted(layers.items()))}\",\n              m.is_acyclic(nodes, edges) and not m.strict_layering_violations(edges, level))\n\n\ndef theorem_condensation(rng, trials=2000):\n    print(\"T2 the condensation (SCC graph) of any directed graph is acyclic\")\n    ok = cyclic_inputs = 0\n    for _ in range(trials):\n        nodes = list(range(10))\n        edges = [(a, b) for a in nodes for b in nodes if a != b and rng.random() < 0.15]\n        cyclic_inputs += not m.is_acyclic(nodes, edges)\n        cnodes, cedges, _ = m.condensation(nodes, edges)\n        ok += m.is_acyclic(cnodes, cedges)\n    check(f\"{ok}/{trials} condensations acyclic ({cyclic_inputs} of the inputs had cycles)\", ok == trials)\n    nodes, with_main, _ = m.module_graph(m.HEXAGONAL, include_main=True)\n    big = [sorted(c) for c in m.tarjan_scc(nodes, with_main) if len(c) > 1]\n    check(f\"hexagonal lab read WITH its __main__ blocks: cycle component {big} \"\n          f\"(driving_cli's entry block imports app, app imports driving_cli)\", big == [[\"app\", \"driving_cli\"]])\n    nodes, edges, _ = m.module_graph(m.HEXAGONAL)\n    seeded = edges + [(\"domain\", \"driving_http\")]  # seeded fault: the domain reaches out to an adapter\n    big = [sorted(c) for c in m.tarjan_scc(nodes, seeded) if len(c) > 1]\n    check(f\"seeded edge domain -> driving_http creates the cycle component {big}\",\n          big == [[\"domain\", \"driving_http\"]] and not m.is_acyclic(nodes, seeded))\n\n\ndef theorem_main_sequence():\n    print(\"T3 Martin metrics on Library Loans (L200 #7 hexagonal): I, A in [0,1]; distance to A + I = 1 is Dn / sqrt(2)\")\n    nodes, edges, classes = m.module_graph(m.HEXAGONAL)\n    rows = m.martin_metrics(nodes, edges, classes)\n    print(f\"      {'module':<14}{'Ca':>3}{'Ce':>3}{'I':>7}{'A':>6}{'Dn':>7}{'numeric d':>11}\")\n    worst = 0.0\n    for name, r in rows.items():\n        numeric = m.distance_to_main_sequence_numeric(r[\"A\"], r[\"I\"])\n        worst = max(worst, abs(numeric - r[\"Dn\"] / math.sqrt(2)))\n        print(f\"      {name:<14}{r['Ca']:>3}{r['Ce']:>3}{r['I']:>7.3f}{r['A']:>6.2f}{r['Dn']:>7.3f}{numeric:>11.4f}\")\n    check(\"all I and A in [0, 1]\", all(0 <= r[\"I\"] <= 1 and 0 <= r[\"A\"] <= 1 for r in rows.values()))\n    check(f\"max |numeric distance - Dn/sqrt(2)| = {worst:.1e} (< 1e-5)\", worst < 1e-5)\n    mean_dn = sum(r[\"Dn\"] for r in rows.values()) / len(rows)\n    print(f\"      mean Dn = {mean_dn:.3f}; furthest from the main sequence: \"\n          f\"{max(rows, key=lambda n: rows[n]['Dn'])} (stable and concrete: the 'zone of pain' corner)\")\n\n\ndef kwic_example():\n    print(\"Worked example: Parnas KWIC change impact (modules that must change per design decision)\")\n    for label, knows in ((\"conventional\", m.KWIC_CONVENTIONAL), (\"information hiding\", m.KWIC_HIDING)):\n        impact = m.change_impact(knows)\n        counts = [len(v) for v in impact.values()]\n        print(f\"      {label:<19} {counts} total {sum(counts)}, worst {max(counts)}\")\n    check(\"information hiding: every decision is known by exactly one module\",\n          all(len(v) == 1 for v in m.change_impact(m.KWIC_HIDING).values()))\n\n\nif __name__ == \"__main__\":\n    rng = random.Random(500)\n    theorem_layering(rng)\n    theorem_condensation(rng)\n    theorem_main_sequence()\n    kwic_example()\n    print(\"ALL CHECKS OK\" if not FAILURES else f\"FAILED: {FAILURES}\")\n    sys.exit(1 if FAILURES else 0)\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L500/23-modularity-theory/modularity.py",
+        "purpose": "graph extraction with ast, SCCs, layering, Martin metrics, KWIC model"
+      },
+      {
+        "path": "labs/L500/23-modularity-theory/check_modularity.py",
+        "purpose": "numerical checks for T23.1-T23.3 (prints OK/FAIL)"
+      },
+      {
+        "path": "labs/L500/23-modularity-theory/test_modularity.py",
+        "purpose": "unittest suite"
+      }
+    ],
+    "sources": [
+      {
+        "title": "Parnas (1972) On the criteria to be used in decomposing systems into modules, CACM 15(12) (doi 10.1145/361598.361623)",
+        "url": "https://cacm.acm.org/research/on-the-criteria-to-be-used-in-decomposing-systems-into-modules/"
+      },
+      {
+        "title": "R. C. Martin (1994) OO Design Quality Metrics: An Analysis of Dependencies",
+        "url": "https://condor.depaul.edu/dmumaugh/OOT/Design-Principles/oodmetrc.pdf"
+      },
+      {
+        "title": "Zimmermann & Nagappan (2008) Predicting defects using network analysis on dependency graphs, ICSE 2008",
+        "url": "https://www.microsoft.com/en-us/research/publication/predicting-defects-using-network-analysis-on-dependency-graphs/"
+      },
+      {
+        "title": "El Emam, Benlarbi, Goel & Rai (2001) The confounding effect of class size on the validity of object-oriented metrics, IEEE TSE 27(7)",
+        "url": "https://www.computer.org/csdl/journal/ts/2001/07/e0630/13rRUIJuxro"
+      }
+    ],
+    "seeAlso": [
+      "L100 #2 Layered structure: presentation, service, repository: the graph whose strict layering T23.1 checks.",
+      "L100 #3 Modular monolith boundaries with a fitness function: the boundary rule is a constraint on the dependency graph.",
+      "L200 #7 Hexagonal architecture: ports and adapters: the code whose Ca, Ce, I, A and Dn are computed here.",
+      "L300 #16 Performance and architecture fitness functions in CI: where an acyclicity or Dn ratchet would run."
+    ],
+    "next": "L500 lesson 24 – Foundations II: quality attributes and trade-off analysis – ISO/IEC 25010, ATAM and availability maths",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran check_modularity.py (ALL CHECKS OK, exit 0) and `python -m unittest` (6 tests OK) on Python 3.12.15, Linux, 2026-10-30; research/l500_checks.py re-runs every theorem check and recomputes every problem-set number. checkOutput fields are pasted from that run.",
+      "pendingCi": [
+        "macOS (arm64) and Windows 11 runs (platforms: expected until the CI matrix runs)"
+      ]
+    }
+  },
+  {
+    "id": "quality-attributes-tradeoffs",
+    "number": 24,
+    "level": "L500",
+    "phase": "Theory & rigour",
+    "title": "Foundations II: quality attributes and trade-off analysis – ISO/IEC 25010, ATAM and availability maths",
+    "category": "theory",
+    "description": "Quality attributes as testable scenarios (ISO/IEC 25010:2023 vocabulary, SEI ATAM utility trees), and the probability behind availability: series, parallel, k-of-n, nines → downtime, MTTF/(MTTF+MTTR), and break-even weights.",
+    "outcome": "You can write quality-attribute scenarios and a prioritised utility tree, derive and compute series/parallel/k-of-n availability with their assumptions, convert nines to downtime, and locate the weight at which a trade-off flips.",
+    "environment": "Python 3.12 standard library only (math, itertools, random).",
+    "estimatedTime": "4-6 hours (reading 1.5 h, lecture 1.5 h, lab 0.5 h, problem set 2 h)",
+    "prerequisites": [
+      "Probability: independent events, complement rule, product rule, union (Boole) bound, binomial distribution",
+      "Expected value; long-run averages (law of large numbers) for the steady-state result",
+      "Linear functions of one variable (for the break-even weight)",
+      "Lessons 13, 15 and 21 (resilience, SLOs, capacity) for the applied context"
+    ],
+    "learningObjectives": [
+      "Explain the ISO/IEC 25010:2023 product quality characteristics and how they differ from the 2011 edition.",
+      "Derive the availability of series, parallel and k-of-n structures and state the independence assumption each derivation needs.",
+      "Analyze a Library Loans deployment: compute its availability, its downtime budget and which component limits it.",
+      "Evaluate an architectural decision ATAM-style: build a utility tree, identify sensitivity and trade-off points, and compute the break-even weight between two options."
+    ],
+    "glossary": [
+      {
+        "term": "quality attribute scenario",
+        "meaning": "Stimulus, source, environment, artefact, response and a measurable response measure – makes an '-ility' testable."
+      },
+      {
+        "term": "utility tree",
+        "meaning": "ATAM's top-down tree: utility → quality attributes → refinements → scenarios, each ranked (importance, difficulty) on H/M/L."
+      },
+      {
+        "term": "sensitivity point",
+        "meaning": "A property of the architecture to which a quality response is highly correlated (ATAM)."
+      },
+      {
+        "term": "trade-off point",
+        "meaning": "A parameter that is a sensitivity point for more than one quality, affecting them differently (ATAM)."
+      },
+      {
+        "term": "series / parallel availability",
+        "meaning": "All parts needed: A = ∏Aᵢ. Any one part enough: A = 1 − ∏(1 − Aᵢ). Both assume independent failures."
+      },
+      {
+        "term": "nines",
+        "meaning": "−log₁₀(1 − A); each extra nine divides the allowed downtime by 10."
+      },
+      {
+        "term": "MTTF / MTTR",
+        "meaning": "Mean time to failure / mean time to repair; steady-state availability = MTTF / (MTTF + MTTR)."
+      }
+    ],
+    "conceptNote": "content/concepts/L500/24-quality-attributes-tradeoffs.md",
+    "conceptSummary": "Qualities become testable as scenarios ranked in a utility tree; availability composes by probability rules that only hold under independence; nines buy downtime by factors of ten; and a trade-off is a weight where the preferred option flips.",
+    "theorems": [
+      {
+        "name": "T24.1 Series composition and its bounds",
+        "statement": "A service that needs all of n components, component i up with probability Aᵢ, has availability A = ∏Aᵢ if failures are independent. Without independence, 1 − Σ(1 − Aᵢ) ≤ A ≤ minᵢ Aᵢ.",
+        "proof": "Let Uᵢ be the event 'component i is up'. The service is up exactly on U₁ ∩ … ∩ Uₙ. With independence, P(∩Uᵢ) = ∏P(Uᵢ) = ∏Aᵢ. Upper bound: ∩Uᵢ ⊆ Uⱼ for every j, so P(∩Uᵢ) ≤ Aⱼ for all j, hence ≤ min Aᵢ. Lower bound: the complement is ∪Uᵢᶜ and by Boole's inequality P(∪Uᵢᶜ) ≤ ΣP(Uᵢᶜ) = Σ(1 − Aᵢ), so A ≥ 1 − Σ(1 − Aᵢ). ∎\n\nReading: a chain is never stronger than its weakest link, and with many links the unavailabilities roughly add – the 'rule of the extra 9' in Treynor et al. (2017).",
+        "check": "labs/L500/24-quality-attributes/check_quality.py",
+        "checkOutput": "T1/T2 series = product, parallel = 1 - product of unavailabilities (independent components)\n  [OK] Library Loans (LB, 2 API replicas, DB, IdP): formula 99.837569% = enumeration of 32 states 99.837569% (|diff| 1.1e-16)\n  [OK] Monte Carlo 400,000 trials: 99.8363% within 4 sigma (0.0255%) of the formula\n  [OK] one API instance: series 99.3409%; union bound 99.3400% <= A <= min 99.50%\n      adding the 2nd API replica: 99.3409% -> 99.8376%; a 3rd: 99.8401% (the database is now the limit: 99.90%)\n  [OK] 1-of-3 replicas at 99%: binomial 99.999900% = enumeration 99.999900%\n  [OK] 2-of-3 replicas at 99%: binomial 99.970200% = enumeration 99.970200%\n  [OK] 3-of-3 replicas at 99%: binomial 97.029900% = enumeration 97.029900%\n  [OK] 1-of-n equals parallel([a]*n)"
+      },
+      {
+        "name": "T24.2 Parallel redundancy and k-of-n",
+        "statement": "With independent replicas, the 'any one is enough' structure has A = 1 − ∏(1 − Aᵢ). For n identical replicas of availability a and a requirement of at least k up, A = Σ_{j=k..n} C(n, j) aʲ (1 − a)ⁿ⁻ʲ.",
+        "proof": "The parallel structure is down exactly when all replicas are down: P(∩Uᵢᶜ) = ∏(1 − Aᵢ) by independence; take the complement. For k-of-n, the number X of replicas up is a sum of n independent Bernoulli(a) variables, so X ~ Binomial(n, a) and P(X ≥ k) = Σ_{j ≥ k} C(n, j) aʲ(1 − a)ⁿ⁻ʲ. For k = 1 this equals 1 − (1 − a)ⁿ, the parallel formula. ∎\n\nCaveat: common-mode failures (same bad deploy, same database, same region) break independence; then redundancy buys far less than the formula promises (problem P24-5).",
+        "check": "labs/L500/24-quality-attributes/check_quality.py",
+        "checkOutput": "T1/T2 series = product, parallel = 1 - product of unavailabilities (independent components)\n  [OK] Library Loans (LB, 2 API replicas, DB, IdP): formula 99.837569% = enumeration of 32 states 99.837569% (|diff| 1.1e-16)\n  [OK] Monte Carlo 400,000 trials: 99.8363% within 4 sigma (0.0255%) of the formula\n  [OK] one API instance: series 99.3409%; union bound 99.3400% <= A <= min 99.50%\n      adding the 2nd API replica: 99.3409% -> 99.8376%; a 3rd: 99.8401% (the database is now the limit: 99.90%)\n  [OK] 1-of-3 replicas at 99%: binomial 99.999900% = enumeration 99.999900%\n  [OK] 2-of-3 replicas at 99%: binomial 99.970200% = enumeration 99.970200%\n  [OK] 3-of-3 replicas at 99%: binomial 97.029900% = enumeration 97.029900%\n  [OK] 1-of-n equals parallel([a]*n)"
+      },
+      {
+        "name": "T24.3 Nines, downtime and steady-state availability",
+        "statement": "Over a period T the allowed downtime is (1 − A)·T, so each extra nine divides it by 10. If a component alternates i.i.d. up periods (mean MTTF) and repair periods (mean MTTR), the long-run fraction of time up is MTTF / (MTTF + MTTR), whatever the distributions.",
+        "proof": "Downtime: by definition of the time-average availability. One more nine maps 1 − A to (1 − A)/10, so (1 − A)T is divided by 10. Steady state (sketch): each up+repair cycle is an i.i.d. renewal cycle; earning reward 1 per unit of up time, the renewal-reward theorem gives long-run reward rate = E[reward per cycle] / E[cycle length] = MTTF / (MTTF + MTTR) with probability 1. Full proof: Gallager, MIT 6.262, ch. 4 (renewal-reward theorem). The Calculus of Service Availability uses the same definition. ∎",
+        "check": "labs/L500/24-quality-attributes/check_quality.py",
+        "checkOutput": "T3 nines -> downtime, and steady-state availability = MTTF / (MTTF + MTTR)\n           SLO  min / 30 days  h / year\n       99.000%         432.00    87.600\n       99.900%          43.20     8.760\n       99.950%          21.60     4.380\n       99.990%           4.32     0.876\n       99.999%           0.43     0.088\n  [OK] each extra nine divides allowed downtime by 10: ratios [10.0, 10.0, 10.0]\n  [OK] CACM example: 3 outages x 20 min = 60 min > 52.56 min allowed by 99.99%/year\n  [OK] MTTF 720 h, MTTR 1 h, exponential repair: simulated up fraction 99.86079% vs formula 99.86130%\n  [OK] MTTF 720 h, MTTR 1 h, uniform repair: simulated up fraction 99.86142% vs formula 99.86130%"
+      },
+      {
+        "name": "T24.4 Break-even weight between two options",
+        "statement": "Two options x, y are scored on two criteria with weights (w, 1 − w). With d = x − y, the score difference Δ(w) = w·d₁ + (1 − w)·d₂ is affine, so there is at most one break-even weight w* = d₂ / (d₂ − d₁) in (0, 1); it exists iff d₁ and d₂ have opposite signs, and the preferred option flips there.",
+        "proof": "Δ(w) = d₂ + w(d₁ − d₂) is a line in w. If d₁ = d₂ it is constant (no flip). Otherwise its unique root is w* = d₂ / (d₂ − d₁). A line takes values Δ(0) = d₂ and Δ(1) = d₁ at the ends, so its root lies strictly inside (0, 1) iff d₂ and d₁ are non-zero with opposite signs; then Δ changes sign at w* and nowhere else. ∎\n\nATAM reading: the stakeholder weight on availability is a sensitivity point for the decision; the storage choice is a trade-off point because it moves availability and simplicity in opposite directions.",
+        "check": "labs/L500/24-quality-attributes/check_quality.py",
+        "checkOutput": "T4 two criteria, weights (w, 1-w): at most one break-even weight w*; preference flips there\n  [OK] SQLite (0.4, 0.9) vs replicated PostgreSQL (0.95, 0.5): w* = 0.4211; sweep flips at [0.4211]\n  [OK] 2,000 random option pairs: sign changes match the formula (0 mismatches)\n      utility tree, highest priority first (importance, difficulty):\n        (H,H) availability: Primary database fails at peak; service restored within 5 min, no comm...\n        (H,M) availability: Identity provider is down; members already signed in can still renew l...\n        (H,M) interaction capability: A screen-reader user completes 'borrow a book' with keyboard only; WCA..."
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "P24-1",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "Library Loans promises a 99.95 % availability SLO. How much downtime does that allow per 30-day window and per 365-day year?",
+        "numericAnswer": "21.6 min per 30 days, 4.38 h per year",
+        "solution": "(1 − 0.9995) × 43,200 min = 21.6 min; (1 − 0.9995) × 525,600 min = 262.8 min = 4.38 h. Result: 21.6 min per 30 days, 4.38 h per year."
+      },
+      {
+        "id": "P24-2",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "A request needs the load balancer (99.99 %), one API instance (99.5 %), the database (99.9 %) and the identity provider (99.95 %). Assuming independence, compute the availability and the expected downtime per 30 days.",
+        "numericAnswer": "99.341%, 284.7 min per 30 days",
+        "solution": "A = 0.9999 × 0.995 × 0.999 × 0.9995 = 0.993409 (T24.1). Downtime = (1 − A) × 43,200 min. Result: 99.341%, 284.7 min per 30 days. The single API instance dominates the unavailability."
+      },
+      {
+        "id": "P24-3",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "How many independent API replicas of 99.5 % are needed for the API tier alone to reach at least 99.999 %? What is then the availability of the whole request path from P24-2, and what limits it?",
+        "numericAnswer": "3 replicas (API tier 99.9999875%); system 99.840%",
+        "solution": "1 − 0.005ⁿ ≥ 0.99999 ⇔ 0.005ⁿ ≤ 10⁻⁵: n = 2 gives 2.5 × 10⁻⁵ (too much), n = 3 gives 1.25 × 10⁻⁷. System: 0.9999 × (1 − 0.005³) × 0.999 × 0.9995. Result: 3 replicas (API tier 99.9999875%); system 99.840%. The database (99.9 %) now limits the path: by T24.1, A ≤ min Aᵢ = 99.9 %."
+      },
+      {
+        "id": "P24-4",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "A loan-ledger replica set needs a majority (2 of 3) of independent 99.9 % replicas. Compute its availability and compare with one replica.",
+        "numericAnswer": "99.9997% (2-of-3) vs 99.9% (single)",
+        "solution": "P(X ≥ 2) = 3a²(1 − a) + a³ with a = 0.999 = 0.999997002 (T24.2). Result: 99.9997% (2-of-3) vs 99.9% (single). Majority quorums buy roughly two extra nines here, but only if failures are independent."
+      },
+      {
+        "id": "P24-5",
+        "type": "calculation",
+        "difficulty": 3,
+        "marks": 6,
+        "problem": "Two API replicas of 99.5 % are 'redundant'. Both read configuration from one shared feature-flag store that is up 99.9 % of the time; if it is down, both replicas fail. Model the common cause and compare with the independence calculation for the API tier.",
+        "numericAnswer": "99.8975% with the common cause vs 99.9975% assumed",
+        "solution": "The tier works iff the flag store is up AND at least one replica is up: 0.999 × (1 − 0.005²) = 0.998975. The naive model ignores the shared dependency: 1 − 0.005² = 0.999975. Result: 99.8975% with the common cause vs 99.9975% assumed – the unavailability is about 41 times larger. Redundancy cannot exceed its shared dependencies (T24.1 upper bound)."
+      },
+      {
+        "id": "P24-6",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "The database fails on average every 720 h and takes 1 h to restore. Compute its steady-state availability. Keeping MTTF fixed, what MTTR is needed for 99.95 %?",
+        "numericAnswer": "99.861%; MTTR <= 0.360 h (21.6 min)",
+        "solution": "A = 720 / 721 = 0.998613 (T24.3). For A ≥ 0.9995: MTTR ≤ MTTF(1 − A)/A = 720 × 0.0005 / 0.9995 = 0.36018 h. Result: 99.861%; MTTR <= 0.360 h (21.6 min). Faster detection and automated failover attack MTTR, which is usually cheaper than raising MTTF."
+      },
+      {
+        "id": "P24-7",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Scores (availability, simplicity): single SQLite (0.40, 0.90), replicated PostgreSQL (0.95, 0.50). Find the break-even weight on availability, and the scores if the stakeholders set that weight to 0.6.",
+        "numericAnswer": "w* = 0.421; at w = 0.6 PostgreSQL 0.770 vs SQLite 0.600",
+        "solution": "d = (0.40 − 0.95, 0.90 − 0.50) = (−0.55, 0.40); w* = d₂/(d₂ − d₁) = 0.40/0.95 (T24.4). At w = 0.6: SQLite 0.6·0.40 + 0.4·0.90 = 0.600; PostgreSQL 0.6·0.95 + 0.4·0.50 = 0.770. Result: w* = 0.421; at w = 0.6 PostgreSQL 0.770 vs SQLite 0.600. The decision is sensitive to a weight that stakeholders set by judgement – record it in the ADR."
+      },
+      {
+        "id": "P24-8",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Write two complete quality-attribute scenarios for Library Loans (one interaction-capability/inclusivity, one modifiability) with all six parts, and place them in a utility tree with (importance, difficulty) and a reason.",
+        "solution": "Example (inclusivity): source – a member who uses a screen reader and keyboard only; stimulus – borrows a book; artefact – web front end and sign-in; environment – normal operation; response – completes the flow without a cognitive-function test or a dragging action; measure – the flow passes the WCAG 2.2 AA success criteria for the pages involved, checked by automated tests plus a manual screen-reader test each release. (H, M): important (public service, legal exposure), medium difficulty (sign-in provider must support it). Example (modifiability): source – product owner; stimulus – new rule 'max 2 new releases per member'; artefact – loans module; environment – development; response – rule added with tests; measure – ≤ 1 person-day, only files under the loans module change, boundary fitness function stays green. (M, L)."
+      },
+      {
+        "id": "P24-9",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "Run a mini-ATAM on the storage decision (single SQLite file vs replicated PostgreSQL) for Library Loans at 800 libraries: list two risks, one non-risk, one sensitivity point and one trade-off point, and recommend a decision with the evidence you would still need.",
+        "solution": "Strong answers: risks – (1) SQLite's single writer limits write throughput as libraries grow (decision whose consequences are not understood until measured: run the lesson 21 capacity model); (2) failover of PostgreSQL is untested (decision made, consequence unknown). Non-risk – read latency with indexes and caching meets the p99 target under the stated load (assumption recorded). Sensitivity point – the database's availability bounds the whole request path (T24.1); trade-off point – replication improves availability but adds operational complexity and failure modes (T24.4, w* ≈ 0.42). Recommendation: decide with an explicit weight, record it in an ADR, and gate with a failover drill (MTTR measured) and the capacity fitness function. Marked with the rubric."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Derivation",
+        "excellent": "Correct formulas with assumptions stated and where they fail",
+        "adequate": "Correct formulas, assumptions implicit",
+        "inadequate": "Formula applied where it does not hold",
+        "weight": 30
+      },
+      {
+        "criterion": "Calculation",
+        "excellent": "Correct numbers, units and periods; checked in code",
+        "adequate": "One unit or rounding slip",
+        "inadequate": "Wrong structure (series vs parallel)",
+        "weight": 25
+      },
+      {
+        "criterion": "Scenario quality",
+        "excellent": "All six parts, measurable response, sensible (H/M/L) with reasons",
+        "adequate": "Measurable but missing a part",
+        "inadequate": "Untestable '-ility' statement",
+        "weight": 25
+      },
+      {
+        "criterion": "Trade-off reasoning",
+        "excellent": "Names sensitivity and trade-off points and the evidence still needed",
+        "adequate": "Recommends without naming the weight it depends on",
+        "inadequate": "No trade-off identified",
+        "weight": 20
+      }
+    ],
+    "code": "\"\"\"Numerical checks for the lesson 24 theorems. Run: python check_quality.py  (exit 0 = every check holds).\"\"\"\nimport itertools\nimport math\nimport random\nimport sys\n\nimport availability as av\nimport tradeoff as tr\n\nFAILURES = []\n\n\ndef check(label, ok):\n    print(f\"  [{'OK' if ok else 'FAIL'}] {label}\")\n    if not ok:\n        FAILURES.append(label)\n\n\ndef exact_by_enumeration(comps, structure):\n    \"\"\"Sum the probability of every up/down state in which the structure works (2^n states, exact).\"\"\"\n    names, total = list(comps), 0.0\n    for bits in itertools.product([True, False], repeat=len(names)):\n        state = dict(zip(names, bits))\n        if structure(state):\n            total += math.prod(comps[n] if state[n] else 1 - comps[n] for n in names)\n    return total\n\n\ndef theorem_series_parallel(rng):\n    print(\"T1/T2 series = product, parallel = 1 - product of unavailabilities (independent components)\")\n    c = av.LIBRARY_LOANS\n    comps = {\"load balancer\": c[\"load balancer\"], \"api 1\": c[\"api instance\"], \"api 2\": c[\"api instance\"],\n             \"database\": c[\"database\"], \"identity provider\": c[\"identity provider\"]}\n    formula = av.library_loans(2)\n    exact = exact_by_enumeration(comps, av.library_loans_structure)\n    check(f\"Library Loans (LB, 2 API replicas, DB, IdP): formula {formula:.6%} = enumeration of 32 states \"\n          f\"{exact:.6%} (|diff| {abs(formula - exact):.1e})\", abs(formula - exact) < 1e-12)\n    trials = 400_000\n    mc = av.monte_carlo(av.library_loans_structure, comps, trials, rng)\n    sigma = math.sqrt(formula * (1 - formula) / trials)\n    check(f\"Monte Carlo {trials:,} trials: {mc:.4%} within 4 sigma ({4 * sigma:.4%}) of the formula\",\n          abs(mc - formula) < 4 * sigma)\n    serial = [c[\"load balancer\"], c[\"api instance\"], c[\"database\"], c[\"identity provider\"]]\n    a = av.series(serial)\n    check(f\"one API instance: series {a:.4%}; union bound {av.union_bound(serial):.4%} <= A <= min {min(serial):.2%}\",\n          av.union_bound(serial) <= a <= min(serial))\n    print(f\"      adding the 2nd API replica: {a:.4%} -> {formula:.4%}; a 3rd: {av.library_loans(3):.4%} \"\n          f\"(the database is now the limit: {c['database']:.2%})\")\n    for k in (1, 2, 3):\n        comps3 = {f\"r{i}\": 0.99 for i in range(3)}\n        exact3 = exact_by_enumeration(comps3, lambda s, k=k: sum(s.values()) >= k)\n        check(f\"{k}-of-3 replicas at 99%: binomial {av.k_of_n(k, 3, 0.99):.6%} = enumeration {exact3:.6%}\",\n              abs(av.k_of_n(k, 3, 0.99) - exact3) < 1e-12)\n    check(\"1-of-n equals parallel([a]*n)\", abs(av.k_of_n(1, 3, 0.99) - av.parallel([0.99] * 3)) < 1e-15)\n\n\ndef theorem_nines(rng):\n    print(\"T3 nines -> downtime, and steady-state availability = MTTF / (MTTF + MTTR)\")\n    print(f\"      {'SLO':>8}{'min / 30 days':>15}{'h / year':>10}\")\n    table = av.nines_table()\n    for a, month, year in table:\n        print(f\"      {a:>8.3%}{month:>15.2f}{year:>10.3f}\")\n    ratios = [table[i][2] / table[j][2] for i, j in ((0, 1), (1, 3), (3, 4))]\n    check(f\"each extra nine divides allowed downtime by 10: ratios {[round(r, 6) for r in ratios]}\",\n          all(abs(r - 10) < 1e-9 for r in ratios))\n    budget = av.downtime_minutes(0.9999)\n    check(f\"CACM example: 3 outages x 20 min = 60 min > {budget:.2f} min allowed by 99.99%/year\", 60 > budget)\n    mttf, mttr = 720.0, 1.0\n    formula = mttf / (mttf + mttr)\n    for repair in (\"exponential\", \"uniform\"):\n        sim = av.simulate_up_fraction(mttf, mttr, 20_000_000, rng, repair)\n        check(f\"MTTF 720 h, MTTR 1 h, {repair} repair: simulated up fraction {sim:.5%} vs formula {formula:.5%}\",\n              abs(sim - formula) < 2e-4)\n\n\ndef theorem_break_even(rng):\n    print(\"T4 two criteria, weights (w, 1-w): at most one break-even weight w*; preference flips there\")\n    x, y = tr.SINGLE_SQLITE, tr.REPLICATED_POSTGRES\n    w_star = tr.break_even(x, y)\n    flips = [i / 10_000 for i in range(1, 10_001)\n             if (tr.weighted_score(x, i / 10_000) > tr.weighted_score(y, i / 10_000)) !=\n             (tr.weighted_score(x, (i - 1) / 10_000) > tr.weighted_score(y, (i - 1) / 10_000))]\n    check(f\"SQLite {x} vs replicated PostgreSQL {y}: w* = {w_star:.4f}; sweep flips at {flips}\",\n          len(flips) == 1 and abs(flips[0] - w_star) <= 1e-4)\n    mismatches = 0\n    for _ in range(2000):\n        p, q = (rng.random(), rng.random()), (rng.random(), rng.random())\n        grid = [tr.weighted_score(p, i / 1000) - tr.weighted_score(q, i / 1000) for i in range(1001)]\n        sign_changes = sum(1 for a, b in zip(grid, grid[1:]) if (a > 0) != (b > 0))\n        mismatches += sign_changes != (1 if tr.break_even(p, q) is not None else 0)\n    check(f\"2,000 random option pairs: sign changes match the formula ({mismatches} mismatches)\", mismatches == 0)\n    print(\"      utility tree, highest priority first (importance, difficulty):\")\n    for attr, _, scenario, imp, dif in tr.prioritise()[:3]:\n        print(f\"        ({imp},{dif}) {attr}: {scenario[:70]}...\")\n\n\nif __name__ == \"__main__\":\n    rng = random.Random(2400)\n    theorem_series_parallel(rng)\n    theorem_nines(rng)\n    theorem_break_even(rng)\n    print(\"ALL CHECKS OK\" if not FAILURES else f\"FAILED: {FAILURES}\")\n    sys.exit(1 if FAILURES else 0)\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L500/24-quality-attributes/availability.py",
+        "purpose": "series, parallel, k-of-n, nines, Monte Carlo, renewal simulation"
+      },
+      {
+        "path": "labs/L500/24-quality-attributes/tradeoff.py",
+        "purpose": "Library Loans utility tree and break-even weight"
+      },
+      {
+        "path": "labs/L500/24-quality-attributes/check_quality.py",
+        "purpose": "numerical checks for T24.1-T24.4"
+      },
+      {
+        "path": "labs/L500/24-quality-attributes/test_quality.py",
+        "purpose": "unittest suite"
+      }
+    ],
+    "sources": [
+      {
+        "title": "ISO/IEC 25010:2023 Product quality model (edition 2, 2023-11; abstract page)",
+        "url": "https://www.iso.org/standard/78176.html"
+      },
+      {
+        "title": "ISO/IEC 25010:2023 foreword (Online Browsing Platform): changes from the 2011 edition",
+        "url": "https://www.iso.org/obp/ui"
+      },
+      {
+        "title": "Kazman, Klein & Clements (2000) ATAM: Method for Architecture Evaluation, CMU/SEI-2000-TR-004",
+        "url": "https://www.sei.cmu.edu/library/atam-method-for-architecture-evaluation/"
+      },
+      {
+        "title": "Treynor, Dahlin, Rau & Beyer (2017) The Calculus of Service Availability, CACM 60(9) / ACM Queue",
+        "url": "https://cacm.acm.org/practice/the-calculus-of-service-availability/"
+      },
+      {
+        "title": "Gallager, MIT 6.262 Discrete Stochastic Processes, Chapter 4 Renewal Processes (renewal-reward theorem), MIT OCW",
+        "url": "https://ocw.mit.edu/courses/6-262-discrete-stochastic-processes-spring-2011/resources/mit6_262s11_chap04/"
+      }
+    ],
+    "seeAlso": [
+      "L300 #13 Resilience patterns: timeouts, circuit breaker, bulkhead, fallback: mitigations that raise effective availability of a weak dependency.",
+      "L300 #15 SLOs and error budgets: burn-rate alerts from request logs: the downtime budget derived in T24.3, measured from logs.",
+      "L400 #21 Cost and capacity planning: Little's law, benchmarks, headroom, cost per request: N+1 sizing is the k-of-n idea applied to capacity.",
+      "distributed-systems L400 #17 Consistency models in practice: quorums (N, R, W), staleness and PACELC: k-of-n availability of quorum systems."
+    ],
+    "next": "L500 lesson 25 – Foundations III: formal reasoning about design – contracts, Liskov substitution, model checking and the evidence",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran check_quality.py (ALL CHECKS OK, exit 0) and `python -m unittest` (7 tests OK) on Python 3.12.15, Linux, 2026-10-30; research/l500_checks.py re-runs every theorem check and recomputes every problem-set number. checkOutput fields are pasted from that run.",
+      "pendingCi": [
+        "macOS (arm64) and Windows 11 runs (platforms: expected until the CI matrix runs)"
+      ]
+    }
+  },
+  {
+    "id": "formal-reasoning-design",
+    "number": 25,
+    "level": "L500",
+    "phase": "Theory & rigour",
+    "title": "Foundations III: formal reasoning about design – contracts, Liskov substitution, model checking and the evidence",
+    "category": "theory",
+    "description": "Pre/postconditions and invariants on the real Member aggregate, Liskov's behavioural subtyping rule, explicit-state model checking of a loan workflow, and an honest reading of the empirical evidence on modularity and defects.",
+    "outcome": "You can state contracts, prove an invariant by induction, decide whether a subtype is substitutable, model-check a small workflow for a safety property, and evaluate empirical claims about design quality.",
+    "environment": "Python 3.12 standard library only; imports the unchanged L200 #8 member.py.",
+    "estimatedTime": "4-6 hours (reading 1.5 h, lecture 1.5 h, lab 0.5 h, problem set 2 h)",
+    "prerequisites": [
+      "Propositional logic: implication, contrapositive; predicates over states",
+      "Proof by induction (on the number of operations)",
+      "Graph search: breadth-first search and its distance property",
+      "Basic statistics vocabulary: correlation, confounding variable",
+      "Lesson 8 (aggregates and invariants) and lesson 9 or 12 (concurrent consumers) for context"
+    ],
+    "learningObjectives": [
+      "Specify pre/postconditions and an invariant for an aggregate and prove the invariant holds in every reachable state.",
+      "Evaluate whether a candidate subtype satisfies the Liskov substitution rule by checking precondition weakening and postcondition strengthening.",
+      "Analyze a concurrent workflow with explicit-state model checking and explain why BFS yields a shortest counterexample.",
+      "Critique empirical claims linking modularity metrics to defects, naming confounders and the limits of each study."
+    ],
+    "glossary": [
+      {
+        "term": "precondition / postcondition",
+        "meaning": "What the caller must guarantee before a call / what the operation guarantees after it (Hoare, Meyer's design by contract)."
+      },
+      {
+        "term": "invariant",
+        "meaning": "A predicate on an object's state that holds after construction and after every public operation."
+      },
+      {
+        "term": "failure atomicity",
+        "meaning": "A rejected operation leaves the state unchanged, so the invariant still holds."
+      },
+      {
+        "term": "behavioural subtype",
+        "meaning": "S is a subtype of T if programs written against T's specification stay correct with S (Liskov & Wing 1994)."
+      },
+      {
+        "term": "safety property",
+        "meaning": "'Nothing bad ever happens' – violated by a finite trace, e.g. two active loans of one book."
+      },
+      {
+        "term": "model checking",
+        "meaning": "Exhaustive exploration of a model's reachable states to verify a property or produce a counterexample trace."
+      },
+      {
+        "term": "state explosion",
+        "meaning": "Reachable states grow exponentially with the number of concurrent components (3ⁿ in the buggy model here)."
+      },
+      {
+        "term": "confounder",
+        "meaning": "A variable (e.g. size) that influences both a metric and the outcome, creating a spurious association."
+      }
+    ],
+    "conceptNote": "content/concepts/L500/25-formal-reasoning-design.md",
+    "conceptSummary": "Contracts make 'correct' precise; invariants are proved by induction over operations; subtypes may only weaken preconditions and strengthen postconditions; a model checker turns a race into a 4-step trace; and the empirical evidence on modularity is real but correlational and easily confounded by size.",
+    "theorems": [
+      {
+        "name": "T25.1 Invariant induction for an aggregate",
+        "statement": "Let Inv be a predicate on the state of an aggregate. If (i) Inv holds after construction, (ii) every public operation, started in a state satisfying Inv and its precondition, ends in a state satisfying Inv, and (iii) a rejected operation leaves the state unchanged, then Inv holds in every state reachable through the public API.",
+        "proof": "Induction on the number n of public calls. Base n = 0: the state is the constructed one; Inv holds by (i). Step: assume Inv holds in state sₙ. The next call either is rejected – by (iii) sₙ₊₁ = sₙ, so Inv holds – or proceeds with its precondition satisfied, and by (ii) sₙ₊₁ satisfies Inv. Hence Inv holds for all n. ∎\n\nThe hidden premise is encapsulation: 'reachable through the public API' must cover every way the state can change. If outside code can append to the internal list, the induction proves nothing – which is why the L200 #8 aggregate exposes loans as a read-only tuple. For Member, Inv = (|active| ≤ max_loans) ∧ (no book twice among active loans); borrow's precondition is |active| < max ∧ book ∉ active, which is exactly what its guard checks.",
+        "check": "labs/L500/25-formal-reasoning/check_formal.py",
+        "checkOutput": "T1 invariant induction: Inv(initial) and every operation preserves Inv => Inv in every reachable state\n  [OK] base case: a new Member satisfies Inv\n      310,352 random calls on the real L200 #8 Member aggregate, 178,288 rejected by rules\n  [OK] Inv broken after 0 calls\n  [OK] borrow postcondition broken 0 times\n  [OK] rejected calls that changed state: 0\n  [OK] loans is exposed as a read-only tuple (no append behind the root's back)"
+      },
+      {
+        "name": "T25.2 Liskov substitution rule for a method",
+        "statement": "Let T specify method m by (pre_T, post_T) and let S implement m with (pre_S, post_S). If pre_T ⇒ pre_S and (pre_T ∧ post_S) ⇒ post_T, then every client proved correct against T's specification remains correct when it receives an S. (Liskov & Wing 1994 also require invariants and history constraints to be preserved.)",
+        "proof": "Sketch. A client correct against T establishes pre_T before calling m and afterwards relies only on post_T. With an S: pre_T ⇒ pre_S, so S's implementation is called inside its own precondition and, being correct against its spec, establishes post_S. Since pre_T still holds about the call's inputs, pre_T ∧ post_S ⇒ post_T, so everything the client relied on still holds and its proof goes through unchanged. ∎ Full treatment (with invariants, history rule and the two subtype definitions): Liskov & Wing (1994).\n\nContrapositive used by the check: a subtype that refuses inputs T accepts (stronger precondition) or returns results T forbids (weaker postcondition) can break some correct client – and the lab exhibits one.",
+        "check": "labs/L500/25-formal-reasoning/check_formal.py",
+        "checkOutput": "T2 Liskov rule: weaker-or-equal precondition and stronger-or-equal postcondition => safe substitution\n      StrictLimit        pre broken at  0 of 44 points, post broken at  0; supertype client (overdue 0 / 1) ends with: [2, 0]\n  [OK] StrictLimit: violations (0, 0) as predicted (0, 0)\n      GenerousLimit      pre broken at  0 of 44 points, post broken at  8; supertype client (overdue 0 / 1) ends with: [5, 5]\n  [OK] GenerousLimit: violations (0, 8) as predicted (0, 8)\n      NoOverdueAccepted  pre broken at 33 of 44 points, post broken at  0; supertype client (overdue 0 / 1) ends with: [3, 'error: members with overdue loans are not accepted']\n  [OK] NoOverdueAccepted: violations (33, 0) as predicted (33, 0)\n  [OK] the client written for the supertype stays within 3 loans only with the valid subtype"
+      },
+      {
+        "name": "T25.3 BFS model checking is complete for finite models and returns shortest counterexamples",
+        "statement": "For a finite transition system, breadth-first search from the initial state visits exactly the reachable states and terminates. If an unsafe state is reachable, the first unsafe state BFS dequeues has minimal distance from the start, so following parent pointers gives a shortest counterexample trace.",
+        "proof": "Each state is enqueued at most once (the parent map is checked first), and only successors of visited states are enqueued, so BFS visits a subset of the reachable states and terminates after at most |S| dequeues. Conversely every reachable state at distance d is enqueued by the time the states at distance d − 1 are expanded (induction on d), so all reachable states are visited. Standard BFS lemma: states leave the queue in non-decreasing distance order; hence the first unsafe state dequeued has the minimum distance among unsafe states, and its parent chain has exactly that many steps. ∎\n\nLimits: the result is about the *model*, not the code; the model must be finite (bounded members, books, operations); and state counts grow exponentially (3ⁿ for the buggy model, (n + 2)·2ⁿ⁻¹ for the fixed one).",
+        "check": "labs/L500/25-formal-reasoning/check_formal.py",
+        "checkOutput": "T3 BFS model checking: explores every reachable state; the first violation found has a shortest trace\n      buggy check-then-act: violation after exploring 9 states; counterexample: ['A reads: book free', 'B reads: book free', 'A borrows', 'B borrows']\n  [OK] BFS counterexample length 4 = brute-force minimum 4\n  [OK] atomic conditional insert: 8 reachable states, no violation, 0 deadlocks\n  [OK] AG EF book available: from all 8 reachable states the book can become free again\n      state explosion, members -> (buggy, fixed) reachable states: {2: (9, 8), 3: (27, 20), 4: (81, 48), 5: (243, 112), 6: (729, 256)}\n  [OK] buggy = 3^n and fixed = (n + 2) * 2^(n - 1) for n = 2..6"
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "P25-1",
+        "type": "proof",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "For the L200 #8 Member aggregate, prove that borrow preserves Inv = (|active| ≤ max) ∧ (active book ids are distinct), given that borrow raises without changing state unless |active| < max and the book is not already active.",
+        "solution": "Assume Inv in state s. Case 1, the guard fails: an exception is raised before any mutation, so s′ = s and Inv holds. Case 2, the guard passes: |active| < max and b ∉ active. borrow appends one new active loan of b, so |active′| = |active| + 1 ≤ max, and active′ = active ∪ {b} with b new, so ids stay distinct. Both conjuncts hold; with the same argument for give_back (which only marks a loan returned) T25.1 gives Inv everywhere."
+      },
+      {
+        "id": "P25-2",
+        "type": "short-answer",
+        "difficulty": 1,
+        "marks": 4,
+        "problem": "Write the precondition and postcondition of Member.give_back(book_id, today) as predicates on the state.",
+        "solution": "pre: ∃ an active loan with book_id (else NotBorrowed is raised and the state is unchanged). post: that loan now has returned_on = today; |active′| = |active| − 1; book_id ∉ active′; all other loans unchanged; Inv holds."
+      },
+      {
+        "id": "P25-3",
+        "type": "proof",
+        "difficulty": 2,
+        "marks": 6,
+        "problem": "Supertype LoanLimit.allowed(active, overdue) has pre_T: 0 ≤ active ≤ 10, 0 ≤ overdue ≤ 3; post_T: result ⇒ active < 3, and (active = 0 ∧ overdue = 0) ⇒ result. Decide, with justification, whether each is a behavioural subtype: StrictLimit (active < 2 ∧ overdue = 0), GenerousLimit (active < 5), NoOverdueAccepted (raises if overdue > 0, else active < 3).",
+        "solution": "StrictLimit: same precondition; result ⇒ active < 2 < 3 and the new-member case returns True, so post_S ⇒ post_T: a subtype. GenerousLimit: returns True at active = 3, 4, violating result ⇒ active < 3: postcondition weakened, not a subtype (a client relying on 'never more than 3' borrows 5). NoOverdueAccepted: refuses inputs with overdue > 0 that pre_T admits: precondition strengthened, not a subtype (a supertype client gets an exception). The lab counts 0/0, 0/8 and 33/0 violating points."
+      },
+      {
+        "id": "P25-4",
+        "type": "calculation",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "On the same 44-point domain, how many points violate the precondition rule and how many the postcondition rule for an implementation that returns active < 4?",
+        "numericAnswer": "post broken at 4 of 44 points, pre at 0",
+        "solution": "It accepts every input (pre at 0). It returns True at active = 3 for overdue 0..3, breaking result ⇒ active < 3: 4 points. Result: post broken at 4 of 44 points, pre at 0. Recomputed by research/l500_checks.py."
+      },
+      {
+        "id": "P25-5",
+        "type": "calculation",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Run the BFS model checker on the two-member workflow. How long is the shortest counterexample for the buggy check-then-act version, and how many reachable states do the buggy and fixed models have?",
+        "numericAnswer": "4 steps; 9 and 8 reachable states",
+        "solution": "Shortest trace: A reads (free), B reads (free), A borrows, B borrows – both hold the book. Buggy model: each member is in one of 3 local states and the loans set is determined by them: 3² = 9. Fixed model: 8 (no state with two holders). Result: 4 steps; 9 and 8 reachable states."
+      },
+      {
+        "id": "P25-6",
+        "type": "derivation",
+        "difficulty": 3,
+        "marks": 8,
+        "problem": "Derive the number of reachable states of the fixed model with n members, and of the buggy model, and compare for n = 2..6.",
+        "numericAnswer": "fixed 8, 20, 48, 112, 256; buggy 9, 27, 81, 243, 729",
+        "solution": "Buggy: every combination of local states (idle, checked, holding) is reachable and the loans set equals the set of holders, so 3ⁿ. Fixed: at most one holder. No holder: each member idle or checked, 2ⁿ states. One holder: n choices, the others idle or checked, n·2ⁿ⁻¹. Total 2ⁿ + n·2ⁿ⁻¹ = (n + 2)·2ⁿ⁻¹. Result: fixed 8, 20, 48, 112, 256; buggy 9, 27, 81, 243, 729. Both grow exponentially (state explosion) – real model checkers use symmetry and partial-order reduction (not covered here)."
+      },
+      {
+        "id": "P25-7",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "The fixed model is safe. List three reasons why this does not prove that the production Library Loans service cannot lend one book twice, and say what you would do about each.",
+        "solution": "(1) Model–code gap: the model abstracts the code; keep them linked with a test that runs the counterexample schedule against the real repository (two threads, deterministic interleaving). (2) Bounded model: one book, n members, no crashes or retries; extend the model with a crash between read and insert, or use a tool such as TLA+ for larger bounds. (3) The 'atomic conditional insert' is an assumption about the database; enforce it with a unique constraint on active loans per book and test it against the real engine (Testcontainers in L200 #11)."
+      },
+      {
+        "id": "P25-8",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "Does modular design reduce defects? Evaluate the evidence from Zimmermann & Nagappan (2008), El Emam et al. (2001) and MacCormack et al. (2006) in ≤ 700 words: what each study measured, what it found, what it cannot show, and what an architect may honestly claim to stakeholders.",
+        "solution": "Model answer outline: Zimmermann & Nagappan – dependency-graph network measures on Windows Server 2003 binaries predicted defect-prone binaries better than complexity metrics (recall about 10 points higher) and found 60 % of the binaries developers considered critical; observational, one system, prediction ≠ causation. El Emam et al. – after controlling for class size, the OO metrics studied lost their association with fault-proneness in a large C++ framework: size is a confounder, many earlier 'validations' are suspect. MacCormack et al. – DSM-based metrics showed Linux more modular than the first Mozilla release and a deliberate redesign made Mozilla more modular; it is about structure and organisation, not defects, and is exploratory. Honest claim: dependency structure is associated with where defects and change costs concentrate; we use it to focus review and testing and to keep change local, and we measure outcomes (defects, lead time) rather than promise them. Marked with the rubric."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Specification",
+        "excellent": "Contracts are precise predicates; invariant and frame conditions stated",
+        "adequate": "Mostly precise; frame condition missing",
+        "inadequate": "Prose that cannot be checked",
+        "weight": 25
+      },
+      {
+        "criterion": "Proof",
+        "excellent": "Induction / substitution argument complete, premises (encapsulation, finiteness) named",
+        "adequate": "Correct but a premise left implicit",
+        "inadequate": "Argument by example only",
+        "weight": 30
+      },
+      {
+        "criterion": "Model checking",
+        "excellent": "Correct trace and state counts; explains model–code gap",
+        "adequate": "Correct trace, no limits discussed",
+        "inadequate": "Wrong property or trace",
+        "weight": 20
+      },
+      {
+        "criterion": "Evidence",
+        "excellent": "Accurate, hedged, names confounders and external validity",
+        "adequate": "Accurate but overclaims",
+        "inadequate": "Misreports a study",
+        "weight": 25
+      }
+    ],
+    "code": "\"\"\"Numerical checks for the lesson 25 theorems. Run: python check_formal.py  (exit 0 = every check holds).\"\"\"\nimport random\nimport sys\n\nimport contracts as c\nimport model_check as mc\n\nFAILURES = []\n\n\ndef check(label, ok):\n    print(f\"  [{'OK' if ok else 'FAIL'}] {label}\")\n    if not ok:\n        FAILURES.append(label)\n\n\ndef theorem_invariant(rng):\n    print(\"T1 invariant induction: Inv(initial) and every operation preserves Inv => Inv in every reachable state\")\n    check(\"base case: a new Member satisfies Inv\", c.invariant(c.Member(\"m0\")))\n    s = c.random_traces(rng)\n    print(f\"      {s['calls']:,} random calls on the real L200 #8 Member aggregate, {s['rejected']:,} rejected by rules\")\n    check(f\"Inv broken after {s['inv_broken']} calls\", s[\"inv_broken\"] == 0)\n    check(f\"borrow postcondition broken {s['post_broken']} times\", s[\"post_broken\"] == 0)\n    check(f\"rejected calls that changed state: {s['not_atomic']}\", s[\"not_atomic\"] == 0)\n    check(\"loans is exposed as a read-only tuple (no append behind the root's back)\",\n          isinstance(c.Member(\"m9\").loans, tuple))\n\n\ndef theorem_liskov():\n    print(\"T2 Liskov rule: weaker-or-equal precondition and stronger-or-equal postcondition => safe substitution\")\n    expected = {\"StrictLimit\": (0, 0), \"GenerousLimit\": (0, 8), \"NoOverdueAccepted\": (33, 0)}\n    for impl in (c.StrictLimit(), c.GenerousLimit(), c.NoOverdueAccepted()):\n        name = type(impl).__name__\n        pre_b, post_b = c.substitution_violations(impl)\n        outcome = [c.client_borrow_up_to_limit(impl, overdue) for overdue in (0, 1)]\n        print(f\"      {name:<18} pre broken at {pre_b:>2} of {len(c.DOMAIN)} points, post broken at {post_b:>2}; \"\n              f\"supertype client (overdue 0 / 1) ends with: {outcome}\")\n        check(f\"{name}: violations {(pre_b, post_b)} as predicted {expected[name]}\", (pre_b, post_b) == expected[name])\n    check(\"the client written for the supertype stays within 3 loans only with the valid subtype\",\n          c.client_borrow_up_to_limit(c.StrictLimit()) <= 3 and c.client_borrow_up_to_limit(c.GenerousLimit()) > 3)\n\n\ndef theorem_model_checking():\n    print(\"T3 BFS model checking: explores every reachable state; the first violation found has a shortest trace\")\n    n_bug, cex, _, _ = mc.bfs(fixed=False)\n    brute = mc.shortest_by_enumeration(fixed=False)\n    print(f\"      buggy check-then-act: violation after exploring {n_bug} states; counterexample: {cex}\")\n    check(f\"BFS counterexample length {len(cex)} = brute-force minimum {brute}\", cex is not None and len(cex) == brute)\n    n_fix, cex_fix, dead, _ = mc.bfs(fixed=True)\n    check(f\"atomic conditional insert: {n_fix} reachable states, no violation, {len(dead)} deadlocks\",\n          cex_fix is None and not dead and mc.shortest_by_enumeration(fixed=True) is None)\n    ok, n = mc.can_always_free_book(fixed=True)\n    check(f\"AG EF book available: from all {n} reachable states the book can become free again\", ok)\n    counts = {k: (mc.reachable_states(False, tuple(\"ABCDEF\"[:k])), mc.reachable_states(True, tuple(\"ABCDEF\"[:k])))\n              for k in range(2, 7)}\n    print(f\"      state explosion, members -> (buggy, fixed) reachable states: {counts}\")\n    check(\"buggy = 3^n and fixed = (n + 2) * 2^(n - 1) for n = 2..6\",\n          all(b == 3 ** k and f == (k + 2) * 2 ** (k - 1) for k, (b, f) in counts.items()))\n\n\nif __name__ == \"__main__\":\n    theorem_invariant(random.Random(2500))\n    theorem_liskov()\n    theorem_model_checking()\n    print(\"ALL CHECKS OK\" if not FAILURES else f\"FAILED: {FAILURES}\")\n    sys.exit(1 if FAILURES else 0)\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L500/25-formal-reasoning/contracts.py",
+        "purpose": "invariant/postcondition/atomicity checks on the real Member; Liskov checks"
+      },
+      {
+        "path": "labs/L500/25-formal-reasoning/model_check.py",
+        "purpose": "BFS explicit-state model checker for the loan workflow"
+      },
+      {
+        "path": "labs/L500/25-formal-reasoning/check_formal.py",
+        "purpose": "numerical checks for T25.1-T25.3"
+      },
+      {
+        "path": "labs/L500/25-formal-reasoning/test_formal.py",
+        "purpose": "unittest suite"
+      }
+    ],
+    "sources": [
+      {
+        "title": "Liskov & Wing (1994) A behavioral notion of subtyping, ACM TOPLAS 16(6) (doi 10.1145/197320.197383)",
+        "url": "https://www.cs.columbia.edu/~wing/publications/LiskovWing94.pdf"
+      },
+      {
+        "title": "Zimmermann & Nagappan (2008) Predicting defects using network analysis on dependency graphs, ICSE 2008",
+        "url": "https://www.microsoft.com/en-us/research/publication/predicting-defects-using-network-analysis-on-dependency-graphs/"
+      },
+      {
+        "title": "El Emam, Benlarbi, Goel & Rai (2001) The confounding effect of class size on the validity of object-oriented metrics, IEEE TSE 27(7)",
+        "url": "https://www.computer.org/csdl/journal/ts/2001/07/e0630/13rRUIJuxro"
+      },
+      {
+        "title": "MacCormack, Rusnak & Baldwin (2006) Exploring the structure of complex software designs, Management Science 52(7) (HBS working paper version)",
+        "url": "https://www.hbs.edu/ris/Publication%20Files/05-016.pdf"
+      }
+    ],
+    "seeAlso": [
+      "L200 #8 Aggregates and invariants (DDD): the Member aggregate whose invariant T25.1 proves and the check exercises.",
+      "L300 #14 Consumer-driven contract testing: contracts between services are the cross-process version of pre/postconditions.",
+      "L400 #19 Policy as code: RBAC vs ABAC, policy tests and decision logs: policies are predicates you can test exhaustively over a finite domain, as in the Liskov check.",
+      "distributed-systems L400 #21 Verifying correctness: model checking and linearizability checking: the same BFS idea at larger scale."
+    ],
+    "next": "L500 lesson 26 – Ethics and professional responsibility: accessibility, privacy by design and honest technical debt",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran check_formal.py (ALL CHECKS OK, exit 0) and `python -m unittest` (5 tests OK) on Python 3.12.15, Linux, 2026-10-30; research/l500_checks.py re-runs every theorem check and recomputes every problem-set number. checkOutput fields are pasted from that run.",
+      "pendingCi": [
+        "macOS (arm64) and Windows 11 runs (platforms: expected until the CI matrix runs)"
+      ]
+    }
+  },
+  {
+    "id": "ethics-accessibility-privacy-debt",
+    "number": 26,
+    "level": "L500",
+    "phase": "Theory & rigour",
+    "title": "Ethics and professional responsibility: accessibility, privacy by design and honest technical debt",
+    "category": "ethics",
+    "description": "Accessibility (WCAG 2.2) and privacy by design (GDPR Art. 25) treated as architectural requirements, technical debt as a duty of honest disclosure, and a structured analysis of a Library Loans launch using the ACM Code.",
+    "outcome": "You can identify stakeholders and harms, map a design decision to the ACM Code, WCAG 2.2 and GDPR Art. 25, argue for a defensible option, and write an honest status report and debt register for decision makers.",
+    "environment": "No code. Reading, discussion, written case analysis.",
+    "estimatedTime": "4 hours (reading 1.5 h, seminar 1 h, written analysis 1.5 h)",
+    "prerequisites": [
+      "Lesson 24 (quality attribute scenarios, utility trees)",
+      "Lesson 10 (authentication) and lesson 18 (multi-tenancy) for the technical context",
+      "No legal background assumed; this lesson is not legal advice"
+    ],
+    "learningObjectives": [
+      "Explain why accessibility and privacy are architectural (cross-cutting, costly to retrofit) rather than UI or legal afterthoughts.",
+      "Analyze a launch decision with a structured method: facts, stakeholders, harms, options, principles, recommendation.",
+      "Evaluate options against the ACM Code (1.2, 1.3, 1.4, 1.6, 2.5, 3.1), WCAG 2.2 success criteria and GDPR Art. 25.",
+      "Critique a status report for misleading claims and rewrite it with an honest technical-debt register."
+    ],
+    "glossary": [
+      {
+        "term": "WCAG 2.2 conformance level",
+        "meaning": "A, AA or AAA; AA is the level most laws and policies reference. WCAG 2.2 adds 9 success criteria to 2.1 and removes 4.1.1 Parsing."
+      },
+      {
+        "term": "Accessible Authentication (Minimum), SC 3.3.8",
+        "meaning": "A new WCAG 2.2 AA criterion: sign-in must not depend on a cognitive function test (e.g. a puzzle) unless an alternative or assistance is provided."
+      },
+      {
+        "term": "data protection by design / by default",
+        "meaning": "GDPR Art. 25: appropriate technical and organisational measures from design time; by default only the personal data necessary for each purpose are processed."
+      },
+      {
+        "term": "data minimisation",
+        "meaning": "Collect and keep only what each purpose needs – named in Art. 25(1) as a principle the measures must implement."
+      },
+      {
+        "term": "technical debt",
+        "meaning": "Cunningham (1992): shipping not-quite-right code is like borrowing; the interest is the extra cost paid until it is repaid."
+      },
+      {
+        "term": "conformance statement",
+        "meaning": "A public claim about which standard and level a product meets; a false claim is a misrepresentation (ACM 1.3)."
+      }
+    ],
+    "conceptNote": "content/concepts/L500/26-ethics-accessibility-privacy-debt.md",
+    "conceptSummary": "Accessibility and privacy are quality attributes with legal teeth; they must be scenarios in the utility tree, not a launch-week checklist. Debt is legitimate only when it is disclosed, owned and dated; claiming compliance you do not have is dishonest, not an engineering trade-off.",
+    "caseStudy": {
+      "case": "Library Loans goes public. A city's library network will open online borrowing in two weeks. An internal audit finds three WCAG 2.2 AA failures in the borrow flow: the sign-in page relies on a distorted-text puzzle (SC 3.3.8 Accessible Authentication (Minimum)), reading lists can only be reordered by dragging (SC 2.5.7 Dragging Movements), and the 'renew' buttons are tiny icons (SC 2.5.8 Target Size (Minimum)). Fixing them needs about three weeks because the sign-in page belongs to a third-party identity component. Separately, the analytics team wants full loan histories kept indefinitely and enabled by default 'to train recommendations'. The product owner asks you, the architect, to tell the city council that the service is 'WCAG 2.2 AA compliant and privacy by design' and to log the remaining work as 'minor tech debt'. Two real precedents frame the stakes: in Robles v. Domino's (9th Cir. 2019) the court held that the ADA applied to a pizza chain's website and app; in November 2022 the Irish DPC fined Meta €265 million for infringing GDPR Articles 25(1) and 25(2) (data protection by design and by default).",
+      "stakeholders": [
+        "Members who are blind or have low vision, motor or cognitive disabilities, and older members",
+        "All other members, including children and their parents",
+        "Library staff who handle complaints and paper fallbacks",
+        "City council (funder, legally responsible public body) and its data protection officer",
+        "Product owner and delivery team (deadline, reputation)",
+        "Architect / developers (professional duties under the ACM Code)",
+        "Analytics team and any recommendation vendor",
+        "Regulators and courts (data protection authority, equality / accessibility enforcement)",
+        "Disability advocacy groups and the wider public (trust in a public service)"
+      ],
+      "questions": [
+        "Which facts are established, which are assumptions, and which need a lawyer or the DPO to answer?",
+        "Who is harmed, how badly and how reversibly, by each of: launching as is; delaying three weeks; launching with an accessible alternative path?",
+        "Is the requested statement to the council true? Which ACM principles does it engage, and what would an honest statement say?",
+        "What should the default retention of loan history be under GDPR Art. 25(2), and what architecture implements it?",
+        "How should accessibility and privacy appear in the utility tree and fitness functions so this does not recur?",
+        "When is technical debt ethically acceptable, and what makes 'minor tech debt' a misleading label here?"
+      ],
+      "frameworks": [
+        "ACM Code of Ethics 2018: 1.2 Avoid harm; 1.3 Be honest and trustworthy; 1.4 Be fair and take action not to discriminate (failure to design for accessibility may be unfair discrimination); 1.6 Respect privacy (minimum data, defined retention); 2.5 Give comprehensive and thorough evaluations … including analysis of possible risks; 3.1 public good; 3.7 systems integrated into the infrastructure of society.",
+        "Software Engineering Code of Ethics 5.2 (ACM/IEEE-CS): principles 1 PUBLIC, 3 PRODUCT, 4 JUDGMENT.",
+        "WCAG 2.2 (= ISO/IEC 40500:2025): SC 3.3.8, 2.5.7, 2.5.8 at level AA.",
+        "GDPR Art. 25(1) by design and 25(2) by default; Irish DPC Meta decision (2022) as an enforcement example.",
+        "ALA Privacy interpretation of the Library Bill of Rights: circulation records are confidential; retain the minimum, anonymise when possible.",
+        "Cunningham's debt metaphor: debt is acceptable when it is repaid promptly; interest accrues while it is not."
+      ],
+      "modelAnswer": "1 Facts and uncertainty. Established: three AA failures in the core flow; ~3 weeks to fix; analytics wants indefinite, default-on history. Uncertain: which laws apply to this city (ask the DPO / legal; the EAA's scope may not cover a public library service; national public-sector accessibility rules may). 2 Harms. Launch as is: blind and motor-impaired members are excluded from a public service at launch (severe for them, reversible only by the fix), plus legal and reputational risk; indefinite default-on histories expose what people read – a classic chilling effect libraries exist to prevent – and enlarge breach impact. 3 Options. (A) Launch and claim compliance: rejected – the claim is false (ACM 1.3: no deliberately false or misleading claims; SE Code 3). (B) Delay three weeks: honest and inclusive, costs the deadline. (C) Launch on time with an equivalent accessible path (staff-assisted or alternative sign-in that satisfies 3.3.8, keyboard reorder controls, larger targets in a hotfix), publish a truthful conformance statement listing known failures and dates, and keep (B) as the fallback if the alternative path is not equivalent. 4 Privacy by design. Default: keep only active loans; delete or anonymise history N days after return; history for recommendations is opt-in, purpose-specific and revocable; analytics gets aggregates or pseudonymised data with the key held separately (Art. 25(1) names pseudonymisation and data minimisation; 25(2) limits default processing). Architecture: a retention job with a fitness function that fails CI if any table holds returned-loan rows older than N days; a policy check (L400 #19) that blocks analytics reads of member identifiers. 5 Recommendation and communication. Choose C if the DPO and an accessibility tester confirm the alternative path is equivalent, else B. Tell the council exactly what is true: 'The borrow flow does not yet meet WCAG 2.2 AA (3 criteria, listed); an accessible alternative is available; full conformance by <date>; loan history is not retained by default.' Record the work in a debt register with owner, interest (who is excluded meanwhile), and repayment date – it is not 'minor'. If the product owner insists on the false statement, escalate (ACM 1.2/2.5 duty to report risks) before going outside the organisation. 6 Prevention. Add inclusivity and privacy scenarios to the utility tree as (H, M), make them release gates, and buy or build identity components that meet SC 3.3.8."
+    },
+    "problemSet": [
+      {
+        "id": "P26-1",
+        "type": "short-answer",
+        "difficulty": 1,
+        "marks": 4,
+        "problem": "Name the three WCAG 2.2 success criteria in the case, their level, and one concrete design change for each.",
+        "solution": "SC 3.3.8 Accessible Authentication (Minimum), AA – support password managers/paste or passkeys, no puzzle without an alternative. SC 2.5.7 Dragging Movements, AA – add 'move up/down' buttons. SC 2.5.8 Target Size (Minimum), AA – make targets at least 24 by 24 CSS pixels or spaced (check the normative text for exceptions)."
+      },
+      {
+        "id": "P26-2",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Rewrite the product owner's statement to the council so that it is honest, specific and still useful.",
+        "solution": "'Online borrowing launches on <date>. Three parts of the borrow flow do not yet meet WCAG 2.2 level AA (sign-in puzzle, drag-only reordering, small renew buttons); an accessible alternative is available from day one and full conformance is planned for <date>, owner <name>. Loan history is deleted 30 days after return unless a member opts in.' It states the standard, level, gaps, mitigation, date and owner (ACM 1.3, 2.5)."
+      },
+      {
+        "id": "P26-3",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 5,
+        "problem": "Design a privacy-by-default data flow for loan history that still allows a recommendation feature. Name the GDPR Art. 25 elements you implement.",
+        "solution": "Default: active loans only; returned loans deleted/anonymised after N days (25(2): only necessary data, limited storage period). Opt-in 'remember my history' per member, revocable, purpose-limited to recommendations. Recommender reads pseudonymised events (key held by the loans service) or aggregates (25(1): pseudonymisation, data minimisation). Enforce with a retention fitness function and access policy tests."
+      },
+      {
+        "id": "P26-4",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "Write the structured case analysis (≤ 900 words): facts, stakeholders, harms, options, principles, recommendation, communication plan.",
+        "solution": "See the caseStudy modelAnswer; marked with the lesson rubric. Full marks need explicit uncertainty (what needs legal/DPO input), at least three options, correct use of ACM principles by number, and a communication plan that is true."
+      },
+      {
+        "id": "P26-5",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "When is taking on technical debt ethically acceptable? Give two conditions and one counter-example from the case.",
+        "solution": "Acceptable when (1) the people who bear the interest know and agree (disclosed, owned, dated) and (2) the interest does not fall on people who cannot consent and are seriously harmed. Counter-example: labelling inaccessible sign-in as 'minor tech debt' moves the interest onto disabled members who were not asked."
+      },
+      {
+        "id": "P26-6",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Explain, with the lesson 24 vocabulary, why accessibility is an architectural concern and not only a UI task.",
+        "solution": "It is a quality attribute (ISO/IEC 25010:2023 interaction capability, subcharacteristic inclusivity) whose response depends on structural choices – the identity provider, component library, client rendering, how errors and status messages flow – that are expensive to change late. It belongs in the utility tree as a measurable scenario and in release gates."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Facts and uncertainty",
+        "excellent": "Separates facts, assumptions and questions for experts",
+        "adequate": "Mostly separated",
+        "inadequate": "Treats assumptions as facts",
+        "weight": 15
+      },
+      {
+        "criterion": "Stakeholders and harms",
+        "excellent": "All affected groups incl. least advantaged; severity and reversibility weighed",
+        "adequate": "Main groups only",
+        "inadequate": "Only the business view",
+        "weight": 20
+      },
+      {
+        "criterion": "Use of frameworks",
+        "excellent": "ACM principles, WCAG SCs and Art. 25 cited precisely and applied",
+        "adequate": "Cited but applied loosely",
+        "inadequate": "Name-dropped or misquoted",
+        "weight": 25
+      },
+      {
+        "criterion": "Options and recommendation",
+        "excellent": "≥ 3 options, a justified choice with conditions and fallback",
+        "adequate": "2 options, justified",
+        "inadequate": "One option asserted",
+        "weight": 25
+      },
+      {
+        "criterion": "Honest communication",
+        "excellent": "Statement is true, specific, dated, owned",
+        "adequate": "True but vague",
+        "inadequate": "Misleading",
+        "weight": 15
+      }
+    ],
+    "sources": [
+      {
+        "title": "ACM Code of Ethics and Professional Conduct (adopted 22 June 2018)",
+        "url": "https://www.acm.org/code-of-ethics"
+      },
+      {
+        "title": "Software Engineering Code of Ethics and Professional Practice 5.2 (ACM/IEEE-CS joint task force)",
+        "url": "https://www.computer.org/education/code-of-ethics"
+      },
+      {
+        "title": "W3C Web Content Accessibility Guidelines (WCAG) 2.2, W3C Recommendation (5 Oct 2023, updated 12 Dec 2024)",
+        "url": "https://www.w3.org/TR/WCAG22/"
+      },
+      {
+        "title": "W3C WAI – What's New in WCAG 2.2",
+        "url": "https://www.w3.org/WAI/standards-guidelines/wcag/new-in-22/"
+      },
+      {
+        "title": "W3C press release (21 Oct 2025): WCAG 2.2 approved as ISO/IEC 40500:2025",
+        "url": "https://www.w3.org/press-releases/2025/wcag22-iso-pas/"
+      },
+      {
+        "title": "Regulation (EU) 2016/679 (GDPR), Article 25 – Data protection by design and by default (EUR-Lex)",
+        "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj"
+      },
+      {
+        "title": "Irish Data Protection Commission – Inquiry concerning Meta Dataset (decision 25 Nov 2022, Art. 25(1) and 25(2), €265m)",
+        "url": "https://www.dataprotection.ie/en/dpc-guidance/decisions/inquiry-concerning-meta-dataset-november-2022"
+      },
+      {
+        "title": "Robles v. Domino's Pizza, LLC, No. 17-55504 (9th Cir. 15 Jan 2019), opinion",
+        "url": "https://cdn.ca9.uscourts.gov/datastore/opinions/2019/01/15/17-55504.pdf"
+      },
+      {
+        "title": "Directive (EU) 2019/882 – European Accessibility Act (EUR-Lex summary)",
+        "url": "https://eur-lex.europa.eu/legal-content/ENG/LSU/?uri=CELEX:32019L0882"
+      },
+      {
+        "title": "ALA – Privacy: An Interpretation of the Library Bill of Rights",
+        "url": "https://www.ala.org/advocacy/intfreedom/librarybill/interpretations/privacy"
+      },
+      {
+        "title": "Cunningham (1992) OOPSLA experience report: The WyCash Portfolio Management System (the debt metaphor)",
+        "url": "https://c2.com/doc/oopsla92.html"
+      }
+    ],
+    "seeAlso": [
+      "L200 #10 Authentication with OpenID Connect (code flow + PKCE): where SC 3.3.8 Accessible Authentication is won or lost.",
+      "L400 #18 Multi-tenancy: shared schema vs schema per tenant vs database per tenant: data isolation is part of privacy by design.",
+      "L400 #19 Policy as code: RBAC vs ABAC, policy tests and decision logs: enforce 'analytics never reads member identifiers' as a tested policy.",
+      "L100 #6 Documenting architecture: C4 diagrams as text and an ADR: record the launch decision and its debt in an ADR."
+    ],
+    "next": "L500 lesson 27 – Reading seminar: Parnas (1972) and the SEI ATAM report (2000)",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "Content-only lesson (no code). Every cited source was retrieved on 2026-10-30; problem answers are qualitative and marked with the rubric. This is not legal advice.",
+      "pendingCi": []
+    }
+  },
+  {
+    "id": "reading-seminar-parnas-atam",
+    "number": 27,
+    "level": "L500",
+    "phase": "Theory & rigour",
+    "title": "Reading seminar: Parnas (1972) and the SEI ATAM report (2000)",
+    "category": "primary literature",
+    "description": "Read two foundational primary sources – Parnas on decomposition criteria and the SEI's Architecture Tradeoff Analysis Method – with guiding questions, then write a critical response that connects them to Library Loans.",
+    "outcome": "You can summarise each source's claim and evidence in your own words, critique its assumptions in today's context, and use it to justify or challenge a design decision in the course project.",
+    "environment": "Both sources are free to read online (links in readings). Summaries only – do not copy the texts.",
+    "estimatedTime": "5 hours (reading 2.5 h, seminar 1 h, response 1.5 h)",
+    "prerequisites": [
+      "Lessons 23 and 24",
+      "Ability to read a technical paper: abstract → claims → evidence → limitations"
+    ],
+    "learningObjectives": [
+      "Explain Parnas's criterion for decomposition and the evidence he offers (the KWIC comparison).",
+      "Explain ATAM's inputs, steps and outputs (utility tree, scenarios, risks, sensitivity and trade-off points).",
+      "Critique each source's assumptions and evaluate how well they transfer to services, cloud deployment and teams today.",
+      "Analyze a Library Loans decision with both sources and argue a position in a referenced critical response."
+    ],
+    "glossary": [
+      {
+        "term": "KWIC index",
+        "meaning": "Key Word In Context: Parnas's example system that lists all circular shifts of all lines alphabetically."
+      },
+      {
+        "term": "decomposition criterion",
+        "meaning": "The rule used to split a system into modules: by processing steps (conventional) or by design decisions to hide (Parnas)."
+      },
+      {
+        "term": "ATAM",
+        "meaning": "Architecture Tradeoff Analysis Method (SEI): a scenario-based evaluation that surfaces risks, sensitivity points and trade-off points."
+      },
+      {
+        "term": "growth / exploratory scenario",
+        "meaning": "ATAM scenario types: anticipated change vs extreme change that stresses the architecture (besides use-case scenarios)."
+      },
+      {
+        "term": "critical response",
+        "meaning": "A short argued essay: claim, evidence from the reading, counter-argument, and application – not a summary."
+      }
+    ],
+    "conceptNote": "content/concepts/L500/27-reading-seminar.md",
+    "conceptSummary": "Parnas argues that modules should hide design decisions likely to change; ATAM turns 'which qualities matter and where they trade off' into a repeatable stakeholder process. Read them for their arguments, then test them against Library Loans.",
+    "readings": [
+      {
+        "citation": "Parnas, D. L. (1972). On the criteria to be used in decomposing systems into modules. Communications of the ACM, 15(12), 1053–1058. doi:10.1145/361598.361623",
+        "url": "https://cacm.acm.org/research/on-the-criteria-to-be-used-in-decomposing-systems-into-modules/",
+        "why": "The origin of information hiding: the criterion behind every boundary, port and module rule in this course. Access: the ACM Digital Library has been fully open access since 1 January 2026; copyright remains with ACM – read it there and summarise, do not reproduce.",
+        "guidingQuestions": [
+          "What problem with 'conventional' modularisation does Parnas identify, and what three benefits of modular programming does he expect?",
+          "Describe the two KWIC decompositions in your own words. Which design decisions does each module 'know'? Check the lab's KWIC model (labs/L500/23-modularity-theory/modularity.py) against the paper and list any disagreement.",
+          "Which changes does Parnas use to compare the decompositions, and what kind of evidence is this (experiment, argument, case)?",
+          "What does Parnas say about efficiency of the unconventional decomposition and how it might be implemented? Is that concern still relevant for in-process modules and for network services?",
+          "Where in Library Loans (L100 #3, L200 #7, L400 #17) is a decision hidden, and where is one leaked across a boundary?"
+        ],
+        "responsePrompt": "In 600–800 words, argue for or against: 'Microservice boundaries should follow Parnas's criterion, not team or business-capability boundaries.' Use at least two specific points from the paper (paraphrased, with page or section reference) and one Library Loans example."
+      },
+      {
+        "citation": "Kazman, R., Klein, M., & Clements, P. (2000). ATAM: Method for Architecture Evaluation (CMU/SEI-2000-TR-004). Software Engineering Institute, Carnegie Mellon University.",
+        "url": "https://www.sei.cmu.edu/library/atam-method-for-architecture-evaluation/",
+        "why": "The reference description of scenario-based architecture evaluation: utility trees, scenario types and the vocabulary of risks, non-risks, sensitivity and trade-off points used in lesson 24. Access: free PDF download from the SEI Digital Library; the report states 'unlimited distribution subject to the copyright' (© 2000 Carnegie Mellon University) – summarise, do not reproduce.",
+        "guidingQuestions": [
+          "What is ATAM for, according to the authors, and what is it explicitly not trying to do (think: precise prediction)?",
+          "Explain the nine steps and the two phases. Which stakeholders take part in which steps, and why does that matter?",
+          "How is a utility tree built and prioritised? Why do the authors prefer H/M/L to a 0–1 scale?",
+          "Define risk, non-risk, sensitivity point and trade-off point in your own words and give one Library Loans example of each.",
+          "The report is from 2000. Which assumptions (e.g. a stable architecture document, an on-site evaluation event) fit poorly with continuous delivery, and how would you adapt the method (e.g. ADRs, fitness functions)?"
+        ],
+        "responsePrompt": "In 600–800 words, critique ATAM as a practice for a small team that ships Library Loans weekly. Propose a 'lightweight ATAM' (what you keep, drop and automate), and justify each choice with the report and with evidence from this course (scorecard, fitness functions, SLOs)."
+      }
+    ],
+    "problemSet": [
+      {
+        "id": "P27-1",
+        "type": "short-answer",
+        "difficulty": 1,
+        "marks": 3,
+        "problem": "State Parnas's decomposition criterion in one sentence in your own words.",
+        "solution": "Begin with a list of difficult or likely-to-change design decisions and make each a module that hides that decision behind an interface revealing as little as possible."
+      },
+      {
+        "id": "P27-2",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Give ATAM's definition of a sensitivity point and a trade-off point in your own words, with one Library Loans example each.",
+        "solution": "Sensitivity point: an architectural property a quality response depends on strongly – e.g. the database's availability bounds request-path availability (T24.1). Trade-off point: a property that is a sensitivity point for several qualities in opposite directions – e.g. replicating the database raises availability but adds operational complexity and consistency questions."
+      },
+      {
+        "id": "P27-3",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Name ATAM's three scenario types and write one Library Loans example of each.",
+        "solution": "Use case: a member renews a loan at peak and gets a response within 300 ms. Growth: add 400 more libraries with p99 unchanged by adding instances only. Exploratory: the identity provider is down for a day – members can still return books and staff can lend at the desk."
+      },
+      {
+        "id": "P27-4",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "Write the critical response for reading 1 (Parnas).",
+        "solution": "Marked with the rubric: a clear thesis; accurate paraphrase of Parnas (criterion, KWIC comparison, efficiency remark); a counter-argument (team ownership, Conway's law, deployment independence) considered fairly; a Library Loans example (e.g. the fines rules hidden behind the strangler facade in L400 #17); references."
+      },
+      {
+        "id": "P27-5",
+        "type": "essay",
+        "difficulty": 3,
+        "marks": 10,
+        "problem": "Write the critical response for reading 2 (ATAM).",
+        "solution": "Marked with the rubric: accurate account of ATAM's purpose (risk identification, not precise prediction), steps and outputs; a concrete lightweight variant (utility tree kept in the repo, scenarios as tests, risks as ADR consequences, fitness functions instead of one-off analysis); limits acknowledged (stakeholder breadth is the part automation cannot replace)."
+      },
+      {
+        "id": "P27-6",
+        "type": "short-answer",
+        "difficulty": 2,
+        "marks": 4,
+        "problem": "Explain why you must summarise rather than reproduce these sources, and how you would quote correctly if needed.",
+        "solution": "Both are copyrighted (ACM; Carnegie Mellon University); free access is not a licence to republish. Use short quotations only where the exact words matter, in quotation marks with author, year and page or section, and otherwise paraphrase with a citation (ACM Code 1.5: credit creators, respect copyright)."
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Accuracy of summary",
+        "excellent": "Claims, evidence and limits of the source stated correctly in own words",
+        "adequate": "Mostly accurate",
+        "inadequate": "Misrepresents the source",
+        "weight": 25
+      },
+      {
+        "criterion": "Critical argument",
+        "excellent": "Clear thesis, counter-argument handled fairly",
+        "adequate": "Thesis without counter-argument",
+        "inadequate": "Summary only",
+        "weight": 30
+      },
+      {
+        "criterion": "Application",
+        "excellent": "Specific Library Loans example tied to course evidence",
+        "adequate": "Generic example",
+        "inadequate": "No application",
+        "weight": 25
+      },
+      {
+        "criterion": "Referencing and integrity",
+        "excellent": "Precise references; quotations short and marked",
+        "adequate": "Minor citation gaps",
+        "inadequate": "Unattributed copying",
+        "weight": 20
+      }
+    ],
+    "sources": [
+      {
+        "title": "Parnas (1972) On the criteria to be used in decomposing systems into modules, CACM 15(12) (doi 10.1145/361598.361623)",
+        "url": "https://cacm.acm.org/research/on-the-criteria-to-be-used-in-decomposing-systems-into-modules/"
+      },
+      {
+        "title": "Kazman, Klein & Clements (2000) ATAM: Method for Architecture Evaluation, CMU/SEI-2000-TR-004",
+        "url": "https://www.sei.cmu.edu/library/atam-method-for-architecture-evaluation/"
+      },
+      {
+        "title": "ACM (1 Jan 2026) ACM is now fully open access",
+        "url": "https://www.acm.org/articles/bulletins/2026/january/acm-open-access"
+      }
+    ],
+    "seeAlso": [
+      "L100 #3 Modular monolith boundaries with a fitness function: a Parnas module with a checked interface.",
+      "L400 #17 Strangler-fig decomposition: facade, branch by abstraction, parallel run, cut-over: hiding the fines decision behind a facade before moving it.",
+      "L400 #22 Capstone: Library Loans, production-ready: the scorecard is a continuously run, automated cousin of an ATAM evaluation."
+    ],
+    "next": "Assessment pack: content/assessment/ (syllabus, midterm, final, concept inventory, capstone oral defence, ADR peer review)",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "validation": {
+      "status": "validated-local",
+      "how": "Content-only lesson (no code). Every cited source was retrieved on 2026-10-30; problem answers are qualitative and marked with the rubric. This is not legal advice.",
+      "pendingCi": []
+    }
+  }
+]

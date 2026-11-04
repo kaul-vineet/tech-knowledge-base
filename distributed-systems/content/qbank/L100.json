@@ -1,0 +1,778 @@
+[
+  {
+    "id": "ds-L100-001",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "In this course's local lab, what makes something a separate 'node'?",
+    "options": [
+      "A thread inside one Python process that shares memory with the others",
+      "A separate physical machine, because one laptop cannot host more than one real node",
+      "A Docker container, which is required before any lab will run",
+      "Its own OS process and port, talking to the others only over the network"
+    ],
+    "answer": 3,
+    "explanation": "Each node is its own process with its own memory and port; they share nothing but the network, which is enough to practise real calls and failures. Threads share memory, so they would hide exactly the failures the labs study.",
+    "source": "Lesson 1 overview and concepts"
+  },
+  {
+    "id": "ds-L100-002",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Why does lab.py poll each node's /health endpoint instead of calling time.sleep(1) after starting it?",
+    "options": [
+      "Start-up time varies; polling waits just long enough and notices a node that never starts",
+      "time.sleep is unreliable on Windows and macOS, so the lab avoids it on every platform it supports",
+      "Polling /health makes the node finish its start-up faster than sleeping would",
+      "The health check reserves the port so another process cannot take it first"
+    ],
+    "answer": 0,
+    "explanation": "Start-up is asynchronous: a fixed sleep is either too long or too short, and it cannot detect a node that crashed on start. Polling does not speed the node up; it only stops waiting at the right moment.",
+    "source": "Lesson 1 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L100-003",
+    "level": "L100",
+    "lesson": 1,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "node1 is running on port 8001. You start a second node with --port 8001 on Linux. What happens?",
+    "options": [
+      "The second node takes over port 8001, and node1 silently stops answering its health checks",
+      "The second node exits with 'Address already in use'; node1 stays healthy",
+      "Both nodes share port 8001 and answer requests in turns",
+      "node1 crashes because two processes tried to bind the same port"
+    ],
+    "answer": 1,
+    "explanation": "The second bind fails (Errno 98 on Linux, 48 on macOS), so that node never becomes healthy while node1 keeps working. Nothing is shared or taken over: the first process owns the port.",
+    "source": "Lesson 1 tryIt 1"
+  },
+  {
+    "id": "ds-L100-004",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why do the optional container nodes bind 0.0.0.0 while the laptop nodes bind 127.0.0.1?",
+    "options": [
+      "0.0.0.0 is faster than loopback, which matters once nodes run in containers",
+      "In a container, traffic arrives on the container's network interface, not its loopback",
+      "127.0.0.1 is IPv6-only inside containers, so IPv4 clients cannot reach it",
+      "Container runtimes forbid binding the loopback address for security reasons, so 0.0.0.0 is the only option"
+    ],
+    "answer": 1,
+    "explanation": "Inside a container, requests come in on the container's own interface, so a loopback-only server would be unreachable; on the laptop, loopback keeps the unauthenticated demo private. Speed has nothing to do with it.",
+    "source": "Lesson 1 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L100-005",
+    "level": "L100",
+    "lesson": 1,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "You start node1, node2 and node3, stop only node2, then health-check all three. What do you see?",
+    "options": [
+      "All three fail because the cluster lost a member",
+      "node1 and node3 time out waiting for node2 to answer",
+      "node1 OK, node2 connection refused, node3 OK",
+      "node2 still answers /health until it is restarted"
+    ],
+    "answer": 2,
+    "explanation": "Each node fails independently: the stopped process refuses connections and the others are unaffected. Nothing in the lab couples the nodes, so there is no cluster-wide failure or wait.",
+    "source": "Lesson 1 tryIt 2"
+  },
+  {
+    "id": "ds-L100-006",
+    "level": "L100",
+    "lesson": 1,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "lab.py stops with 'RuntimeError: node1 did not start'. What is the best first step?",
+    "options": [
+      "Raise the health-poll timeout to a few minutes and run lab.py again",
+      "Switch the nodes to bind 0.0.0.0 so that the health check can reach them from any interface",
+      "Run python node.py --port 8001 by hand to see the real error, e.g. port taken",
+      "Reinstall Python, because this error always means a broken install"
+    ],
+    "answer": 2,
+    "explanation": "Running the node by hand shows the underlying error (often the port is taken or Python is not found); then change LAB_BASE_PORT if needed. Waiting longer does not help a node that already exited.",
+    "source": "Lesson 1 troubleshooting"
+  },
+  {
+    "id": "ds-L100-007",
+    "level": "L100",
+    "lesson": 2,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "A sends a request to B. Which list names every possible outcome A must handle?",
+    "options": [
+      "A success response or an error response; HTTP guarantees that one of the two always comes back",
+      "A success response, or an exception if B's code has a bug",
+      "A 200 response, a 404 response, or a 500 response",
+      "A success response, an error response, or no response at all (outcome unknown)"
+    ],
+    "answer": 3,
+    "explanation": "A remote call is two messages and either can be lost or late, so 'no response' is a third outcome in which A cannot know whether B did the work. Assuming every request gets some status code is the classic mistake.",
+    "source": "Lesson 2 checkYourself"
+  },
+  {
+    "id": "ds-L100-008",
+    "level": "L100",
+    "lesson": 2,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Why does the lab measure latency with time.perf_counter() instead of time.time()?",
+    "options": [
+      "time() only has whole-second resolution on most platforms",
+      "perf_counter() is monotonic; time() can jump backwards when the clock is set",
+      "perf_counter() measures only CPU time, which leaves out the network waiting you do not control",
+      "time() returns the server's clock, not the client's"
+    ],
+    "answer": 1,
+    "explanation": "Durations need a clock that never goes backwards; the wall clock can be adjusted by NTP or a user. perf_counter() measures elapsed time including waiting, not CPU time.",
+    "source": "Lesson 2 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L100-009",
+    "level": "L100",
+    "lesson": 2,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "B answers 404 {'error': \"unknown item 'kiwi'\"}. Should A retry the request?",
+    "options": [
+      "No: 404 is a fact about the request that asking again will not change",
+      "Yes: retry up to three times in case B was still starting up",
+      "Yes, but only after a full-jitter backoff so B is not overloaded",
+      "No: A should treat 404 as B being down and stop calling B entirely"
+    ],
+    "answer": 0,
+    "explanation": "A 4xx answer says the request itself is the problem, so repeating it unchanged wastes capacity. It is also a normal result, not evidence that B is down.",
+    "source": "Lesson 2 checkYourself; Lesson 4 concepts"
+  },
+  {
+    "id": "ds-L100-010",
+    "level": "L100",
+    "lesson": 2,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "To serve one page, A calls B, C and D, which take 50 ms, 30 ms and 20 ms. Ignoring overhead, how long do the calls take if made one after another, and if made in parallel?",
+    "options": [
+      "100 ms sequentially, 50 ms in parallel",
+      "50 ms sequentially, 100 ms in parallel",
+      "100 ms sequentially, 100 ms in parallel",
+      "33 ms sequentially, 50 ms in parallel"
+    ],
+    "answer": 0,
+    "explanation": "Sequential calls add up (50 + 30 + 20); parallel calls wait only for the slowest one. This is why long sequential chains on a hot path are a warning sign.",
+    "source": "Lesson 2 useWhen; tryIt 2"
+  },
+  {
+    "id": "ds-L100-011",
+    "level": "L100",
+    "lesson": 2,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "What does this latency summary print?",
+    "code": "lat_ms = [3.1, 1.2, 1.4, 9.8, 1.3]\ns = sorted(lat_ms)\nprint(f\"min={s[0]} median={s[len(s) // 2]} max={s[-1]}\")",
+    "options": [
+      "min=1.2 median=1.4 max=9.8",
+      "min=1.2 median=3.1 max=9.8",
+      "min=3.1 median=1.4 max=9.8",
+      "min=1.2 median=1.3 max=9.8"
+    ],
+    "answer": 0,
+    "explanation": "The list is sorted first, so the middle of five values is the third smallest (1.4). Taking the median of the unsorted list would give 3.1 instead.",
+    "source": "Lesson 2 steps (latency summary)"
+  },
+  {
+    "id": "ds-L100-012",
+    "level": "L100",
+    "lesson": 2,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "This stand-in for service B is called for two items. What is printed?",
+    "code": "PRICES = {\"pear\": 4}\n\ndef call_b(item):\n    if item not in PRICES:\n        return 404, {\"error\": f\"unknown item {item!r}\"}\n    return 200, {\"item\": item, \"price\": PRICES[item]}\n\nprint([(s, body.get(\"price\")) for s, body in map(call_b, [\"pear\", \"kiwi\"])])",
+    "options": [
+      "[(200, 4), (200, None)]",
+      "[(200, 4), (404, None)]",
+      "[(200, 4)]",
+      "[(200, 4), (404, 'kiwi')]"
+    ],
+    "answer": 1,
+    "explanation": "Non-2xx answers are normal results: 'kiwi' returns status 404 with an error body, so .get('price') gives None. The call does not vanish or raise; it is one more outcome to handle.",
+    "source": "Lesson 2 concepts"
+  },
+  {
+    "id": "ds-L100-013",
+    "level": "L100",
+    "lesson": 2,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A is pointed at a localhost port where nothing listens and calls B. Which outcome does A get?",
+    "options": [
+      "An error response: HTTP 503 Service Unavailable",
+      "No response: URLError wrapping ConnectionRefusedError",
+      "An error response: HTTP 404 Not Found",
+      "A hang until A's 2-second timeout expires"
+    ],
+    "answer": 1,
+    "explanation": "With nobody listening, the operating system refuses the connection immediately, so there is no HTTP response at all. A timeout would only occur if packets were dropped rather than refused.",
+    "source": "Lesson 2 tryIt 1; troubleshooting"
+  },
+  {
+    "id": "ds-L100-014",
+    "level": "L100",
+    "lesson": 3,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "What does urlopen(url, timeout=0.5) actually limit?",
+    "options": [
+      "Each blocking socket operation, not the total duration of the call",
+      "The total time of the call, including DNS, connect and reading the body",
+      "Only the connect phase; reading the body is never limited",
+      "The time the server is allowed to spend processing the request"
+    ],
+    "answer": 0,
+    "explanation": "The timeout applies per blocking socket operation, so a slow trickle of data can exceed 0.5 s overall; enforce a total deadline yourself if you need one. It does not limit the server at all.",
+    "source": "Lesson 3 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L100-015",
+    "level": "L100",
+    "lesson": 3,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "A request has one 0.8 s deadline. The first call to B took 0.25 s and the second took 0.35 s. What timeout should the third call get?",
+    "options": [
+      "0.8 s",
+      "0.55 s",
+      "0.2 s",
+      "0.27 s"
+    ],
+    "answer": 2,
+    "explanation": "Each call's timeout is deadline minus time already spent: 0.8 - 0.25 - 0.35. Giving every call the full 0.8 s would let the request run far beyond its budget.",
+    "source": "Lesson 3 tryIt 2; glossary (deadline)"
+  },
+  {
+    "id": "ds-L100-016",
+    "level": "L100",
+    "lesson": 3,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A dependency handles 200,000 normal requests a day. Roughly how many of them would time out falsely if you set the timeout at its p99 latency instead of its p99.9?",
+    "options": [
+      "about 200 (vs about 2,000 with p99.9)",
+      "about 20 (vs about 200 with p99.9)",
+      "about 2,000 (vs about 20 with p99.9)",
+      "about 2,000 (vs about 200 with p99.9)"
+    ],
+    "answer": 3,
+    "explanation": "A timeout at the p99 means 1% of normal requests are slower than it (2,000 of 200,000); at the p99.9 only 0.1% are. Picking the percentile is picking your false-timeout rate.",
+    "source": "Lesson 3 concepts; steps (stricter false-timeout rate)"
+  },
+  {
+    "id": "ds-L100-017",
+    "level": "L100",
+    "lesson": 3,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does gRPC send a relative timeout to the next server rather than an absolute deadline timestamp?",
+    "options": [
+      "Relative timeouts are shorter to encode in the request headers",
+      "The servers' clocks may disagree; a relative timeout is immune to clock skew",
+      "An absolute deadline cannot be represented in Protocol Buffers",
+      "The next server should be free to extend the deadline if it is busy, which a timestamp would forbid"
+    ],
+    "answer": 1,
+    "explanation": "Each server converts the remaining time against its own clock, so skew between hosts does not shrink or stretch the budget. The point is correctness, not header size.",
+    "source": "Lesson 3 checkYourself"
+  },
+  {
+    "id": "ds-L100-018",
+    "level": "L100",
+    "lesson": 3,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "A gives up on B after its 0.5 s timeout. What happens to the work B was doing?",
+    "options": [
+      "B stops immediately, because closing the TCP connection interrupts the handler that is running",
+      "B rolls back everything it did for that request",
+      "B keeps working; a client timeout does not cancel work on the server",
+      "B finishes and then retries sending the response to A"
+    ],
+    "answer": 2,
+    "explanation": "The timeout only frees the caller; B keeps sleeping or computing unless it checks for cancellation itself. That is why servers should stop work for cancelled requests where they can.",
+    "source": "Lesson 3 caution"
+  },
+  {
+    "id": "ds-L100-019",
+    "level": "L100",
+    "lesson": 3,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "This handler is meant to catch every timeout, yet some timeouts escape as URLError. Why?",
+    "code": "from urllib.request import urlopen\n\ndef fetch(url):\n    try:\n        with urlopen(url, timeout=0.5) as r:\n            return r.read()\n    except TimeoutError:\n        return \"timed out\"",
+    "options": [
+      "The timeout value is too small; URLError means the value was rejected",
+      "URLError is raised only for 404s, so these errors are not timeouts at all",
+      "TimeoutError must be imported from urllib.error, not used as a builtin",
+      "Timeouts while connecting are wrapped in URLError; catch both exception types"
+    ],
+    "answer": 3,
+    "explanation": "urllib raises TimeoutError for timeouts while reading but wraps connect-phase timeouts in URLError, so a handler must catch both. The value itself was accepted; it simply expired in a different phase.",
+    "source": "Lesson 3 troubleshooting"
+  },
+  {
+    "id": "ds-L100-020",
+    "level": "L100",
+    "lesson": 3,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Two sequential calls share one 0.5 s deadline. What does this simulation print?",
+    "code": "deadline, now, out = 0.5, 0.0, []\nfor cost in [0.3, 0.3]:\n    timeout = round(deadline - now, 2)\n    if cost > timeout:\n        out.append(f\"timeout {timeout}\")\n        break\n    now = round(now + cost, 2)\n    out.append(f\"ok {now}\")\nprint(out)",
+    "options": [
+      "['ok 0.3', 'ok 0.6']",
+      "['ok 0.3', 'timeout 0.5']",
+      "['ok 0.3', 'timeout 0.2']",
+      "['timeout 0.2']"
+    ],
+    "answer": 2,
+    "explanation": "Call 1 gets the full 0.5 s and finishes at 0.3; call 2 only gets the 0.2 s that is left and times out after 0.2 s, so the total stays within budget. Giving call 2 a fresh 0.5 s would let the request run to 0.6 s.",
+    "source": "Lesson 3 tryIt 2"
+  },
+  {
+    "id": "ds-L100-021",
+    "level": "L100",
+    "lesson": 4,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "With base 20 ms and cap 500 ms, what range can the full-jitter sleep fall in before attempt 5 (attempts count from 0)?",
+    "options": [
+      "0 to 500 ms",
+      "0 to 640 ms",
+      "320 to 640 ms",
+      "exactly 500 ms"
+    ],
+    "answer": 0,
+    "explanation": "The ceiling is min(cap, base * 2^attempt) = min(500, 640), and full jitter draws uniformly from 0 up to that ceiling. Forgetting the cap gives 640 ms; forgetting the jitter gives a fixed sleep.",
+    "source": "Lesson 4 concepts; glossary"
+  },
+  {
+    "id": "ds-L100-022",
+    "level": "L100",
+    "lesson": 4,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Envoy-style backoff uses base 25 ms and max 250 ms with full jitter. What range can the sleep fall in before attempt 3 (counting from 0)?",
+    "options": [
+      "0 to 250 ms",
+      "100 to 200 ms",
+      "0 to 200 ms",
+      "0 to 75 ms"
+    ],
+    "answer": 2,
+    "explanation": "The ceiling is min(250, 25 * 2^3) = 200 ms, still below the cap, and full jitter picks anywhere from 0 to it. The cap only matters from attempt 4 on.",
+    "source": "Lesson 4 inRealSystems; concepts"
+  },
+  {
+    "id": "ds-L100-023",
+    "level": "L100",
+    "lesson": 4,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A client makes up to 4 attempts, and the gateway it calls also makes up to 3 attempts per incoming request. In the worst case, how many calls can reach the backend for one user request?",
+    "options": [
+      "7 calls",
+      "12 calls",
+      "4 calls",
+      "16 calls"
+    ],
+    "answer": 1,
+    "explanation": "Retries at each layer multiply: every one of the client's 4 attempts can become 3 backend calls. Adding the layers (4 + 3) underestimates the storm.",
+    "source": "Lesson 4 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L100-024",
+    "level": "L100",
+    "lesson": 4,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Which failures should a client retry automatically?",
+    "options": [
+      "503, 429, connection resets and timeouts",
+      "400, 404, 503 and timeouts",
+      "Every non-2xx status, but never timeouts",
+      "Only 500, since other codes are final"
+    ],
+    "answer": 0,
+    "explanation": "Transient failures (429/502/503/504, connection errors, timeouts) may succeed on another try; 400 and 404 describe the request and will not fix themselves. Timeouts are exactly the uncertain case that retries are for, given idempotency.",
+    "source": "Lesson 4 concepts"
+  },
+  {
+    "id": "ds-L100-025",
+    "level": "L100",
+    "lesson": 4,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "100 clients fail at the same moment and back off before attempt 2. Why use full jitter instead of a fixed 0.08 s sleep?",
+    "options": [
+      "Jitter shortens the average wait, so every request finishes sooner overall than with a fixed sleep",
+      "A fixed sleep lands all 100 retries in one 10 ms slot; jitter spreads them out",
+      "A fixed sleep is never allowed to exceed the cap, but jitter can",
+      "Jitter guarantees each client a unique time slot with no overlap"
+    ],
+    "answer": 1,
+    "explanation": "In the lab the fixed sleep put 100 of 100 retries in one 10 ms slot, recreating the spike, while full jitter kept the busiest slot to at most 17. Jitter reduces collisions; it does not guarantee unique slots.",
+    "source": "Lesson 4 tryIt 2; checkYourself"
+  },
+  {
+    "id": "ds-L100-026",
+    "level": "L100",
+    "lesson": 4,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "This is the lab's retry budget with default settings. What does the snippet print?",
+    "code": "class RetryBudget:\n    def __init__(self, max_tokens=10, ratio=0.5):\n        self.max, self.ratio, self.tokens = max_tokens, ratio, float(max_tokens)\n    def record(self, ok):\n        self.tokens = min(self.max, self.tokens + self.ratio) if ok else max(0.0, self.tokens - 1)\n    def can_retry(self):\n        return self.tokens >= self.max / 2\n\nb, out = RetryBudget(), []\nfor ok in [False] * 4 + [True] * 2 + [False] * 3:\n    b.record(ok)\n    out.append(b.can_retry())\nprint(out.count(True), b.tokens)",
+    "options": [
+      "8 4.0",
+      "6 7.0",
+      "9 5.0",
+      "5 4.0"
+    ],
+    "answer": 0,
+    "explanation": "Four failures take tokens from 10 to 6, two successes add 0.5 each (7.0), and three more failures leave 6, 5, then 4; can_retry() needs at least 5 tokens, so only the last check is False. Successes refill slowly (0.5) while failures cost 1, which is what stops a retry storm.",
+    "source": "Lesson 4 code (RetryBudget); testCases"
+  },
+  {
+    "id": "ds-L100-027",
+    "level": "L100",
+    "lesson": 4,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "During an outage of B this helper makes things much worse. What is the most serious problem?",
+    "code": "import time\n\ndef get_with_retry(fetch, url):\n    attempt = 0\n    while True:\n        try:\n            return fetch(url)\n        except Exception:\n            time.sleep(min(0.5, 0.02 * 2 ** attempt))\n            attempt += 1",
+    "options": [
+      "No attempt limit or budget: every caller retries forever while B is down",
+      "It should use max() instead of min() so the sleep can grow past 0.5 s",
+      "The exponent should be attempt + 1 so the first sleep is 40 ms",
+      "It should catch BaseException as well, so that timeouts and interrupts are retried like other errors"
+    ],
+    "answer": 0,
+    "explanation": "The loop never gives up and retries every exception, including 4xx, so a sick B receives an unbounded retry storm; it also lacks jitter. The cap via min() is correct and is not the problem.",
+    "source": "Lesson 4 concepts; troubleshooting"
+  },
+  {
+    "id": "ds-L100-028",
+    "level": "L100",
+    "lesson": 4,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Replaying the lab's flaky B (30% 503s) gave 5/10 successes with max_attempts=1 and 8/10 with 17 attempts at max_attempts=4. What did the retries buy and cost?",
+    "options": [
+      "3 more successful requests at no extra load on B",
+      "8 more successful requests for 17 extra calls to B",
+      "No benefit: 503s are permanent, so the extra calls were wasted",
+      "3 more successful requests for 7 extra calls to B"
+    ],
+    "answer": 3,
+    "explanation": "Going from 10 to 17 attempts rescued 3 requests (5 to 8 successes), a load factor of 1.7. Retries are never free: each one spends B's capacity.",
+    "source": "Lesson 4 tryIt 1"
+  },
+  {
+    "id": "ds-L100-029",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Where should a client create the idempotency key for a payment it may retry?",
+    "options": [
+      "Inside the retry loop, so each attempt is uniquely traceable",
+      "Once per logical operation, before and outside the retry loop",
+      "On the server, after the first attempt has been processed",
+      "From the current timestamp at the moment each attempt is sent"
+    ],
+    "answer": 1,
+    "explanation": "All attempts of one operation must carry the same key so the server can recognise the retry; a new key per attempt makes every retry look like a new charge. Timestamp keys change between attempts for the same reason.",
+    "source": "Lesson 5 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L100-030",
+    "level": "L100",
+    "lesson": 5,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A retry with an idempotency key arrives while the first request with that key is still being processed. What does the IETF draft recommend the server answer?",
+    "options": [
+      "201 Created with a new charge id for the retry",
+      "422 Unprocessable Content, because the key was reused",
+      "409 Conflict, so the client retries later unchanged",
+      "400 Bad Request, because the key is not yet stored"
+    ],
+    "answer": 2,
+    "explanation": "An in-progress duplicate gets 409; the client can retry later and will then receive the stored response. 422 is for the same key with a different payload, not for a concurrent duplicate.",
+    "source": "Lesson 5 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L100-031",
+    "level": "L100",
+    "lesson": 5,
+    "type": "scenario",
+    "difficulty": 1,
+    "question": "A client reuses an existing idempotency key but changes the amount from 10 to 99. What does the lab's server do?",
+    "options": [
+      "Reject it with 422, because the payload fingerprint differs",
+      "Replay the stored response for the original amount of 10",
+      "Charge 99 as a new operation and store a second response",
+      "Return 409, because the key is still being processed"
+    ],
+    "answer": 0,
+    "explanation": "The server stores a fingerprint (hash of the payload) with the key; a mismatch means the key is being misused, so it answers 422. Silently replaying the old response would hide a client bug.",
+    "source": "Lesson 5 concepts; expectedResults"
+  },
+  {
+    "id": "ds-L100-032",
+    "level": "L100",
+    "lesson": 5,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A tiny keyed payment server receives these calls. What is printed?",
+    "code": "store, ledger = {}, []\n\ndef charge(key, amount):\n    if key in store:\n        return store[key]\n    ledger.append(amount)\n    store[key] = (201, f\"ch_{len(ledger)}\")\n    return store[key]\n\nfor key in [\"k1\", \"k1\", \"k2\", \"k1\"]:\n    charge(key, 10)\nprint(len(ledger), sum(ledger), charge(\"k2\", 10)[1])",
+    "options": [
+      "4 40 ch_4",
+      "2 20 ch_1",
+      "2 20 ch_2",
+      "3 30 ch_2"
+    ],
+    "answer": 2,
+    "explanation": "Only the first call per key adds to the ledger (k1 then k2), and every repeat replays the stored response, so the final k2 call returns ch_2. Counting every call would give 4 charges.",
+    "source": "Lesson 5 concepts (replay stored response)"
+  },
+  {
+    "id": "ds-L100-033",
+    "level": "L100",
+    "lesson": 5,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Clients send idempotency keys, yet the ledger still shows duplicate charges after lost responses. What is wrong?",
+    "code": "import uuid\n\ndef pay(send, order):\n    for attempt in range(4):\n        key = str(uuid.uuid4())\n        try:\n            return send(order, headers={\"Idempotency-Key\": key})\n        except TimeoutError:\n            continue",
+    "options": [
+      "uuid4 keys are not random enough, so two orders can collide",
+      "The loop should also retry 4xx responses, because a lost response can come back as a 400 or 404",
+      "The key must be sent in the body instead of a header",
+      "The key is generated inside the loop, so every attempt carries a new key"
+    ],
+    "answer": 3,
+    "explanation": "Because uuid4() runs per attempt, the server sees each retry as a new operation, the same overcharge as sending no key (110 instead of 50 in the lab). uuid4 collisions are not the issue.",
+    "source": "Lesson 5 tryIt 1; troubleshooting"
+  },
+  {
+    "id": "ds-L100-034",
+    "level": "L100",
+    "lesson": 5,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Five orders of 10 each are sent; the client retries until it gets a response, and 6 responses are lost in total after the server processed the request. What does the ledger total, without keys and with keys?",
+    "options": [
+      "110 without keys, 50 with keys",
+      "50 without keys, 50 with keys",
+      "110 without keys, 110 with keys",
+      "60 without keys, 50 with keys"
+    ],
+    "answer": 0,
+    "explanation": "Every lost response causes one more processed attempt, so without keys 5 + 6 = 11 charges of 10 are booked; with keys the retries replay stored responses and only 5 charges remain. This matches the lab's 110 versus 50.",
+    "source": "Lesson 5 expectedResults"
+  },
+  {
+    "id": "ds-L100-035",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is 'exactly-once delivery' the wrong name for what the lesson builds?",
+    "options": [
+      "The network guarantees delivery, so 'once' is all that is needed",
+      "Messages can still arrive several times; only the effect happens once",
+      "The server deduplicates only GET requests, not writes",
+      "Delivery is really at-most-once here, so some messages are never seen by the server at all"
+    ],
+    "answer": 1,
+    "explanation": "At-least-once delivery plus deduplication gives an exactly-once effect; the duplicates still travel and are recognised. Calling it at-most-once is wrong, because the client keeps retrying until acknowledged.",
+    "source": "Lesson 5 concepts; checkYourself"
+  },
+  {
+    "id": "ds-L100-036",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which request needs an idempotency key before a client may retry it after a timeout?",
+    "options": [
+      "PUT /users/7 replacing the whole profile",
+      "DELETE /orders/9 by its order id",
+      "GET /prices for the current price list",
+      "POST /charges with an amount to charge"
+    ],
+    "answer": 3,
+    "explanation": "POST is not idempotent, so a retried charge can double-charge; RFC 9110 makes GET, PUT and DELETE idempotent, so repeating them has the same effect. A full-value PUT is naturally safe to repeat.",
+    "source": "Lesson 5 glossary; inRealSystems"
+  },
+  {
+    "id": "ds-L100-037",
+    "level": "L100",
+    "lesson": 6,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "Node C's Lamport clock is 12. It receives a message stamped 7. What is C's clock after the receive?",
+    "options": [
+      "8",
+      "12",
+      "13",
+      "19"
+    ],
+    "answer": 2,
+    "explanation": "On receive the clock becomes max(local, received) + 1 = max(12, 7) + 1. Taking the sender's stamp plus one (8) would put this event before C's own earlier events.",
+    "source": "Lesson 6 concepts"
+  },
+  {
+    "id": "ds-L100-038",
+    "level": "L100",
+    "lesson": 6,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "All clocks start at 0. A does a local event, then sends m1 to B. B does three local events, then receives m1, then sends m2 to C. C does one local event, then receives m2. What Lamport value does C's receive get?",
+    "options": [
+      "5",
+      "3",
+      "6",
+      "2"
+    ],
+    "answer": 2,
+    "explanation": "A sends m1 with 2; B is at 3, receives to max(3, 2) + 1 = 4 and sends m2 with 5; C is at 1 and receives to max(1, 5) + 1 = 6. Answering 5 forgets the +1 on receive.",
+    "source": "Lesson 6 concepts (rules)"
+  },
+  {
+    "id": "ds-L100-039",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Event a on node A has L=3 and event b on node B has L=7. What can you conclude?",
+    "options": [
+      "a happened before b in real time",
+      "a caused b, because its timestamp is smaller",
+      "a and b are concurrent, because they are on different nodes",
+      "b did not happen-before a; a may or may not have caused b"
+    ],
+    "answer": 3,
+    "explanation": "If b had happened-before a, L(b) would be smaller than L(a), so that is ruled out; but L(a) < L(b) does not prove causality or real-time order. Concurrency is possible but not certain.",
+    "source": "Lesson 6 concepts; caution"
+  },
+  {
+    "id": "ds-L100-040",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Two events on different nodes both have Lamport value 8. What does that tell you?",
+    "options": [
+      "They happened at the same real-time instant",
+      "One caused the other, and the node id says which",
+      "One of the nodes forgot the max() rule on receive",
+      "They are concurrent: neither happened-before the other"
+    ],
+    "answer": 3,
+    "explanation": "If one happened-before the other, its Lamport value would be strictly smaller, so equal values imply concurrency. The node-id tie-break only gives a deterministic order; it does not reveal causality.",
+    "source": "Lesson 6 checkYourself; glossary"
+  },
+  {
+    "id": "ds-L100-041",
+    "level": "L100",
+    "lesson": 6,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "In the merged log, B's receive of m1 has a smaller Lamport value than A's send of m1. What is the likely bug?",
+    "code": "class Node:\n    def __init__(self):\n        self.clock = 0\n    def on_send(self):\n        self.clock += 1\n        return self.clock\n    def on_receive(self, msg_ts):\n        self.clock += 1\n        return self.clock",
+    "options": [
+      "on_send forgets to increment the clock before attaching it",
+      "Events are sorted by (node, Lamport) instead of (Lamport, node)",
+      "on_receive does clock += 1 instead of clock = max(clock, msg_ts) + 1",
+      "B's wall clock is 80 ms slow compared with A's"
+    ],
+    "answer": 2,
+    "explanation": "Without max() the receiver ignores the sender's stamp, so a receive can get a smaller value than its send (L=1 vs L=2 in the lab). Wall-clock skew cannot cause this, because Lamport values do not use wall clocks.",
+    "source": "Lesson 6 tryIt 1; troubleshooting"
+  },
+  {
+    "id": "ds-L100-042",
+    "level": "L100",
+    "lesson": 6,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "Events are sorted by (Lamport, node id) to build one merged log. What is printed?",
+    "code": "events = [(8, \"C\", \"ship\"), (8, \"A\", \"bill\"), (7, \"B\", \"recv\")]\nprint([name for _, _, name in sorted(events)])",
+    "options": [
+      "['recv', 'bill', 'ship']",
+      "['bill', 'ship', 'recv']",
+      "['ship', 'bill', 'recv']",
+      "['recv', 'ship', 'bill']"
+    ],
+    "answer": 0,
+    "explanation": "Tuples sort by Lamport value first (7 before 8), and the node id breaks the tie between the two L=8 events (A before C). The tie order is arbitrary but deterministic, which is all a merged log needs.",
+    "source": "Lesson 6 concepts; expectedResults"
+  },
+  {
+    "id": "ds-L100-043",
+    "level": "L100",
+    "lesson": 6,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this Lamport clock exchange print?",
+    "code": "class Node:\n    def __init__(self): self.c = 0\n    def local(self): self.c += 1; return self.c\n    def send(self): self.c += 1; return self.c\n    def recv(self, ts): self.c = max(self.c, ts) + 1; return self.c\n\na, b = Node(), Node()\na.local(); m = a.send(); b.local()\nprint(b.recv(m), b.send())",
+    "options": [
+      "2 3",
+      "1 2",
+      "3 3",
+      "3 4"
+    ],
+    "answer": 3,
+    "explanation": "A ticks to 1 (local) and 2 (send); B ticks to 1, then receives max(1, 2) + 1 = 3 and sends 4. Forgetting that a send also ticks the clock gives '3 3'.",
+    "source": "Lesson 6 concepts (rules)"
+  },
+  {
+    "id": "ds-L100-044",
+    "level": "L100",
+    "lesson": 6,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Related events are 10 ms apart. You make B's wall clock 5 ms slow, then 15 ms slow. What happens to the wall-clock-sorted log?",
+    "options": [
+      "1 violation at 5 ms and 2 at 15 ms; any skew breaks the order",
+      "0 causality violations at 5 ms, 1 at 15 ms; Lamport order has 0 both times",
+      "0 violations both times, because 15 ms is still too small a skew to reorder any related events",
+      "Both logs show violations, because Lamport values use wall clocks"
+    ],
+    "answer": 1,
+    "explanation": "Skew reorders events only once it exceeds the gap between related events, while Lamport order never violates causality. Saying any skew breaks the order overstates it; saying 15 ms is harmless understates it.",
+    "source": "Lesson 6 tryIt 2"
+  },
+  {
+    "id": "ds-L100-045",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "You must decide whether two edits from different nodes were concurrent so you can show a conflict. What should you use?",
+    "options": [
+      "Lamport clocks, comparing the two values for equality",
+      "Wall-clock timestamps with NTP synchronisation",
+      "A monotonic clock such as time.perf_counter() on each node, compared after the logs are merged",
+      "Vector clocks, because Lamport clocks cannot detect concurrency"
+    ],
+    "answer": 3,
+    "explanation": "Lamport values give an order consistent with causality but cannot tell 'concurrent' from 'causally ordered'; vector clocks can. Equal Lamport values imply concurrency, but concurrent events usually have different values.",
+    "source": "Lesson 6 troubleshooting; useWhen"
+  }
+]

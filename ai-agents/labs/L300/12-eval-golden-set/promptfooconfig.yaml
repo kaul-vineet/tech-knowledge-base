@@ -1,0 +1,18 @@
+# promptfoo equivalent of eval_gate.py (pending-ci: Node 24 + npx promptfoo@0.125.1, fake server on port 8765).
+#   python ../fake_server_l300.py --port 8765
+#   export PROMPTFOO_DISABLE_TELEMETRY=1 PROMPTFOO_DISABLE_UPDATE=1   (PowerShell: $env:PROMPTFOO_DISABLE_TELEMETRY="1"; $env:PROMPTFOO_DISABLE_UPDATE="1")
+#   eval is local: prompts and outputs go only to the provider below; npx itself downloads promptfoo from npm once.
+#   npx promptfoo@0.125.1 eval -c promptfooconfig.yaml --no-cache                       -> exit 0
+#   npx promptfoo@0.125.1 eval -c promptfooconfig.yaml -p prompts/v2.txt --no-cache     -> exit 100 (t07, t15 fail)
+# Same idea, different engine: promptfoo has no per-case baseline comparison built in; the exit code is the gate.
+description: ticket triage golden set (20 cases)
+prompts:
+  - file://prompts/v1.txt
+providers:
+  - id: openai:chat:fake-model          # any OpenAI-compatible server; for Ollama use openai:chat:qwen2.5:1.5b
+    config:
+      apiBaseUrl: http://127.0.0.1:8765/v1
+      apiKeyRequired: false
+      useDefaultApiKey: false
+      temperature: 0
+tests: file://promptfoo_tests.jsonl     # generated from golden.jsonl by make_promptfoo_tests.py

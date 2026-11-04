@@ -1,0 +1,812 @@
+[
+  {
+    "id": "ag-L400-001",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The lesson calls every multi-agent topology 'the same loop cut into pieces'. What crosses each cut?",
+    "options": [
+      "Every tool result, copied into each agent's context",
+      "The model's internal state from the previous call",
+      "The full message history of the previous agent, including its tool results",
+      "Only short text, so whatever is not handed over is lost"
+    ],
+    "answer": 3,
+    "explanation": "Routers, planners and supervisors pass short strings between loops, which is where hand-off loss comes from. Copying all history would remove the context isolation that justified the split.",
+    "source": "Lesson 17 Concepts; Code walkthrough (supervisor)"
+  },
+  {
+    "id": "ag-L400-002",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why did planner/executor fail task t09 while one agent with tools passed it?",
+    "options": [
+      "The planner's JSON plan named a tool that is not allow-listed",
+      "The planner made too many model calls and ran out of its 8-call budget on t09",
+      "The planner overflowed the 1,000-token context window",
+      "The plan was written before the metric existed, so it never checked deploys"
+    ],
+    "answer": 3,
+    "explanation": "t09's next step depends on an observation; ReWOO-style planning saves tokens by not looking, which is the blind spot. The planner was actually the cheapest design (20 calls).",
+    "source": "Lesson 17 Options; Check yourself"
+  },
+  {
+    "id": "ag-L400-003",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "According to the lesson, what must an extra agent buy to be worth adding?",
+    "options": [
+      "Context isolation, separate permissions or parallelism",
+      "A shorter system prompt for each agent",
+      "A more modern architecture that is easier to explain",
+      "A higher score on any single task, whatever it costs in calls and tokens"
+    ],
+    "answer": 0,
+    "explanation": "Rank designs by success first, then calls and tokens; extra hops must pay for themselves. Cemri et al. found multi-agent gains over single agents were often minimal.",
+    "source": "Lesson 17 Concepts; In real systems"
+  },
+  {
+    "id": "ag-L400-004",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "When a prompt exceeds the context window, how do the servers named in the lesson differ?",
+    "options": [
+      "All servers truncate the oldest messages and continue",
+      "Some return HTTP 400 context_length_exceeded; others silently truncate",
+      "All servers return HTTP 400 and the client must retry with a shorter prompt",
+      "All servers raise the window automatically when needed"
+    ],
+    "answer": 1,
+    "explanation": "Some servers reject the request, while the lesson's default local server truncates, which is harder to notice. That is why the estimate in code matters.",
+    "source": "Lesson 17 Glossary (context window); Scaling limits"
+  },
+  {
+    "id": "ag-L400-005",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "The hybrid escalates to supervisor/worker when estimate(task) > 0.9 x CONTEXT_LIMIT. With the context limit raised to 2,000 tokens, what is the threshold, and what happens to t07 (estimate 1,178)?",
+    "options": [
+      "1,800 tokens - t07 (1,178) stays on one agent",
+      "2,000 tokens - t07 (1,178) is escalated",
+      "900 tokens - t07 (1,178) is escalated",
+      "1,800 tokens - t07 (1,178) is escalated"
+    ],
+    "answer": 0,
+    "explanation": "0.9 x 2,000 = 1,800, and 1,178 is below it, so t07 stays on one agent; with the larger window the single agent solves it (10/10 in the try-it). The 900 threshold only applies to the 1,000-token window.",
+    "source": "Lesson 17 Code walkthrough (hybrid); Try it 1"
+  },
+  {
+    "id": "ag-L400-006",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Adding 12 unused tools raised the single agent's tokens from 5,925 to 10,293 over the same 26 model calls. About how many tokens does one extra tool schema add to one call?",
+    "options": [
+      "14",
+      "168",
+      "364",
+      "4,368"
+    ],
+    "answer": 0,
+    "explanation": "(10,293 - 5,925) / (12 x 26) = 14 tokens per tool per call. Every call resends every schema, which is the 'schema tax' routers avoid.",
+    "source": "Lesson 17 Try it 2; Scaling limits"
+  },
+  {
+    "id": "ag-L400-007",
+    "level": "L400",
+    "lesson": 17,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The router validates the model's route in code. What does this print?",
+    "code": "SPECIALISTS = {\"observability\": [\"get_metrics\", \"get_logs\"],\n               \"ops\": [\"get_deploys\", \"get_runbook\"],\n               \"support\": [\"get_invoice\", \"get_ticket\"]}\n\ndef route(answer):\n    return SPECIALISTS.get(answer.strip(), [])\n\nprint(route(\" ops\\n\"), route(\"Ops\"), route(\"finance\"))",
+    "options": [
+      "['get_deploys', 'get_runbook'] [] []",
+      "['get_deploys', 'get_runbook'] ['get_deploys', 'get_runbook'] []",
+      "['get_deploys', 'get_runbook'] [] ['get_invoice', 'get_ticket']",
+      "[] [] []"
+    ],
+    "answer": 0,
+    "explanation": "strip() removes the whitespace, but 'Ops' does not match the lower-case key and 'finance' is unknown, so both get no tools at all. Unknown routes get nothing by design.",
+    "source": "Lesson 17 Code walkthrough (router); Troubleshooting"
+  },
+  {
+    "id": "ag-L400-008",
+    "level": "L400",
+    "lesson": 17,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A router sends each request to one specialist with only its two tools. Which tasks fail, as in the lab?",
+    "options": [
+      "Single-domain tasks: specialists have too few tools",
+      "Every task: routers cannot call tools themselves",
+      "Only tasks with long logs, because routing adds tokens to every specialist call",
+      "Cross-domain tasks: the chosen specialist lacks the other domain's tool"
+    ],
+    "answer": 3,
+    "explanation": "The router passed 6/10 and failed t05, t06 and t09 because they span domains (plus t07's overflow). It is cheap per call but blind to mixed tasks.",
+    "source": "Lesson 17 Options; Trade-offs"
+  },
+  {
+    "id": "ag-L400-009",
+    "level": "L400",
+    "lesson": 17,
+    "type": "design",
+    "difficulty": 3,
+    "question": "You have a model with a large context window. When would you still choose supervisor/worker?",
+    "options": [
+      "Whenever the tool count is above six",
+      "Whenever a task has more than two steps",
+      "When tasks depend on earlier observations that each worker needs to see",
+      "When sub-tasks need different credentials or must run in parallel"
+    ],
+    "answer": 3,
+    "explanation": "Separate permissions and latency from parallel work are real gains; context overflow is no longer one. Observation-dependent tasks are where splitting loses information.",
+    "source": "Lesson 17 Check yourself; Scaling limits"
+  },
+  {
+    "id": "ag-L400-010",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why is a checkpoint written after the payment call not enough to prevent a second refund?",
+    "options": [
+      "Because checkpoints are written before the model is called",
+      "Because the payment API ignores checkpoints",
+      "A crash can land between the API's commit and the checkpoint",
+      "Because SQLite commits can be lost on a power failure before they reach disk"
+    ],
+    "answer": 2,
+    "explanation": "The restart cannot tell whether money moved, so it must resend, and only the same key makes that harmless. SQLite's atomic commit does survive crashes; the gap is outside the database.",
+    "source": "Lesson 18 Check yourself; Failure lab"
+  },
+  {
+    "id": "ag-L400-011",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does the durable workflow write the notification row in the same transaction as the step's checkpoint?",
+    "options": [
+      "So the notification is sent faster",
+      "So 'notified' and 'recorded' can never disagree after a crash",
+      "So the payment API receives the idempotency key",
+      "So the model can read the notification again when the workflow is replayed"
+    ],
+    "answer": 1,
+    "explanation": "The outbox pattern ties a local effect to the checkpoint: both commit or neither does. External effects need a key; local ones ride in the transaction.",
+    "source": "Lesson 18 Concepts; Code walkthrough"
+  },
+  {
+    "id": "ag-L400-012",
+    "level": "L400",
+    "lesson": 18,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The lab simulates kill -9 with a BaseException subclass. What does this print?",
+    "code": "class Crash(BaseException):\n    pass\n\ndef step():\n    raise Crash(\"after_effect:refund\")\n\ntry:\n    try:\n        step()\n    except Exception:\n        print(\"swallowed by error handling\")\nexcept Crash as c:\n    print(\"process died at\", c)",
+    "options": [
+      "Crash: after_effect:refund",
+      "process died at after_effect:refund",
+      "swallowed by error handling",
+      "process died at Crash"
+    ],
+    "answer": 1,
+    "explanation": "except Exception does not catch BaseException subclasses, so the simulated kill escapes the engine's error handling, as a real crash would. Using Exception would let the test of durability be swallowed.",
+    "source": "Lesson 18 Code walkthrough (class Crash)"
+  },
+  {
+    "id": "ag-L400-013",
+    "level": "L400",
+    "lesson": 18,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "After a restart, replay reads the history. What does this print?",
+    "code": "STEPS = [\"lookup\", \"propose\", \"approve\", \"refund\", \"notify\"]\nhistory = {\"lookup\": {\"paid\": 25.0}, \"propose\": {\"amount\": 25.0}, \"approve\": \"signal\"}\nexecuted = []\n\nfor step in STEPS:\n    if step in history:\n        continue\n    executed.append(step)\n    history[step] = \"completed\"\n\nprint(executed)",
+    "options": [
+      "['refund', 'notify']",
+      "[]",
+      "['lookup', 'propose', 'approve', 'refund', 'notify']",
+      "['notify']"
+    ],
+    "answer": 0,
+    "explanation": "Steps with a recorded result are skipped and their results reused; only refund and notify run. Re-running from step 1 is what the naive loop did, causing duplicates.",
+    "source": "Lesson 18 Code walkthrough (replay)"
+  },
+  {
+    "id": "ag-L400-014",
+    "level": "L400",
+    "lesson": 18,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A manager double-clicks 'approve'. What does this print?",
+    "code": "import sqlite3\ndb = sqlite3.connect(\":memory:\")\ndb.execute(\"CREATE TABLE history (wf_id TEXT, step TEXT, event TEXT, UNIQUE (wf_id, step, event))\")\nfor click in range(2):\n    db.execute(\"INSERT OR IGNORE INTO history VALUES ('wf-1', 'approve', 'signal')\")\nprint(db.execute(\"SELECT count(*) FROM history\").fetchone()[0])",
+    "options": [
+      "0",
+      "sqlite3.IntegrityError",
+      "1",
+      "2"
+    ],
+    "answer": 2,
+    "explanation": "UNIQUE (wf_id, step, event) plus INSERT OR IGNORE stores the signal once, so the double click cannot cause two approvals. A plain INSERT would raise IntegrityError on the second click.",
+    "source": "Lesson 18 Try it 2"
+  },
+  {
+    "id": "ag-L400-015",
+    "level": "L400",
+    "lesson": 18,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "The crash sweep shows two refunds at one crash point although keys are sent. Which line is the bug?",
+    "code": "import os\n\ndef refund(self, wf_id, amount):\n    key = f\"{wf_id}:refund:{os.getpid()}\"\n    return post(PAY_URL, json={\"amount\": amount}, headers={\"Idempotency-Key\": key})",
+    "options": [
+      "class Crash(BaseException)  - crashes should be Exceptions",
+      "if step in done: continue  - replay skips the refund",
+      "with self.db:  - one transaction per step is too strict for an external call",
+      "key = f\"{wf_id}:refund:{os.getpid()}\"  - the key differs per process"
+    ],
+    "answer": 3,
+    "explanation": "The restarted process has a new pid, so the resend carries a new key and the API refunds again; derive it from workflow id + step only. Replay skipping completed steps is the intended behaviour.",
+    "source": "Lesson 18 Troubleshooting; Failure lab"
+  },
+  {
+    "id": "ag-L400-016",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "A manager clicks 'approve' 50 hours after the refund was proposed; approvals expire after 48 hours. What should the workflow do?",
+    "options": [
+      "Restart the workflow from step 1 so the new approval is applied to a fresh run",
+      "Ignore the late click: the approval deadline has passed",
+      "Move the money, since a human did approve it",
+      "Ask the model whether the approval is still valid"
+    ],
+    "answer": 1,
+    "explanation": "A human wait is a state with a deadline; a late click must not move money. Letting the model decide approval state is exactly what the caution forbids.",
+    "source": "Lesson 18 Design brief; Concepts; Caution"
+  },
+  {
+    "id": "ag-L400-017",
+    "level": "L400",
+    "lesson": 18,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Your durable SQLite workflow must now run on several workers across hosts with long timers. What does the lesson suggest?",
+    "options": [
+      "Go back to an in-memory loop with more retries",
+      "Keep SQLite and let all hosts write the same file over a shared network drive",
+      "Drop the keys, since the engine guarantees exactly-once effects",
+      "Move to a dedicated workflow engine, and keep the idempotency keys"
+    ],
+    "answer": 3,
+    "explanation": "One SQLite writer queues concurrent workflows ('database is locked'); an engine adds durable timers and many workers. Its activities can still retry after an effect, so keys are still needed.",
+    "source": "Lesson 18 Options; Scaling limits"
+  },
+  {
+    "id": "ag-L400-018",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why couldn't the validated cascade catch ticket t03?",
+    "options": [
+      "The large model was down when t03 was escalated",
+      "Its answer was valid JSON with allowed values, just the wrong priority",
+      "The validator compares answers with golden labels, and t03 had no label at all",
+      "t03 was too long for the small model's context window"
+    ],
+    "answer": 1,
+    "explanation": "The cascade's validator needs no labels, so it runs in production but cannot see valid-but-wrong answers; only the golden set does. That blind spot is why the routing rule was added.",
+    "source": "Lesson 19 Check yourself; Options"
+  },
+  {
+    "id": "ag-L400-019",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does decode speed on these machines scale with memory bandwidth?",
+    "options": [
+      "Because prompts are processed one token at a time",
+      "Each token reads all weights once, so bandwidth / weight size bounds tokens/s",
+      "Because the GPU's clock speed follows memory speed",
+      "Because the KV cache is copied to disk after every token, so disk speed limits it"
+    ],
+    "answer": 1,
+    "explanation": "Decode is memory-bound: every generated token streams the full weights. Prefill is compute-bound and batched, which is why it is much faster per token.",
+    "source": "Lesson 19 Glossary; Check yourself"
+  },
+  {
+    "id": "ag-L400-020",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What makes a prompt friendly to the server's prefix cache?",
+    "options": [
+      "Making every prompt unique, so the cache can never return stale data for a ticket",
+      "A stable prefix: instructions, schemas and shared docs first; the ticket last",
+      "Putting the newest information first so it is processed early",
+      "Shortening the instructions so they fit inside one cache block"
+    ],
+    "answer": 1,
+    "explanation": "The server reuses the KV cache of a prefix it has seen; only the new suffix is processed. Ticket-first prompts got 3 % cached tokens versus 76 % for instructions-first.",
+    "source": "Lesson 19 Check yourself; Concepts"
+  },
+  {
+    "id": "ag-L400-021",
+    "level": "L400",
+    "lesson": 19,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Using lesson 19's cost_model (f16 KV = 2 x layers x kv_heads x head_dim x 2 bytes per token; qwen2.5:7b: 28 layers, 4 KV heads, head_dim 128, weights 4.7 GB), how much memory do weights + KV need at a 4,096-token context with 1 slot?",
+    "options": [
+      "6.58 GB",
+      "4.70 GB",
+      "4.93 GB",
+      "4.82 GB"
+    ],
+    "answer": 2,
+    "explanation": "KV = 2 x 28 x 4 x 128 x 2 x 4,096 bytes = 0.235 GB, plus 4.7 GB of weights. Counting weights alone ignores memory that grows with context and slots.",
+    "source": "Lesson 19 Glossary (KV cache); cost_model.py"
+  },
+  {
+    "id": "ag-L400-022",
+    "level": "L400",
+    "lesson": 19,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Same cost model: qwen2.5:7b at a 32,768-token context with 4 parallel slots on a Mac mini with 16 GB, of which 6 GB is reserved for the OS and apps. Does it fit?",
+    "options": [
+      "Yes: the 4.7 GB of weights fit in 10 GB",
+      "Yes: it needs 6.58 GB, under the 10 GB usable",
+      "No: it needs 12.22 GB but only 10 GB is usable",
+      "No: it needs 34.77 GB"
+    ],
+    "answer": 2,
+    "explanation": "KV grows linearly with context x slots: 7.52 GB of KV plus 4.7 GB of weights is 12.22 GB, above the 10 GB usable. Sizing from the weights alone is the classic mistake.",
+    "source": "Lesson 19 Concepts; Scaling limits; cost_model.py"
+  },
+  {
+    "id": "ag-L400-023",
+    "level": "L400",
+    "lesson": 19,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "In lesson 19's cost model a call costs 2 x params(B) x (uncached prompt + 0.1 x cached prompt + completion tokens). For the 7B model, a call has 400 prompt tokens (300 cached) and 20 completion tokens. What does it cost, in the model's units?",
+    "options": [
+      "1,680",
+      "2,100",
+      "1,050",
+      "5,880"
+    ],
+    "answer": 1,
+    "explanation": "2 x 7 x (100 + 30 + 20) = 2,100 units. Ignoring the cache gives 5,880; treating cached tokens as free gives 1,680.",
+    "source": "Lesson 19 Code walkthrough; cost_model.call_cost"
+  },
+  {
+    "id": "ag-L400-024",
+    "level": "L400",
+    "lesson": 19,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Large-only costs 7,000.0 units and rules+cascade costs 3,890.1 for the same 20/20 accuracy. The fitness function requires cost <= 60 % of large-only. What is the ratio?",
+    "options": [
+      "179.9% - over the 60 % limit",
+      "55.6% - within the 60 % limit",
+      "54.4% - within the 60 % limit",
+      "44.4% - within the 60 % limit"
+    ],
+    "answer": 1,
+    "explanation": "3,890.1 / 7,000 = 55.6 %, inside the limit. 44.4 % is the saving, not the ratio the fitness function checks.",
+    "source": "Lesson 19 Fitness function; Options"
+  },
+  {
+    "id": "ag-L400-025",
+    "level": "L400",
+    "lesson": 19,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "How long a shared prefix do two prompts have in each order? What does this print?",
+    "code": "import os\nINSTR = \"Classify the ticket. Reply with JSON: category, priority, summary.\\n\"\nt1, t2 = \"Login fails after reset\", \"Invoice shows the wrong VAT\"\ninstr_first = [INSTR + f\"<ticket>{t}</ticket>\" for t in (t1, t2)]\nticket_first = [f\"<ticket>{t}</ticket>\\n\" + INSTR for t in (t1, t2)]\nshared = lambda a, b: len(os.path.commonprefix([a, b]))\nprint(shared(*instr_first), shared(*ticket_first))",
+    "options": [
+      "67 0",
+      "8 75",
+      "75 8",
+      "75 75"
+    ],
+    "answer": 2,
+    "explanation": "Instructions-first prompts share the whole 67-character instruction plus '<ticket>' (75); ticket-first prompts share only '<ticket>' (8) before the tickets differ. Same words, different order, very different cache reuse.",
+    "source": "Lesson 19 Code walkthrough (TICKET_FIRST)"
+  },
+  {
+    "id": "ag-L400-026",
+    "level": "L400",
+    "lesson": 19,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "The server's prompt-cache hit ratio is near 0 for this template. What is the fix?",
+    "code": "PROMPT = (f\"Today is {today}.\\n\"\n          \"Classify the ticket. Reply with JSON: category, priority, summary.\\n\"\n          \"<ticket>{ticket}</ticket>\")",
+    "options": [
+      "Lower the temperature to 0 so prompts repeat",
+      "Move the date line to the end so the stable instructions form the prefix",
+      "Raise the number of parallel slots to 8 so each prompt family gets its own slot",
+      "Shorten the instructions below 100 tokens"
+    ],
+    "answer": 1,
+    "explanation": "Anything variable at the top (date, ticket, user name) makes every prefix unique. More slots help only when unrelated prompts share a slot.",
+    "source": "Lesson 19 Troubleshooting"
+  },
+  {
+    "id": "ag-L400-027",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What does 'monotone combine' mean for the model's claims?",
+    "options": [
+      "A claim may only move a decision toward the safer outcome, never away",
+      "Claims are averaged with the policy's score",
+      "Claims are combined by majority vote across several models",
+      "Claims always override facts whenever the model reports high confidence in them"
+    ],
+    "answer": 0,
+    "explanation": "A chargeback threat can move approve_auto to escalate, but nothing can move deny or escalate to approve. That keeps untrusted input from creating a more permissive decision.",
+    "source": "Lesson 20 Glossary; Code walkthrough"
+  },
+  {
+    "id": "ag-L400-028",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why did 'model decides, code validates' still get c04 wrong?",
+    "options": [
+      "The model was down, so the template decided",
+      "The amount exceeded what the customer paid",
+      "The validator crashed on the extra 'override' key and let the approval through",
+      "Validation checks shape; c04's approval was a valid action and amount"
+    ],
+    "answer": 3,
+    "explanation": "Schema and range checks stopped c08's 120 on an 80 order, but c04's approve_auto was well-formed; only the policy knows it is outside 30 days. Validation catches shape, not truth.",
+    "source": "Lesson 20 Check yourself; Options"
+  },
+  {
+    "id": "ag-L400-029",
+    "level": "L400",
+    "lesson": 20,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A trimmed copy of the refund policy and combine(). What does this print?",
+    "code": "AUTO_LIMIT, WINDOW_DAYS = 50.0, 30\n\ndef decide(f):\n    if f[\"amount_requested\"] > f[\"paid\"] or f[\"days_since_delivery\"] > WINDOW_DAYS:\n        return \"deny\"\n    return \"approve_auto\" if f[\"amount_requested\"] <= AUTO_LIMIT else \"escalate\"\n\ndef combine(action, claims):\n    return \"escalate\" if action == \"approve_auto\" and claims.get(\"threat\") is True else action\n\nc04 = {\"paid\": 40.0, \"amount_requested\": 40.0, \"days_since_delivery\": 45}\nc03 = {\"paid\": 30.0, \"amount_requested\": 30.0, \"days_since_delivery\": 3}\nprint(combine(decide(c04), {\"threat\": False, \"approve\": True}), combine(decide(c03), {\"threat\": True}))",
+    "options": [
+      "deny escalate",
+      "escalate escalate",
+      "approve_auto escalate",
+      "deny approve_auto"
+    ],
+    "answer": 0,
+    "explanation": "c04 is 45 days after delivery, so the policy denies it and no claim can move a deny; c03 is approved by rule but the threat claim moves it to escalate. The model's 'approve' key is never read.",
+    "source": "Lesson 20 Code (policy.decide, combine); Failure lab"
+  },
+  {
+    "id": "ag-L400-030",
+    "level": "L400",
+    "lesson": 20,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "The fuzz test reports changed decisions. Which line breaks the deterministic core?",
+    "code": "proposal = ask(model, case[\"message\"]) or {}\ndecision = policy.decide({**case[\"facts\"], **proposal.get(\"facts\", {})})\nfinal = policy.combine(decision, proposal.get(\"claims\"))\ntext = explain_check.checked(proposal.get(\"explanation\", \"\"), final)",
+    "options": [
+      "decision = policy.decide({**case[\"facts\"], **proposal.get(\"facts\", {})})",
+      "final = policy.combine(decision, proposal[\"claims\"] if proposal else None)",
+      "proposal = ask(model, case[\"message\"])",
+      "text = explain_check.checked(explanation, final)"
+    ],
+    "answer": 0,
+    "explanation": "Merging model-supplied 'facts' into the facts dict lets a hostile answer become an input to decide(). Facts must come only from the system of record; combine() accepting claims is intended and one-way.",
+    "source": "Lesson 20 Troubleshooting; Caution"
+  },
+  {
+    "id": "ag-L400-031",
+    "level": "L400",
+    "lesson": 20,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "The model server is down while refund requests keep arriving. What happens in the 'code decides' design?",
+    "options": [
+      "The policy approves small refunds and denies the rest",
+      "Requests are queued and retried every minute until the model answers",
+      "Code decides as usual and the customer gets the template explanation",
+      "Every request is escalated until the model is back"
+    ],
+    "answer": 2,
+    "explanation": "ask() returns None and every caller has a refusal path: the decision never needed the model, only the wording does. Escalating everything would be safe but needlessly expensive.",
+    "source": "Lesson 20 Check yourself; Glossary (refusal path)"
+  },
+  {
+    "id": "ag-L400-032",
+    "level": "L400",
+    "lesson": 20,
+    "type": "design",
+    "difficulty": 3,
+    "question": "The business wants auto-approval up to 150.00 instead of 50.00. How should that change reach production?",
+    "options": [
+      "Tell the model in the system prompt that the limit is now 150",
+      "Add the new limit to the customer-facing explanation template",
+      "Let the model propose the new limit per case and validate that it is below 200",
+      "Change AUTO_LIMIT in code, with reviewed tests, and ship it like any release"
+    ],
+    "answer": 3,
+    "explanation": "Decisions change through reviewed, tested code, never through a prompt. A prompt-only change would also be steerable by customer text.",
+    "source": "Lesson 20 Try it 1"
+  },
+  {
+    "id": "ag-L400-033",
+    "level": "L400",
+    "lesson": 20,
+    "type": "design",
+    "difficulty": 3,
+    "question": "For a refund decision with money at stake, which option does the lesson choose, and why?",
+    "options": [
+      "Code decides from trusted facts; the model proposes claims and an explanation",
+      "Two models vote and code accepts the majority",
+      "The model decides under strict schema validation, which stops steering attempts",
+      "The model decides, because it handles fuzzy cases without rules"
+    ],
+    "answer": 0,
+    "explanation": "Only 'code decides' got 0/12 wrong and 0 changed decisions under 600 hostile answers. Validation alone still let 5 of 12 wrong decisions through.",
+    "source": "Lesson 20 Options; Decision record"
+  },
+  {
+    "id": "ag-L400-034",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does the lesson pin models by digest rather than by tag such as model:latest?",
+    "options": [
+      "Tags are longer than digests and waste configuration space",
+      "Digests make the model load and run faster on the same hardware and server",
+      "A re-pull can move a tag to new weights with no code change or deploy",
+      "Tags cannot be used in chat-completions requests"
+    ],
+    "answer": 2,
+    "explanation": "In the failure lab a re-tag changed t14's priority silently; a digest pin makes start-up refuse on a mismatch. Speed has nothing to do with it.",
+    "source": "Lesson 21 Failure lab; In real systems"
+  },
+  {
+    "id": "ag-L400-035",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why can a fixed-threshold chi-square drift alarm become noisy on very large windows?",
+    "options": [
+      "Chi-square only works for windows of exactly 200 items",
+      "The critical value shrinks as the window grows, so the bar drops each week",
+      "The statistic grows with n, so tiny shifts exceed the threshold",
+      "Large windows always contain more errors than small ones"
+    ],
+    "answer": 2,
+    "explanation": "With more data, even negligible proportion changes give large statistics, causing alarm fatigue; use fixed window sizes or effect-size bounds. The critical value depends on degrees of freedom, not on n.",
+    "source": "Lesson 21 Scaling limits"
+  },
+  {
+    "id": "ag-L400-036",
+    "level": "L400",
+    "lesson": 21,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Baseline priority mix is 50 % high / 50 % normal. A window of 100 replayed tickets has 60 high and 40 normal. Using the lesson's chi-square (df = 1, critical value 6.635 at alpha 0.01), what is the statistic and is there an alarm?",
+    "options": [
+      "4.00 - no alarm (4.00 < 6.635)",
+      "4.00 - alarm (4.00 > 3.317)",
+      "16.00 - alarm (16.00 > 6.635)",
+      "2.00 - no alarm (2.00 < 6.635)"
+    ],
+    "answer": 0,
+    "explanation": "Expected counts are 50 and 50: (10^2/50) + (10^2/50) = 4.00, below 6.635, so no alarm. Drift is a coarse trigger; the golden set is the precise check.",
+    "source": "Lesson 21 Code walkthrough (chi_square); Check yourself"
+  },
+  {
+    "id": "ag-L400-037",
+    "level": "L400",
+    "lesson": 21,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A hash chain like the lesson's audit log. One row is edited directly in the database. What does verify() print?",
+    "code": "import hashlib, json\nh = lambda prev, row: hashlib.sha256((prev + json.dumps(row)).encode()).hexdigest()\nrows, prev = [], \"\"\nfor seq, actor in enumerate([\"alice\", \"alice\", \"alice\", \"carol\"], 1):\n    prev = h(prev, [seq, actor])\n    rows.append({\"seq\": seq, \"actor\": actor, \"hash\": prev})\nrows[2][\"actor\"] = \"bob\"\ndef verify(rows, prev=\"\"):\n    for r in rows:\n        if h(prev, [r[\"seq\"], r[\"actor\"]]) != r[\"hash\"]:\n            return False, r[\"seq\"]\n        prev = r[\"hash\"]\n    return True, None\nprint(verify(rows))",
+    "options": [
+      "(True, None)",
+      "(False, 1)",
+      "(False, 4)",
+      "(False, 3)"
+    ],
+    "answer": 3,
+    "explanation": "Row 3's recomputed hash no longer matches its stored hash, so verification fails at seq 3. The first bad seq points to where tampering happened.",
+    "source": "Lesson 21 Code walkthrough (AuditLog, verify); Try it 2"
+  },
+  {
+    "id": "ag-L400-038",
+    "level": "L400",
+    "lesson": 21,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "fake-model:v2 scores 19/20 = 95 % and the bar is 95 %, but t14 passed before and fails now. The red team is 8/8 and output drift does not alarm. What does decide_upgrade return, and why?",
+    "options": [
+      "REJECT: a regression on a known case blocks, whatever the average",
+      "ACCEPT: the pass rate meets the 95 % bar",
+      "REJECT: output drift must alarm for an upgrade to pass",
+      "ACCEPT: red team and drift are both clean"
+    ],
+    "answer": 0,
+    "explanation": "The gate blocks on any previously passing case that now fails; averages hide which users are hurt. Drift not firing is expected because only one ticket type changed.",
+    "source": "Lesson 21 Check yourself; Expected results"
+  },
+  {
+    "id": "ag-L400-039",
+    "level": "L400",
+    "lesson": 21,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "verify() returns False right after the 30-day retention purge ran. What is the likely cause?",
+    "options": [
+      "SQLite reorders rows after a DELETE",
+      "The purge deleted audit rows instead of only the content",
+      "The chain hashes the full content, so any purge of old content must break it",
+      "The purge ran on a weekend"
+    ],
+    "answer": 1,
+    "explanation": "The chain hashes the content hash, not the content, so deleting content keeps every link valid; deleting rows breaks the chain. Restore from backup and purge content only.",
+    "source": "Lesson 21 Troubleshooting; Check yourself"
+  },
+  {
+    "id": "ag-L400-040",
+    "level": "L400",
+    "lesson": 21,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Prompts contain customer text that must be deleted after 30 days, yet any edit to the audit trail must be detectable. Which design satisfies both?",
+    "options": [
+      "Delete old audit rows and start a new chain each month",
+      "Keep everything forever in one table and restrict access",
+      "Chain who/what/when plus a content hash; store content separately",
+      "Hash the full prompt content into the chain and never delete any of it"
+    ],
+    "answer": 2,
+    "explanation": "Separating content from the chained metadata lets retention delete text while every link still verifies. Hashing the full content into the chain would make deletion break verification.",
+    "source": "Lesson 21 Concepts; Trade-offs"
+  },
+  {
+    "id": "ag-L400-041",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The capstone's rule is 'facts by tools, context by retrieval, advice by the model, decisions by code'. Which part decides severity?",
+    "options": [
+      "The retrieved runbook that the proposal cites",
+      "The incident lead, for every incident",
+      "policy.decide, from metrics and deploy age only",
+      "The model's proposal, once it passes schema validation"
+    ],
+    "answer": 2,
+    "explanation": "Severity and actions come only from the deterministic policy; the proposal is advice and its explanation is shown only if checked. The lead approves rollbacks, not every severity.",
+    "source": "Lesson 22 Concepts; Glossary (severity policy)"
+  },
+  {
+    "id": "ag-L400-042",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "With no model available at all, what still works in the capstone?",
+    "options": [
+      "Facts, retrieval, the decision, approvals and effects",
+      "Nothing: the workflow fails the model step and stops",
+      "Everything except approvals, which need the model's explanation",
+      "Only fact gathering; triage waits for the model"
+    ],
+    "answer": 0,
+    "explanation": "Only the proposal and its wording are missing; INC-7 still got SEV2 page_oncall. The model's absence changes wording, never actions.",
+    "source": "Lesson 22 Check yourself; Rubric"
+  },
+  {
+    "id": "ag-L400-043",
+    "level": "L400",
+    "lesson": 22,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "The capstone's paging threshold 14.4 is the burn rate that spends 2 % of a 30-day error budget in 1 hour (0.02 x 720 h / 1 h). What burn rate spends 5 % of a 30-day budget in 6 hours?",
+    "options": [
+      "36",
+      "14.4",
+      "0.17",
+      "6"
+    ],
+    "answer": 3,
+    "explanation": "Burn rate = budget share x budget period / window = 0.05 x 720 / 6 = 6. Forgetting to divide by the 6-hour window gives 36.",
+    "source": "Lesson 22 policy.py (14.4 threshold)"
+  },
+  {
+    "id": "ag-L400-044",
+    "level": "L400",
+    "lesson": 22,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "This is the capstone's severity table. What does it print for these two incidents?",
+    "code": "def severity(m):\n    if m[\"users_affected_pct\"] >= 25 or m[\"error_rate\"] >= 20:\n        return \"SEV1\"\n    if m[\"users_affected_pct\"] >= 5 or m[\"burn_rate\"] >= 14.4:\n        return \"SEV2\"\n    if m[\"burn_rate\"] >= 1 or m[\"error_rate\"] >= 2:\n        return \"SEV3\"\n    return \"SEV4\"\n\ninc6 = {\"users_affected_pct\": 3, \"burn_rate\": 7, \"error_rate\": 1.5}\nbig = {\"users_affected_pct\": 30, \"burn_rate\": 2, \"error_rate\": 4}\nprint(severity(inc6), severity(big))",
+    "options": [
+      "SEV3 SEV2",
+      "SEV1 SEV1",
+      "SEV2 SEV1",
+      "SEV3 SEV1"
+    ],
+    "answer": 3,
+    "explanation": "The first has 3 % users and burn 7, below the SEV2 limits but over burn 1, so SEV3; the second has 30 % users, which is SEV1. Burn 7 is below the 14.4 paging threshold.",
+    "source": "Lesson 22 policy.py; Check yourself"
+  },
+  {
+    "id": "ag-L400-045",
+    "level": "L400",
+    "lesson": 22,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "INC-6's logs contain an injected instruction; the model proposes SEV1 and a delete_cluster action. What does the capstone do?",
+    "options": [
+      "Stops the workflow until the model gives a valid proposal",
+      "Pages on-call at SEV1, since the model saw the logs",
+      "Logs 'unknown action delete_cluster', decides SEV3, opens a ticket",
+      "Runs delete_cluster, but only after the incident lead approves it in the queue"
+    ],
+    "answer": 2,
+    "explanation": "The proposal is validated advice: unknown actions are only listed as problems and severity comes from metrics (users 3 %, burn 7 -> SEV3). Nothing the model writes can add an action.",
+    "source": "Lesson 22 Check yourself; Expected results"
+  },
+  {
+    "id": "ag-L400-046",
+    "level": "L400",
+    "lesson": 22,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "The process dies right after INC-4's page was sent. After restart, why is on-call paged only once?",
+    "options": [
+      "The workflow remembers the page in process memory",
+      "The effect is resent with key INC-4:page_oncall and the service replays it",
+      "Pages are only sent once per hour by the paging service",
+      "The model checks the logs, sees the earlier page and decides not to page again"
+    ],
+    "answer": 1,
+    "explanation": "Exactly-once comes from a key derived from incident + action; the stand-in returns the stored response. Process memory is gone after a crash, which is the whole point of durability.",
+    "source": "Lesson 22 Check yourself; Code walkthrough"
+  },
+  {
+    "id": "ag-L400-047",
+    "level": "L400",
+    "lesson": 22,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Someone removes rollback_deploy from NEEDS_APPROVAL and INC-1 runs again while the lead rejects the rollback. Which rubric row fails?",
+    "options": [
+      "Observability: the rollback span is missing",
+      "Degrades without a model: INC-7 no longer pages",
+      "No unsafe effects: rollbacks_without_approval becomes 1",
+      "Decisions by policy: severity no longer matches the golden set"
+    ],
+    "answer": 2,
+    "explanation": "The rollback runs without the lead's yes, so the scorecard reports rollbacks_without_approval 1 and pass false. Severity is unchanged, which is why the eval gate alone would not catch it.",
+    "source": "Lesson 22 Try it 2; Rubric"
+  }
+]

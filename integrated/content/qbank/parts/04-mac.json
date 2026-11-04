@@ -1,0 +1,139 @@
+[
+ {
+  "id": "04-mac-01",
+  "level": "L600",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A board samples once a minute and never reboots. The dot's seq is packed into 16 bits (seq & 0xFFFF). After how many days does seq wrap?",
+  "options": [
+   "About 22.8 days",
+   "About 182 days",
+   "About 4.5 days",
+   "About 45.5 days"
+  ],
+  "answer": 3,
+  "explanation": "65,535 samples / 1,440 samples per day = 45.5 days. A soak longer than that would have to show duplicate dots for the same (device, boot).",
+  "source": "firmware/node.py pack(); 04 mac_mini/soak.py seq_wrap_days"
+ },
+ {
+  "id": "04-mac-02",
+  "level": "L600",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 1,
+  "question": "soak.py --boards 500: one radio group holds at most 255 device ids. How many sites and boards per site does it run?",
+  "options": [
+   "1 site of 500 boards",
+   "2 sites of 250 boards",
+   "2 sites of 255 and 245 boards",
+   "4 sites of 125 boards"
+  ],
+  "answer": 1,
+  "explanation": "sites = ceil(500 / 255) = 2, boards per site = ceil(500 / 2) = 250. One site of 500 is impossible with a 1-byte device id.",
+  "source": "04 mac_mini/soak.py main()"
+ },
+ {
+  "id": "04-mac-03",
+  "level": "L600",
+  "lesson": 4,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Where does the 255-board limit per radio group come from?",
+  "options": [
+   "The frame header packs the device id into one byte: bytes([schema, kind, dev]) fails for dev 256",
+   "The micro:bit radio supports 255 groups",
+   "The gateway's receive queue holds 255 frames",
+   "MicroPython limits a dict to 255 keys"
+  ],
+  "answer": 0,
+  "explanation": "frames() builds bytes([SCHEMA, ord('D'), dev]); a byte holds 0-255, and soak.py proves the limit by packing device 256. Radio groups (0-255) are a separate setting.",
+  "source": "firmware/node.py frames(); 04 mac_mini/soak.py dev_id_limit()"
+ },
+ {
+  "id": "04-mac-04",
+  "level": "L600",
+  "lesson": 4,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "In the simulator, test 1 (ACK_WAIT_MS = 500) passes with 30/30 acked, but test 2 (the shipped 50 ms) acks fewer than 30. What does that show?",
+  "options": [
+   "The firmware drops acks when the queue is 16",
+   "The gateway program computes the wrong high-water mark",
+   "The postMessage bridge between the two simulator iframes takes longer than 50 ms; the code path works, the timing is a property of the browser setup",
+   "ADR 0003's 50 ms window is proven too short for real micro:bit radios"
+  ],
+  "answer": 2,
+  "explanation": "Same code, only the wait differs, and the 500 ms run acks everything. Two iframes and a bridge are not a radio, so nothing is proven about real boards; that needs hardware timing.",
+  "source": "04 mac_mini/sim/fleet-node.spec.js; README experiment 1"
+ },
+ {
+  "id": "04-mac-05",
+  "level": "L600",
+  "lesson": 4,
+  "type": "code-reading",
+  "difficulty": 1,
+  "question": "What does this snippet print?",
+  "code": "try:\n    frame = bytes([2, ord(\"D\"), 256])\n    print(len(frame))\nexcept ValueError:\n    print(\"ValueError\")",
+  "options": [
+   "3",
+   "ValueError",
+   "2",
+   "b'\\x02D\\x00'"
+  ],
+  "answer": 1,
+  "explanation": "bytes() accepts integers 0-255 only, so device 256 raises ValueError instead of silently wrapping to 0 - which is how soak.py proves the limit.",
+  "source": "Python bytes(); soak.dev_id_limit (executed in research/checks_04_mac.py)"
+ },
+ {
+  "id": "04-mac-06",
+  "level": "L600",
+  "lesson": 4,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "The oversize-frame variant builds a 102-byte frame (3-byte header + 11 records x 9 B) while the radio is configured with length = 32. On the stub only 32 bytes go on air. What should simulator test 3 report if the stub's rule is right?",
+  "options": [
+   "102 bytes on air: MicroPython fragments long frames",
+   "0 bytes on air: send_bytes raises for oversize frames",
+   "251 bytes on air: the maximum radio length",
+   "32 bytes on air: the sender truncates to the configured length"
+  ],
+  "answer": 3,
+  "explanation": "The stub follows MicroPython's modradio source: the sender truncates to `length`. Any other value in the simulator means the stub, and the failure lab's explanation, must change.",
+  "source": "microbit/labs/sim_stub/radio.py send_bytes; 04 mac_mini/make_sim_programs.py"
+ },
+ {
+  "id": "04-mac-07",
+  "level": "L600",
+  "lesson": 4,
+  "type": "design",
+  "difficulty": 2,
+  "question": "Why does soak.py run each 250-board site in its own process rather than one 500-board simulation in one process?",
+  "options": [
+   "Sites are independent radio groups (ids 1-255 each), the stub's radio costs O(boards^2) per minute, and separate processes use separate cores",
+   "fleet_sim.run cannot simulate more than 7 days",
+   "Python processes are limited to 255 threads",
+   "Playwright can only drive one simulator per process"
+  ],
+  "answer": 0,
+  "explanation": "Two groups never hear each other, so they are independent simulations; splitting also halves the quadratic air cost and runs on two performance cores. fleet_sim.run takes any number of hours.",
+  "source": "04 mac_mini/soak.py; microbit/labs/sim_stub/radio.py Air.broadcast"
+ },
+ {
+  "id": "04-mac-08",
+  "level": "L600",
+  "lesson": 4,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A frame has a 3-byte header and 9-byte schema-2 records. With RECORDS_PER_FRAME = 27 (the oversize fault) and 11 unacked records in flash, how long is the first frame?",
+  "options": [
+   "30 bytes",
+   "246 bytes",
+   "102 bytes",
+   "99 bytes"
+  ],
+  "answer": 2,
+  "explanation": "The frame takes min(27, 11) = 11 records: 3 + 11 x 9 = 102 bytes. 246 bytes is a full 27-record frame; 30 bytes is the normal 3-record frame.",
+  "source": "firmware/node.py frames(); make_sim_programs.py --here (maxframe 102)"
+ }
+]

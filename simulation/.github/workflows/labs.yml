@@ -1,0 +1,290 @@
+# Runs every L100, L200, L300 and L400 lab demo (and the L400 capstone), the L500 theory checks, tryIt script, buildTask solution and unittest suite with pinned versions on
+# Linux, macOS (Apple silicon, arm64) and Windows (x64). Locally (Linux sandbox) only the stdlib/numpy parts ran;
+# SimPy, SciPy, Mesa, SALib and FMPy equivalents and the macOS/Windows runs happen here for the first time (pending-ci).
+# L200 adds no packages: it reuses labs/L100/01-setup-workbench/requirements.txt.
+# L300 adds SALib and FMPy (labs/L300/requirements.txt, which includes the L100 pins).
+# L400 adds pyarrow for the Parquet export (labs/L400/requirements.txt, which includes the L300 pins).
+name: labs
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-labs:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - 01-setup-workbench
+          - 02-monte-carlo
+          - 03-discrete-event-queue
+          - 04-time-stepped-physics
+          - 05-agent-based-schelling
+          - 06-verification-validation
+        include:
+          - { lab: 01-setup-workbench,         demo: "check_env.py",   equivalent: "" }
+          - { lab: 02-monte-carlo,             demo: "monte_carlo.py", equivalent: "" }
+          - { lab: 03-discrete-event-queue,    demo: "des_queue.py",   equivalent: "simpy_queue.py" }
+          - { lab: 04-time-stepped-physics,    demo: "falling.py",     equivalent: "falling_scipy.py" }
+          - { lab: 05-agent-based-schelling,   demo: "schelling.py",   equivalent: "schelling_mesa.py" }
+          - { lab: 06-verification-validation, demo: "vv.py",          equivalent: "agent_assist.py --fake" }
+    defaults:
+      run:
+        shell: bash  # Git Bash on Windows: the same commands run on all three runners
+        working-directory: labs/L100/${{ matrix.lab }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies (wheels only - fails if a platform wheel is missing)
+        run: "python -m pip install --only-binary=:all: -r ../01-setup-workbench/requirements.txt"
+      - name: Run demo
+        run: python ${{ matrix.demo }}
+      - name: Run tryIt
+        run: python try_it.py
+      - name: Run equivalent (SimPy / SciPy / Mesa / agent assist with fake model)
+        if: matrix.equivalent != ''
+        run: python ${{ matrix.equivalent }}
+      - name: Run tests (no skips expected in CI)
+        run: python -m unittest -v
+
+  python-labs-l200:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - 07-input-modelling
+          - 08-multi-server-queue
+          - 09-adaptive-ode
+          - 10-warmup-replications
+          - 11-supply-chain-inventory
+        include:
+          - { lab: 07-input-modelling,        demo: "fit_inputs.py",   equivalent: "fit_scipy.py",       solution: "solution/shifted_exponential.py", agent: "agent_assist.py --fake" }
+          - { lab: 08-multi-server-queue,     demo: "mmc_queue.py",    equivalent: "simpy_mmc.py",       solution: "solution/mmc_capacity.py",        agent: "" }
+          - { lab: 09-adaptive-ode,           demo: "adaptive_ode.py", equivalent: "ode_scipy.py",       solution: "solution/ode_events.py",          agent: "" }
+          - { lab: 10-warmup-replications,    demo: "warmup.py",       equivalent: "",                   solution: "solution/sequential_reps.py",     agent: "" }
+          - { lab: 11-supply-chain-inventory, demo: "inventory.py",    equivalent: "simpy_inventory.py", solution: "solution/fill_rate.py",           agent: "" }
+    defaults:
+      run:
+        shell: bash
+        working-directory: labs/L200/${{ matrix.lab }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies (same pins as L100, wheels only)
+        run: "python -m pip install --only-binary=:all: -r ../../L100/01-setup-workbench/requirements.txt"
+      - name: Run demo
+        run: python ${{ matrix.demo }}
+      - name: Run tryIt
+        run: python try_it.py
+      - name: Run buildTask reference solution
+        run: python ${{ matrix.solution }}
+      - name: Run equivalent (SciPy / SimPy)
+        if: matrix.equivalent != ''
+        run: python ${{ matrix.equivalent }}
+      - name: Run agent assist with the fake model
+        if: matrix.agent != ''
+        run: python ${{ matrix.agent }}
+      - name: Run tests incl. test_build_task (no skips expected in CI)
+        run: python -m unittest -v
+
+  python-labs-l300:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - 12-variance-reduction
+          - 13-calibration
+          - 14-global-sensitivity
+          - 15-cosimulation-fmi
+          - 16-performance-scale
+        include:
+          - { lab: 12-variance-reduction, demo: "variance_reduction.py", equivalent: "",                     solution: "solution/variance_reduction.py", stretch: "solution/pick_estimator.py",  agent: "" }
+          - { lab: 13-calibration,        demo: "calibrate.py",          equivalent: "calibrate_scipy.py",   solution: "solution/calibrate.py",          stretch: "solution/param_report.py",    agent: "" }
+          - { lab: 14-global-sensitivity, demo: "sensitivity.py",        equivalent: "sensitivity_salib.py", solution: "solution/sensitivity.py",        stretch: "solution/robust_ranking.py",  agent: "agent_assist.py --fake" }
+          - { lab: 15-cosimulation-fmi,   demo: "cosim.py",              equivalent: "fmpy_cosim.py",        solution: "solution/cosim.py",              stretch: "solution/guarded_master.py",  agent: "" }
+          - { lab: 16-performance-scale,  demo: "perf.py",               equivalent: "",                     solution: "solution/perf.py",               stretch: "solution/chunked.py",         agent: "" }
+    defaults:
+      run:
+        shell: bash
+        working-directory: labs/L300/${{ matrix.lab }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies (L100 pins + SALib + FMPy, wheels only)
+        run: "python -m pip install --only-binary=:all: -r ../requirements.txt"
+      - name: Run demo
+        run: python ${{ matrix.demo }}
+      - name: Run tryIt
+        run: python try_it.py
+      - name: Run buildTask reference solution (the fix) and the stretch solution
+        run: |
+          python ${{ matrix.solution }}
+          python ${{ matrix.stretch }}
+      - name: buildTask test must FAIL on the shipped (unfixed) lab file
+        run: "! BUILD_TARGET=mine python -m unittest test_build_task"
+      - name: Run equivalent (SciPy / SALib / FMPy API check)
+        if: matrix.equivalent != ''
+        run: python ${{ matrix.equivalent }}
+      - name: Run agent assist with the fake model
+        if: matrix.agent != ''
+        run: python ${{ matrix.agent }}
+      - name: Run tests incl. fault reproductions, test_build_task (solution) and test_stretch (only the FMU-file test may skip)
+        run: python -m unittest -v
+
+  python-labs-l400:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        lab:
+          - 17-digital-twin
+          - 18-sim-optimisation
+          - 19-surrogates
+          - 20-parallel-scale
+          - 21-governance-vv
+        include:
+          - { lab: 17-digital-twin,     demo: "twin.py",       extra: "make_feed.py",          solution: "solution/twin.py",       agent: "" }
+          - { lab: 18-sim-optimisation, demo: "optimise.py",   extra: "",                      solution: "solution/optimise.py",   agent: "" }
+          - { lab: 19-surrogates,       demo: "surrogate.py",  extra: "",                      solution: "solution/surrogate.py",  agent: "" }
+          - { lab: 20-parallel-scale,   demo: "sweep.py",      extra: "storage_options.py",    solution: "solution/sweep.py",      agent: "" }
+          - { lab: 21-governance-vv,    demo: "governance.py", extra: "",                      solution: "solution/governance.py", agent: "agent_assist.py --fake" }
+    defaults:
+      run:
+        shell: bash
+        working-directory: labs/L400/${{ matrix.lab }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies (L300 pins + pyarrow, wheels only)
+        run: "python -m pip install --only-binary=:all: -r ../requirements.txt"
+      - name: Run demo (shipped design)
+        run: python ${{ matrix.demo }}
+      - name: Run extra evidence script
+        if: matrix.extra != ''
+        run: python ${{ matrix.extra }}
+      - name: Run buildTask reference solution (the fix)
+        run: python ${{ matrix.solution }}
+      - name: Run tryIt
+        run: python try_it.py
+      - name: buildTask test must FAIL on the shipped (unfixed) lab file
+        run: "! BUILD_TARGET=mine python -m unittest test_build_task"
+      - name: Parquet export (lesson 20 only; needs pyarrow)
+        if: matrix.lab == '20-parallel-scale'
+        run: python to_parquet.py
+      - name: Scaling measurement on this runner (lesson 20 only; timings are informational)
+        if: matrix.lab == '20-parallel-scale'
+        run: python scaling.py
+      - name: Run agent assist with the fake model
+        if: matrix.agent != ''
+        run: python ${{ matrix.agent }}
+      - name: Run tests incl. fault reproductions, test_build_task and test_fitness (solution) - no skips expected in CI
+        run: python -m unittest -v
+
+  python-capstone-l400:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+        working-directory: labs/L400/22-capstone
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies (wheels only)
+        run: "python -m pip install --only-binary=:all: -r ../requirements.txt"
+      - name: Run the capstone (fake model) - scorecard must be PASS
+        run: |
+          python run_capstone.py
+          python -c "import json; l = [json.loads(x) for x in open('scorecard.jsonl', encoding='utf-8')]; assert l[-1]['scorecard'] == 'PASS', l[-1]"
+      - name: Run tryIt
+        run: python try_it.py
+      - name: Milestone tests and fitness functions
+        run: python -m unittest -v
+
+  python-theory-l500:
+    # L500 theory checks: every theorem check script, problem-set and exam number, both question banks.
+    # Exact-output comparison runs on Linux only (golden text recorded there); macOS/Windows must pass every assert.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies (numpy only is needed; same pins as L100)
+        run: "python -m pip install --only-binary=:all: -r labs/L100/01-setup-workbench/requirements.txt"
+      - name: Theorem checks, problem-set and exam numbers
+        run: python research/l500_checks.py
+      - name: L500 question bank + concept inventory rules
+        run: python research/check_l500_qbank.py
+      - name: Recompute every qbank calculation and code-reading answer (L100-L500)
+        run: python research/qbank_checks.py
+      - name: Lab tests (each L500 folder)
+        run: |
+          for d in labs/L500/23-probability labs/L500/24-numerics labs/L500/25-rng-monte-carlo labs/L500/26-ethics labs/L500/27-readings; do
+            (cd "$d" && python -m unittest -v) || exit 1
+          done
+
+  cross-platform:
+    # same seeds -> same printed results on every OS (golden.json written on Linux x86_64)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.15"
+      - name: Install pinned dependencies
+        run: "python -m pip install --only-binary=:all: -r labs/L400/requirements.txt"
+      - name: Seeded fingerprints match golden.json
+        working-directory: labs/L100/cross_platform
+        run: python -m unittest -v
+      - name: L200 seeded fingerprints match golden.json
+        working-directory: labs/L200/cross_platform
+        run: python -m unittest -v
+      - name: L300 seeded fingerprints match golden.json
+        working-directory: labs/L300/cross_platform
+        run: python -m unittest -v
+      - name: L400 + capstone seeded fingerprints match golden.json
+        working-directory: labs/L400/cross_platform
+        run: python -m unittest -v
+      - name: Shared local-agent helper tests (fake server only)
+        working-directory: labs/_shared/local_agent
+        run: python -m unittest -v

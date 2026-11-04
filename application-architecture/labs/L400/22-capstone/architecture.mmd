@@ -1,0 +1,16 @@
+flowchart LR
+  portal["Member portal<br/>(consumer, contract)"] -->|"GET /tenants/{t}/members/{m}/loans"| api["HTTP adapter<br/>http_api.py"]
+  api --> svc["LoansService<br/>loans_service.py"]
+  svc -->|"1 authorize()"| pdp["Policy decision point<br/>rego_lite + loans.rego"]
+  pdp -->|"JSON lines, email erased"| dlog[("decisions.jsonl")]
+  svc -->|"2 SQL bound to :tenant<br/>TenantGuard"| db[("SQLite shared schema<br/>loans + outbox")]
+  svc -->|"3 fine()"| facade["Strangler facade<br/>shadow / canary / service"]
+  facade --> legacy["Monolith fines<br/>(legacy)"]
+  facade --> fines["Fines service<br/>(extracted)"]
+  svc -->|"request log"| rlog[("requests.jsonl")]
+  db -->|"relay, at least once"| bus["Event bus"]
+  bus --> proj["Idempotent consumers<br/>projection, emails"]
+  rlog --> gates["run_capstone.py scorecard<br/>SLOs, contracts, fitness, capacity, ADRs"]
+  dlog --> gates
+  gates -->|"GO / NO-GO (code)"| release["Release"]
+  gates -.->|"explain only"| agent["Local model<br/>agent_assist.py"]

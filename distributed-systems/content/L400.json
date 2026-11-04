@@ -1,0 +1,2249 @@
+[
+  {
+    "id": "consistency-quorums",
+    "number": 17,
+    "level": "L400",
+    "title": "Consistency models in practice: quorums (N, R, W), staleness and PACELC",
+    "phase": "Consistency and replication design",
+    "category": "consistency",
+    "description": "Measure every (R, W) setting of a 3-replica store on a seeded simulated network - latency, stale reads, read-your-writes, new-then-old inversions, availability with a region down - and choose one per use case; R + W > N turns out not to be linearizable until you add read write-back.",
+    "outcome": "You can place linearizable, sequential, causal and eventual consistency on a map, measure what each quorum setting costs (PACELC), decide per use case from evidence, and make a quorum register linearizable with read write-back.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Optional: Maelstrom 0.2.4 (JDK 11+) for the lin-kv exercise (manual).",
+    "estimatedTime": "75 minutes",
+    "overview": [
+      "Consistency is a menu with prices: measure staleness, anomalies, latency and availability per setting, then choose per use case and record why."
+    ],
+    "prerequisites": [
+      "Lesson 9 (consistent hashing: N replicas per key)",
+      "Lesson 13 (linearizability checking)"
+    ],
+    "designBrief": {
+      "context": "One replicated key-value store (N = 3: zones A and B in one region, zone C in another) serves a cart badge, feature flags and a lock-owner/config key. A single writer updates each key; readers sit in all three zones; 5% of messages hit a 20-80 ms slow tail.",
+      "constraints": [
+        "Cart badge: <= 20% stale reads, read p99 <= 70 ms, write p99 <= 40 ms, >= 99% answered with region C down",
+        "Feature flags: <= 1% stale reads, 0 read-your-writes violations, read p99 <= 80 ms, write p99 <= 100 ms, >= 99% answered with region C down",
+        "Lock owner / config: linearizable (0 stale, 0 inversions), read p99 <= 150 ms, write p99 <= 100 ms, >= 99% answered with region C down"
+      ],
+      "question": "Which N, R, W (and read write-back or not) does each use case get?"
+    },
+    "options": [
+      {
+        "name": "R=1 W=1 (eventual)",
+        "description": "Fastest single replica answers reads and acknowledges writes.",
+        "evidence": "read p99 60.5 ms, write p99 34.0 ms, 16.74% stale (max age 86.9 ms), 15 read-your-writes violations, 902 inversions, 100% answered with region C down",
+        "verdict": "Chosen for the cart badge only."
+      },
+      {
+        "name": "R=2 W=2 (R + W > N)",
+        "description": "Overlapping quorums, newest of two replies.",
+        "evidence": "read p99 65.9 ms, write p99 68.3 ms, 0% stale, 0 read-your-writes violations, 2 inversions (not linearizable), 100% answered with region C down",
+        "verdict": "Chosen for feature flags; not enough for config."
+      },
+      {
+        "name": "R=2 W=2 + read write-back (ABD)",
+        "description": "A read writes the newest value back to W replicas before returning, when replicas disagree.",
+        "evidence": "read p50 12.7 ms, read p99 124.5 ms, write p99 67.5 ms, 0 stale, 0 inversions (linearizable), 100% answered with region C down; R=3 W=1 is also linearizable but answers 0% with C down",
+        "verdict": "Chosen for lock owner / config (ADR-017)."
+      }
+    ],
+    "decisionRecord": "labs/L400/17-consistency-quorums/ADR-017-consistency-per-use-case.md",
+    "fitnessFunction": {
+      "what": "The config setting (N=3 R=2 W=2 + read write-back) stays linearizable, fast enough and available when a region is lost.",
+      "test": "labs/L400/17-consistency-quorums/test_fitness.py",
+      "threshold": "0 stale reads and 0 inversions on seeds 11-20; read p99 <= 150 ms; >= 99% of reads and writes answered with region C down"
+    },
+    "scalingLimits": [
+      "Larger N or replicas further away: R and W wait for the slowest member of the quorum, so p99 rises with every cross-region replica (signal: read/write p99 tracks the far replica's RTT).",
+      "Many writers per key: the single-writer version numbers no longer order writes; you need (counter, writer id) versions or a consensus log (signal: concurrent writes with equal versions, lost updates).",
+      "Sloppy quorums / hinted handoff during failures break R + W > N overlap (signal: stale reads appear only during node failures)."
+    ],
+    "glossary": [
+      {
+        "term": "linearizable",
+        "meaning": "Every operation appears to take effect at one instant between its start and end; once any read sees a value, every later read sees it or newer."
+      },
+      {
+        "term": "sequential / causal consistency",
+        "meaning": "One total order consistent with each client's order (not real time) / effects never seen before their causes; concurrent writes may be seen in different orders."
+      },
+      {
+        "term": "quorum (N, R, W)",
+        "meaning": "N replicas; a write waits for W acknowledgements, a read for R replies; R + W > N makes every read quorum overlap every write quorum."
+      },
+      {
+        "term": "PACELC",
+        "meaning": "If Partition: Availability vs Consistency; Else: Latency vs Consistency (Abadi 2012)."
+      },
+      {
+        "term": "read write-back",
+        "meaning": "Second phase of a quorum read (Attiya, Bar-Noy, Dolev): store the newest value on W replicas before returning it."
+      }
+    ],
+    "concepts": [
+      "R + W > N prevents stale reads of finished writes, not new-then-old between concurrent reads.",
+      "The latency/consistency trade-off is paid on every request, the availability trade-off only during partitions.",
+      "Choose per use case, from measured numbers, and keep the choice true with a test."
+    ],
+    "steps": [
+      {
+        "title": "Run the measurement",
+        "detail": "`python quorum.py` - six settings, then one decision per use case.",
+        "expected": "`3 1 1 -  False      3.8/60.5        34.0  16.74 ( 86.9)        15        902  False         100.0%` ... `decide lock owner / config (linearizable): NO setting meets the constraints`.",
+        "ifNot": "Different numbers -> TAIL_P, RUN_MS, CLIENTS or the seed were edited; compare with the README."
+      },
+      {
+        "title": "Read it as PACELC",
+        "detail": "Else-branch: latency vs stale% per row. Partition-branch: the last column (region C down).",
+        "expected": "R=1 W=1 is fastest with 16.74% stale reads; W=3 or R=3 answer 0% with region C down; R=2 W=2 has 0% stale and 100% availability.",
+        "ifNot": "Re-read the column header: stale% counts reads older than a write that FINISHED before the read started."
+      },
+      {
+        "title": "Failure lab: R + W > N is not linearizable",
+        "detail": "Look at the inversions column for R=2 W=2.",
+        "expected": "`3 2 2 -  True      12.5/65.9        68.3    0.0 (  0.0)         0          2  False`: 2 reads returned an older value than an already finished read.",
+        "ifNot": "0 inversions -> the slow tail was removed (tryIt 1 shows why it matters)."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v` - includes a cross-check against the exhaustive L300 #13 checker on 300 short histories.",
+        "expected": "Ran 10 tests ... OK",
+        "ifNot": "Run from the lab folder (the tests import neighbouring files by path)."
+      },
+      {
+        "title": "Build task (the design change)",
+        "detail": "Make the change in buildTask.task in the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK. Before your change they fail (FAILED (failures=2): inversions 2 != 0, config decision None); the reference is solution_quorum.py.",
+        "ifNot": "Diff your file against solution_quorum.py; run without BUILD_TARGET to see the reference pass."
+      },
+      {
+        "title": "Fitness function (keeps the decision true)",
+        "detail": "`test_fitness.py` checks the config decision on seeds 11-20 (linearizable, read p99 <= 150 ms, region C loss survivable). Run it against the reference, then against your file.",
+        "mac": "python -m unittest test_fitness -v; BUILD_TARGET=mine python -m unittest test_fitness -v",
+        "windows": "python -m unittest test_fitness -v; $env:BUILD_TARGET=\"mine\"; python -m unittest test_fitness -v",
+        "expected": "Reference: OK. Unmodified lesson file: FAILED, 8 of 10 seeds are not linearizable without write-back.",
+        "ifNot": "If the reference fails, a lab or an L300 file it imports was edited: compare with the README output."
+      },
+      {
+        "title": "Record the decision",
+        "detail": "Read `ADR-017-consistency-per-use-case.md`; change a constraint in `USE_CASES` and see whether the decision moves.",
+        "expected": "With the reference: cart R=1 W=1, flags R=2 W=2, config R=2 W=2 + read write-back.",
+        "ifNot": "If a decision changes unexpectedly, print `decide()`'s candidate rows for that use case."
+      }
+    ],
+    "code": "\"\"\"L400 lesson 17 (python quorum.py): consistency models in practice with a quorum-replicated register.\nN=3 replicas in zones A, B (one region) and C (another region); a single writer and three readers in different\nzones, on a seeded simulated network (helpers.Sim; simulated ms, no sleeps). For each (R, W) we measure read and\nwrite latency, stale reads, read-your-writes violations, new-then-old inversions and availability with a\nregion down - then decide per use case. The lesson file returns the newest of R replies and nothing else.\"\"\"\nimport json\n\nfrom helpers import Sim, anomalies, pct\n\nREPLICAS, TIMEOUT_MS, RUN_MS = (\"a\", \"b\", \"c\"), 300.0, 10000.0\nCLIENTS = {\"writer\": \"A\", \"r1\": \"A\", \"r2\": \"B\", \"r3\": \"C\", \"r4\": \"A\", \"r5\": \"B\", \"r6\": \"C\"}  # client -> its zone\nSETTINGS = [(1, 1, False), (1, 2, False), (2, 2, False), (1, 3, False), (3, 1, False), (2, 2, True)]  # (R, W, write-back)\n\n\nclass Cluster:\n    def __init__(self, sim, r, w, write_back=False):\n        self.sim, self.r, self.w, self.write_back = sim, r, w, write_back\n        self.version = {rep: 0 for rep in REPLICAS}  # each replica keeps the newest version it has seen\n\n    def write(self, zone, version, done):\n        \"\"\"Send to all N replicas, succeed after W acks (Dynamo: latency = the W-th fastest replica).\"\"\"\n        state = {\"acks\": 0, \"over\": False}\n\n        def at_replica(back, rep):\n            self.version[rep] = max(self.version[rep], version)  # apply, then ack\n            self.sim.at(back, ack)\n\n        def ack():\n            state[\"acks\"] += 1\n            if state[\"acks\"] == self.w and not state[\"over\"]:\n                state[\"over\"] = True\n                done(True, version)\n        self._fan_out(zone, at_replica, state, done, version)\n\n    def read(self, zone, done):\n        \"\"\"Ask all N replicas, use the first R replies (the R fastest decide the latency).\"\"\"\n        state, replies = {\"over\": False}, []\n\n        def at_replica(back, rep):\n            self.sim.at(back, reply, self.version[rep])\n\n        def reply(v):\n            replies.append(v)\n            if len(replies) == self.r and not state[\"over\"]:\n                state[\"over\"] = True\n                self.finish_read(zone, replies, done)\n        self._fan_out(zone, at_replica, state, done, None)\n\n    def finish_read(self, zone, replies, done):\n        done(True, max(replies))  # newest of the R replies; write_back is ignored, so later reads may see older\n\n    def _fan_out(self, zone, at_replica, state, done, value):\n        for rep in REPLICAS:\n            self.sim.send(zone, rep, at_replica, rep)\n\n        def timeout():  # fewer than R (or W) replicas answered: the operation fails (unavailable)\n            if not state[\"over\"]:\n                state[\"over\"] = True\n                done(False, value)\n        self.sim.at(self.sim.now + TIMEOUT_MS, timeout)\n\n\ndef run(r, w, seed=17, down=(), cluster_class=Cluster, write_back=False, run_ms=RUN_MS):\n    \"\"\"Closed-loop clients start ops for run_ms, then the run drains: every op ends (ok or timed out).\n    The writer writes v+1 then reads it back; readers read and think.\"\"\"\n    sim, history = Sim(seed), []\n    sim.down |= set(down)\n    cluster, next_version = cluster_class(sim, r, w, write_back), [0]\n\n    def start(proc, f):\n        if sim.now > run_ms:\n            return\n        op = {\"process\": proc, \"f\": f, \"start\": sim.now}\n\n        def done(ok, value):\n            op.update(ok=ok, value=value, end=sim.now)\n            history.append(op)\n            again = \"read\" if proc == \"writer\" and f == \"write\" else (\"write\" if proc == \"writer\" else \"read\")\n            sim.at(sim.now + sim.rng.expovariate(1 / (20.0 if again == \"write\" else 5.0)), start, proc, again)\n        if f == \"write\":\n            next_version[0] += 1\n            cluster.write(CLIENTS[proc], next_version[0], done)\n        else:\n            cluster.read(CLIENTS[proc], done)\n\n    for proc in CLIENTS:\n        sim.at(sim.rng.uniform(0, 5), start, proc, \"write\" if proc == \"writer\" else \"read\")\n    sim.run(float(\"inf\"))\n    return history\n\n\ndef measure(r, w, write_back=False, seed=17, cluster_class=Cluster):\n    history = run(r, w, seed, cluster_class=cluster_class, write_back=write_back)\n    lat = {f: [op[\"end\"] - op[\"start\"] for op in history if op[\"ok\"] and op[\"f\"] == f] for f in (\"read\", \"write\")}\n    a = anomalies(history)\n    region_down = run(r, w, seed, down=(\"c\",), cluster_class=cluster_class, write_back=write_back)\n    avail = min(100 * sum(op[\"ok\"] for op in region_down if op[\"f\"] == f) / sum(op[\"f\"] == f for op in region_down)\n                for f in (\"read\", \"write\"))  # the worse of read and write availability\n    return {\"R\": r, \"W\": w, \"write_back\": write_back, \"overlap\": r + w > len(REPLICAS), \"read_p50\": pct(lat[\"read\"], 50),\n            \"read_p99\": pct(lat[\"read\"], 99), \"write_p99\": pct(lat[\"write\"], 99),\n            \"stale_pct\": round(100 * a[\"stale\"] / a[\"reads\"], 2), \"stale_age_max\": a[\"age_max\"], \"ryw\": a[\"ryw\"], \"inversions\": a[\"inversions\"],\n            \"linearizable\": a[\"stale\"] == 0 and a[\"inversions\"] == 0,\n            \"avail_c_down_pct\": round(avail, 1)}\n\n\nUSE_CASES = {  # constraints from the design brief; decide() picks the fastest setting that meets them\n    \"cart badge (shows a count)\": {\"max_stale_pct\": 20.0, \"read_p99_ms\": 70.0, \"write_p99_ms\": 40.0, \"min_avail_pct\": 99.0},\n    \"feature flag (writer sees own change)\": {\"max_stale_pct\": 1.0, \"ryw\": True, \"read_p99_ms\": 80.0,\n                                              \"write_p99_ms\": 100.0, \"min_avail_pct\": 99.0},\n    \"lock owner / config (linearizable)\": {\"linearizable\": True, \"read_p99_ms\": 150.0, \"write_p99_ms\": 100.0,\n                                           \"min_avail_pct\": 99.0},\n}\n\n\ndef decide(rows, need):\n    ok = [m for m in rows if m[\"stale_pct\"] <= need.get(\"max_stale_pct\", 0.0) and m[\"read_p99\"] <= need[\"read_p99_ms\"]\n          and m[\"write_p99\"] <= need[\"write_p99_ms\"]\n          and m[\"avail_c_down_pct\"] >= need[\"min_avail_pct\"] and (m[\"linearizable\"] or not need.get(\"linearizable\"))\n          and (m[\"ryw\"] == 0 or not need.get(\"ryw\"))]\n    return min(ok, key=lambda m: (m[\"read_p99\"], m[\"write_p99\"]), default=None)\n\n\ndef main(cluster_class=Cluster):\n    rows = [measure(r, w, wb, cluster_class=cluster_class) for r, w, wb in SETTINGS]\n    print(\"N R W wb R+W>N  read p50/p99 ms  write p99  stale% (max age ms)  ryw  inversions  linearizable  avail, C down\")\n    for m in rows:\n        print(f\"3 {m['R']} {m['W']} {'+' if m['write_back'] else '-':2} {str(m['overlap']):6} {m['read_p50']:>7}/{m['read_p99']:<6} {m['write_p99']:>9}\"\n              f\" {m['stale_pct']:>6} ({m['stale_age_max']:>5}) {m['ryw']:>9} {m['inversions']:>10}  {str(m['linearizable']):12}\"\n              f\" {m['avail_c_down_pct']:>6}%\")\n    for name, need in USE_CASES.items():\n        best = decide(rows, need)\n        choice = f\"N=3 R={best['R']} W={best['W']}\" + (\" + read write-back\" if best[\"write_back\"] else \"\") if best else None\n        print(f\"decide {name}: {choice or 'NO setting meets the constraints'}\")\n    return rows\n\n\nif __name__ == \"__main__\":\n    print(json.dumps({\"seed\": 17, \"run_ms\": RUN_MS, \"replicas\": \"a@A b@B c@C (C = other region)\"}))\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Write path",
+        "detail": "`Cluster.write` fans out to all N replicas; each applies `max(version)` and acks; the write succeeds at the W-th ack (Dynamo: latency = W-th fastest replica) or fails at the 300 ms timeout."
+      },
+      {
+        "title": "Read path",
+        "detail": "`Cluster.read` asks all N and uses the first R replies; `finish_read` returns the newest of them. The lesson ignores `write_back`, so nothing guarantees later reads see that value."
+      },
+      {
+        "title": "Workload",
+        "detail": "`run` drives a closed-loop writer (write v+1, then read it back) and six readers in zones A, B, C on a seeded simulated network; ops started after `run_ms` are not started, in-flight ones drain."
+      },
+      {
+        "title": "History checks",
+        "detail": "`helpers.anomalies` sweeps the history once: stale (older than a write finished before the read began), inversion (older than an already finished read), read-your-writes. For a single-writer register, no stale and no inversion means linearizable - cross-checked against the L300 #13 exhaustive checker."
+      },
+      {
+        "title": "PACELC column",
+        "detail": "`measure` re-runs the workload with replica c down and reports the worse of read and write availability."
+      },
+      {
+        "title": "Decision as code",
+        "detail": "`USE_CASES` holds each brief's numbers; `decide` returns the fastest setting that meets them, or None - the evidence and the choice live in one place."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/17-consistency-quorums/quorum.py",
+        "purpose": "Replicas, quorum read/write, workload, measure, decide"
+      },
+      {
+        "path": "labs/L400/17-consistency-quorums/helpers.py",
+        "purpose": "Plumbing: discrete-event simulator, zone latency + slow tail, percentiles, history checks"
+      },
+      {
+        "path": "labs/L400/17-consistency-quorums/solution_quorum.py",
+        "purpose": "Build-task reference: read write-back"
+      },
+      {
+        "path": "labs/L400/17-consistency-quorums/test_quorum.py",
+        "purpose": "Lesson tests incl. the cross-check with the L300 #13 checker"
+      },
+      {
+        "path": "labs/L400/17-consistency-quorums/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/17-consistency-quorums/test_fitness.py",
+        "purpose": "Fitness function for ADR-017"
+      },
+      {
+        "path": "labs/L400/17-consistency-quorums/ADR-017-consistency-per-use-case.md",
+        "purpose": "Decision record"
+      },
+      {
+        "path": "labs/L400/17-consistency-quorums/try_it.py",
+        "purpose": "The two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "R=1 W=1: 16.74% stale reads, read p99 60.5 ms",
+      "R=2 W=2: 0% stale but 2 inversions -> not linearizable",
+      "W=3 or R=3: 0% answered with region C down",
+      "With write-back: 0 inversions, read p99 124.5 ms, config decision R=2 W=2 + read write-back"
+    ],
+    "testCases": [
+      {
+        "action": "Measure R=1 W=1",
+        "expected": "stale > 10%, read-your-writes violations > 0"
+      },
+      {
+        "action": "Measure R=2 W=2 (lesson)",
+        "expected": "0% stale, 2 inversions, linearizable False"
+      },
+      {
+        "action": "300 short histories through both checkers",
+        "expected": "same verdicts; 89 rejected by both"
+      },
+      {
+        "action": "Region C down",
+        "expected": "R=1 W=1 and R=2 W=2 100%; R=1 W=3 and R=3 W=1 0%"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Remove the slow-message tail (`helpers.TAIL_P = 0`) and measure R=2 W=2 again (`python try_it.py`).",
+        "predict": "Do the inversions survive without slow messages?",
+        "expected": "TAIL_P=0.05: inversions=2, read p99 65.9 ms, write p99 68.3 ms; TAIL_P=0.00: inversions=0, read p99 62.4 ms, write p99 17.9 ms."
+      },
+      {
+        "task": "Partition the clients from replicas b and c (only a reachable) and count answered reads and writes per setting (`python try_it.py`).",
+        "predict": "Which settings keep answering (PA) and which refuse (PC)?",
+        "expected": "R=1 W=1: reads 100%, writes 100%; R=2 W=2 (with or without write-back): 0% / 0%; R=1 W=3: reads 100%, writes 0%; R=3 W=1: reads 0%, writes 100%."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "A 'strongly consistent' quorum store still shows a value going backwards between two reads",
+        "action": "Check for read repair before return (write-back); R + W > N alone allows new-then-old during an in-flight write."
+      },
+      {
+        "symptom": "p99 jumps after enabling write-back",
+        "action": "Expected when replicas often disagree (frequent writes, slow tail); keep write-back only for keys that need linearizability."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Dynamo-style stores (Dynamo, Cassandra, Riak): N, R and W are configurable, and raising R + W buys consistency with latency (Abadi 2012).",
+      "Same idea in consensus stores (etcd, ZooKeeper, Raft-based KVs): linearizable reads go through the leader's log or a read index instead of quorum write-back.",
+      "Same check in Maelstrom: the lin-kv workload verifies a key-value service for linearizability."
+    ],
+    "learningTools": [
+      {
+        "name": "Maelstrom (Jepsen)",
+        "role": "CHECK",
+        "exercise": "Write a 3-node lin-kv node in Python that writes to all peers, acknowledges after 2 acks and answers reads from the newest of 2 replies (no write-back); run `./maelstrom test -w lin-kv --bin node.py --node-count 3 --time-limit 20 --nemesis partition`, then add the write-back phase and run again.",
+        "expected": "Should match this lab: without write-back the checker should find the history not linearizable (lab: 2 inversions, linearizable False); with write-back it should pass or report unavailability during partitions rather than wrong answers (lab: 0 inversions). Pending a manual run.",
+        "mac": "JDK 11+, Graphviz, Gnuplot; untar release and run ./maelstrom",
+        "windows": "not supported natively (the project's own statement, per the catalog's L300 corrections); use WSL 2 (unverified) or the Mac mini",
+        "licence": "EPL-1.0 (OSI: yes)",
+        "url": "https://github.com/jepsen-io/maelstrom/blob/main/doc/workloads.md"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L300 #13 Network partitions and fault injection: proxy toxics, split brain, fencing and linearizability checking: the exhaustive checker this lab cross-checks its fast history checks against",
+      "distributed-systems L400 #21 Verifying correctness: model checking and linearizability checking: a memoised linearizability checker finds this lab's inversion in a 2,273-operation history",
+      "distributed-systems L400 #18 CRDTs for local-first collaboration: counters, OR-Set, LWW-Register and property tests: when eventual consistency is the right answer, make concurrent updates merge instead of overwrite",
+      "application-architecture L300 #12 CQRS and read models: projections that survive crashes: read models are an eventual-consistency choice made per use case, like this lab's cart badge"
+    ],
+    "inRealSystems": [
+      "Dynamo-style databases expose R and W (or consistency levels) per request so each use case can pick its point on the latency/consistency curve.",
+      "Coordination data (locks, leader ids, config) lives in linearizable stores such as etcd or ZooKeeper; carts, counters and feeds live in eventually consistent ones."
+    ],
+    "useWhen": "Use this measurement-first choice whenever one replicated store serves several use cases; avoid quorum tuning for data that needs transactions across keys (use a consensus or transactional store instead).",
+    "simulatorVsReal": "Replicas, clients and the network are simulated in-process (simulated milliseconds, seeded); latencies are assumptions, not measurements. Real systems add retries, hinted handoff, clock skew and failure detection.",
+    "caution": "Numbers here come from an assumed latency model; re-measure with your own placement and traffic before copying a setting.",
+    "checkpoint": "PASS if `python quorum.py` matches the README, `python -m unittest` runs 10 tests OK and your write-back passes test_build_task and test_fitness with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "N=3, R=2, W=2. A write has reached replica a only; reader 1 gets a and b, reader 2 (starting after reader 1 ends) gets b and c. What do they return, and which model is violated?",
+        "a": "Reader 1 returns the new value, reader 2 the old one: new-then-old, so not linearizable (it can still be sequentially consistent)."
+      },
+      {
+        "q": "Why does write-back barely change p50 but double p99?",
+        "a": "It only runs when the R replies disagree, which happens mostly while a write is in flight or delayed - the tail."
+      },
+      {
+        "q": "Which half of PACELC did tryIt 2 show?",
+        "a": "The partition half: R=1 W=1 stays available (PA), R=2 W=2 refuses (PC)."
+      }
+    ],
+    "buildTask": {
+      "task": "In Cluster.finish_read: when write_back is set and fewer than W of the R replies already hold the newest version, write that version to a write quorum before returning it (skip the extra round trip when W replies already agree).",
+      "hints": [
+        "self.write(zone, v, callback) already exists - reuse it for the second phase.",
+        "replies.count(max(replies)) >= self.w means the value is already on a write quorum.",
+        "The callback must return v, not the write's own value argument."
+      ],
+      "solution": "labs/L400/17-consistency-quorums/solution_quorum.py",
+      "check": "labs/L400/17-consistency-quorums/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "failureLab": {
+      "fault": "A 5% slow-message tail (20-80 ms, seeded) delays some replication messages while reads continue (seed 17, 10 s simulated, 7 clients).",
+      "symptom": "R=2 W=2 (R + W > N) shows 0% stale reads but 2 new-then-old inversions -> linearizable False; decide() finds no setting for the lock-owner/config use case.",
+      "fix": "Read write-back (ABD two-phase read) for the config setting only.",
+      "proof": "labs/L400/17-consistency-quorums/test_build_task.py: 2 failures against quorum.py (BUILD_TARGET=mine), 3 passes against solution_quorum.py; test_fitness.py fails on 8 of 10 seeds before, passes after."
+    },
+    "tradeOffs": [
+      {
+        "option": "Low quorums (R=1, W=1)",
+        "gains": "Lowest latency, survives partitions",
+        "costs": "Stale reads (16.74%), read-your-writes violations",
+        "chooseWhen": "Values that are fine slightly old: counts, feeds, recommendations"
+      },
+      {
+        "option": "Overlapping quorums (R + W > N)",
+        "gains": "No stale reads of finished writes, survives one region down",
+        "costs": "Latency of the 2nd replica; still not linearizable",
+        "chooseWhen": "Read-your-writes and freshness matter, occasional reordering is tolerable"
+      },
+      {
+        "option": "Overlap + write-back (or a consensus log)",
+        "gains": "Linearizable",
+        "costs": "Tail latency (p99 65.9 -> 124.5 ms); unavailable without a quorum",
+        "chooseWhen": "Locks, leader ids, config, uniqueness checks"
+      }
+    ],
+    "sources": [
+      {
+        "title": "Abadi, Consistency Tradeoffs in Modern Distributed Database System Design (IEEE Computer, 2012) - PACELC",
+        "url": "https://www.cs.umd.edu/~abadi/papers/abadi-pacelc.pdf"
+      },
+      {
+        "title": "DeCandia et al., Dynamo: Amazon's Highly Available Key-value Store (SOSP 2007)",
+        "url": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf"
+      },
+      {
+        "title": "Jepsen: Consistency models (reference guide; background)",
+        "url": "https://jepsen.io/consistency"
+      }
+    ],
+    "next": "L400 #18 CRDTs for local-first collaboration: counters, OR-Set, LWW-Register and property tests - when you choose eventual consistency, make concurrent updates merge",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python quorum.py`, `python solution_quorum.py`, `python try_it.py` and `python -m unittest -v` (10 tests OK) on Python 3.12.15 (Linux); output identical on repeated runs (seeded, simulated time). BUILD_TARGET=mine against the unmodified quorum.py: test_build_task 2 failures, test_fitness fails on 8 of 10 seeds.",
+      "pendingCi": [
+        "macOS and Windows runs (CI matrix)",
+        "Maelstrom lin-kv exercise (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/17-consistency-quorums.md",
+    "conceptSummary": "Consistency models are sets of allowed histories, and each costs latency (always) and availability (during partitions) - PACELC. Measured on 3 replicas: R=1 W=1 is fast but 16.74% stale; R+W>N removes stale reads but still allows new-then-old, which read write-back removes at a p99 cost. Choose per use case and keep the choice true with a fitness test.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "crdts-local-first",
+    "number": 18,
+    "level": "L400",
+    "title": "CRDTs for local-first collaboration: counters, OR-Set, LWW-Register and property tests",
+    "phase": "Consistency and replication design",
+    "category": "crdt",
+    "description": "Implement G-Counter, PN-Counter, OR-Set and LWW-Register, test their merge laws and convergence with a seeded property-based tester that shrinks failures, and find the LWW tie that makes two replicas diverge forever.",
+    "outcome": "You can choose a CRDT per field from the wanted concurrent semantics, prove merge laws with random histories, read a shrunk counterexample, and estimate metadata cost.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Optional: Node 24 + npm for the Automerge 3.3.2 equivalent (CI only).",
+    "estimatedTime": "70 minutes",
+    "overview": [
+      "Local-first apps write locally and merge later; a merge that is commutative, associative and idempotent makes every replica converge no matter how the sync behaved."
+    ],
+    "prerequisites": [
+      "Lesson 6 (Lamport clocks)",
+      "Lesson 8 (at-least-once delivery: duplicates)",
+      "Lesson 17 (when eventual consistency is acceptable)"
+    ],
+    "designBrief": {
+      "context": "A shopping-list app runs on a phone and a laptop, offline for hours, syncing over an unreliable channel that loses, reorders and duplicates messages (20% of syncs are delivered twice in the lab). No server decides conflicts.",
+      "constraints": [
+        "Every replica converges after anti-entropy: 500/500 seeded histories per type",
+        "Concurrent increments are never lost (a like-counter must equal the true sum)",
+        "A concurrent add and remove of the same item keeps the item (add wins)",
+        "A busy cart session ships <= 4,096 bytes per sync"
+      ],
+      "question": "Which data type represents each field (items, counters, title), and how are ties broken?"
+    },
+    "options": [
+      {
+        "name": "Plain values, last writer wins",
+        "description": "Store the number/list; the newest write replaces the rest.",
+        "evidence": "like-counter truth 140 ends at 81 on all three replicas (concurrent increments lost); 15 bytes per sync",
+        "verdict": "Rejected for counters and sets."
+      },
+      {
+        "name": "State-based CRDTs (this lab)",
+        "description": "OR-Set, PN-Counter, LWW-Register with merge = join.",
+        "evidence": "G/PN-Counter and OR-Set: laws 500/500, converged 500/500; PN-Counter exact at 140 with 76 bytes per sync; LWW-Register 407/500 commutative and 386/500 converged until ties are broken by replica id, then 500/500",
+        "verdict": "Chosen (ADR-018), with the tie-break."
+      },
+      {
+        "name": "Automerge 3.3.2 (op-based JSON CRDT)",
+        "description": "A library CRDT for whole documents; keeps conflicting values visible.",
+        "evidence": "automerge_equivalent.mjs asserts the same three stories (convergence, likes = 5, two conflicting titles kept); pending CI - npm not reachable here",
+        "verdict": "Equivalent when the document model grows beyond a few fields."
+      }
+    ],
+    "decisionRecord": "labs/L400/18-crdts-local-first/ADR-018-crdts-for-local-first.md",
+    "fitnessFunction": {
+      "what": "Every chosen type stays a join and the sync payload stays small.",
+      "test": "labs/L400/18-crdts-local-first/test_fitness.py",
+      "threshold": "OR-Set, PN-Counter, LWW-Register: 500/500 on all laws and convergence on seeds 18-20; reference cart session <= 4,096 bytes per sync (1,311 today)"
+    },
+    "scalingLimits": [
+      "Tombstones are never collected: one item re-added and removed 1,000 times costs 31,813 bytes (signal: sync size grows while the visible list does not).",
+      "Counter vectors keep one slot per replica that ever wrote: many short-lived devices grow every counter (signal: state bytes per counter grow with device churn).",
+      "Global invariants (stock >= 0, unique usernames) cannot be enforced by merging local states (signal: oversold items after a merge) - they need reservations or coordination."
+    ],
+    "glossary": [
+      {
+        "term": "CRDT (state-based)",
+        "meaning": "A replicated type whose merge is a least upper bound: commutative, associative, idempotent; replicas that saw the same updates are equal."
+      },
+      {
+        "term": "OR-Set",
+        "meaning": "Observed-remove set: each add has a unique tag; a remove tombstones only the tags it saw, so a concurrent add wins."
+      },
+      {
+        "term": "LWW-Register",
+        "meaning": "Last-writer-wins register ordered by a timestamp; ties need a deterministic rule (replica id)."
+      },
+      {
+        "term": "property-based test / shrinking",
+        "meaning": "Check a law on many random inputs; on failure, remove steps while it still fails to get a minimal counterexample."
+      }
+    ],
+    "concepts": [
+      "Choose the type by what should happen on concurrent updates.",
+      "Merge laws are testable properties; duplicates in the history are part of the test.",
+      "Metadata is the price: tags, tombstones, per-replica slots."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python crdts.py`",
+        "expected": "`1) phone+laptop: ['eggs', 'milk'] == ['eggs', 'milk']: True` - the concurrent re-add of milk survives the remove.",
+        "ifNot": "If milk is missing, `ORSet.remove` tombstoned tags it had not observed."
+      },
+      {
+        "title": "Read the property results",
+        "detail": "Part 2: three laws and convergence per type, 500 seeded histories each.",
+        "expected": "Counters and OR-Set all `500/500`; `LWW-Register {\"commutative\": \"407/500\", ... \"converged\": \"386/500\"}`.",
+        "ifNot": "Different counts -> the seed or helpers.gen_history was edited."
+      },
+      {
+        "title": "Failure lab: read the shrunk counterexample",
+        "detail": "The shrinker drops steps while the property still fails.",
+        "expected": "`commutative fails after: r0.assign('r0', 'r0.9', 0); r1.assign('r1', 'r1.10', 0)` - two writes at the same Lamport timestamp.",
+        "ifNot": "A long counterexample means shrink() was changed; it should remove one step at a time while the failure persists."
+      },
+      {
+        "title": "Compare the options",
+        "detail": "Part 3: a like-counter on 3 replicas with duplicated syncs.",
+        "expected": "`truth 140: LWW number [81, 81, 81] (concurrent adds lost), PN-Counter [140, 140, 140]; sync bytes LWW 15, PN 76`.",
+        "ifNot": "Check LWWCounter.add reads its own current value before assigning."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 10 tests ... OK",
+        "ifNot": "Run from the lab folder (the tests import neighbouring files by path)."
+      },
+      {
+        "title": "Build task (the design change)",
+        "detail": "Make the change in buildTask.task in the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK. Before your change they fail (FAILED (failures=2): commutative 407/500, tie keeps 'x'); the reference is solution_crdts.py.",
+        "ifNot": "Diff your file against solution_crdts.py; run without BUILD_TARGET to see the reference pass."
+      },
+      {
+        "title": "Fitness function (keeps the decision true)",
+        "detail": "`test_fitness.py` checks laws and convergence on seeds 18-20 and the 4,096-byte sync budget. Run it against the reference, then against your file.",
+        "mac": "python -m unittest test_fitness -v; BUILD_TARGET=mine python -m unittest test_fitness -v",
+        "windows": "python -m unittest test_fitness -v; $env:BUILD_TARGET=\"mine\"; python -m unittest test_fitness -v",
+        "expected": "Reference: OK. Unmodified lesson file: FAILED for LWW-Register on seeds 18, 19 and 20.",
+        "ifNot": "If the reference fails, a lab or an L300 file it imports was edited: compare with the README output."
+      },
+      {
+        "title": "Optional: the Automerge equivalent (CI)",
+        "detail": "Node 24: `npm install` then `node automerge_equivalent.mjs`.",
+        "mac": "npm install && node automerge_equivalent.mjs",
+        "windows": "npm install; node automerge_equivalent.mjs",
+        "expected": "One JSON line with `\"converged\":true`, `\"likes\":5` and two title conflicts (pending CI; not run here).",
+        "ifNot": "If getConflicts returns undefined, the two title changes were not concurrent (clone before both changes)."
+      }
+    ],
+    "code": "\"\"\"L400 lesson 18 (python crdts.py): state-based CRDTs for local-first collaboration.\nG-Counter, PN-Counter, OR-Set and LWW-Register (Shapiro et al., 2011): every replica updates locally (offline\nis fine) and merge() is a join - commutative, associative, idempotent - so replicas that have seen the same updates\nhold the same state, whatever order, duplication or path the sync took. helpers.py generates seeded random\nhistories and checks those laws; this file shows a two-phone story, the property results and the options.\"\"\"\nimport json, random\n\nfrom helpers import check_laws, converge, size\n\n\nclass GCounter:  # grow-only: one slot per replica, merge = per-slot max (vector-clock shape)\n    def __init__(self, slots=None):\n        self.slots = dict(slots or {})\n\n    def inc(self, replica, n=1):\n        self.slots[replica] = self.slots.get(replica, 0) + n  # a replica only ever touches its own slot\n\n    def value(self):\n        return sum(self.slots.values())\n\n    def merge(self, other):\n        keys = self.slots.keys() | other.slots.keys()\n        return GCounter({k: max(self.slots.get(k, 0), other.slots.get(k, 0)) for k in keys})\n\n    def state(self):\n        return sorted(self.slots.items())\n\n\nclass PNCounter:  # increments and decrements = two G-Counters\n    def __init__(self, p=None, n=None):\n        self.p, self.n = p or GCounter(), n or GCounter()\n\n    def add(self, replica, delta):\n        (self.p if delta >= 0 else self.n).inc(replica, abs(delta))\n\n    def value(self):\n        return self.p.value() - self.n.value()\n\n    def merge(self, other):\n        return PNCounter(self.p.merge(other.p), self.n.merge(other.n))\n\n    def state(self):\n        return self.p.state(), self.n.state()\n\n\nclass ORSet:  # observed-remove set: add-wins; every add gets a unique tag, remove tombstones the tags it saw\n    def __init__(self, adds=None, tombs=None):\n        self.adds, self.tombs = {e: set(t) for e, t in (adds or {}).items()}, set(tombs or ())\n\n    def add(self, element, tag):\n        self.adds.setdefault(element, set()).add(tag)  # tag = (replica, counter): unique per add\n\n    def remove(self, element):\n        self.tombs |= self.adds.get(element, set())  # only tags observed HERE: a concurrent add survives\n\n    def value(self):\n        return {e for e, tags in self.adds.items() if tags - self.tombs}\n\n    def merge(self, other):\n        adds = {e: self.adds.get(e, set()) | other.adds.get(e, set()) for e in self.adds.keys() | other.adds.keys()}\n        return ORSet(adds, self.tombs | other.tombs)\n\n    def state(self):\n        return sorted((e, sorted(t)) for e, t in self.adds.items()), sorted(self.tombs)\n\n\nclass LWWRegister:  # last-writer-wins by Lamport timestamp; the replica id travels with the value\n    def __init__(self, value=None, ts=0, replica=\"\"):\n        self.val, self.ts, self.replica = value, ts, replica\n\n    def assign(self, replica, value, seen_ts):\n        self.val, self.ts, self.replica = value, max(self.ts, seen_ts) + 1, replica\n\n    def value(self):\n        return self.val\n\n    def merge(self, other):\n        if other.ts > self.ts:  # BUG (failure lab): equal timestamps keep MY value -> merge is not commutative\n            return LWWRegister(other.val, other.ts, other.replica)\n        return LWWRegister(self.val, self.ts, self.replica)\n\n    def state(self):\n        return self.val, self.ts, self.replica\n\n\nclass LWWCounter(LWWRegister):  # option \"store the number, last writer wins\": concurrent increments get lost\n    def add(self, replica, delta):\n        self.assign(replica, (self.val or 0) + delta, self.ts)\n\n    def merge(self, other):\n        won = LWWRegister.merge(self, other)\n        return LWWCounter(won.val, won.ts, won.replica)\n\n\nTYPES = {\"G-Counter\": GCounter, \"PN-Counter\": PNCounter, \"OR-Set\": ORSet, \"LWW-Register\": LWWRegister}\n\n\ndef two_phones():\n    \"\"\"Two devices edit a shared shopping list offline, then sync both ways.\"\"\"\n    phone, laptop = ORSet(), ORSet()\n    phone.add(\"milk\", (\"phone\", 1))\n    laptop = laptop.merge(phone)\n    phone.remove(\"milk\")  # phone removes milk ...\n    laptop.add(\"milk\", (\"laptop\", 1))  # ... while the laptop re-adds it (concurrently): add wins\n    laptop.add(\"eggs\", (\"laptop\", 2))\n    return phone.merge(laptop), laptop.merge(phone)\n\n\ndef like_counter(seed=18, steps=300):\n    \"\"\"Options for a shared like-counter: 3 replicas, random sync, 20% of syncs delivered twice.\"\"\"\n    rng, truth = random.Random(seed), 0\n    reps = {\"lww\": [LWWCounter() for _ in range(3)], \"pn\": [PNCounter() for _ in range(3)]}\n    for _ in range(steps):\n        i, j, delta = rng.randrange(3), rng.randrange(3), rng.choice((1, 1, 1, -1))\n        truth += delta\n        for rs in reps.values():\n            rs[i].add(f\"r{i}\", delta)\n        if rng.random() < 0.5:\n            for _ in range(2 if rng.random() < 0.2 else 1):\n                for rs in reps.values():\n                    rs[j] = rs[j].merge(rs[i])\n    for rs in reps.values():  # final anti-entropy: everyone merges everyone\n        for x in range(3):\n            for y in range(3):\n                rs[y] = rs[y].merge(rs[x])\n    return {\"truth\": truth, **{k: [r.value() for r in rs] for k, rs in reps.items()},\n            \"bytes\": {k: size(rs[0]) for k, rs in reps.items()}}\n\n\nif __name__ == \"__main__\":\n    a, b = two_phones()\n    print(f\"1) phone+laptop: {sorted(a.value())} == {sorted(b.value())}: {a.state() == b.state()}\")\n    print(\"2) merge laws and convergence over 500 seeded random histories per type:\")\n    for name, cls in TYPES.items():\n        laws, conv = check_laws(cls, seed=18), converge(cls, seed=18)\n        print(f\"   {name:13} {json.dumps({**laws['counts'], 'converged': conv['converged']})}\")\n        for example in filter(None, (laws[\"counterexample\"], conv[\"counterexample\"])):\n            print(f\"   {'':13} shrunk counterexample: {example}\")\n    c = like_counter()\n    print(f\"3) like-counter, truth {c['truth']}: LWW number {c['lww']} (concurrent adds lost), PN-Counter {c['pn']};\"\n          f\" sync bytes LWW {c['bytes']['lww']}, PN {c['bytes']['pn']}\")\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "G-Counter",
+        "detail": "One slot per replica; `inc` touches only its own slot; `merge` takes the per-slot max - a join on vectors, so duplicated syncs change nothing."
+      },
+      {
+        "title": "PN-Counter",
+        "detail": "Two G-Counters (increments, decrements); value = P - N. Decrements stay monotone in N, so the join still works."
+      },
+      {
+        "title": "OR-Set",
+        "detail": "`add` stores a unique tag; `remove` copies only the tags this replica has seen into the tombstones; value = elements with a live tag. A concurrent add has a tag the remover never saw, so it survives."
+      },
+      {
+        "title": "LWW-Register (the bug)",
+        "detail": "`merge` keeps `other` only if `other.ts > self.ts`; on a tie each side keeps its own value, so merge(x, y) != merge(y, x)."
+      },
+      {
+        "title": "Property tester",
+        "detail": "`helpers.gen_history` mixes local updates with random, 20%-duplicated syncs; `law_failures` checks the three laws on the resulting states; `diverged` checks convergence (and the true sum for counters) after random anti-entropy."
+      },
+      {
+        "title": "Shrinking",
+        "detail": "`helpers.shrink` removes one step at a time while the property still fails, turning a 12-step history into the 2-step tie."
+      },
+      {
+        "title": "Options as code",
+        "detail": "`like_counter` runs the same 300 seeded updates through a last-writer-wins number and a PN-Counter and reports values and sync bytes."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/18-crdts-local-first/crdts.py",
+        "purpose": "The four CRDTs, the two-phone story, the like-counter options"
+      },
+      {
+        "path": "labs/L400/18-crdts-local-first/helpers.py",
+        "purpose": "Plumbing: random histories, replay, laws, convergence, shrinker, size"
+      },
+      {
+        "path": "labs/L400/18-crdts-local-first/solution_crdts.py",
+        "purpose": "Build-task reference: (timestamp, replica id) tie-break"
+      },
+      {
+        "path": "labs/L400/18-crdts-local-first/automerge_equivalent.mjs",
+        "purpose": "Automerge 3.3.2 cross-check (pending CI)"
+      },
+      {
+        "path": "labs/L400/18-crdts-local-first/package.json",
+        "purpose": "Pins @automerge/automerge 3.3.2 for CI"
+      },
+      {
+        "path": "labs/L400/18-crdts-local-first/test_crdts.py",
+        "purpose": "Lesson tests"
+      },
+      {
+        "path": "labs/L400/18-crdts-local-first/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/18-crdts-local-first/test_fitness.py",
+        "purpose": "Fitness function for ADR-018"
+      },
+      {
+        "path": "labs/L400/18-crdts-local-first/ADR-018-crdts-for-local-first.md",
+        "purpose": "Decision record"
+      },
+      {
+        "path": "labs/L400/18-crdts-local-first/try_it.py",
+        "purpose": "The two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "Two devices converge to ['eggs', 'milk'] (add wins)",
+      "Counters and OR-Set: 500/500 on all laws and convergence",
+      "LWW-Register (lesson): commutative 407/500, converged 386/500; shrunk to two same-timestamp writes",
+      "Like-counter: LWW number 81, PN-Counter 140 (truth 140)"
+    ],
+    "testCases": [
+      {
+        "action": "Concurrent remove (phone) and re-add (laptop) of milk",
+        "expected": "both replicas equal, milk present"
+      },
+      {
+        "action": "500 random histories per counter / OR-Set",
+        "expected": "all laws and convergence 500/500"
+      },
+      {
+        "action": "Shrink a 4-step LWW failure",
+        "expected": "2 steps remain, still non-commutative"
+      },
+      {
+        "action": "Like-counter options",
+        "expected": "PN [140, 140, 140]; LWW below 140"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Give the G-Counter a merge that ADDS slots instead of taking the max, and run the property tester (`python try_it.py`).",
+        "predict": "Which law breaks, and does anything still converge?",
+        "expected": "{'commutative': '500/500', 'associative': '500/500', 'idempotent': '7/500'}, converged 0/500; shrunk to `idempotent fails after: r0.inc('r0', 1)`."
+      },
+      {
+        "task": "Re-add and remove one item 10, 100 and 1,000 times on an OR-Set and print its state size (`python try_it.py`).",
+        "predict": "How does the state grow while the list shows one item?",
+        "expected": "10 cycles: tombstones 10, 311 bytes; 100: 3,012 bytes; 1,000: 31,813 bytes - value ['milk'] every time."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Two devices show different values forever after syncing",
+        "action": "Run the law tests with duplicated syncs; a non-commutative tie in an LWW merge is the usual cause - order by (timestamp, replica id)."
+      },
+      {
+        "symptom": "Sync payloads keep growing",
+        "action": "Measure tombstones and per-replica slots; plan compaction (needs coordination) or switch to op-based sync with acknowledgements."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Automerge (MIT; @automerge/automerge 3.3.2 on npm): a JSON CRDT with counters and conflict tracking for local-first apps.",
+      "Same check in Maelstrom: the g-counter and pn-counter workloads verify that final reads equal the sum of all deltas.",
+      "Same family in Shapiro et al.: registers, sets, maps, graphs and sequences (text) with state- or op-based specifications."
+    ],
+    "learningTools": [
+      {
+        "name": "Maelstrom (Jepsen)",
+        "role": "CHECK",
+        "exercise": "Run this lab's PN-Counter as a Maelstrom node: answer `add` and `read` (workloads.md), gossip the full state to peers every 500 ms and merge by per-slot max; run `./maelstrom test -w pn-counter --bin crdt_node.py --node-count 3 --rate 100 --time-limit 20 --nemesis partition`. Then switch the merge to adding slots (tryIt 1) and run again.",
+        "expected": "Should match this lab: with max-merge the final reads should equal the sum of all deltas (the lab's PN-Counter [140, 140, 140]); with sum-merge the check should fail, like tryIt 1 (idempotent 7/500, converged 0/500). Pending a manual run.",
+        "mac": "JDK 11+, Graphviz, Gnuplot; untar release and run ./maelstrom",
+        "windows": "not supported natively (the project's own statement, per the catalog's L300 corrections); use WSL 2 (unverified) or the Mac mini",
+        "licence": "EPL-1.0 (OSI: yes)",
+        "url": "https://github.com/jepsen-io/maelstrom/blob/main/doc/workloads.md"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L400 #17 Consistency models in practice: quorums (N, R, W), staleness and PACELC: the eventual-consistency settings whose concurrent writes these types merge instead of overwrite",
+      "distributed-systems L400 #19 Multi-region design: latency budget, leader placement, follower reads, failover RTO/RPO: multi-leader and leaderless designs accept 434 / 409 concurrent writes - CRDT values make those safe",
+      "application-architecture L300 #12 CQRS and read models: projections that survive crashes: projections also rebuild state by merging events idempotently"
+    ],
+    "inRealSystems": [
+      "Collaborative and local-first apps use CRDT libraries (Automerge, others) for offline edits that merge without a server.",
+      "Eventually consistent databases offer counters and sets with CRDT semantics so concurrent updates merge instead of overwrite."
+    ],
+    "useWhen": "Use CRDTs when replicas must accept writes independently (offline, multi-region) and every concurrent update should survive; avoid them for invariants across replicas (balances, stock) and when one authoritative order is required.",
+    "simulatorVsReal": "Replicas are in-process objects and sync is a function call (with seeded duplicates); real systems add persistence, delta or op-based sync, and garbage collection.",
+    "caution": "Merging silently hides conflicts that users might care about (two titles); keep conflicts visible where the business needs them.",
+    "checkpoint": "PASS if `python crdts.py` matches the README, `python -m unittest` runs 10 tests OK and your tie-break passes test_build_task and test_fitness with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "Why does a G-Counter merge use max per slot and not the sum?",
+        "a": "Max is idempotent: re-delivering the same state changes nothing; a sum double-counts every duplicate (tryIt 1)."
+      },
+      {
+        "q": "The phone removes milk while the laptop re-adds it. Why does the OR-Set keep milk?",
+        "a": "The laptop's add has a new tag the phone never saw, so the phone's tombstones cannot cover it."
+      },
+      {
+        "q": "Two replicas assign the title at the same Lamport time. What makes the result deterministic?",
+        "a": "A total order on (timestamp, replica id) - every replica picks the same winner in either merge order."
+      }
+    ],
+    "buildTask": {
+      "task": "In LWWRegister.merge, order writes by (timestamp, replica id) so ties are broken the same way on every replica; make the law and convergence tests pass 500/500.",
+      "hints": [
+        "Python compares tuples element by element: (ts, replica).",
+        "Keep the 'later timestamp wins' behaviour for different timestamps.",
+        "Run check_laws(LWWRegister) after the change; the shrunk counterexample should disappear."
+      ],
+      "solution": "labs/L400/18-crdts-local-first/solution_crdts.py",
+      "check": "labs/L400/18-crdts-local-first/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "failureLab": {
+      "fault": "Seeded random histories in which two replicas assign the register concurrently (same Lamport timestamp), with 20% of syncs delivered twice.",
+      "symptom": "LWW-Register commutative 407/500 and converged 386/500; shrunk counterexample `r0.assign('r0', 'r0.9', 0); r1.assign('r1', 'r1.10', 0)`; 114 of 500 histories end with replicas that never agree.",
+      "fix": "Deterministic tie-break: compare (timestamp, replica id).",
+      "proof": "labs/L400/18-crdts-local-first/test_build_task.py: 2 failures against crdts.py (BUILD_TARGET=mine), 3 passes against solution_crdts.py; test_fitness.py fails for LWW-Register on 3 seeds before, passes after."
+    },
+    "tradeOffs": [
+      {
+        "option": "State-based CRDTs",
+        "gains": "Any channel works (loss, reorder, duplicates); simple to test",
+        "costs": "Ship whole states; metadata grows",
+        "chooseWhen": "Small objects, unreliable sync, few replicas"
+      },
+      {
+        "option": "Op-based CRDT library (Automerge)",
+        "gains": "Compact changes, rich documents, conflicts visible",
+        "costs": "Needs reliable causal delivery and a library dependency",
+        "chooseWhen": "Documents, text, many fields"
+      },
+      {
+        "option": "Last-writer-wins values",
+        "gains": "Tiny state, trivial merge",
+        "costs": "Concurrent updates lost (81 of 140)",
+        "chooseWhen": "Single-field values where only the latest matters"
+      }
+    ],
+    "sources": [
+      {
+        "title": "Shapiro, Preguica, Baquero, Zawirski, A comprehensive study of CRDTs (INRIA RR-7506, 2011)",
+        "url": "https://perso.lip6.fr/Marc.Shapiro/papers/2011/Comprehensive-CRDTs-RR7506-2011-01.pdf"
+      },
+      {
+        "title": "Kleppmann et al., Local-first software (Onward! 2019, Ink & Switch essay)",
+        "url": "https://www.inkandswitch.com/essay/local-first/"
+      },
+      {
+        "title": "Automerge repository (MIT) and npm @automerge/automerge 3.3.2",
+        "url": "https://github.com/automerge/automerge"
+      },
+      {
+        "title": "Maelstrom workloads (g-counter, pn-counter)",
+        "url": "https://github.com/jepsen-io/maelstrom/blob/main/doc/workloads.md"
+      }
+    ],
+    "next": "L400 #19 Multi-region design: latency budget, leader placement, follower reads, failover RTO/RPO - place replicas across regions and decide what a region failure may cost",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python crdts.py`, `python solution_crdts.py`, `python try_it.py` and `python -m unittest -v` (10 tests OK) on Python 3.12.15 (Linux); output identical on repeated runs (seeded). BUILD_TARGET=mine against the unmodified crdts.py: test_build_task 2 failures, test_fitness fails for LWW-Register.",
+      "pendingCi": [
+        "automerge_equivalent.mjs with @automerge/automerge 3.3.2 (npm not reachable from the sandbox)",
+        "macOS and Windows runs (CI matrix)",
+        "Maelstrom pn-counter exercise (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/18-crdts-local-first.md",
+    "conceptSummary": "A state-based CRDT merges by a join that is commutative, associative and idempotent, so replicas converge whatever the sync did. Seeded property tests with shrinking show counters and OR-Set pass 500/500 while an LWW-Register without a tie-break diverges; choose types per field by concurrent semantics and watch metadata growth.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "multi-region",
+    "number": 19,
+    "level": "L400",
+    "title": "Multi-region design: latency budget, leader placement, follower reads, failover RTO/RPO",
+    "phase": "Consistency and replication design",
+    "category": "multi-region",
+    "description": "Simulate three regions, four replication designs and a whole-region failure; measure write p99 per user region, follower lag, conflicts, lost acknowledged writes (RPO) and time to recover (RTO); then place the leader by measurement.",
+    "outcome": "You can turn a latency budget and RPO/RTO targets into a measured choice between single-leader (async or majority-sync), multi-leader and leaderless designs, place the leader by traffic-weighted p99, and explain follower-read staleness.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Optional: Toxiproxy and Grafana k6 for the latency exercise (manual).",
+    "estimatedTime": "75 minutes",
+    "overview": [
+      "Every write waits for the network legs its design requires; whatever was acknowledged before reaching a second region is exposed when the first one fails."
+    ],
+    "prerequisites": [
+      "Lesson 12 (Raft: majority commit, election restriction)",
+      "Lesson 17 (quorums, PACELC)"
+    ],
+    "designBrief": {
+      "context": "Order writes arrive at 100/s from us (50%), eu (35%) and ap (15%). One-way latencies (assumed): us-eu 40 ms, eu-ap 70 ms, us-ap 110 ms, plus jitter and a 2% 50-150 ms tail. A whole region can fail; the deployed design is async replication with the leader in ap, where the team launched first.",
+      "constraints": [
+        "Write p99 <= 350 ms for us and eu users",
+        "RPO = 0: no acknowledged order lost when any one region fails",
+        "RTO <= 5,000 ms: writes succeed again within 5 s",
+        "No conflicting concurrent writes to the same order or stock row"
+      ],
+      "question": "Which replication design, and which leader region?"
+    },
+    "options": [
+      {
+        "name": "Single leader, async (deployed: ap; also us)",
+        "description": "Leader acknowledges after its own write; followers catch up.",
+        "evidence": "leader ap: us/eu/ap p99 346.0/265.3/102.3 ms, 16 acknowledged writes lost, RTO 1,129 ms; leader us: 128.0/205.3/320.3 ms, 17 lost",
+        "verdict": "Rejected: RPO > 0."
+      },
+      {
+        "name": "Single leader, majority-sync (Raft-style)",
+        "description": "Commit after the first follower acknowledges; the most up-to-date survivor becomes leader.",
+        "evidence": "leader us: 310.9/354.9/445.8 ms (eu over budget); leader eu: 304.6/267.8/341.7 ms; leader ap: 497.2/450.1/354.5 ms; 0 lost at every placement; RTO 1,009-1,313 ms",
+        "verdict": "Chosen with the leader in eu (ADR-019)."
+      },
+      {
+        "name": "Multi-leader / leaderless W=2",
+        "description": "Accept writes in every region / in the client's region with 2 of 3 acks.",
+        "evidence": "multi-leader: 140.6/127.1/112.8 ms, 434 conflicts, 2 lost; leaderless: 203.9/147.1/221.9 ms, 409 conflicts, 0 lost; both keep writing through the failure (first write 65 ms after it)",
+        "verdict": "Rejected for orders (conflicts); fit for carts with CRDT values (lesson 18)."
+      }
+    ],
+    "decisionRecord": "labs/L400/19-multi-region/ADR-019-multi-region-orders.md",
+    "fitnessFunction": {
+      "what": "The chosen design keeps meeting the brief, and its leader is still the best-placed region for today's traffic.",
+      "test": "labs/L400/19-multi-region/test_fitness.py",
+      "threshold": "Seeds 19-28: us/eu write p99 <= 350 ms, RPO 0, RTO <= 5,000 ms, 0 conflicts; place_leader() == DESIGN leader on seeds 19-21"
+    },
+    "scalingLimits": [
+      "Thin latency margin: us p99 peaked at 339.2 ms over 20 seeds against a 350 ms budget; more ap traffic or a heavier tail breaks it (signal: the fitness test fails on some seeds first).",
+      "Head-of-line blocking on the ordered replication stream: one slow entry delays all behind it, so p99 grows with write rate (signal: follower lag spikes in bursts).",
+      "A single leader caps write throughput at one region's capacity; beyond that, shard the key space so each shard has its own leader near its users (signal: leader CPU or log append latency)."
+    ],
+    "glossary": [
+      {
+        "term": "RPO / RTO",
+        "meaning": "Recovery point objective: how much acknowledged data may be lost; recovery time objective: how long the service may be down (NIST SP 800-34)."
+      },
+      {
+        "term": "majority-sync",
+        "meaning": "A write commits once a majority (leader + 1 of 2 followers) has it; the next leader must hold every committed write."
+      },
+      {
+        "term": "follower read",
+        "meaning": "A read served by a local follower: fast, but stale by the replication lag."
+      },
+      {
+        "term": "leader placement",
+        "meaning": "The region of the leader; it fixes every user's commit path (client -> leader -> nearest follower -> leader -> client)."
+      }
+    ],
+    "concepts": [
+      "Latency is the sum of the legs a design must wait for.",
+      "RPO 0 needs a second region before the acknowledgement.",
+      "Place the leader by measured, traffic-weighted p99."
+    ],
+    "steps": [
+      {
+        "title": "Run the options table",
+        "detail": "`python multiregion.py` - 7 designs, each simulated calm and with a region failure at 10 s.",
+        "expected": "`async@ap                346.0 /  265.3 /  102.3     266.6          0        16    1129       108` ... `leaderless ... 409         0      65         0`.",
+        "ifNot": "Different numbers -> latencies, TRAFFIC or the seed in helpers.py were edited."
+      },
+      {
+        "title": "Failure lab: the deployed design loses orders",
+        "detail": "Read the last two lines.",
+        "expected": "`deployed {'replication': 'async', 'leader': 'ap'}: violations ['RPO: 16 acknowledged writes lost']` and `place_leader('sync-majority') -> ap` (history, not measurement).",
+        "ifNot": "If RPO is 0, check that async commits at the leader's arrival time (commit = t_arr)."
+      },
+      {
+        "title": "Read placement from the table",
+        "detail": "Compare the three majority-sync rows.",
+        "expected": "Leader us: eu p99 354.9 ms (over budget); leader eu: 304.6/267.8/341.7 ms - eu sits between the other two regions.",
+        "ifNot": "Remember: the commit waits for the leader's NEAREST follower."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 10 tests ... OK",
+        "ifNot": "Run from the lab folder (the tests import neighbouring files by path)."
+      },
+      {
+        "title": "Build task (the design change)",
+        "detail": "Make the change in buildTask.task in the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK. Before your change they fail (FAILED (failures=3): place_leader 'ap' != 'eu', RPO 16); the reference is solution_multiregion.py.",
+        "ifNot": "Diff your file against solution_multiregion.py; run without BUILD_TARGET to see the reference pass."
+      },
+      {
+        "title": "Fitness function (keeps the decision true)",
+        "detail": "`test_fitness.py` checks the brief on seeds 19-28 and that eu is still the best-placed leader. Run it against the reference, then against your file.",
+        "mac": "python -m unittest test_fitness -v; BUILD_TARGET=mine python -m unittest test_fitness -v",
+        "windows": "python -m unittest test_fitness -v; $env:BUILD_TARGET=\"mine\"; python -m unittest test_fitness -v",
+        "expected": "Reference: OK. Unmodified lesson file: FAILED on all 10 seeds (RPO).",
+        "ifNot": "If the reference fails, a lab or an L300 file it imports was edited: compare with the README output."
+      },
+      {
+        "title": "Try the follower-read and election trade-offs",
+        "detail": "`python try_it.py`",
+        "expected": "ap follower read ~2 ms but up to 103.6 ms stale (p99); election timeout 150-300 ms: RTO 278 ms instead of 1,313 ms.",
+        "ifNot": "Run from the lab folder; try_it imports solution_multiregion.py."
+      }
+    ],
+    "code": "\"\"\"L400 lesson 19 (python multiregion.py): multi-region design under a latency budget, measured in a simulation.\nThree regions (us, eu, ap; latencies in helpers.py), 100 writes/s for 20 s, seeded. Designs: single leader with\nasync or majority-sync replication, multi-leader, leaderless W=2. For each we measure write p99 per user region,\nfollower lag, write conflicts, and what a region failure at t=10 s costs: RPO (acknowledged writes lost) and RTO\n(time until writes succeed again). The deployed design is checked against the constraints in the design brief.\"\"\"\nfrom helpers import REGIONS, TRAFFIC, Net, conflicts, pct, write_stream\n\nT_FAIL, ELECTION_MS = 10000.0, (1000.0, 2000.0)  # failure time; election timeout range (WAN heartbeats)\nDESIGN = {\"replication\": \"async\", \"leader\": \"ap\"}  # as deployed: the first region the team launched in\nCONSTRAINTS = {\"write_p99_ms\": {\"us\": 350.0, \"eu\": 350.0}, \"rpo_writes\": 0, \"rto_ms\": 5000.0, \"conflicts\": 0}\n\n\ndef leader_write(net, mode, leader, followers, t, origin):\n    \"\"\"Single leader: one round trip to the leader; majority-sync also waits for the FIRST follower ack.\"\"\"\n    t_arr = net.send(origin, leader, t)\n    arrive = {leader: t_arr, **{f: net.send(leader, f, t_arr, fifo=True) for f in followers}}  # the log stream\n    commit = t_arr if mode == \"async\" else min(net.send(f, leader, arrive[f]) for f in followers)\n    return t_arr, commit, net.send(leader, origin, commit), arrive\n\n\ndef simulate(design, seed=19, fail=False):\n    net, mode, leader = Net(seed), design[\"replication\"], design.get(\"leader\")\n    down = (leader or \"us\") if fail else None  # leader designs lose the leader's region; others the busiest one\n    writes, rejected, log, new_leader, t_elect = [], 0, [], None, None\n    for seq, (t, origin, key) in enumerate(write_stream(seed)):\n        after = fail and t >= T_FAIL\n        if after and origin == down:\n            continue  # those users are down with their region\n        w = {\"t\": t, \"origin\": origin, \"key\": key, \"seq\": seq}\n        if mode in (\"async\", \"sync-majority\"):\n            if after and new_leader is None:  # failover: promote the most up-to-date survivor (Raft 5.4.1)\n                survivors = [r for r in REGIONS if r != down]\n                has = {r: sum(x[\"arrive\"][r] < T_FAIL for x in log) for r in survivors}  # FIFO -> log prefix\n                new_leader = max(survivors, key=lambda r: has[r])\n                t_elect = T_FAIL + net.rng.uniform(*ELECTION_MS) + 2 * max(net.d(*survivors), 1.0)\n                lost = [x for x in log if x[\"commit\"] < T_FAIL and x[\"arrive\"][new_leader] >= T_FAIL]\n            lead = new_leader if after else leader\n            followers = [r for r in REGIONS if r != lead and not (after and r == down)]\n            t_arr, w[\"commit\"], w[\"ack\"], w[\"arrive\"] = leader_write(net, mode, lead, followers, t, origin)\n            if (after and t_arr < t_elect) or (fail and not after and t_arr >= T_FAIL):\n                rejected += 1  # no leader yet (or the request died with the old one): the write fails\n                continue\n            w[\"accepted\"] = t_arr\n            log.append(w)\n        elif mode == \"multi-leader\":  # every region accepts locally, replicates asynchronously\n            w[\"accepted\"] = w[\"commit\"] = net.send(origin, origin, t)\n            w[\"ack\"] = net.send(origin, origin, w[\"commit\"])\n            w[\"arrive\"] = {r: w[\"commit\"] if r == origin else net.send(origin, r, w[\"commit\"], fifo=True) for r in REGIONS}\n        else:  # leaderless: the client's region coordinates, W=2 of the 3 regions must ack\n            live = [r for r in REGIONS if not (after and r == down)]\n            w[\"arrive\"] = {r: net.send(origin, r, t) for r in live}\n            backs = sorted(net.send(r, origin, w[\"arrive\"][r]) for r in live)\n            w[\"accepted\"], w[\"commit\"] = t, backs[1]\n            w[\"ack\"] = backs[1]\n            w[\"arrive\"].update({r: float(\"inf\") for r in REGIONS if r not in live})\n        writes.append(w)\n    if mode not in (\"async\", \"sync-majority\"):  # no failover needed; data only on the dead region is gone\n        lost = [w for w in writes if fail and w[\"commit\"] < T_FAIL and all(\n            w[\"arrive\"][r] >= T_FAIL for r in REGIONS if r != down)]\n    before = [w for w in writes if w[\"t\"] < T_FAIL or not fail]\n    lag = [w[\"arrive\"][r] - w[\"commit\"] for w in before for r in REGIONS if w[\"arrive\"][r] != float(\"inf\")]\n    first_ok = min((w[\"t\"] for w in writes if fail and w[\"t\"] >= T_FAIL), default=T_FAIL)  # first write that works\n    return {\"p99\": {o: pct([w[\"ack\"] - w[\"t\"] for w in before if w[\"origin\"] == o], 99) for o in REGIONS},\n            \"lag_p99\": pct(lag, 99), \"lag_p99_at\": {r: pct([w[\"arrive\"][r] - w[\"commit\"] for w in before\n                                                          if w[\"arrive\"][r] != float(\"inf\")], 99) for r in REGIONS},\n            \"conflicts\": conflicts(before) if mode in (\"multi-leader\", \"leaderless\") else 0,\n            \"rpo_writes\": len(lost) if fail else 0, \"rto_ms\": round(first_ok - T_FAIL) if fail else 0,\n            \"rejected\": rejected}\n\n\ndef evaluate(design, seed=19):\n    calm, failed = simulate(design, seed), simulate(design, seed, fail=True)\n    return {**calm, \"rpo_writes\": failed[\"rpo_writes\"], \"rto_ms\": failed[\"rto_ms\"], \"rejected\": failed[\"rejected\"]}\n\n\ndef violations(m):\n    c = CONSTRAINTS\n    out = [f\"{o} write p99 {m['p99'][o]} > {lim} ms\" for o, lim in c[\"write_p99_ms\"].items() if m[\"p99\"][o] > lim]\n    out += [f\"RPO: {m['rpo_writes']} acknowledged writes lost\"] if m[\"rpo_writes\"] > c[\"rpo_writes\"] else []\n    out += [f\"RTO {m['rto_ms']} ms > {c['rto_ms']:.0f} ms\"] if m[\"rto_ms\"] > c[\"rto_ms\"] else []\n    return out + ([f\"{m['conflicts']} write conflicts\"] if m[\"conflicts\"] > c[\"conflicts\"] else [])\n\n\ndef place_leader(replication, seed=19):\n    \"\"\"Build task: choose the leader region by measurement (traffic-weighted write p99), not by history.\"\"\"\n    return DESIGN[\"leader\"]\n\n\nOPTIONS = [(\"async\", \"ap\"), (\"async\", \"us\"), (\"sync-majority\", \"us\"), (\"sync-majority\", \"eu\"),\n           (\"sync-majority\", \"ap\"), (\"multi-leader\", None), (\"leaderless\", None)]\n\nif __name__ == \"__main__\":\n    print(\"design               write p99 us / eu / ap ms   lag p99  conflicts  RPO lost  RTO ms  rejected\")\n    for mode, leader in OPTIONS:\n        m = evaluate({\"replication\": mode, \"leader\": leader})\n        print(f\"{mode + ('@' + leader if leader else ''):20} {m['p99']['us']:>8} / {m['p99']['eu']:>6} / {m['p99']['ap']:>6}\"\n              f\" {m['lag_p99']:>9} {m['conflicts']:>10} {m['rpo_writes']:>9} {m['rto_ms']:>7} {m['rejected']:>9}\")\n    print(f\"deployed {DESIGN}: violations {violations(evaluate(DESIGN)) or 'none'}\")\n    print(f\"place_leader('sync-majority') -> {place_leader('sync-majority')}\")\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "One write, as legs",
+        "detail": "`leader_write`: client -> leader (`t_arr`), leader -> each follower on a FIFO replication stream; async commits at `t_arr`, majority-sync at the first follower ack; the client hears back one leg later."
+      },
+      {
+        "title": "Failover",
+        "detail": "At the first write after `T_FAIL`, the most up-to-date survivor (the longest log prefix received before the failure) becomes leader after its election timeout plus a vote round trip (`t_elect`); writes arriving earlier are rejected."
+      },
+      {
+        "title": "RPO, measured",
+        "detail": "`lost` = writes committed before the failure that had not reached the new leader. Majority-sync makes this empty by construction - which is exactly the property to prove."
+      },
+      {
+        "title": "Multi-leader and leaderless",
+        "detail": "Multi-leader commits locally and replicates; leaderless waits for the 2nd of 3 replies from the client's region. Neither needs failover; `helpers.conflicts` counts concurrent writes to one key from different regions."
+      },
+      {
+        "title": "RTO, measured",
+        "detail": "`first_ok` = issue time of the first write after the failure that succeeds; RTO = first_ok - T_FAIL."
+      },
+      {
+        "title": "Brief as code",
+        "detail": "`CONSTRAINTS` + `violations()` turn the design brief into checks; `place_leader()` is the build task: choose by traffic-weighted p99, not by history."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/19-multi-region/multiregion.py",
+        "purpose": "Designs, failover, RPO/RTO, violations, place_leader"
+      },
+      {
+        "path": "labs/L400/19-multi-region/helpers.py",
+        "purpose": "Plumbing: latency model, FIFO streams, write stream, conflicts, percentiles"
+      },
+      {
+        "path": "labs/L400/19-multi-region/solution_multiregion.py",
+        "purpose": "Build-task reference: measured placement, majority-sync design"
+      },
+      {
+        "path": "labs/L400/19-multi-region/test_multiregion.py",
+        "purpose": "Lesson tests"
+      },
+      {
+        "path": "labs/L400/19-multi-region/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/19-multi-region/test_fitness.py",
+        "purpose": "Fitness function for ADR-019"
+      },
+      {
+        "path": "labs/L400/19-multi-region/ADR-019-multi-region-orders.md",
+        "purpose": "Decision record"
+      },
+      {
+        "path": "labs/L400/19-multi-region/try_it.py",
+        "purpose": "The two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "Async replication loses 16-17 acknowledged writes on a leader-region failure",
+      "Majority-sync loses 0 at every placement; RTO 1,009-1,313 ms",
+      "Multi-leader / leaderless: no failover gap, 434 / 409 conflicts",
+      "place_leader (reference): eu; design meets the brief"
+    ],
+    "testCases": [
+      {
+        "action": "Fail the leader region with async replication",
+        "expected": "RPO 16 (ap leader)"
+      },
+      {
+        "action": "Fail the leader region with majority-sync at each placement",
+        "expected": "RPO 0, RTO 1,000-2,500 ms"
+      },
+      {
+        "action": "Multi-leader and leaderless",
+        "expected": "conflicts 434 and 409; RPO 2 and 0"
+      },
+      {
+        "action": "Move the leader from us to ap",
+        "expected": "us users' p99 rises, ap users' p99 falls"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Serve reads from local followers with the chosen design (majority-sync, leader eu) and compare with reading at the leader (`python try_it.py`).",
+        "predict": "How fast and how stale is a follower read in us and in ap?",
+        "expected": "us follower read ~2 ms, stale by up to 12.4 ms (p99 lag); ap ~2 ms, up to 103.6 ms; leader reads ~80 ms (us) and ~140 ms (ap) + jitter, current if the leader confirms it still leads (Raft section 8)."
+      },
+      {
+        "task": "Use a LAN-style election timeout (150-300 ms instead of 1-2 s) on the same WAN (`python try_it.py`).",
+        "predict": "What happens to RTO and to rejected writes?",
+        "expected": "1,000-2,000 ms: RTO 1,313 ms, 73 writes rejected, RPO 0; 150-300 ms: RTO 278 ms, 21 rejected, RPO 0 (false elections on real WAN jitter are not modelled)."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "After a regional failover, a few recently confirmed orders are missing",
+        "action": "The design acknowledged before a second region had the write (async). Commit on a majority, or accept and document RPO > 0."
+      },
+      {
+        "symptom": "Leader elections keep happening without failures",
+        "action": "The election timeout is too close to the WAN round trip plus jitter; raise it (and accept a longer RTO)."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Raft-based stores: the leader commits once a majority has an entry; a new leader must hold every committed entry (Raft paper, 5.4).",
+      "Same idea in PNUTS-style systems: a per-record master region with asynchronous replication and reads from any replica (Abadi 2012 classifies it PC/EL).",
+      "Same idea in Dynamo-style stores: each key's replicas span data centres, so a data-centre outage loses no data (Dynamo paper, 4.6)."
+    ],
+    "learningTools": [
+      {
+        "name": "Toxiproxy",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Feel the region round trips on a real socket: start lesson 16's `python serve_realtime.py` (127.0.0.1:8016), create proxies with latency toxics of 80, 140 and 220 ms (the lab's us-eu, eu-ap and us-ap round trips), e.g. `toxiproxy-cli create -l localhost:26220 -u localhost:8016 us-ap` then `toxiproxy-cli toxic add -t latency -a latency=220 us-ap`, and call http://127.0.0.1:26220/work.",
+        "expected": "Each call through a proxy should take about the toxic's latency longer than a direct call - the legs this lab adds up (async@ap: us users pay ~2 x 110 ms, p99 346.0 ms). Pending a manual run.",
+        "mac": "brew tap shopify/shopify && brew install toxiproxy (or ghcr.io/shopify/toxiproxy)",
+        "windows": "toxiproxy-server/cli-windows-amd64.exe from releases",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/Shopify/toxiproxy"
+      },
+      {
+        "name": "Grafana k6",
+        "role": "CHECK",
+        "exercise": "Run lesson 16's `k6 run load_test.js` against the 220 ms proxy instead of the direct port and read http_req_duration p(99); repeat through the 80 ms proxy.",
+        "expected": "p99 should rise by roughly the toxic latency (220 vs 80 ms) - the reason majority-sync with the leader in eu (nearest follower 40-70 ms away) beats ap for us and eu users. Pending a manual run.",
+        "mac": "brew install k6",
+        "windows": "winget install k6 --source winget, or official MSI",
+        "licence": "AGPL-3.0 (OSI: yes)",
+        "url": "https://grafana.com/docs/k6/latest/results-output/web-dashboard/"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L300 #12 Replicated log with Raft (simplified): terms, commit index, re-election, election restriction: the majority commit and election restriction that make RPO 0 here",
+      "distributed-systems L400 #17 Consistency models in practice: quorums (N, R, W), staleness and PACELC: the same latency/consistency trade-off inside one store",
+      "distributed-systems L400 #18 CRDTs for local-first collaboration: counters, OR-Set, LWW-Register and property tests: CRDT values make multi-leader and leaderless conflicts safe for carts and counters",
+      "application-architecture L300 #15 SLOs and error budgets: burn-rate alerts from request logs: the p99 budget and RTO here are SLOs; burn-rate alerts watch them in production"
+    ],
+    "inRealSystems": [
+      "Globally distributed databases offer leader placement or per-region leaders, follower reads with bounded staleness, and majority replication across regions.",
+      "Disaster-recovery plans state RPO and RTO per system; asynchronous cross-region replicas give RPO > 0 by design."
+    ],
+    "useWhen": "Use majority-sync with a measured leader placement when acknowledged data must survive a region loss; use multi-leader or leaderless only with mergeable values (CRDTs) or per-key ownership.",
+    "simulatorVsReal": "Regions, latencies (assumed round numbers), failures and elections are simulated with seeded randomness; real systems add failure detection noise, client redirects and capacity limits.",
+    "caution": "The latency matrix is an assumption for the exercise. Measure your own regions (and their tails) before choosing a placement.",
+    "checkpoint": "PASS if `python multiregion.py` matches the README, `python -m unittest` runs 10 tests OK and your placement + design pass test_build_task and test_fitness with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "Why can majority-sync lose no committed write when the leader region fails?",
+        "a": "A commit needs one follower; the new leader is the most up-to-date survivor, so its log contains every committed entry."
+      },
+      {
+        "q": "Why does a leader in eu beat a leader in us for us users' writes?",
+        "a": "With the leader in us, its nearest follower is eu (80 ms round trip); with the leader in eu, its nearest follower is us - the commit leg is shared, but eu and ap users gain a lot more."
+      },
+      {
+        "q": "What does a follower read cost and buy?",
+        "a": "~2 ms locally instead of a leader round trip, at the price of staleness up to the replication lag (p99 103.6 ms in ap)."
+      }
+    ],
+    "buildTask": {
+      "task": "Implement place_leader(replication): simulate the design with the leader in each region and return the one with the lowest traffic-weighted write p99; then set DESIGN to majority-sync with that leader so violations(evaluate(DESIGN)) is empty.",
+      "hints": [
+        "simulate({...})['p99'] gives p99 per user region.",
+        "Weight by TRAFFIC[region] and sum.",
+        "Expected answer: eu."
+      ],
+      "solution": "labs/L400/19-multi-region/solution_multiregion.py",
+      "check": "labs/L400/19-multi-region/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "failureLab": {
+      "fault": "The leader's region (ap) fails at t = 10 s during a seeded 100 writes/s stream (seed 19).",
+      "symptom": "Deployed async@ap: `violations ['RPO: 16 acknowledged writes lost']`; place_leader returns the historical 'ap'.",
+      "fix": "Majority-sync replication with the leader chosen by traffic-weighted p99 (eu).",
+      "proof": "labs/L400/19-multi-region/test_build_task.py: 3 failures against multiregion.py (BUILD_TARGET=mine), 3 passes against solution_multiregion.py; test_fitness.py fails on all 10 seeds before, passes after."
+    },
+    "tradeOffs": [
+      {
+        "option": "Async single leader",
+        "gains": "Fastest writes near the leader",
+        "costs": "RPO > 0 (16-17 writes here)",
+        "chooseWhen": "Data that can be re-derived or re-sent; analytics"
+      },
+      {
+        "option": "Majority-sync single leader",
+        "gains": "RPO 0, no conflicts",
+        "costs": "Every write pays a follower round trip; RTO = one election",
+        "chooseWhen": "Orders, payments, stock"
+      },
+      {
+        "option": "Multi-leader / leaderless",
+        "gains": "Local writes, no failover gap",
+        "costs": "Conflicts (409-434 here) need merge rules",
+        "chooseWhen": "Carts, counters, collaborative data with CRDT values"
+      }
+    ],
+    "sources": [
+      {
+        "title": "Ongaro & Ousterhout, In Search of an Understandable Consensus Algorithm (Raft, extended)",
+        "url": "https://raft.github.io/raft.pdf"
+      },
+      {
+        "title": "Abadi, Consistency Tradeoffs in Modern Distributed Database System Design (IEEE Computer, 2012) - PACELC",
+        "url": "https://www.cs.umd.edu/~abadi/papers/abadi-pacelc.pdf"
+      },
+      {
+        "title": "NIST SP 800-34 Rev. 1, Contingency Planning Guide for Federal Information Systems (RTO, RPO)",
+        "url": "https://csrc.nist.gov/pubs/sp/800/34/r1/upd1/final"
+      },
+      {
+        "title": "DeCandia et al., Dynamo: Amazon's Highly Available Key-value Store (SOSP 2007)",
+        "url": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf"
+      }
+    ],
+    "next": "L400 #20 Chaos engineering: hypotheses, steady state, blast radius and seeded fault campaigns - prove the design survives the faults you did not plan for",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python multiregion.py`, `python solution_multiregion.py`, `python try_it.py` and `python -m unittest -v` (10 tests OK) on Python 3.12.15 (Linux); output identical on repeated runs (seeded, simulated time). BUILD_TARGET=mine against the unmodified multiregion.py: test_build_task 3 failures, test_fitness fails on 10 of 10 seeds.",
+      "pendingCi": [
+        "macOS and Windows runs (CI matrix)",
+        "Toxiproxy and k6 exercises (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/19-multi-region.md",
+    "conceptSummary": "A write's latency is the sum of the legs its design waits for, and anything acknowledged before reaching a second region is lost when the first fails. Measured: async loses 16-17 acknowledged writes; majority-sync loses none and costs a follower round trip; multi-leader and leaderless avoid failover but conflict. Place the leader by traffic-weighted p99 (eu here).",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "chaos-engineering",
+    "number": 20,
+    "level": "L400",
+    "title": "Chaos engineering: hypotheses, steady state, blast radius and seeded fault campaigns",
+    "phase": "Proving it",
+    "category": "chaos-engineering",
+    "description": "Run hypothesis-driven, seeded fault experiments against the L300 saga and Raft labs (as shipped and as hardened); the lesson harness finds the weaknesses but hurts every customer - bound it with a 10% cohort, a control group and an abort rule.",
+    "outcome": "You can design a chaos experiment (steady-state metric, hypothesis, real-world fault, blast radius, abort rule), run a seeded campaign, read a refuted hypothesis, and keep experiments safe enough to automate.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Imports labs/L300/12 and 14 by path. Optional: Toxiproxy and Grafana k6 (manual).",
+    "estimatedTime": "70 minutes",
+    "overview": [
+      "A chaos experiment is a hypothesis test about steady state under a real-world fault - and it must be bounded, because a refuted hypothesis means someone was harmed."
+    ],
+    "prerequisites": [
+      "Lesson 12 (Raft)",
+      "Lesson 14 (sagas with compensation)",
+      "Lesson 13 (fault injection)"
+    ],
+    "designBrief": {
+      "context": "Lessons 12 and 14 produced a hardened Raft log and a hardened order saga. The team wants continuous evidence that they survive courier outages, orchestrator crashes, node crashes and rolling restarts - in CI, with production-like traffic later.",
+      "constraints": [
+        "Every experiment names a steady-state metric measured from the services' own data and a written hypothesis",
+        "An experiment that refutes its hypothesis may hurt at most 1 customer (abort rule)",
+        "Order-level faults touch at most 10% of orders; the rest is a control group",
+        "Raft faults touch one node at a time (a minority)"
+      ],
+      "question": "How are chaos experiments bounded, and which faults go into the campaign?"
+    },
+    "options": [
+      {
+        "name": "Fault everything (lesson harness)",
+        "description": "Inject into every order; no control group; no abort.",
+        "evidence": "shipping outage and crash-after-charge vs the L300 lesson saga: hypothesis refuted, 60 customers hurt each",
+        "verdict": "Rejected."
+      },
+      {
+        "name": "Bounded campaign",
+        "description": "10% stable cohort, control group, abort after the first harmed order.",
+        "evidence": "same faults: hypothesis still refuted, 1 customer hurt, control group 0 harmed; hardened saga holds both hypotheses with 0 harmed",
+        "verdict": "Chosen (ADR-020)."
+      },
+      {
+        "name": "Manual game days only",
+        "description": "People pick faults by hand.",
+        "evidence": "random node crashes found nothing in 20/20 runs of the unhardened Raft; a 0-4 tick rolling restart found lost commits in 1 of 20 seeds",
+        "verdict": "Complement, not the gate."
+      }
+    ],
+    "decisionRecord": "labs/L400/20-chaos-engineering/ADR-020-bounded-chaos-campaign.md",
+    "fitnessFunction": {
+      "what": "Experiments stay bounded, and the hardened L300 services keep every hypothesis.",
+      "test": "labs/L400/20-chaos-engineering/test_fitness.py",
+      "threshold": "Every saga experiment: blast radius <= 10%, customers hurt <= ABORT_AFTER (1); hardened saga and Raft hold all hypotheses on seeds 14-16"
+    },
+    "scalingLimits": [
+      "Small cohorts detect rare weaknesses slowly: the rolling-restart bug shows in 1 of 20 seeds (signal: long time-to-detection; raise run counts, not the blast radius).",
+      "Faults that cannot be keyed to a cohort (shared caches, global config, a whole region) leak into the control group (signal: control group harmed > 0 - stop and redesign).",
+      "The abort rule is only as fast as the steady-state metric: an aggregated or delayed metric lets harm accumulate before the stop (signal: customers hurt > ABORT_AFTER)."
+    ],
+    "glossary": [
+      {
+        "term": "steady state",
+        "meaning": "A measurable output that indicates normal behaviour (here: harmed orders = 0; Raft: no lost commits, leader gap <= 40 ticks)."
+      },
+      {
+        "term": "hypothesis",
+        "meaning": "The steady state continues in the experiment group as in the control group; the experiment tries to refute it."
+      },
+      {
+        "term": "blast radius",
+        "meaning": "The share of traffic or components the fault may touch (a stable 10% cohort)."
+      },
+      {
+        "term": "abort rule",
+        "meaning": "Stop injecting as soon as the steady state breaks for the experiment group."
+      }
+    ],
+    "concepts": [
+      "Hypotheses about steady state, not 'breaking things'.",
+      "Bound every experiment: cohort, control group, abort.",
+      "Operational sequences (rollouts) find bugs random faults miss."
+    ],
+    "steps": [
+      {
+        "title": "Run the campaign",
+        "detail": "`python chaos.py` - saga experiments as JSON lines, then a summary of 84 runs.",
+        "expected": "`saga/shipping-outage    L300 lesson       0/1   runs           60` ... `raft/rolling-restart    L300 lesson      19/20  runs            0`.",
+        "ifNot": "An ImportError means labs/L300/12 or 14 were moved; harness.py loads them by relative path."
+      },
+      {
+        "title": "Failure lab: the experiment hurt everyone",
+        "detail": "Read `blast_radius_pct` and `customers_hurt` in the JSON lines.",
+        "expected": "`\"blast_radius_pct\": 100.0, \"control_harmed\": null, \"customers_hurt\": 60` for both saga faults against the L300 lesson saga.",
+        "ifNot": "If customers_hurt is 0 you are running the hardened target."
+      },
+      {
+        "title": "Read the Raft rows",
+        "detail": "Compare random crashes with the fast rolling restart.",
+        "expected": "Random crashes: 20/20 held for both versions; rolling restart: 19/20 for the L300 lesson Raft, 20/20 hardened.",
+        "ifNot": "Different counts -> the seeds or settle range in run_raft_experiment were edited."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 9 tests ... OK",
+        "ifNot": "Run from the lab folder (the tests import neighbouring files by path)."
+      },
+      {
+        "title": "Build task (the design change)",
+        "detail": "Make the change in buildTask.task in the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK. Before your change they fail (FAILED (failures=3): blast radius 100.0 > 10.0, control_harmed None); the reference is solution_chaos.py.",
+        "ifNot": "Diff your file against solution_chaos.py; run without BUILD_TARGET to see the reference pass."
+      },
+      {
+        "title": "Fitness function (keeps the decision true)",
+        "detail": "`test_fitness.py` checks that every experiment is bounded and the hardened L300 services hold all hypotheses on seeds 14-16. Run it against the reference, then against your file.",
+        "mac": "python -m unittest test_fitness -v; BUILD_TARGET=mine python -m unittest test_fitness -v",
+        "windows": "python -m unittest test_fitness -v; $env:BUILD_TARGET=\"mine\"; python -m unittest test_fitness -v",
+        "expected": "Reference: OK. Unmodified lesson file: FAILED (4 subtests: blast radius 100%).",
+        "ifNot": "If the reference fails, a lab or an L300 file it imports was edited: compare with the README output."
+      },
+      {
+        "title": "Try the protections one by one",
+        "detail": "`python try_it.py`",
+        "expected": "10% cohort + abort: 1 hurt; 10% without abort: 6; 50% without abort: 30.",
+        "ifNot": "try_it sets BLAST_PCT/ABORT_AFTER on solution_chaos; restart Python between edits."
+      }
+    ],
+    "code": "\"\"\"L400 lesson 20 (python chaos.py): hypothesis-driven chaos experiments against the L300 labs.\nTargets: the L300 saga (lesson 14) and Raft (lesson 12), each as shipped in L300 (unhardened) and as hardened by\nits build task. Every experiment states a steady-state metric and a hypothesis, injects a seeded real-world fault and\ntries to refute the hypothesis (Principles of Chaos). Results are JSON lines. The lesson's saga harness injects the\nfault into EVERY order, keeps no control group and never aborts - watch how many customers the experiment hurts.\"\"\"\nimport random\n\nfrom harness import cohort, jsonl, load\n\nSAGA = {\"L300 lesson\": load(\"14-sagas-compensation/saga.py\", \"l300_saga\"),\n        \"L300 hardened\": load(\"14-sagas-compensation/solution_saga.py\", \"l300_saga_hardened\")}\nRAFT = {\"L300 lesson\": load(\"12-raft-replicated-log/raft.py\", \"l300_raft\"),\n        \"L300 hardened\": load(\"12-raft-replicated-log/solution_raft.py\", \"l300_raft_hardened\")}\nN_ORDERS, BLAST_PCT, ABORT_AFTER = 60, 10.0, 1  # blast-radius limit and abort rule (used once you add them)\n\n\ndef harmed(mod, services, log, sagas):\n    \"\"\"Steady-state metric, from the services' own data: orders whose money/state is wrong or never finished.\"\"\"\n    bad = {line.split(\":\")[0] for line in mod.audit(*services)}\n    unfinished = {s for s in sagas if not any(r[\"step\"] == \"saga\" and r[\"status\"] in (\"completed\", \"compensated\")\n                                              for r in log.entries(s))}\n    return sorted((bad | unfinished) & set(sagas))\n\n\ndef inject(mod, orch, shipping, fault, saga):\n    \"\"\"Real-world faults: the courier API is down for this order, or the orchestrator dies right after a charge.\"\"\"\n    if fault == \"shipping-outage\":\n        shipping.outcome[saga] = \"no courier slot\"\n    elif fault == \"crash-after-charge\":\n        name, charge, comp = orch.steps[1]\n\n        def dies_after(s, amount):\n            charge(s, amount)\n            if s == saga:\n                raise mod.lab_helpers.Crash(f\"orchestrator died after charge({s})\")\n        orch.steps[1] = (name, dies_after, comp)\n\n\ndef run_saga_experiment(target, fault, seed):\n    \"\"\"Lesson harness: fault on every order (blast radius 100%), no control group, no abort rule.\"\"\"\n    mod = SAGA[target]\n    services, log = (mod.Orders(), mod.Payments(), mod.Shipping(0.0, seed)), mod.lab_helpers.SagaLog()\n    orch, sagas = mod.Orchestrator(*services, log), [f\"o{i}\" for i in range(1, N_ORDERS + 1)]\n    for i, saga in enumerate(sagas, start=1):\n        steps = list(orch.steps)\n        inject(mod, orch, services[2], fault, saga)\n        try:\n            orch.run(saga, 10 * i)\n        except mod.lab_helpers.Crash:\n            if hasattr(orch, \"recover\"):\n                orch.recover()  # the supervisor restarts the orchestrator; it finishes from the saga log\n        orch.steps = steps\n    hurt = harmed(mod, services, log, sagas)\n    return {\"experiment\": f\"saga/{fault}\", \"target\": target, \"seed\": seed, \"blast_radius_pct\": 100.0,\n            \"steady_state\": \"harmed orders = 0\", \"experiment_harmed\": len(hurt), \"control_harmed\": None,\n            \"held\": not hurt, \"aborted\": False, \"customers_hurt\": len(hurt)}\n\n\ndef run_raft_experiment(target, fault, seed, ticks=60, settle=(0, 4)):\n    \"\"\"Raft faults touch one node at a time (a minority): random crashes, or a fast rolling restart that waits\n    only 0-4 ticks between nodes. Steady state: no committed entry lost, a leader again within 40 ticks.\"\"\"\n    mod, rng = RAFT[target], random.Random(f\"{fault}-{seed}\")\n    c, t, gap, worst = mod.lab_helpers.Cluster(mod.Node, seed), 0, 0, 0\n    c.run_until_leader()\n\n    def step(n):\n        nonlocal t, gap, worst\n        for _ in range(n):\n            if t % 2 == 0 and c.leader():\n                c.leader().propose(f\"x={t}\")  # steady write load\n            c.run(1)\n            t, gap = t + 1, (gap + 1 if c.leader() is None else 0)\n            worst = max(worst, gap)\n    step(10)\n    if fault == \"rolling-restart\":\n        for name in sorted(c.nodes, key=lambda n: c.nodes[n].role == \"leader\"):  # followers first, leader last\n            c.crash(name)\n            step(12)\n            c.restart(name)\n            step(rng.randint(*settle))  # impatient rollout (0-4 ticks): does not wait for the node to catch up\n    else:  # random-crash: 8 crashes of a random node (the leader 60% of the time), down 5-30 ticks each\n        for _ in range(8):\n            leader = c.leader()\n            name = leader.name if leader and rng.random() < 0.6 else rng.choice(sorted(c.nodes))\n            c.crash(name)\n            step(rng.randint(5, 30))\n            c.restart(name)\n            step(rng.randint(5, 20))\n    step(ticks)\n    lost = len(c.checker.violations)\n    return {\"experiment\": f\"raft/{fault}\", \"target\": target, \"seed\": seed, \"blast_radius_pct\": 33.3,\n            \"steady_state\": \"lost committed entries = 0, no-leader gap <= 40 ticks\", \"lost_entries\": lost,\n            \"max_no_leader_ticks\": worst, \"held\": lost == 0 and worst <= 40}\n\n\ndef campaign():\n    rows = [run_saga_experiment(t, f, 14) for t in SAGA for f in (\"shipping-outage\", \"crash-after-charge\")]\n    rows += [run_raft_experiment(t, f, s) for t in RAFT for f in (\"random-crash\", \"rolling-restart\") for s in range(1, 21)]\n    return rows\n\n\ndef summary(rows):\n    out = {}\n    for r in rows:\n        k = (r[\"experiment\"], r[\"target\"])\n        held, runs, hurt = out.get(k, (0, 0, 0))\n        out[k] = (held + r[\"held\"], runs + 1, hurt + r.get(\"customers_hurt\", 0))\n    return out\n\n\nif __name__ == \"__main__\":\n    rows = campaign()\n    print(*jsonl([r for r in rows if r[\"experiment\"].startswith(\"saga\")]), sep=\"\\n\")\n    print(\"experiment              target          hypothesis held   customers hurt by the experiment\")\n    for (exp, target), (held, runs, hurt) in summary(rows).items():\n        print(f\"{exp:23} {target:15} {held:>3}/{runs:<3} runs {hurt:>12}\")\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Targets from L300",
+        "detail": "`harness.load` imports labs/L300/14 saga.py and solution_saga.py and labs/L300/12 raft.py and solution_raft.py, each with its own helpers.py - the old and the hardened version side by side."
+      },
+      {
+        "title": "Steady state from the services' own data",
+        "detail": "`harmed` = orders the L300 audit flags (money kept without shipping, wrong status) plus sagas without a final log entry - not what the orchestrator believes."
+      },
+      {
+        "title": "Real-world faults",
+        "detail": "`inject`: the courier API is down for this order (`shipping.outcome`), or the orchestrator dies right after a successful charge (a Crash after the call); the supervisor then runs `recover()` if the target has it."
+      },
+      {
+        "title": "The unbounded harness",
+        "detail": "`run_saga_experiment` injects into every order, keeps no control group and never aborts - the build task bounds it."
+      },
+      {
+        "title": "Raft experiments",
+        "detail": "`run_raft_experiment`: random crashes (one node at a time) or a rolling restart that waits only 0-4 ticks between nodes, under a steady write load; steady state = no lost committed entry (L300 SafetyChecker) and a leader within 40 ticks."
+      },
+      {
+        "title": "Campaign and summary",
+        "detail": "`campaign` runs 4 saga and 80 Raft experiments; `summary` counts held hypotheses and customers hurt per (experiment, target)."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/20-chaos-engineering/chaos.py",
+        "purpose": "Experiments, steady state, campaign"
+      },
+      {
+        "path": "labs/L400/20-chaos-engineering/harness.py",
+        "purpose": "Plumbing: L300 loader, stable cohort, JSON lines"
+      },
+      {
+        "path": "labs/L400/20-chaos-engineering/solution_chaos.py",
+        "purpose": "Build-task reference: cohort, control group, abort"
+      },
+      {
+        "path": "labs/L400/20-chaos-engineering/test_chaos.py",
+        "purpose": "Lesson tests"
+      },
+      {
+        "path": "labs/L400/20-chaos-engineering/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/20-chaos-engineering/test_fitness.py",
+        "purpose": "Fitness function for ADR-020"
+      },
+      {
+        "path": "labs/L400/20-chaos-engineering/ADR-020-bounded-chaos-campaign.md",
+        "purpose": "Decision record"
+      },
+      {
+        "path": "labs/L400/20-chaos-engineering/try_it.py",
+        "purpose": "The two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "Unbounded: both saga faults refute the hypothesis against the L300 lesson saga and hurt 60 customers",
+      "Hardened saga: both hypotheses held, 0 hurt",
+      "Raft: random crashes 20/20 held; fast rolling restart 19/20 (lesson) vs 20/20 (hardened)",
+      "Bounded (reference): same verdicts, 1 customer hurt, control group 0"
+    ],
+    "testCases": [
+      {
+        "action": "Load the L300 labs",
+        "expected": "each module keeps its own helpers (SagaLog, Cluster)"
+      },
+      {
+        "action": "Unbounded shipping outage vs L300 lesson saga",
+        "expected": "blast radius 100%, 60 hurt, held False"
+      },
+      {
+        "action": "Raft campaign, 20 seeds each",
+        "expected": "random crash 20/20; rolling restart 19/20 lesson, 20/20 hardened"
+      },
+      {
+        "action": "Bounded experiment (reference)",
+        "expected": "held False, blast radius <= 10%, hurt <= 1, aborted, control 0"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Switch the protections one at a time: 10% cohort with abort, 10% without abort, 50% without abort (`python try_it.py`).",
+        "predict": "How many customers does each version of the experiment hurt?",
+        "expected": "blast 10%, abort after 1 harmed order: 1 hurt; blast 10%, never abort: 6; blast 50%, never abort: 30 - the hypothesis is refuted in all three."
+      },
+      {
+        "task": "Make the rolling restart patient: wait 20-30 ticks between nodes instead of 0-4 (`python try_it.py`).",
+        "predict": "Does the unhardened Raft still lose commits?",
+        "expected": "0-4 ticks: refuted in 1/20 seeds; 20-30 ticks: 0/20 - the operational fix hides the bug, the code fix (election restriction) removes it."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "The experiment caused a real outage",
+        "action": "Add an abort rule on the experiment group's per-request steady state and start from a small cohort."
+      },
+      {
+        "symptom": "Hypothesis 'held' but a similar incident happened later",
+        "action": "Replay the incident's sequence (e.g. a fast rollout) as a new experiment; random faults rarely reproduce operational sequences."
+      }
+    ],
+    "equivalents": [
+      "Same idea with Toxiproxy (MIT): latency, timeout and reset toxics on a TCP proxy, with a toxicity share as the blast radius.",
+      "Same idea in Kubernetes with Chaos Mesh (Apache-2.0, CNCF incubating): pod, network, I/O and time faults as custom resources, with schedules and workflows.",
+      "Same discipline in the Principles of Chaos: steady state, hypothesis, real-world variables, control vs experiment group, minimal blast radius, automation."
+    ],
+    "learningTools": [
+      {
+        "name": "Toxiproxy",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Run a bounded chaos experiment on a real socket: put a proxy in front of lesson 16's `python serve_realtime.py`, add `toxiproxy-cli toxic add -t reset_peer -a timeout=0 work` and set its toxicity to 0.1 through the HTTP API on :8474 (10% of connections, as in L300 #13); remove the toxic as soon as the failure rate passes your abort threshold.",
+        "expected": "About 10% of requests through the proxy should fail - the lab's 10% cohort; with the toxic removed the failure rate should return to the L300 #16 baseline. Pending a manual run.",
+        "mac": "brew tap shopify/shopify && brew install toxiproxy (or ghcr.io/shopify/toxiproxy)",
+        "windows": "toxiproxy-server/cli-windows-amd64.exe from releases",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/Shopify/toxiproxy"
+      },
+      {
+        "name": "Grafana k6",
+        "role": "CHECK",
+        "exercise": "Measure the steady state while the toxic is on: `K6_WEB_DASHBOARD=true k6 run load_test.js` (lesson 16) and watch http_req_failed and p(99) at http://127.0.0.1:5665; run once without the toxic as the control.",
+        "expected": "The experiment run should show ~10% http_req_failed and the control run the baseline - a refuted hypothesis bounded to the cohort, as in the lab (1 customer hurt instead of 60). Pending a manual run.",
+        "mac": "brew install k6",
+        "windows": "winget install k6 --source winget, or official MSI",
+        "licence": "AGPL-3.0 (OSI: yes)",
+        "url": "https://grafana.com/docs/k6/latest/results-output/web-dashboard/"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L300 #14 Sagas with compensation: orchestration vs choreography, idempotent steps, saga log: the saga these experiments attack, as shipped and hardened",
+      "distributed-systems L300 #12 Replicated log with Raft (simplified): terms, commit index, re-election, election restriction: the Raft log whose election restriction the rolling-restart experiment tests",
+      "distributed-systems L400 #22 An order pipeline that survives chaos and proves it: the capstone runs this bounded campaign against the whole order pipeline",
+      "application-architecture L300 #13 Resilience patterns: timeouts, circuit breaker, bulkhead, fallback: the patterns these experiments are meant to exercise",
+      "application-architecture L300 #15 SLOs and error budgets: burn-rate alerts from request logs: a production steady-state metric and a natural abort signal"
+    ],
+    "inRealSystems": [
+      "Large services run automated, bounded experiments in production (small traffic cohorts, automatic stop on SLO breach) and replay incident sequences as new experiments.",
+      "Kubernetes teams describe faults as resources (Chaos Mesh) and schedule them as workflows; proxies such as Toxiproxy inject network faults in tests."
+    ],
+    "useWhen": "Use chaos experiments once the system has a measurable steady state and the obvious fault handling exists; avoid them on systems without monitoring, abort controls or recovery paths.",
+    "simulatorVsReal": "Faults are injected into in-process copies of the L300 services with seeded randomness; production chaos needs real traffic, real monitoring and an on-call owner.",
+    "caution": "Never run an experiment without a written hypothesis, an abort rule and an owner watching; the bounded harness still hurt one customer in the lab.",
+    "checkpoint": "PASS if `python chaos.py` matches the README, `python -m unittest` runs 9 tests OK and your bounded harness passes test_build_task and test_fitness with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "What does a control group give you that the experiment group alone cannot?",
+        "a": "A baseline under the same conditions: if the control is harmed too, the cause is not your fault (or the fault leaked)."
+      },
+      {
+        "q": "Why did random crashes never break the unhardened Raft?",
+        "a": "The bug needs a lagging node to win an election right after it restarts; independent random crashes rarely line up, a fast rolling restart does."
+      },
+      {
+        "q": "Which number should an abort rule watch?",
+        "a": "The experiment group's steady-state metric, per request or order, not a delayed aggregate."
+      }
+    ],
+    "buildTask": {
+      "task": "Bound run_saga_experiment: inject only into a stable cohort of BLAST_PCT (10%) of orders (harness.cohort), report the control group's harmed count, and stop injecting after ABORT_AFTER (1) harmed orders; return blast_radius_pct, control_harmed and aborted.",
+      "hints": [
+        "cohort(sagas, BLAST_PCT, f\"{fault}-{seed}\") returns exactly 6 of 60 orders.",
+        "Check harmed(mod, services, log, [saga]) right after each faulty order.",
+        "The verdict must stay 'refuted' - the finding is kept, the damage is not."
+      ],
+      "solution": "labs/L400/20-chaos-engineering/solution_chaos.py",
+      "check": "labs/L400/20-chaos-engineering/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "failureLab": {
+      "fault": "Courier outage and orchestrator crash-after-charge (seed 14, 60 orders) against the unhardened L300 saga, plus random crashes and a fast rolling restart against the unhardened L300 Raft (20 seeds).",
+      "symptom": "The saga hypotheses are refuted (correct finding) but the unbounded experiment hurts 60 customers each time; the rolling restart loses committed Raft entries in 1 of 20 seeds while random crashes find nothing.",
+      "fix": "Bound the experiment: 10% stable cohort, control group, abort after the first harmed order; keep the rolling restart in the campaign.",
+      "proof": "labs/L400/20-chaos-engineering/test_build_task.py: 3 failures against chaos.py (BUILD_TARGET=mine), 2 passes against solution_chaos.py; tryIt 1 shows 1 / 6 / 30 customers hurt."
+    },
+    "tradeOffs": [
+      {
+        "option": "Large blast radius",
+        "gains": "Finds rare weaknesses faster",
+        "costs": "Harm scales with the cohort (30 hurt at 50%)",
+        "chooseWhen": "Staging or read-only paths"
+      },
+      {
+        "option": "Small cohort + abort",
+        "gains": "Harm bounded (1 customer)",
+        "costs": "More runs needed for rare findings",
+        "chooseWhen": "Money-moving or user-visible flows"
+      },
+      {
+        "option": "Random faults only",
+        "gains": "Cheap, easy to automate",
+        "costs": "Miss correlated operational sequences (0 of 20 found)",
+        "chooseWhen": "As a baseline, never as the only experiment"
+      }
+    ],
+    "sources": [
+      {
+        "title": "Principles of Chaos Engineering (2019)",
+        "url": "https://principlesofchaos.org/"
+      },
+      {
+        "title": "Basiri et al., Chaos Engineering (IEEE Software 33(3), 2016; arXiv 1702.05843)",
+        "url": "https://arxiv.org/abs/1702.05843"
+      },
+      {
+        "title": "Chaos Mesh repository (Apache-2.0, CNCF incubating) - equivalent only",
+        "url": "https://github.com/chaos-mesh/chaos-mesh"
+      }
+    ],
+    "next": "L400 #21 Verifying correctness: model checking and linearizability checking - when experiments cannot reach the bad interleaving, check every state or every history",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python chaos.py`, `python solution_chaos.py`, `python try_it.py` and `python -m unittest -v` (9 tests OK) on Python 3.12.15 (Linux); output identical on repeated runs (seeded). BUILD_TARGET=mine against the unmodified chaos.py: test_build_task 3 failures, test_fitness 4 failing subtests.",
+      "pendingCi": [
+        "macOS and Windows runs (CI matrix)",
+        "Toxiproxy and k6 exercises (manual)",
+        "Chaos Mesh (catalogue equivalent only; not exercised)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/20-chaos-engineering.md",
+    "conceptSummary": "Chaos experiments test a hypothesis about steady state under a real-world fault. Against the L300 saga the unbounded harness found the weakness but hurt 60 customers; a 10% cohort, a control group and an abort rule kept the finding and hurt one. A fast rolling restart found a Raft bug that random crashes never did.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "verifying-correctness",
+    "number": 21,
+    "level": "L400",
+    "title": "Verifying correctness: model checking and linearizability checking",
+    "phase": "Proving it",
+    "category": "verification",
+    "description": "Find a voting bug automatically: an explicit-state BFS model checker returns the shortest 7-step trace to two leaders in one term while three unit tests pass; then check recorded histories with a Porcupine-style linearizability checker that pinpoints lab 17's inversion in 2,273 operations.",
+    "outcome": "You can model a protocol as a state machine, state invariants (including ghost-variable invariants), model-check it exhaustively within bounds, read a counterexample, and check recorded histories for linearizability with a memoised search.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Optional: TLA+ tools v1.7.4 (Java 11+) for Election.tla (CI only); Maelstrom 0.2.4 (manual).",
+    "estimatedTime": "75 minutes",
+    "overview": [
+      "Distributed bugs live in interleavings; a model checker enumerates every interleaving of a small model, and a history checker judges every run of the real code."
+    ],
+    "prerequisites": [
+      "Lesson 12 (Raft voting rules)",
+      "Lesson 13 (linearizability checking)",
+      "Lesson 17 (quorum histories)"
+    ],
+    "designBrief": {
+      "context": "A pull request says 'votedFor need not be persisted; the term is enough'. Reviewers agreed; three example-based tests pass. Separately, the config store from lesson 17 must stay linearizable as its code changes.",
+      "constraints": [
+        "Find protocol bugs before merge, with a replayable counterexample",
+        "Explore every reachable state of the model within stated bounds (3 nodes, terms <= 2)",
+        "Check histories of thousands of operations from the real implementation in under a second",
+        "Run in CI on macOS, Windows and Linux with the Python standard library"
+      ],
+      "question": "Which verification method guards protocol changes, and which guards the implementation?"
+    },
+    "options": [
+      {
+        "name": "Example-based tests",
+        "description": "Hand-written scenarios.",
+        "evidence": "3 plausible scenarios pass on the buggy protocol",
+        "verdict": "Necessary, not sufficient."
+      },
+      {
+        "name": "Random simulation of the model",
+        "description": "1,000 random walks of up to 30 steps.",
+        "evidence": "bug hit in 16 of 1,000 walks (shortest 8 steps)",
+        "verdict": "Cheap smoke test."
+      },
+      {
+        "name": "Exhaustive model checking + history checking",
+        "description": "BFS over all reachable states (TLC equivalent) for the design; memoised Wing & Gong search for recorded histories.",
+        "evidence": "BFS: 7-step counterexample after 4,519 states; fixed model 1,853 states, no violation; history checker rejects lab 17's 2,273-op history in 48,590 steps at r6's read of 28",
+        "verdict": "Chosen (ADR-021)."
+      }
+    ],
+    "decisionRecord": "labs/L400/21-verifying-correctness/ADR-021-verify-protocols-and-histories.md",
+    "fitnessFunction": {
+      "what": "The election model has no reachable invariant violation, and the config store's recorded histories stay linearizable.",
+      "test": "labs/L400/21-verifying-correctness/test_fitness.py",
+      "threshold": "bfs() returns no violation over > 1,000 states; lincheck.check() True for lab 17's R=2 W=2 + write-back histories on seeds 11-13"
+    },
+    "scalingLimits": [
+      "State explosion: one more term multiplies the model by 16 (1,853 -> 29,221 states; 36 ms -> 856 ms here); 5 nodes or more terms need symmetry reduction, TLC or bounded runs (signal: BFS time and memory).",
+      "History checking is NP-complete in general; registers stay tractable, but many keys need P-compositionality (split per key, as Porcupine does) (signal: steps per operation grow).",
+      "Model drift: the model can stop matching the code; history checks of the real implementation are the backstop (signal: model green, history red)."
+    ],
+    "glossary": [
+      {
+        "term": "explicit-state model checking",
+        "meaning": "Enumerate every reachable state of a finite model (here by BFS), check invariants in each, return a counterexample trace on violation."
+      },
+      {
+        "term": "invariant / ghost variable",
+        "meaning": "A property true in every reachable state / extra state kept only for checking (the log of every vote cast), never erased by crashes."
+      },
+      {
+        "term": "Wing & Gong search with memoisation",
+        "meaning": "Try to linearize pending calls in time order; backtrack on an unexplainable return; remember (linearized set, model state) so no configuration is explored twice (Lowe 2017)."
+      },
+      {
+        "term": "TLA+ / TLC",
+        "meaning": "A specification language and its explicit-state model checker; Election.tla is this lab's model."
+      }
+    ],
+    "concepts": [
+      "Check the cause (VoteOnce) as well as the consequence (ElectionSafety).",
+      "Model check the design, history-check the implementation.",
+      "Exhaustive only within bounds: state the bounds."
+    ],
+    "steps": [
+      {
+        "title": "Run the model checker",
+        "detail": "`python modelcheck.py`",
+        "expected": "`BFS: 4519 distinct states explored, invariant ElectionSafety violated` followed by a 7-step trace whose step 5 is `n1 restarts (votedFor forgotten)`.",
+        "ifNot": "No violation -> PERSIST_VOTE was set to True (that is the build task)."
+      },
+      {
+        "title": "Compare with random simulation",
+        "detail": "Last line of the same run.",
+        "expected": "`random simulation: bug hit in 16/1000 walks of <= 30 steps (shortest 8 steps)`.",
+        "ifNot": "Different counts -> the seed (21) or depth was edited."
+      },
+      {
+        "title": "Check histories",
+        "detail": "`python lincheck.py`",
+        "expected": "`Porcupine README histories: True, False`; R=2 W=2 without write-back: `linearizable False, 48590 steps` and `cannot place r6 read -> 28 [1738.9, 1799.6] ms`; with write-back: `linearizable True, 2890 steps` (times vary).",
+        "ifNot": "An ImportError means labs/L400/17-consistency-quorums is missing; lincheck loads it by path."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 11 tests ... OK",
+        "ifNot": "Run from the lab folder (the tests import neighbouring files by path)."
+      },
+      {
+        "title": "Build task (the design change)",
+        "detail": "Make the change in buildTask.task in the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK. Before your change they fail (FAILED (failures=2): ElectionSafety violated; 'VoteOnce' not in INVARIANTS); the reference is solution_modelcheck.py.",
+        "ifNot": "Diff your file against solution_modelcheck.py; run without BUILD_TARGET to see the reference pass."
+      },
+      {
+        "title": "Fitness function (keeps the decision true)",
+        "detail": "`test_fitness.py` checks that no invariant has a reachable violation and that lab 17's config histories stay linearizable. Run it against the reference, then against your file.",
+        "mac": "python -m unittest test_fitness -v; BUILD_TARGET=mine python -m unittest test_fitness -v",
+        "windows": "python -m unittest test_fitness -v; $env:BUILD_TARGET=\"mine\"; python -m unittest test_fitness -v",
+        "expected": "Reference: OK. Unmodified lesson file: FAILED (test_protocol_has_no_reachable_violation).",
+        "ifNot": "If the reference fails, a lab or an L300 file it imports was edited: compare with the README output."
+      },
+      {
+        "title": "Optional: the same model in TLA+ (CI)",
+        "detail": "Download tla2tools.jar v1.7.4 and run TLC on both configs.",
+        "mac": "java -cp tla2tools.jar tlc2.TLC -config Election.cfg Election.tla; java -cp tla2tools.jar tlc2.TLC -config ElectionFixed.cfg Election.tla",
+        "windows": "java -cp tla2tools.jar tlc2.TLC -config Election.cfg Election.tla; java -cp tla2tools.jar tlc2.TLC -config ElectionFixed.cfg Election.tla",
+        "expected": "Election.cfg: an invariant violation (ElectionSafety) with a trace; ElectionFixed.cfg: no error. Pending CI (no Java in the authoring sandbox).",
+        "ifNot": "TLC exits non-zero on a violation - that is the expected result for Election.cfg."
+      }
+    ],
+    "code": "\"\"\"L400 lesson 21 (python modelcheck.py): find a protocol bug automatically by exhaustive model checking.\nA toy leader election (Raft's voting rule, 3 nodes, terms up to 2) is written as a state machine: a state is an\nimmutable tuple, actions produce successor states. bfs() visits EVERY reachable state, checks the invariants in\neach and returns the SHORTEST trace to a violation - what TLC does for a TLA+ spec (Election.tla is the same model).\nThe lesson protocol keeps votedFor only in memory, so a restart forgets the vote.\"\"\"\nimport random, time\nfrom collections import deque\n\nNODES, MAX_TERM = (0, 1, 2), 2\nPERSIST_VOTE = False  # the bug: a restarted node forgets whom it voted for in its current term\n\n\ndef init():\n    # per node: (term, voted_for, role, votes received); plus a ghost log of every vote ever cast (term, voter, cand)\n    return tuple((0, None, \"follower\", frozenset()) for _ in NODES), frozenset()\n\n\ndef replace(nodes, i, node):\n    return nodes[:i] + (node,) + nodes[i + 1:]\n\n\ndef actions(state):\n    \"\"\"Every enabled step: (label, next_state). Messages are delivered atomically (request + reply in one step).\"\"\"\n    nodes, cast = state\n    for i, (term, voted, role, votes) in enumerate(nodes):\n        if role != \"leader\" and term < MAX_TERM:  # election timeout: new term, vote for myself\n            yield f\"n{i} times out -> candidate, term {term + 1}\", (\n                replace(nodes, i, (term + 1, i, \"candidate\", frozenset({i}))), cast | {(term + 1, i, i)})\n        if role == \"candidate\" and 2 * len(votes) > len(NODES):\n            yield f\"n{i} becomes leader of term {term}\", (replace(nodes, i, (term, voted, \"leader\", votes)), cast)\n        if role == \"candidate\":\n            for j in NODES:\n                if j in votes or j == i:\n                    continue\n                jt, jv, jr, jvotes = nodes[j]\n                if jt > term:\n                    continue  # j is in a newer term: it refuses (and i would step down later)\n                if jt < term:  # newer term seen: j becomes a follower with no vote in that term yet\n                    jt, jv, jr, jvotes = term, None, \"follower\", frozenset()\n                if jv in (None, i):  # one vote per term, first come first served\n                    nxt = replace(replace(nodes, j, (jt, i, jr, jvotes)), i, (term, voted, role, votes | {j}))\n                    yield f\"n{j} votes for n{i} in term {term}\", (nxt, cast | {(term, j, i)})\n    for j, (term, voted, role, votes) in enumerate(nodes):  # crash + restart: volatile state is lost\n        kept = voted if PERSIST_VOTE else None\n        restarted = (term, kept, \"follower\", frozenset())\n        if restarted != nodes[j]:\n            yield f\"n{j} restarts (votedFor {'kept' if PERSIST_VOTE else 'forgotten'})\", (replace(nodes, j, restarted), cast)\n\n\ndef election_safety(state):\n    \"\"\"At most one leader per term (Raft, Figure 3).\"\"\"\n    leaders = [(t, i) for i, (t, _, role, _) in enumerate(state[0]) if role == \"leader\"]\n    return len({t for t, _ in leaders}) == len(leaders)\n\n\nINVARIANTS = {\"ElectionSafety\": election_safety}\n\n\ndef bfs(invariants=None):\n    \"\"\"Explicit-state breadth-first search. Returns (violated invariant or None, shortest trace, states, ms).\"\"\"\n    invariants, start = invariants or INVARIANTS, time.perf_counter()\n    first = init()\n    parent, queue = {first: None}, deque([first])\n    while queue:\n        state = queue.popleft()\n        for name, ok in invariants.items():\n            if not ok(state):\n                trace = []\n                while parent[state]:\n                    state, label = parent[state]\n                    trace.append(label)\n                return name, trace[::-1], len(parent), round(1000 * (time.perf_counter() - start))\n        for label, nxt in actions(state):\n            if nxt not in parent:\n                parent[nxt] = (state, label)\n                queue.append(nxt)\n    return None, [], len(parent), round(1000 * (time.perf_counter() - start))\n\n\ndef random_walks(walks=1000, depth=30, seed=21):\n    \"\"\"The cheaper alternative: random simulation. How many walks hit the bug, and how long is the first trace?\"\"\"\n    rng, hits, shortest = random.Random(seed), 0, None\n    for _ in range(walks):\n        state = init()\n        for step in range(1, depth + 1):\n            options = list(actions(state))\n            if not options:\n                break\n            state = rng.choice(options)[1]\n            if not all(ok(state) for ok in INVARIANTS.values()):\n                hits, shortest = hits + 1, min(shortest or step, step)\n                break\n    return hits, shortest\n\n\nif __name__ == \"__main__\":\n    violated, trace, states, ms = bfs()\n    print(f\"BFS: {states} distinct states explored, invariant {violated or 'none'} violated\")\n    for k, label in enumerate(trace, start=1):\n        print(f\"  {k}. {label}\")\n    hits, shortest = random_walks()\n    print(f\"random simulation: bug hit in {hits}/1000 walks of <= 30 steps (shortest {shortest or '-'} steps)\")\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "State as immutable tuples",
+        "detail": "`init()` returns (per-node (term, votedFor, role, votes), ghost set of votes cast); tuples and frozensets are hashable, so states can go into a visited set."
+      },
+      {
+        "title": "Actions",
+        "detail": "`actions(state)` yields every enabled step with a label: time out, become leader with a majority, grant a vote (request and reply delivered atomically), and crash + restart (role and votes lost; votedFor lost unless PERSIST_VOTE)."
+      },
+      {
+        "title": "Invariants",
+        "detail": "`election_safety`: no two leaders share a term (Raft Figure 3). The build task adds `vote_once` over the ghost log, which a restart cannot erase."
+      },
+      {
+        "title": "BFS",
+        "detail": "`bfs()` pops states in breadth-first order, checks invariants, records `parent[next] = (state, label)` the first time a state is seen; the first violation found is therefore at the smallest depth, and the trace is rebuilt from parents."
+      },
+      {
+        "title": "Random walks",
+        "detail": "`random_walks()` takes 1,000 seeded random paths of up to 30 steps - the cheaper alternative, measured against BFS."
+      },
+      {
+        "title": "History checking (lincheck.py)",
+        "detail": "`check()` keeps call/return entries in a doubly linked list, lifts a call and its return when the register spec allows it, backtracks on a return it cannot explain, and caches (linearized bitmask, state); on failure it names the earliest op outside the longest partial linearization."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/21-verifying-correctness/modelcheck.py",
+        "purpose": "Election model, BFS, random walks"
+      },
+      {
+        "path": "labs/L400/21-verifying-correctness/lincheck.py",
+        "purpose": "Porcupine-style memoised linearizability checker, runs lab 17's histories"
+      },
+      {
+        "path": "labs/L400/21-verifying-correctness/solution_modelcheck.py",
+        "purpose": "Build-task reference: persisted vote + VoteOnce"
+      },
+      {
+        "path": "labs/L400/21-verifying-correctness/Election.tla",
+        "purpose": "The same model in TLA+ (TLC, pending CI)"
+      },
+      {
+        "path": "labs/L400/21-verifying-correctness/Election.cfg",
+        "purpose": "TLC config: bug (PersistVote = FALSE)"
+      },
+      {
+        "path": "labs/L400/21-verifying-correctness/ElectionFixed.cfg",
+        "purpose": "TLC config: fix (PersistVote = TRUE, both invariants)"
+      },
+      {
+        "path": "labs/L400/21-verifying-correctness/test_modelcheck.py",
+        "purpose": "Lesson tests: examples pass, BFS finds the bug"
+      },
+      {
+        "path": "labs/L400/21-verifying-correctness/test_lincheck.py",
+        "purpose": "Lesson tests: Porcupine examples, agreement with L300 checker, lab 17 inversion"
+      },
+      {
+        "path": "labs/L400/21-verifying-correctness/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/21-verifying-correctness/test_fitness.py",
+        "purpose": "Fitness function for ADR-021"
+      },
+      {
+        "path": "labs/L400/21-verifying-correctness/ADR-021-verify-protocols-and-histories.md",
+        "purpose": "Decision record"
+      },
+      {
+        "path": "labs/L400/21-verifying-correctness/try_it.py",
+        "purpose": "The two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "BFS: ElectionSafety violated after 4,519 states, 7-step shortest trace",
+      "Random simulation: 16 of 1,000 walks",
+      "Fixed model: 1,853 states, no violation; with VoteOnce the bug shows in 4 steps",
+      "lincheck: lab 17 R=2 W=2 rejected at r6's read of 28; with write-back linearizable"
+    ],
+    "testCases": [
+      {
+        "action": "Three example scenarios on the buggy protocol",
+        "expected": "all safe (tests pass, bug missed)"
+      },
+      {
+        "action": "bfs() on the lesson model",
+        "expected": "ElectionSafety, 7 steps, 4,519 states; replaying the trace violates the invariant"
+      },
+      {
+        "action": "lincheck vs L300 exhaustive checker on 300 short histories",
+        "expected": "same verdicts, 89 rejected"
+      },
+      {
+        "action": "bfs() with PERSIST_VOTE=True",
+        "expected": "no violation, 1,853 states"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Check the same non-linearizable R=1 W=1 histories (11, 26, 41 operations) with the memoised checker and the exhaustive L300 checker (`python try_it.py`).",
+        "predict": "How do the two grow with history length?",
+        "expected": "One run: 11 ops 2.31 ms vs 40.1 ms; 26 ops 0.27 ms vs 240.6 ms; 41 ops 0.29 ms vs 265.6 ms - both say False; times vary by machine."
+      },
+      {
+        "task": "Allow one more term in the fixed election model (MAX_TERM 2 -> 3) (`python try_it.py`).",
+        "predict": "How much bigger is the state space?",
+        "expected": "MAX_TERM=2: 1,853 distinct states (36 ms); MAX_TERM=3: 29,221 states (856 ms); no violation either way."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "The model checker runs out of memory or time",
+        "action": "Shrink the bounds (nodes, terms), collapse request/reply into one step, use symmetry; raise bounds only in nightly runs."
+      },
+      {
+        "symptom": "A history check says 'not linearizable' but the code looks right",
+        "action": "Check the recorded times: an operation's start must be taken before the request is sent and its end after the reply arrives; clock or barrier mistakes create false alarms (Porcupine's README warns about weakly-ordered CPUs)."
+      }
+    ],
+    "equivalents": [
+      "Same idea in TLA+ with TLC (MIT): Election.tla is this model; TLC explores the same state space and prints a counterexample trace.",
+      "Same idea in Porcupine (Go, MIT): linearizability checking of recorded histories with a memoised search and P-compositionality; used by etcd's robustness tests.",
+      "Same idea in Jepsen/Maelstrom: the lin-kv workload records client histories and checks them for linearizability."
+    ],
+    "learningTools": [
+      {
+        "name": "Maelstrom (Jepsen)",
+        "role": "CHECK",
+        "exercise": "Run the lin-kv workload twice: against a node that serves reads from a local cache, and against one that sends every operation through a single leader; compare Maelstrom's verdict with `lincheck.check()` on a history of the same shape (record your node's operations with start/end times).",
+        "expected": "Should match this lab: the cached-read node should be reported invalid (lincheck: lab 17's R=2 W=2 history False, r6 read -> 28), the leader-only node valid (lincheck: write-back history True). Pending a manual run.",
+        "mac": "JDK 11+, Graphviz, Gnuplot; untar release and run ./maelstrom",
+        "windows": "not supported natively (the project's own statement, per the catalog's L300 corrections); use WSL 2 (unverified) or the Mac mini",
+        "licence": "EPL-1.0 (OSI: yes)",
+        "url": "https://github.com/jepsen-io/maelstrom/blob/main/doc/workloads.md"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L300 #12 Replicated log with Raft (simplified): terms, commit index, re-election, election restriction: votedFor is persistent state in Raft's Figure 2 - the rule this model checker proves necessary",
+      "distributed-systems L400 #17 Consistency models in practice: quorums (N, R, W), staleness and PACELC: the store whose 2,273-operation history this checker judges",
+      "distributed-systems L300 #13 Network partitions and fault injection: proxy toxics, split brain, fencing and linearizability checking: the exhaustive checker that this memoised search replaces for long histories",
+      "application-architecture L300 #16 Performance and architecture fitness functions in CI: model checks and history checks run as fitness functions in the same CI gate"
+    ],
+    "inRealSystems": [
+      "Teams building consensus and storage systems model-check protocol designs (TLA+/TLC) before coding and keep the specs next to the code.",
+      "Storage and consensus projects record client histories in robustness tests and check them for linearizability (Porcupine, Knossos)."
+    ],
+    "useWhen": "Use model checking for protocol logic with small, critical state (elections, leases, membership changes); use history checking for any store that promises linearizability; avoid relying on either for performance or for behaviour outside the stated bounds.",
+    "simulatorVsReal": "The model collapses each request and reply into one step and bounds nodes and terms; lincheck judges simulated histories from lab 17. TLC on Election.tla is pending CI.",
+    "caution": "A green model check only covers the explored bounds and the model as written; say the bounds out loud in every claim.",
+    "checkpoint": "PASS if `python modelcheck.py` and `python lincheck.py` match the README, `python -m unittest` runs 11 tests OK and your fix passes test_build_task and test_fitness with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "Why does BFS return the SHORTEST counterexample?",
+        "a": "It visits states in order of distance from the initial state; the first violating state found has the minimal number of steps."
+      },
+      {
+        "q": "Why put VoteOnce on a ghost log instead of on votedFor?",
+        "a": "A restart erases votedFor, so an invariant over it cannot see the double vote; the ghost log keeps the evidence."
+      },
+      {
+        "q": "What does the memoisation cache key contain, and why is that enough?",
+        "a": "The set of already linearized operations and the model state; the rest of the search depends only on those, so a repeated configuration cannot lead anywhere new."
+      }
+    ],
+    "buildTask": {
+      "task": "Fix the protocol and strengthen the checks: set PERSIST_VOTE = True, and add a VoteOnce invariant over the ghost log state[1] (nobody votes for two candidates in one term), checked before ElectionSafety.",
+      "hints": [
+        "The ghost log holds (term, voter, candidate) tuples.",
+        "A dict keyed by (term, voter) with setdefault finds a second candidate.",
+        "With the bug re-introduced, VoteOnce should fail after 4 steps."
+      ],
+      "solution": "labs/L400/21-verifying-correctness/solution_modelcheck.py",
+      "check": "labs/L400/21-verifying-correctness/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "failureLab": {
+      "fault": "The protocol forgets votedFor on restart (PERSIST_VOTE = False); BFS explores every interleaving of timeouts, votes, leader steps and restarts (3 nodes, terms <= 2).",
+      "symptom": "Three example tests pass; BFS finds `ElectionSafety violated` with a 7-step trace (n1 votes for n0, restarts, votes for n2: two leaders in term 1); random simulation hits it in 16 of 1,000 walks.",
+      "fix": "Persist votedFor; add the VoteOnce invariant over a ghost log.",
+      "proof": "labs/L400/21-verifying-correctness/test_build_task.py: 2 failures against modelcheck.py (BUILD_TARGET=mine), 2 passes against solution_modelcheck.py (1,853 states, no violation; VoteOnce trace 4 steps when the bug is re-introduced)."
+    },
+    "tradeOffs": [
+      {
+        "option": "Exhaustive model checking",
+        "gains": "Every interleaving within bounds; shortest trace",
+        "costs": "Needs a model; state explosion (x16 per extra term)",
+        "chooseWhen": "Protocol logic: elections, leases, reconfiguration"
+      },
+      {
+        "option": "History (linearizability) checking",
+        "gains": "Checks the real code, any size of run",
+        "costs": "Only judges runs that happened; needs fault injection",
+        "chooseWhen": "Stores and services that promise linearizability"
+      },
+      {
+        "option": "Random simulation / property tests",
+        "gains": "Cheap, no model bounds",
+        "costs": "No guarantee (16 of 1,000 walks)",
+        "chooseWhen": "Smoke tests and large state spaces"
+      }
+    ],
+    "sources": [
+      {
+        "title": "Porcupine: a fast linearizability checker (README; MIT)",
+        "url": "https://github.com/anishathalye/porcupine"
+      },
+      {
+        "title": "Lowe, Testing for Linearizability (Concurrency and Computation: Practice and Experience, 2017)",
+        "url": "https://www.cs.ox.ac.uk/people/gavin.lowe/LinearizabiltyTesting/paper.pdf"
+      },
+      {
+        "title": "TLA+ tools releases (tla2tools.jar v1.7.4 stable, v1.8.0 pre-release; MIT)",
+        "url": "https://github.com/tlaplus/tlaplus/releases"
+      },
+      {
+        "title": "Ongaro & Ousterhout, In Search of an Understandable Consensus Algorithm (Raft, extended)",
+        "url": "https://raft.github.io/raft.pdf"
+      }
+    ],
+    "next": "Capstone #22 An order pipeline that survives chaos and proves it - put every mechanism together and prove it under chaos",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python modelcheck.py`, `python solution_modelcheck.py`, `python lincheck.py`, `python try_it.py` and `python -m unittest -v` (11 tests OK) on Python 3.12.15 (Linux); state counts and traces identical on repeated runs, times vary. BUILD_TARGET=mine against the unmodified modelcheck.py: test_build_task 2 failures, test_fitness 1 failure.",
+      "pendingCi": [
+        "TLC on Election.tla with Election.cfg / ElectionFixed.cfg (tla2tools.jar v1.7.4; no Java in the sandbox)",
+        "macOS and Windows runs (CI matrix)",
+        "Maelstrom lin-kv exercise (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/21-verifying-correctness.md",
+    "conceptSummary": "Model checking explores every reachable state of a small protocol model and returns the shortest counterexample; history checking decides whether a recorded run could come from one correct copy. BFS finds the forgotten-vote bug in 7 steps that three unit tests miss; a memoised Wing & Gong checker pinpoints lab 17's inversion in 2,273 operations.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "capstone-order-pipeline",
+    "number": 22,
+    "level": "Capstone",
+    "title": "An order pipeline that survives chaos and proves it",
+    "phase": "Capstone",
+    "category": "capstone",
+    "description": "One order pipeline built from the earlier labs - bounded admission, idempotency keys, orchestrated saga with recovery, outbox, at-least-once bus, idempotent consumers, W3C tracing and Raft-replicated config - attacked by a bounded chaos campaign and judged by deterministic checks; a local model only explains.",
+    "outcome": "You can integrate the topic's mechanisms into one system, state its correctness as code-checked invariants, run a bounded chaos campaign, produce a JSON-lines scorecard, and keep a model's explanation honest by checking its claims.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Imports labs/L300/12, 14, 15, 16 and labs/L400/20, 21 by path. Optional: Ollama + qwen2.5:1.5b for a real explanation; Jaeger and the Temporal CLI (manual).",
+    "estimatedTime": "3-4 hours",
+    "overview": [
+      "Put every mechanism together, break it on purpose, and let code - not opinion - decide whether customers were harmed."
+    ],
+    "prerequisites": [
+      "Lessons 5, 8, 12, 14, 15, 16 (the mechanisms)",
+      "Lessons 17-21 (the design and proof tools)"
+    ],
+    "designBrief": {
+      "context": "A shop takes orders from clients that retry, through a gateway that must not drown, into a saga across orders, payments and shipping that must never keep money for an unshipped order. Other services learn about changes through events. The gateway's limits change at runtime. Faults: courier outages, orchestrator crashes, relay crashes, duplicate deliveries, lost acknowledgements, a flash-sale burst and a config-leader crash.",
+      "constraints": [
+        "0 audit violations (money kept == amount if shipped, else 0) in every run",
+        "Every order reaches a final state; one order and one charge per idempotency key",
+        "Every event delivered; every effect (email, revenue booking) exactly once",
+        "One trace per order, no orphan spans, valid traceparent headers",
+        "Queue never above the committed bound; p99 queue wait <= 6 ticks",
+        "Config changes committed through Raft with 0 safety violations; versions never go backwards",
+        "Order-level chaos faults touch <= 10% of orders"
+      ],
+      "question": "How do the mechanisms compose, and how do we prove the composition under faults?"
+    },
+    "architecture": {
+      "diagram": "labs/L400/22-capstone/architecture.mmd",
+      "summary": "Clients send orders with an idempotency key and a W3C trace root to a gateway whose queue is bounded by a Raft-committed config value; when full it sheds with 503 + Retry-After. Workers run the L300 orchestrated saga (create, charge, ship; reverse compensation; recover() after a crash). Every step and compensation writes its state change and its event in one outbox transaction, only if the state changed. A relay publishes at least once to a bus that may duplicate; email and revenue consumers keep processed ids with their effects. checks.py reads the services' own data, the outboxes, consumers, spans, queue samples and the Raft log; run_capstone.py turns 27 chaos runs into a 10-criterion scorecard; agent_assist.py lets a local model explain the campaign while code checks each claim."
+    },
+    "milestones": [
+      {
+        "title": "M1 Outbox + at-least-once bus + idempotent consumers",
+        "deliverable": "outbox.py (OutboxDB.transact, Relay, Bus, IdempotentConsumer)",
+        "test": "labs/L400/22-capstone/test_m1_outbox.py"
+      },
+      {
+        "title": "M2 Saga with compensation and recovery on the outbox",
+        "deliverable": "pipeline.py: outboxed steps, crash and shipping-outage faults, supervisor recover()",
+        "test": "labs/L400/22-capstone/test_m2_saga.py"
+      },
+      {
+        "title": "M3 One W3C trace per order",
+        "deliverable": "spans for client, gateway, steps and consumers; traceparent inside events",
+        "test": "labs/L400/22-capstone/test_m3_tracing.py"
+      },
+      {
+        "title": "M4 Bounded admission with idempotent retries",
+        "deliverable": "gateway (L300 #16 admit), 503 + Retry-After, idempotency keys, lost-ack and burst faults",
+        "test": "labs/L400/22-capstone/test_m4_backpressure.py"
+      },
+      {
+        "title": "M5 Replicated config via Raft",
+        "deliverable": "versioned max_queue proposed until committed; applied only when committed and newer",
+        "test": "labs/L400/22-capstone/test_m5_config.py"
+      },
+      {
+        "title": "M6 Chaos campaign, scorecard, checked explanation",
+        "deliverable": "chaos_campaign.py, checks.py, run_capstone.py, agent_assist.py",
+        "test": "labs/L400/22-capstone/test_m6_chaos.py"
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "money invariant (audit)",
+        "measure": "SAGA.audit over orders, payments, shipping",
+        "pass": "0 violations in 27/27 runs"
+      },
+      {
+        "criterion": "no lost orders",
+        "measure": "orders with a final saga entry / orders submitted",
+        "pass": "all, in 27/27 runs"
+      },
+      {
+        "criterion": "one order and one charge per key",
+        "measure": "order.created events and positive ledger entries per key",
+        "pass": "max 1 each"
+      },
+      {
+        "criterion": "exactly-once effects",
+        "measure": "emails per event id; revenue per order vs payments ledger",
+        "pass": "max 1 email per event, 0 revenue mismatches"
+      },
+      {
+        "criterion": "outbox delivered",
+        "measure": "outbox rows sent and processed by every consumer",
+        "pass": "all rows"
+      },
+      {
+        "criterion": "one trace per order",
+        "measure": "trace ids per order, orphan parents, unparseable traceparents",
+        "pass": "1 trace, 0 orphans, 0 bad headers"
+      },
+      {
+        "criterion": "bounded queue",
+        "measure": "queue length vs committed bound per tick; p99 queue wait",
+        "pass": "never above bound; p99 <= 6 ticks"
+      },
+      {
+        "criterion": "config via Raft",
+        "measure": "Raft safety violations; committed config version on live nodes; applied versions monotonic",
+        "pass": "0 violations; all at version 2; monotonic"
+      },
+      {
+        "criterion": "chaos hypotheses held",
+        "measure": "experiments where all 8 checks held",
+        "pass": "27/27"
+      },
+      {
+        "criterion": "blast radius of order faults",
+        "measure": "max cohort share for shipping-outage / crash-after-charge",
+        "pass": "<= 10%"
+      }
+    ],
+    "fitnessFunctions": [
+      {
+        "what": "The whole scorecard",
+        "test": "labs/L400/22-capstone/run_capstone.py (exit code 0 only if every criterion passes) and test_m6_chaos.py",
+        "threshold": "10/10 criteria, 27/27 experiments held"
+      },
+      {
+        "what": "Exactly-once effects under duplicates and relay crashes",
+        "test": "labs/L400/22-capstone/test_m1_outbox.py",
+        "threshold": "max 1 email per event, revenue == ledger"
+      },
+      {
+        "what": "Config through Raft survives a leader crash",
+        "test": "labs/L400/22-capstone/test_m5_config.py",
+        "threshold": "committed version 2 on all live nodes, 0 safety violations, monotonic versions"
+      }
+    ],
+    "decisionRecords": [
+      "labs/L400/22-capstone/adr/ADR-022-1-outbox-idempotent-consumers.md",
+      "labs/L400/22-capstone/adr/ADR-022-2-orchestrated-saga.md",
+      "labs/L400/22-capstone/adr/ADR-022-3-config-through-raft.md",
+      "labs/L400/22-capstone/adr/ADR-022-4-shed-at-admission.md"
+    ],
+    "glossary": [
+      {
+        "term": "transactional outbox",
+        "meaning": "The event is written in the same local transaction as the state change, then published by a relay (at least once)."
+      },
+      {
+        "term": "scorecard",
+        "meaning": "JSON lines, one per rubric criterion with its measure and pass/fail, computed by code from the system's own data."
+      },
+      {
+        "term": "versioned config",
+        "meaning": "A config entry carries a version so retries and stale leaders can never apply an older value."
+      }
+    ],
+    "concepts": [
+      "Compose mechanisms through explicit contracts: keys, events, versions, traces.",
+      "Correctness is a set of invariants that code checks after every run.",
+      "The model explains; code decides."
+    ],
+    "steps": [
+      {
+        "title": "Run the pipeline once",
+        "detail": "`python pipeline.py`",
+        "expected": "`ticks 33, sagas {'completed': 60}, events published 180, delivered 360, spans 660, config {'version': 2, 'max_queue': 12}, audit: OK`.",
+        "ifNot": "ImportError -> an earlier lab folder was moved; reuse.py loads labs/L300/12, 14, 15, 16 and labs/L400/20, 21 by path."
+      },
+      {
+        "title": "Run the scorecard",
+        "detail": "`python run_capstone.py` - 27 experiment lines, 10 criteria, a verdict; exit code 0 only if all pass.",
+        "mac": "python run_capstone.py; echo \"exit $?\"",
+        "windows": "python run_capstone.py; echo \"exit $LASTEXITCODE\"",
+        "expected": "`{\"scorecard\": \"10/10\", \"pass\": true}` and exit 0.",
+        "ifNot": "Read the first failing criterion's measure; the experiment lines name which fault broke it (`failed`)."
+      },
+      {
+        "title": "Let a model explain - and check it",
+        "detail": "With the fake server: `python run_capstone.py --explain --fake`; with Ollama: set LOCAL_MODEL_URL / LOCAL_MODEL and drop --fake.",
+        "mac": "python run_capstone.py --explain --fake",
+        "windows": "python run_capstone.py --explain --fake",
+        "expected": "`agent check relay-crash ... WRONG`, `agent check burst ... WRONG`, `agent summary (number OK): ... absorbed 586 ...`, `agent verdict IGNORED (code decides): PASS - safe to release`.",
+        "ifNot": "'no model server reachable' -> start Ollama or use --fake."
+      },
+      {
+        "title": "Run the milestone tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 15 tests ... OK",
+        "ifNot": "Run from the capstone folder."
+      },
+      {
+        "title": "Switch a mechanism off",
+        "detail": "`python try_it.py` removes consumer dedupe, then gateway idempotency.",
+        "expected": "Each run fails exactly the criteria that mechanism protects (exactly-once effects; one order per key).",
+        "ifNot": "If nothing fails, check that the fault (bus-duplicates / lost-acks) is switched on in try_it.py."
+      },
+      {
+        "title": "Read the decisions",
+        "detail": "`adr/ADR-022-1..4` and `architecture.mmd`; each ADR names the scorecard criterion that keeps it true.",
+        "expected": "Four ADRs (outbox, saga, config through Raft, shedding at admission) with the numbers from this run.",
+        "ifNot": "Render the Mermaid file in any Mermaid viewer to see the flow."
+      }
+    ],
+    "code": "\"\"\"Capstone (python pipeline.py): an order pipeline built from the earlier labs, on simulated ticks, seeded.\ngateway (bounded queue, 503 + Retry-After; L300 #16) -> workers -> orchestrated saga create/charge/ship with\ncompensation and recover() (L300 #14) -> every state change + its event in one outbox transaction -> relay ->\nat-least-once bus -> idempotent consumers (email, revenue). Every order carries a W3C trace context (L300 #15);\nthe gateway's queue bound is replicated config committed through Raft (L300 #12). Faults are switched on by name.\"\"\"\nimport random\nfrom collections import Counter, defaultdict, deque\n\nfrom outbox import Bus, IdempotentConsumer, OutboxDB, Relay\nfrom reuse import BACKPRESSURE, RAFT, SAGA, TRACING\n\nEVENTS = {\"create\": \"order.created\", \"cancel\": \"order.cancelled\", \"charge\": \"payment.charged\",\n          \"refund\": \"payment.refunded\", \"ship\": \"shipment.shipped\"}\nOWNER = {\"create\": \"orders\", \"cancel\": \"orders\", \"charge\": \"payments\", \"refund\": \"payments\", \"ship\": \"shipping\"}\nCONFIG_CHANGES = {0: 8, 25: 12}  # tick -> wanted max_queue (an operator raises the bound at tick 25)\nWORKERS, N_ORDERS, MAX_TICKS = 3, 60, 300\n\n\nclass Pipeline:\n    def __init__(self, seed=22, faults=(), cohort=frozenset()):\n        self.rng, self.t, self.faults, self.cohort = random.Random(seed), 0, set(faults), cohort\n        self.raft, self.config = RAFT.lab_helpers.Cluster(RAFT.Node, seed), {\"version\": 0, \"max_queue\": 1}\n        self.orders, self.payments, self.shipping = SAGA.Orders(), SAGA.Payments(), SAGA.Shipping(0.0, seed)\n        self.log, self.dbs = SAGA.lab_helpers.SagaLog(), {n: OutboxDB(n) for n in (\"orders\", \"payments\", \"shipping\")}\n        self.orch = SAGA.Orchestrator(self.orders, self.payments, self.shipping, self.log)\n        self.orch.steps = [(n, self.outboxed(n, act), comp and self.outboxed(comp.__name__, comp))\n                           for n, act, comp in self.orch.steps]  # every step and compensation goes through an outbox\n        self.bus = Bus(self.rng, 0.2 if \"bus-duplicates\" in self.faults else 0.0)\n        self.relay = Relay(list(self.dbs.values()), self.bus)\n        self.emails, self.revenue, self.spans, self.trace, self.root = Counter(), defaultdict(int), [], {}, {}\n        self.bus.subscribers += [IdempotentConsumer(\"email\", self.email), IdempotentConsumer(\"revenue\", self.book)]\n        self.gateway, self.accepted, self.retries = BACKPRESSURE.Server(WORKERS, 1), {}, deque()\n        self.queue_seen, self.waits, self.crashed, self.config_seen = [], [], set(), []\n\n    def span(self, saga, name, parent):  # W3C-shaped ids from a seeded RNG (production: a CSPRNG)\n        s = {\"saga\": saga, \"name\": name, \"trace_id\": self.trace[saga], \"span_id\": f\"{self.rng.getrandbits(64):016x}\",\n             \"parent_id\": parent}\n        self.spans.append(s)\n        return s\n\n    def outboxed(self, name, fn):\n        \"\"\"State change + its event in one local transaction, under a span whose traceparent rides on the event.\"\"\"\n        db = OWNER[name]\n        state = {\"orders\": lambda s: self.orders.status.get(s), \"payments\": self.payments.net,\n                 \"shipping\": lambda s: self.shipping.outcome.get(s)}[db]\n\n        def step(saga, amount):\n            faulty = saga in self.cohort\n            if name == \"ship\" and faulty and \"shipping-outage\" in self.faults:\n                self.shipping.outcome.setdefault(saga, \"courier API down\")  # fault: no courier for this order\n            s = self.span(saga, f\"{db}.{name}\", self.root[saga])\n            result = self.dbs[db].transact(lambda: fn(saga, amount), lambda: state(saga), EVENTS[name], saga,\n                                           f\"00-{s['trace_id']}-{s['span_id']}-01\", amount=amount)\n            if name == \"charge\" and faulty and \"crash-after-charge\" in self.faults and saga not in self.crashed:\n                self.crashed.add(saga)\n                raise SAGA.lab_helpers.Crash(f\"orchestrator died after charge({saga})\")  # fault: process dies\n            return result\n        step.__name__ = name\n        return step\n\n    def email(self, msg):\n        self.consumer_span(msg, \"email.send\")\n        self.emails[(msg[\"saga\"], msg[\"type\"])] += 1\n\n    def book(self, msg):\n        self.consumer_span(msg, \"revenue.book\")\n        sign = {\"payment.charged\": 1, \"payment.refunded\": -1}.get(msg[\"type\"], 0)\n        self.revenue[msg[\"saga\"]] += sign * msg[\"data\"][\"amount\"]\n\n    def consumer_span(self, msg, name):\n        trace_id, parent, _ = TRACING.parse_traceparent(msg[\"traceparent\"])  # context from the event header\n        self.spans.append({\"saga\": msg[\"saga\"], \"name\": name, \"trace_id\": trace_id,\n                           \"span_id\": f\"{self.rng.getrandbits(64):016x}\", \"parent_id\": parent})\n\n    def tick_config(self):\n        \"\"\"Operator: re-propose the wanted config until Raft commits it (the version makes retries idempotent);\n        the pipeline applies only COMMITTED entries, and never an older version than it already has.\"\"\"\n        version = sum(k <= self.t for k in CONFIG_CHANGES)\n        wanted = CONFIG_CHANGES[max(k for k in CONFIG_CHANGES if k <= self.t)]\n        if \"raft-leader-crash\" in self.faults and self.t in (25, 40):\n            if self.t == 25:\n                self.downed = self.raft.leader().name\n                self.raft.crash(self.downed)  # fault: the config leader dies just as the change arrives\n            else:\n                self.raft.restart(self.downed)\n        leader = self.raft.leader()\n        if leader:\n            for _, cmd in leader.log[:leader.commit]:\n                v, value = (int(x) for x in cmd.split(\":\"))\n                if v > self.config[\"version\"]:\n                    self.config = {\"version\": v, \"max_queue\": value}\n            if self.config[\"version\"] < version and self.t % 5 == 0:\n                leader.propose(f\"{version}:{wanted}\")\n        self.gateway.max_queue = self.config[\"max_queue\"]\n        self.config_seen.append((self.t, self.config[\"version\"]))\n        self.raft.run(1)\n\n    def submit(self, key, amount):\n        \"\"\"Client -> gateway with an idempotency key; on 503 the client retries after Retry-After (+ jitter).\"\"\"\n        if key in self.accepted:\n            return \"duplicate\"  # idempotent replay: the order exists, nothing new happens\n        retry_after = self.gateway.admit(self.t)\n        if retry_after is not None:  # bounded queue full: shed now, tell the client when to come back\n            self.retries.append((self.t + retry_after + self.rng.randint(0, 2), key, amount))\n            return \"503\"\n        self.accepted[key] = amount\n        self.gateway.queue.append((key, amount, self.t))\n        self.span(key, \"gateway.accept\", self.root[key])\n        if \"lost-acks\" in self.faults and self.rng.random() < 0.2:\n            self.retries.append((self.t + 1, key, amount))  # the 200 got lost: the client retries anyway\n        return \"accepted\"\n\n    def run(self):\n        arrivals = [(self.rng.randint(0, 30), f\"o{i}\", 10 * i) for i in range(1, N_ORDERS + 1)]\n        arrivals += [(10, f\"o{i}\", 10 * i) for i in range(N_ORDERS + 1, N_ORDERS + 21)] if \"burst\" in self.faults else []\n        for _, key, _ in arrivals:\n            self.trace[key] = f\"{self.rng.getrandbits(128):032x}\"\n            self.root[key] = self.span(key, \"client.order\", None)[\"span_id\"]\n        pending = deque(sorted(arrivals))\n        while self.t < MAX_TICKS:\n            self.tick_config()\n            while pending and pending[0][0] <= self.t:\n                self.submit(*pending.popleft()[1:])\n            for due, key, amount in [self.retries.popleft() for _ in range(len(self.retries))]:\n                if due <= self.t:\n                    self.submit(key, amount)\n                else:\n                    self.retries.append((due, key, amount))\n            self.queue_seen.append((len(self.gateway.queue), self.gateway.max_queue))\n            for _ in range(min(WORKERS, len(self.gateway.queue))):\n                key, amount, queued_at = self.gateway.queue.popleft()\n                self.waits.append(self.t - queued_at)\n                try:\n                    self.orch.run(key, amount)\n                except SAGA.lab_helpers.Crash:\n                    self.orch.recover()  # the supervisor restarts it; it finishes from the saga log\n            self.relay.crash_next = 1 if \"relay-crash\" in self.faults and self.t % 7 == 3 else 0\n            self.relay.tick()\n            self.t += 1\n            settled = self.config[\"version\"] == sum(k <= self.t for k in CONFIG_CHANGES)  # config change committed\n            if settled and not (pending or self.retries or self.gateway.queue) and all(\n                    r[\"sent\"] for d in self.dbs.values() for r in d.rows):\n                break\n        self.raft.run(10)  # let followers learn the final commit index before anyone checks them\n        return self\n\n\nif __name__ == \"__main__\":\n    p = Pipeline().run()\n    done = Counter(r[\"status\"] for r in p.log.entries() if r[\"step\"] == \"saga\" and r[\"status\"] != \"started\")\n    print(f\"ticks {p.t}, sagas {dict(done)}, events published {p.bus.published}, delivered {p.bus.delivered},\"\n          f\" spans {len(p.spans)}, config {p.config}, audit: {SAGA.audit(p.orders, p.payments, p.shipping) or 'OK'}\")\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Reuse, not copies",
+        "detail": "`reuse.py` imports the hardened L300 saga, Raft, backpressure and tracing modules (and lab 20/21 helpers) by path, each with its own helpers.py."
+      },
+      {
+        "title": "Outboxed steps",
+        "detail": "`Pipeline.outboxed` wraps every saga action and compensation: open a span, run the change and append its event in one `transact`, only if the service's state changed; faults are injected here for cohort orders."
+      },
+      {
+        "title": "Admission",
+        "detail": "`submit`: a repeated key is an idempotent replay; otherwise the L300 #16 `admit()` queues or sheds with Retry-After, and the client retries later with jitter."
+      },
+      {
+        "title": "Config",
+        "detail": "`tick_config`: the operator re-proposes `<version>:<max_queue>` every 5 ticks until committed; the pipeline applies committed entries with a newer version only; the leader-crash fault kills the Raft leader at tick 25."
+      },
+      {
+        "title": "Run loop",
+        "detail": "Each tick: config, arrivals, due retries, up to 3 saga runs (a Crash triggers recover()), relay tick (optionally crashing between publish and mark); the run ends only when everything is final, delivered and the wanted config is committed."
+      },
+      {
+        "title": "Consumers and traces",
+        "detail": "`email` and `book` run behind IdempotentConsumer; `consumer_span` parses the event's traceparent with the L300 #15 parser and parents its span on the emitting step."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/22-capstone/pipeline.py",
+        "purpose": "The integrated pipeline (main file)"
+      },
+      {
+        "path": "labs/L400/22-capstone/outbox.py",
+        "purpose": "Outbox, relay, bus, idempotent consumer"
+      },
+      {
+        "path": "labs/L400/22-capstone/checks.py",
+        "purpose": "The eight correctness checks (code decides)"
+      },
+      {
+        "path": "labs/L400/22-capstone/chaos_campaign.py",
+        "purpose": "9 experiments x 3 seeds, 10% cohorts"
+      },
+      {
+        "path": "labs/L400/22-capstone/run_capstone.py",
+        "purpose": "JSON-lines scorecard, exit code, --explain"
+      },
+      {
+        "path": "labs/L400/22-capstone/agent_assist.py",
+        "purpose": "Local-model explanation with claim checks"
+      },
+      {
+        "path": "labs/L400/22-capstone/reuse.py",
+        "purpose": "Loads the earlier labs"
+      },
+      {
+        "path": "labs/L400/22-capstone/architecture.mmd",
+        "purpose": "Architecture diagram (Mermaid)"
+      },
+      {
+        "path": "labs/L400/22-capstone/adr/",
+        "purpose": "ADR-022-1 to ADR-022-4"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_m1_outbox.py",
+        "purpose": "Milestone 1 (to test_m6_chaos.py: milestone 6)"
+      },
+      {
+        "path": "labs/L400/22-capstone/try_it.py",
+        "purpose": "The two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "Baseline: 60 completed, 180 events, 660 spans, config version 2, audit OK",
+      "Campaign: 27/27 experiments held; scorecard 10/10; consumers absorbed 586 duplicates",
+      "Agent: 2 wrong claims flagged, release verdict ignored"
+    ],
+    "testCases": [
+      {
+        "action": "Relay crash + duplicate deliveries",
+        "expected": "exactly-once effects and outbox delivered pass; duplicates absorbed > 0"
+      },
+      {
+        "action": "Shipping outage on o3, o7, o11",
+        "expected": "those orders CANCELLED, revenue 0, audit clean"
+      },
+      {
+        "action": "Corrupt one event's traceparent",
+        "expected": "'one trace per order' fails"
+      },
+      {
+        "action": "Config leader crash at tick 25",
+        "expected": "config {'version': 2, 'max_queue': 12}, versions monotonic"
+      },
+      {
+        "action": "Full campaign",
+        "expected": "10/10 criteria, 27 runs; agent wrong on burst and relay-crash"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Remove deduplication from the consumers and run with duplicate deliveries (`python try_it.py`).",
+        "predict": "Which criterion fails, and by how much?",
+        "expected": "failed checks {'exactly-once effects': 'max emails per event 2, revenue mismatches 14'}."
+      },
+      {
+        "task": "Make the gateway forget idempotency keys and run with lost acknowledgements (`python try_it.py`).",
+        "predict": "What do client retries do now?",
+        "expected": "failed checks {'one order and one charge per key': 'max created 2, max charges 1', 'exactly-once effects': 'max emails per event 2, revenue mismatches 0'}."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "'config via Raft' fails with committed versions [1]",
+        "action": "The run ended before the re-proposed change committed (seen while building); keep running until the wanted version is committed."
+      },
+      {
+        "symptom": "A refund event appears twice after a crash",
+        "action": "Emit outbox events only when the state actually changed; idempotent re-runs must not publish."
+      }
+    ],
+    "equivalents": [
+      "Same workflow on a durable-execution engine: Temporal workflows with activities and compensations (see the L300 #14 Temporal exercise).",
+      "Same eventing with a broker (Kafka, RabbitMQ, NATS JetStream): an outbox table + relay, consumers with a processed-id table in the same transaction.",
+      "Same config pattern with etcd: versioned keys and compare-and-swap through Raft."
+    ],
+    "learningTools": [
+      {
+        "name": "Jaeger",
+        "role": "SEE",
+        "exercise": "Export `Pipeline().run().spans` to Jaeger: create one OpenTelemetry span per entry with the same trace and parent ids (L300 #15's `otel_equivalent.py` shows the SDK and OTLP exporter setup), start Jaeger, then search one order at http://localhost:16686.",
+        "expected": "Each order should be one trace with 11 spans (client.order, gateway.accept, 3 saga steps, 2 consumers x 3 events) - the lab's 660 spans for 60 orders. Pending a manual run (OpenTelemetry SDK not installed here).",
+        "mac": "jaeger-2.22.0-darwin-arm64.tar.gz or container cr.jaegertracing.io/jaegertracing/jaeger:2.22.0",
+        "windows": "Windows binary or container",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://www.jaegertracing.io/docs/latest/getting-started/"
+      },
+      {
+        "name": "Temporal CLI dev server + Web UI",
+        "role": "SEE",
+        "exercise": "Port the capstone's saga to a Temporal workflow as in L300 #14 (activities create, charge, ship; compensations refund then cancel), add the outbox write inside each activity, run the shipping-outage cohort (o3, o7, o11) and open their histories at http://localhost:8233.",
+        "expected": "Should tell the capstone's story: ship failed, then refund and cancel, revenue 0 for those orders - test_m2_saga.py's result. Pending a manual run (temporalio SDK not installed here).",
+        "mac": "brew install temporal; temporal server start-dev (UI http://localhost:8233)",
+        "windows": "Windows amd64 archive from the CLI README; temporal.exe server start-dev",
+        "licence": "MIT, CLI repository (OSI: yes)",
+        "url": "https://github.com/temporalio/cli"
+      }
+    ],
+    "agentAssist": {
+      "task": "A local model reads the 27 campaign result lines and explains them to an on-call engineer: one 'fault: <name> held=<yes|no> harmed=<n>' line per experiment and a summary. Code checks every claim; the scorecard is computed before and without the model.",
+      "prompt": "system: You explain chaos-experiment results to an on-call engineer. For every experiment write one line 'fault: <name> held=<yes|no> harmed=<n>' (harmed = total harmed orders over all seeds), then 'summary: <one sentence on what the results mean>'. Do not decide whether to release. user: [[CHAOS-SCORECARD]] Campaign results, one object per run: <27 result lines>",
+      "check": "agent_assist.truth() aggregates held/harmed per experiment from the campaign; check() compares each claimed line (missing = wrong); a number in the summary ('absorbed N') is compared with the campaign's duplicates_absorbed; any 'verdict:' line is printed as IGNORED.",
+      "expected": "python run_capstone.py --explain --fake -> 7 claims OK, relay-crash agent ('no', 0) vs code ('yes', 0) WRONG, burst agent ('yes', 3) vs code ('yes', 0) WRONG; summary number OK (586); 'agent verdict IGNORED (code decides): PASS - safe to release'. The scorecard stays 10/10 whatever the model says.",
+      "realModelNote": "Ollama on the Mac mini (Metal) or the Windows PC: `ollama pull qwen2.5:1.5b`, then `LOCAL_MODEL=qwen2.5:1.5b python run_capstone.py --explain` (Windows: `$env:LOCAL_MODEL=...`). Not run against a real model here. The model sees only experiment results - never secrets or customer data."
+    },
+    "seeAlso": [
+      "distributed-systems L300 #16 Backpressure and load shedding: bounded queues, 503 + Retry-After, AIMD concurrency limits: the bounded admission the gateway reuses",
+      "distributed-systems L400 #20 Chaos engineering: hypotheses, steady state, blast radius and seeded fault campaigns: the bounded campaign (cohort, control, abort) this capstone runs",
+      "application-architecture L200 #9 Event-driven integration: outbox, bus and AsyncAPI: the outbox and bus from the architecture side",
+      "ai-agents L300 #15 Safe tool execution: the same boundary - the agent proposes or explains, code decides and acts"
+    ],
+    "inRealSystems": [
+      "Order and payment platforms combine sagas, outboxes and idempotent consumers because no transaction spans their services.",
+      "Release gates run invariant checks and fault campaigns automatically and block on a failing scorecard, not on a reviewer's impression."
+    ],
+    "useWhen": "Use this composition for multi-service workflows that move money or stock; a single-database monolith with local transactions does not need it.",
+    "simulatorVsReal": "Every service, the bus, Raft and the faults run in-process on simulated ticks (seeded); real deployments add networks, persistence, clocks and operators.",
+    "caution": "Never let a model decide release readiness or take actions; send it only experiment results, never secrets or customer data.",
+    "checkpoint": "PASS if `python run_capstone.py` prints `{\"scorecard\": \"10/10\", \"pass\": true}` (exit code 0) and `python -m unittest` runs 15 tests OK.",
+    "checkYourself": [
+      {
+        "q": "Why must an outbox event be written only when the state changed?",
+        "a": "Recovery re-runs idempotent steps; publishing again would make consumers apply a second, different event id (a second refund booking)."
+      },
+      {
+        "q": "The gateway's bound is 1 until the first config commit. Why not use the newest proposed value?",
+        "a": "A proposed value may never commit (leader crash); only committed, versioned config is safe to act on."
+      },
+      {
+        "q": "The agent says relay-crash 'held=no'. What happens?",
+        "a": "Code marks the claim WRONG and the scorecard does not change; the model never decides."
+      }
+    ],
+    "sources": [
+      {
+        "title": "W3C Trace Context (Recommendation)",
+        "url": "https://www.w3.org/TR/trace-context/"
+      },
+      {
+        "title": "Garcia-Molina & Salem, Sagas (SIGMOD 1987)",
+        "url": "https://www.cs.cornell.edu/andru/cs711/2002fa/reading/sagas.pdf"
+      },
+      {
+        "title": "Ongaro & Ousterhout, In Search of an Understandable Consensus Algorithm (Raft, extended)",
+        "url": "https://raft.github.io/raft.pdf"
+      },
+      {
+        "title": "Principles of Chaos Engineering (2019)",
+        "url": "https://principlesofchaos.org/"
+      }
+    ],
+    "next": "L500 #23 Foundations I: system models, time and causality - with proofs - the theory behind every mechanism the capstone combines (further study: the L400 candidates in KNOWN-GAPS)",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python pipeline.py`, `python run_capstone.py` (10/10, exit 0), `python run_capstone.py --explain --fake`, `python try_it.py` and `python -m unittest -v` (15 tests OK) on Python 3.12.15 (Linux); identical output on repeated runs (seeded, simulated ticks). The agent assist ran only against the vendored fake model server (rule [[CHAOS-SCORECARD]]).",
+      "pendingCi": [
+        "macOS and Windows runs (CI matrix)",
+        "agent explanation with a real local model (Ollama)",
+        "Jaeger and Temporal exercises (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/22-capstone.md",
+    "conceptSummary": "The capstone composes bounded admission, idempotency keys, an orchestrated saga with recovery, a transactional outbox, idempotent consumers, W3C tracing and Raft-committed config, then runs a bounded chaos campaign. Eight code-checked invariants plus two campaign criteria form a 10/10 scorecard; a local model explains, and code checks its claims.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  }
+]

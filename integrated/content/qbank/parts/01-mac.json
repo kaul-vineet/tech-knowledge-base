@@ -1,0 +1,139 @@
+[
+ {
+  "id": "01-mac-01",
+  "level": "L600",
+  "lesson": 1,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "bench_crypto.py measures 165.61 us for one project welcome (hybrid KEM + HKDF + AES-GCM wrap) and the rotation budget is 100 ms. How many members fit in one synchronous rotation?",
+  "options": [
+   "60",
+   "603",
+   "1,656",
+   "6,038"
+  ],
+  "answer": 1,
+  "explanation": "A rotation seals one welcome per member: floor(100,000 us / 165.61 us) = 603. 1,656 is the time in ms for 10,000 members, not a member count.",
+  "source": "01 mac_mini/bench_crypto.py budgets(); README real output"
+ },
+ {
+  "id": "01-mac-02",
+  "level": "L600",
+  "lesson": 1,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "One core seals 41,186 messages per second under one epoch key with random 96-bit nonces. Roughly how long until the 2^32 per-key limit of SP 800-38D is reached?",
+  "options": [
+   "About 104 days",
+   "About 12 days",
+   "About 1.2 days",
+   "About 2.9 hours"
+  ],
+  "answer": 2,
+  "explanation": "2^32 / 41,186 / 86,400 = 1.2 days. A time-based rotation of a week would overshoot at full load, which is why F4 counts messages instead of waiting for a timer.",
+  "source": "01 mac_mini/bench_crypto.py budgets(); pqmsg.MAX_MSGS_PER_EPOCH"
+ },
+ {
+  "id": "01-mac-03",
+  "level": "L600",
+  "lesson": 1,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "multiproc.py --here sends 300 messages and the audit finds 301 ciphertexts on the wire with no nonce reuse. Where does the extra ciphertext come from?",
+  "options": [
+   "A request was in flight when its leader was killed; the client retried with the same Idempotency-Key and the new leader sealed it again under a fresh nonce",
+   "The new leader re-encrypted the whole log after the failover, and one entry was counted twice",
+   "A follower sealed a copy of an entry while it was catching up from the leader",
+   "The epoch rotation entry is sealed like a message and counted as one ciphertext"
+  ],
+  "answer": 0,
+  "explanation": "Only leaders seal. The killed leader had sealed (and written to sealed.jsonl) but not replicated the message; the retry produced a second ciphertext for the same key, deduplicated in the log. Followers never seal, they only store.",
+  "source": "01 mac_mini/README.md real output; replica.py seal()"
+ },
+ {
+  "id": "01-mac-04",
+  "level": "L600",
+  "lesson": 1,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "With --nonce leader-counter, F1 fails across real processes and the first reused nonce is 000000000000000000000001. What is the diagnosis?",
+  "options": [
+   "The random generator of the new process was seeded with the same value as the old one",
+   "The follower appended the same envelope twice during log repair",
+   "AES-GCM in cryptography 50.x pads short nonces with zeros",
+   "Each new or restarted leader process starts its in-memory counter at 1 under the same epoch key, so counter value 1 is sealed again"
+  ],
+  "answer": 3,
+  "explanation": "The shipped DerivedNonce keeps its counter in RAM and ignores the term; a SIGKILL or a promotion of another process resets it. The solution puts the persisted Raft term in the first 4 bytes, so a new leader starts a fresh range.",
+  "source": "nonce_derived.py; solution/nonce_derived.py; multiproc.py --here --nonce leader-counter"
+ },
+ {
+  "id": "01-mac-05",
+  "level": "L600",
+  "lesson": 1,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "The build-task solution builds the nonce as term (4 bytes) || counter (8 bytes). What does this snippet print?",
+  "code": "term, counter = 3, 2\nnonce = term.to_bytes(4, \"big\") + counter.to_bytes(8, \"big\")\nprint(nonce.hex())",
+  "options": [
+   "000000000000000300000002",
+   "000000030000000000000002",
+   "030000000200000000000000",
+   "00000003000000000002"
+  ],
+  "answer": 1,
+  "explanation": "4 big-endian bytes of the term (00000003) followed by 8 big-endian bytes of the counter (0000000000000002): 24 hex digits. The first option swaps the field widths.",
+  "source": "solution/nonce_derived.py (executed in research/checks_01_mac.py)"
+ },
+ {
+  "id": "01-mac-06",
+  "level": "L600",
+  "lesson": 1,
+  "type": "design",
+  "difficulty": 3,
+  "question": "After a kill, multiproc.py promotes the live replica with the highest (last term, log length) to a strictly higher term. What would break if it promoted any live replica instead?",
+  "options": [
+   "Nothing: every live replica has the same log after a kill",
+   "Only performance: the new leader would need a longer catch-up",
+   "The nonce audit: random nonces need the longest log to stay unique",
+   "F2: an entry acknowledged by a majority could be missing on the new leader, and log repair would then truncate it from the replica that had it"
+  ],
+  "answer": 3,
+  "explanation": "A committed entry is on 2 of 3 replicas; with one dead, the more up-to-date survivor has it. Electing the other one and repairing logs from it erases an acknowledged message - Raft's election restriction exists for exactly this.",
+  "source": "multiproc.py Cluster.elect(); replica.py append/truncate; distributed-systems L300 #12"
+ },
+ {
+  "id": "01-mac-07",
+  "level": "L600",
+  "lesson": 1,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "Experiment 3 adds tc netem to the loopback interface inside one container instead of giving each replica its own container. Why is that enough here?",
+  "options": [
+   "The three replicas talk to each other over 127.0.0.1 inside that container, so delaying and dropping loopback packets impairs exactly their traffic",
+   "netem cannot be applied to eth0 inside a container",
+   "Colima containers have no eth0 interface",
+   "Loopback impairment is required for fsync to be measured"
+  ],
+  "answer": 0,
+  "explanation": "The labs bind to 127.0.0.1 only; inside one network namespace all replica traffic crosses lo, so netem on lo changes the code's network without changing the code. Separate containers would need a non-loopback bind.",
+  "source": "01 mac_mini/README.md experiment 3; tc-netem(8)"
+ },
+ {
+  "id": "01-mac-08",
+  "level": "L600",
+  "lesson": 1,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "After a kill, a replica finds a half-written last line in log.jsonl. replica.py drops it and terminates the line with a newline. Why is dropping it safe?",
+  "options": [
+   "The leader always resends the last 10 entries after a restart",
+   "Torn lines only ever contain truncate markers",
+   "The line was never completely written and fsynced, so it was never part of an acknowledged majority",
+   "The audit ignores the last line of every log anyway"
+  ],
+  "answer": 2,
+  "explanation": "A replica acknowledges an append only after the whole line is written and fsynced; a torn tail therefore belongs to a write that never completed. If it was needed, log repair from the leader re-sends it.",
+  "source": "replica.py read_log() and Replica.__init__; test_torn_last_line_from_a_kill_is_dropped_and_terminated"
+ }
+]

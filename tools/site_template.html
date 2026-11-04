@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Technology Knowledge Base — L100 to L400</title>
+<style>
+:root{--bg:#f6f7fb;--panel:#ffffff;--ink:#16202c;--muted:#5b6777;--line:#e2e6ee;--accent:#2457d6;--accent-soft:#e8eefc;
+--ok:#16794a;--ok-soft:#e5f5ec;--warn:#9a5b00;--warn-soft:#fff3df;--bad:#b42318;--bad-soft:#fde8e6;--code:#0f1720;--code-ink:#e6edf3;
+--radius:10px;--sidebar:310px;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+@media (prefers-color-scheme:dark){:root{--bg:#0e131a;--panel:#151c25;--ink:#e6edf3;--muted:#9aa6b5;--line:#253040;--accent:#7aa2ff;
+--accent-soft:#1b2a4a;--ok:#4cc38a;--ok-soft:#12301f;--warn:#f0b35a;--warn-soft:#33270f;--bad:#ff7b6e;--bad-soft:#3a1714;--code:#0a0f15}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.55}
+a{color:var(--accent)}
+button{font:inherit;cursor:pointer}
+.layout{display:flex;min-block-size:100vh}
+.sidebar{inline-size:var(--sidebar);flex:0 0 var(--sidebar);background:var(--panel);border-inline-end:1px solid var(--line);
+position:sticky;inset-block-start:0;block-size:100vh;overflow-y:auto;padding:14px 12px 40px}
+body.focus .sidebar{display:none}
+.brand{font-weight:700;font-size:16px;margin:2px 6px 10px}
+.brand small{display:block;font-weight:400;color:var(--muted);font-size:12px}
+select.topic{inline-size:100%;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);margin-block-end:10px}
+.progress{margin:6px 6px 14px;font-size:12px;color:var(--muted)}
+.bar{block-size:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-block-start:4px}
+.bar>i{display:block;block-size:100%;background:var(--ok)}
+.group{margin-block-start:12px}
+.group h4{margin:0 6px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.nav-item{display:flex;gap:8px;align-items:flex-start;inline-size:100%;text-align:start;border:0;background:none;color:var(--ink);
+padding:6px 8px;border-radius:8px;font-size:13.5px}
+.nav-item:hover{background:var(--accent-soft)}
+.nav-item.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.nav-item .n{flex:0 0 22px;color:var(--muted);font-variant-numeric:tabular-nums}
+.nav-item .done{color:var(--ok);margin-inline-start:auto}
+.main{flex:1;min-inline-size:0}
+.topbar{position:sticky;inset-block-start:0;z-index:5;display:flex;gap:10px;align-items:center;padding:10px 24px;
+background:var(--bg);border-block-end:1px solid var(--line)}
+.search{flex:1;position:relative;max-inline-size:620px}
+.search input{inline-size:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+.results{position:absolute;inset-inline:0;inset-block-start:42px;background:var(--panel);border:1px solid var(--line);border-radius:8px;
+max-block-size:60vh;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,.15);display:none}
+.results.show{display:block}
+.results button{display:block;inline-size:100%;text-align:start;border:0;background:none;color:var(--ink);padding:8px 12px}
+.results button:hover,.results button.sel{background:var(--accent-soft)}
+.results small{color:var(--muted)}
+.btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px 12px;border-radius:8px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.content{max-inline-size:980px;margin:0 auto;padding:22px 28px 80px}
+.crumb{font-size:12.5px;color:var(--muted);margin-block-end:6px}
+h1{font-size:28px;line-height:1.2;margin:4px 0 8px}
+h2{font-size:21px;margin:30px 0 10px;padding-block-start:14px;border-block-start:1px solid var(--line)}
+h3{font-size:17px;margin:20px 0 8px}
+h4{font-size:15px;margin:16px 0 6px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px}
+.chip{font-size:12px;padding:3px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin:12px 0}
+.card.outcome{border-inline-start:4px solid var(--accent)}
+.card.fail{border-inline-start:4px solid var(--bad)}
+.card.fix{border-inline-start:4px solid var(--ok)}
+.card.agent{border-inline-start:4px solid #8a4bd6}
+.card.caution{border-inline-start:4px solid var(--warn);background:var(--warn-soft)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;margin:14px 0 4px;position:sticky;inset-block-start:57px;background:var(--bg);padding:6px 0;z-index:4}
+.tabs button{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 11px;border-radius:999px;font-size:13px}
+.tabs button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.step{display:flex;gap:12px;margin:12px 0}
+.step .num{flex:0 0 28px;block-size:28px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:700}
+.step .body{flex:1;min-inline-size:0}
+.exp{background:var(--ok-soft);color:var(--ok);border-radius:8px;padding:6px 10px;margin-block-start:6px;font-size:13.5px}
+.ifnot{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:6px 10px;margin-block-start:6px;font-size:13.5px}
+.os{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin:6px 0}
+.os button{border:0;background:var(--panel);color:var(--ink);padding:4px 12px;font-size:12.5px}
+.os button.on{background:var(--accent);color:#fff}
+pre{background:var(--code);color:var(--code-ink);border-radius:8px;padding:12px 14px;overflow:auto;font-size:12.8px;line-height:1.45;position:relative}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+:not(pre)>code{background:var(--accent-soft);padding:1px 5px;border-radius:5px;font-size:.9em}
+.copy{position:absolute;inset-block-start:6px;inset-inline-end:6px;font-size:11.5px;padding:3px 8px;border-radius:6px;border:1px solid #3a4656;background:#1c2633;color:#cfd8e3}
+table{border-collapse:collapse;inline-size:100%;font-size:13.5px;margin:8px 0}
+th,td{border:1px solid var(--line);padding:6px 8px;text-align:start;vertical-align:top}
+th{background:var(--accent-soft)}
+details{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:8px 0}
+summary{cursor:pointer;font-weight:600}
+.reveal{margin-block-start:6px}
+.pager{display:flex;justify-content:space-between;gap:10px;margin-block-start:36px;padding-block-start:16px;border-block-start:1px solid var(--line)}
+.muted{color:var(--muted)}
+.mermaid-note{font-size:12px;color:var(--muted);margin-block-start:-4px}
+.topic-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;margin-block-start:14px}
+.topic-cards button{text-align:start;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;color:var(--ink)}
+.topic-cards button:hover{border-color:var(--accent)}
+.hidden{display:none!important}
+.q-opts{display:grid;gap:8px;margin:12px 0}
+.q-opt{display:flex;gap:10px;align-items:flex-start;text-align:start;inline-size:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
+.q-opt:hover:not([disabled]){border-color:var(--accent)}
+.q-opt .k{flex:0 0 22px;font-weight:700;color:var(--muted)}
+.q-opt.right{border-color:var(--ok);background:var(--ok-soft)}
+.q-opt.wrong{border-color:var(--bad);background:var(--bad-soft)}
+.q-meta{font-size:12.5px;color:var(--muted)}
+.q-filters{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 14px}
+.q-filters button{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 11px;border-radius:999px;font-size:13px}
+.q-filters button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+@media (max-width:860px){.sidebar{position:fixed;z-index:20;inset-inline-start:0;transform:translateX(-100%);transition:transform .2s}
+body.nav-open .sidebar{transform:none}.menu-btn{display:inline-block!important}}
+.menu-btn{display:none}
+@media print{.sidebar,.topbar,.tabs,.pager,.copy{display:none!important}.panel-sec{display:block!important}}
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">Technology Knowledge Base<small>L100 → L400 · Mac mini + Windows · open source</small></div>
+    <select class="topic" id="topicSel" aria-label="Topic"></select>
+    <div class="progress" id="progress"></div>
+    <nav id="nav"></nav>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="btn menu-btn" id="menuBtn" type="button">☰</button>
+      <button class="btn" id="homeBtn" type="button">Home</button>
+      <div class="search"><input id="q" type="search" placeholder="Search lessons, concepts, tools…  (Ctrl/⌘ K)" autocomplete="off">
+        <div class="results" id="results"></div></div>
+      <button class="btn" id="focusBtn" type="button">Focus mode</button>
+    </div>
+    <div class="content" id="view"></div>
+  </main>
+</div>
+<script type="application/octet-stream" id="kb-data">__KB_DATA__</script>
+<script>
+(async function(){
+"use strict";
+async function loadKB(){
+  const b64 = document.getElementById("kb-data").textContent.trim();
+  const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const stream = new Blob([bin]).stream().pipeThrough(new DecompressionStream("gzip"));
+  return JSON.parse(await new Response(stream).text());
+}
+let KB;
+try { KB = await loadKB(); }
+catch (err) { document.getElementById("view").innerHTML = '<div class="card caution"><strong>This browser cannot open the course data.</strong> Please use a current version of Safari, Edge, Chrome or Firefox.</div>'; return; }
+const $ = (s, el) => (el || document).querySelector(s);
+const view = $("#view"), nav = $("#nav");
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem("kb:" + k); return v === null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem("kb:" + k, JSON.stringify(v)); }catch(e){} }
+};
+let state = { topic: store.get("topic", KB.topics[0].slug), lesson: null, os: store.get("os", "mac") };
+
+/* ---------- safe text + tiny markdown ---------- */
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function inline(s){
+  s = esc(s);
+  s = s.replace(/`([^`]+)`/g, (m, c) => "<code>" + c + "</code>");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
+  return s;
+}
+function md(src){
+  const lines = String(src || "").replace(/\r/g, "").split("\n");
+  let out = [], i = 0;
+  while (i < lines.length){
+    let ln = lines[i];
+    if (/^```/.test(ln)){
+      const lang = ln.slice(3).trim(); const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+      i++;
+      out.push(codeBlock(buf.join("\n"), lang));
+      if (lang === "mermaid") out.push('<div class="mermaid-note">Diagram source (Mermaid) — paste into any Mermaid viewer to draw it.</div>');
+      continue;
+    }
+    const h = ln.match(/^(#{1,6})\s+(.*)$/);
+    if (h){ const lv = Math.min(6, h[1].length + 1); out.push("<h" + lv + ">" + inline(h[2]) + "</h" + lv + ">"); i++; continue; }
+    if (/^\s*<details>/.test(ln)){
+      const buf = []; let summ = "";
+      const sm = ln.match(/<summary>(.*?)<\/summary>/); if (sm) summ = sm[1];
+      i++;
+      while (i < lines.length && !/<\/details>/.test(lines[i])) buf.push(lines[i++]);
+      const tail = (lines[i] || "").replace(/<\/details>.*/, ""); if (tail.trim()) buf.push(tail);
+      i++;
+      out.push("<details><summary>" + inline(summ || "Show") + "</summary>" + md(buf.join("\n")) + "</details>");
+      continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(ln) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i+1])){
+      const row = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      const head = row(ln); i += 2; const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(row(lines[i++]));
+      out.push("<table><thead><tr>" + head.map(c => "<th>" + inline(c) + "</th>").join("") + "</tr></thead><tbody>" +
+        rows.map(r => "<tr>" + r.map(c => "<td>" + inline(c) + "</td>").join("") + "</tr>").join("") + "</tbody></table>");
+      continue;
+    }
+    if (/^\s*([-*]|\d+\.)\s+/.test(ln)){
+      const ordered = /^\s*\d+\./.test(ln); const items = [];
+      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])){
+        let it = lines[i].replace(/^\s*([-*]|\d+\.)\s+/, ""); i++;
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !/^\s*([-*]|\d+\.)\s+/.test(lines[i])) it += " " + lines[i++].trim();
+        items.push("<li>" + inline(it) + "</li>");
+      }
+      out.push((ordered ? "<ol>" : "<ul>") + items.join("") + (ordered ? "</ol>" : "</ul>"));
+      continue;
+    }
+    if (/^>\s?/.test(ln)){ const buf = []; while (i < lines.length && /^>\s?/.test(lines[i])) buf.push(lines[i++].replace(/^>\s?/, ""));
+      out.push('<div class="card caution">' + md(buf.join("\n")) + "</div>"); continue; }
+    if (!ln.trim()){ i++; continue; }
+    const buf = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|\s*([-*]|\d+\.)\s|>|\s*\|)/.test(lines[i]) && !/^\s*<details>/.test(lines[i])) buf.push(lines[i++]);
+    if (!buf.length){ buf.push(lines[i++]); }
+    out.push("<p>" + inline(buf.join(" ")) + "</p>");
+  }
+  return out.join("\n");
+}
+function codeBlock(code, lang){
+  return '<pre><button class="copy" type="button" data-copy="1">Copy</button><code data-lang="' + esc(lang || "") + '">' + esc(code) + "</code></pre>";
+}
+function txt(v){ return Array.isArray(v) ? v.map(x => typeof x === "string" ? x : JSON.stringify(x)).join("; ") : (v == null ? "" : (typeof v === "object" ? JSON.stringify(v) : String(v))); }
+
+/* ---------- data helpers ---------- */
+const topic = () => KB.topics.find(t => t.slug === state.topic) || KB.topics[0];
+const groupOf = l => l.level === "Setup" ? "Getting started" : l.level === "Capstone" ? "Capstone" :
+  ({L100:"L100 · Run it", L200:"L200 · Build it", L300:"L300 · Harden it", L400:"L400 · Design it", L500:"L500 · Theory & rigour", L600:"L600 · Integrate it"}[l.level] || l.level);
+const doneKey = () => "done:" + state.topic;
+const done = () => store.get(doneKey(), []);
+function setDone(id, v){ let d = done().filter(x => x !== id); if (v) d.push(id); store.set(doneKey(), d); }
+
+/* ---------- sidebar ---------- */
+function renderTopicSel(){
+  const sel = $("#topicSel");
+  sel.innerHTML = KB.topics.map(t => '<option value="' + t.slug + '"' + (t.slug === state.topic ? " selected" : "") + ">" + esc(t.name) + "</option>").join("");
+}
+function renderNav(){
+  const t = topic(), d = done(); const groups = {};
+  t.lessons.forEach(l => { (groups[groupOf(l)] = groups[groupOf(l)] || []).push(l); });
+  nav.innerHTML = (qbank(t).length ? '<div class="group"><h4>Practice</h4><a class="nav-item" href="#/' + t.slug + '/practice"><span class="n">Q</span><span>Grind Q&amp;A (' + qbank(t).length + ")</span></a></div>" : "") + Object.keys(groups).map(g => '<div class="group"><h4>' + esc(g) + "</h4>" +
+    groups[g].map(l => '<button type="button" class="nav-item' + (state.lesson === l.number ? " active" : "") + '" data-lesson="' + l.number + '">' +
+      '<span class="n">' + l.number + "</span><span>" + esc(shortTitle(l.title)) + "</span>" + (d.includes(l.id) ? '<span class="done">✓</span>' : "") + "</button>").join("") + "</div>").join("");
+  const pct = Math.round(100 * d.length / t.lessons.length);
+  $("#progress").innerHTML = "Course progress: " + d.length + " / " + t.lessons.length + " lessons (" + pct + "%)" + '<div class="bar"><i style="inline-size:' + pct + '%"></i></div>';
+}
+function shortTitle(s){ s = String(s); return s.length > 70 ? s.slice(0, 68) + "…" : s; }
+
+/* ---------- pages ---------- */
+const META = KB.meta || {site:{}, topics:{}};
+const tmeta = slug => (META.topics || {})[slug] || {};
+function ul(arr){ return "<ul>" + (arr || []).map(x => "<li>" + inline(x) + "</li>").join("") + "</ul>"; }
+function homeAll(){
+  state.lesson = null; nav.innerHTML = '<div class="group"><h4>Topics</h4>' + KB.topics.map(t => '<button type="button" class="nav-item" data-topic="' + t.slug + '"><span>' + esc(t.name) + "</span></button>").join("") + "</div>";
+  $("#progress").innerHTML = "";
+  const S = META.site || {};
+  view.innerHTML =
+    '<div class="crumb">Home</div><h1>' + esc(S.title || "Technology Knowledge Base") + "</h1>" +
+    '<div class="chips"><span class="chip">' + KB.topics.length + ' topics</span><span class="chip">' + KB.topics.reduce((a, t) => a + t.lessons.length, 0) + ' lessons</span><span class="chip">' + KB.topics.reduce((a, t) => a + (t.qbank || []).length, 0) + ' practice questions</span><span class="chip">Mac mini + Windows</span><span class="chip">Open source</span><span class="chip warn">Not yet run on macOS / Windows — CI pending</span></div>' +
+    '<div class="card outcome"><h3 style="margin-block-start:0">What it is</h3><p>' + inline(S.what || "") + "</p></div>" +
+    '<div class="card"><h3 style="margin-block-start:0">Why use it</h3>' + ul(S.why) + "</div>" +
+    "<h2>Choose a topic</h2>" +
+    '<div class="topic-cards">' + KB.topics.map(t => { const m = tmeta(t.slug), d = store.get("done:" + t.slug, []).length;
+      return '<button type="button" data-topic="' + t.slug + '"><strong>' + esc(t.name) + '</strong><p class="muted" style="margin:6px 0">' + inline(m.what ? m.what.split(". ")[0] + "." : "") +
+        '</p><span class="muted" style="font-size:12.5px">' + t.lessons.length + " lessons · " + d + " done</span></button>"; }).join("") + "</div>" +
+    "<h2>How the levels work</h2>" + tbl(["Level", "What you do"], (S.levels || [])) +
+    "<h2>How to use this site</h2><p>" + inline(S.howToUse || "") + "</p>" +
+    '<details><summary>Workstation setup (Mac mini + Windows)</summary>' + md(KB.shared.setup) + "</details>";
+}
+function home(){
+  state.lesson = null; renderNav();
+  const t = topic(), m = tmeta(t.slug), groups = {};
+  t.lessons.forEach(l => (groups[groupOf(l)] = groups[groupOf(l)] || []).push(l));
+  const S = META.site || {}, lvlDesc = {}; (S.levels || []).forEach(r => lvlDesc[r[0]] = r[1]);
+  view.innerHTML =
+    '<div class="crumb"><a href="#/">Home</a> / ' + esc(t.name) + "</div><h1>" + esc(t.name) + "</h1>" +
+    '<div class="chips">' + Object.keys(groups).map(k => '<span class="chip">' + esc(k) + ": " + groups[k].length + "</span>").join("") + "</div>" +
+    '<div class="card outcome"><h3 style="margin-block-start:0">What it is</h3><p>' + inline(m.what || "") + "</p></div>" +
+    '<div class="grid"><div class="card"><h3 style="margin-block-start:0">Why learn it</h3>' + ul(m.why) + '</div><div class="card"><h3 style="margin-block-start:0">Where it is used</h3>' + ul(m.usedFor) + "</div></div>" +
+    (m.capstone ? '<div class="card fix"><strong>What you will build by the end (capstone):</strong> ' + inline(m.capstone) + "</div>" : "") +
+    (qbank(t).length ? '<div class="card agent"><strong>Practice (grind Q&amp;A):</strong> ' + qbank(t).length + ' multiple-choice questions across all levels. <a class="btn primary" href="#/' + t.slug + '/practice">Start practising</a></div>' : "") +
+    "<h2>Learning path</h2>" + Object.keys(groups).map(g => "<h3>" + esc(g) + "</h3>" + (lvlDesc[g] ? '<p class="muted">' + esc(lvlDesc[g]) + "</p>" : "") +
+      "<ol start=\"" + groups[g][0].number + "\">" + groups[g].map(l => '<li><a href="#/' + t.slug + "/" + l.number + '">' + esc(l.title) + "</a>" + (l.conceptSummary ? '<br><span class="muted" style="font-size:13px">' + inline(l.conceptSummary) + "</span>" : "") + "</li>").join("") + "</ol>").join("") +
+    "<h2>Reference</h2>" +
+    '<div class="tabs" id="htabs"><button type="button" class="on" data-h="primer">Concepts primer</button><button type="button" data-h="tools">Learning tools</button><button type="button" data-h="hardware">Hardware</button><button type="button" data-h="setup">Workstation setup</button>' + (t.assessment && t.assessment.syllabus ? '<button type="button" data-h="syllabus">Syllabus</button><button type="button" data-h="midterm">Midterm</button><button type="button" data-h="final">Final exam</button><button type="button" data-h="capstone-oral-defence">Oral defence</button><button type="button" data-h="peer-review-adr">ADR peer review</button><button type="button" data-h="team-roles">Team roles</button>' : "") + '</div>' +
+    '<div id="hbody"></div>' +
+    '<div class="pager"><a class="btn" href="#/">← All topics</a><button type="button" class="btn primary" data-lesson="' + t.lessons[0].number + '">Start lesson 1 →</button></div>';
+  showHome("primer");
+}
+function showHome(k){
+  const t = topic();
+  const src = k === "setup" ? KB.shared.setup : (t.assessment && t.assessment[k] !== undefined && !t[k] ? t.assessment[k] : t[k]);
+  $("#hbody").innerHTML = md(src || "_Not available._");
+  document.querySelectorAll("#htabs button").forEach(b => b.classList.toggle("on", b.dataset.h === k));
+}
+function whyOf(text){
+  const m = String(text || "").match(/#+\s*(?:Why it matters|Overview)\s*\n([\s\S]*?)(?=\n#+\s|$)/i);
+  return m ? m[1].trim() : "";
+}
+
+const SECTIONS = [
+  ["concept","Concept"],["explain","Explained"],["lab","Lab"],["code","Code"],["harden","Failure lab"],["design","Design"],
+  ["integration","Integration"],["mac","On your Mac mini"],["objectives","Objectives"],["theory","Theorems & proofs"],["problems","Problem set"],["case","Case study"],["readings","Readings"],["rubric","Rubric"],
+  ["build","Build task"],["try","Try it"],["tools","Learning tools"],["agent","Agent assist"],["check","Checkpoint"],["practice","Practice"],["refs","Sources"]
+];
+function lesson(num){
+  const t = topic(), l = t.lessons.find(x => x.number === num); if (!l) return home();
+  state.lesson = num; renderNav(); window.scrollTo(0, 0);
+  const idx = t.lessons.indexOf(l), prev = t.lessons[idx - 1], next = t.lessons[idx + 1];
+  const isDone = done().includes(l.id), v = l.validation || {}, p = l.platforms || {};
+  const has = {
+    concept: !!l.conceptText, explain: !!l.explainText, lab: true, code: !!l.code, harden: !!(l.failureLab || l.tradeOffs),
+    design: !!(l.designBrief || l.options || l.decisionRecord || l.milestones || l.rubric || l.scalingLimits),
+    build: !!l.buildTask, try: !!(l.tryIt && l.tryIt.length), tools: !!(l.learningTools && l.learningTools.length),
+    agent: !!l.agentAssist, integration: !!(l.combines || l.buildsOn || l.seams), mac: !!l.macMini, objectives: !!(l.learningObjectives && l.learningObjectives.length), theory: !!((l.theorems && l.theorems.length) || l.codeCheck || l.runCommands),
+    problems: !!(l.problemSet && l.problemSet.length), case: !!l.caseStudy, readings: !!(l.readings && l.readings.length), rubric: !!(l.rubric && l.rubric.length && l.rubric.some(r => r && r.criterion)), check: true, practice: qbank(t).some(q => q.lesson === l.number), refs: !!(l.sources && l.sources.length)
+  };
+  const why = whyOf(l.conceptText);
+  let h = '<div class="crumb"><a href="#/">Home</a> / <a href="#/' + t.slug + '">' + esc(t.name) + "</a> / " + esc(groupOf(l)) + " / Lesson " + l.number + "</div>" +
+    "<h1>" + esc(l.title) + "</h1>" +
+    '<div class="chips"><span class="chip">' + esc(l.level) + "</span>" + (l.estimatedTime ? '<span class="chip">⏱ ' + esc(l.estimatedTime) + "</span>" : "") +
+    '<span class="chip ' + (/validated/.test(v.status || "") ? "ok" : "warn") + '">' + esc(v.status || "") + "</span>" +
+    '<span class="chip warn">Mac: ' + esc(p.mac || "-") + " · Windows: " + esc(p.windows || "-") + "</span></div>" +
+    (why ? '<div class="card fix"><strong>Why this matters</strong>' + md(why) + "</div>" : "") +
+    (l.outcome ? '<div class="card outcome"><strong>What you will be able to do:</strong> ' + inline(l.outcome) + "</div>" : "") +
+    '<div class="tabs" id="ltabs"><button type="button" class="on" data-s="all">All</button>' +
+    SECTIONS.filter(s => has[s[0]]).map(s => '<button type="button" data-s="' + s[0] + '">' + s[1] + "</button>").join("") + "</div>";
+
+  if (has.concept) h += sec("concept", "Concept", md(l.conceptText.replace(/^# .*\n/, "")) +
+      (l.inRealSystems ? "<p><strong>In real systems:</strong> " + inline(txt(l.inRealSystems)) + "</p>" : "") +
+      (l.useWhen ? "<p><strong>Use when / avoid when:</strong> " + inline(txt(l.useWhen)) + "</p>" : ""));
+
+  if (has.explain) h += sec("explain", "Explained: intuition and walkthrough", md(l.explainText.replace(/^# .*\n/, "")));
+
+  let lab = "";
+  if (l.environment) lab += "<p><strong>Environment:</strong> " + inline(l.environment) + "</p>";
+  (l.overview || []).forEach(x => lab += "<p>" + inline(x) + "</p>");
+  if (l.prerequisites && l.prerequisites.length) lab += "<h4>Prerequisites</h4><ul>" + l.prerequisites.map(x => "<li>" + inline(x) + "</li>").join("") + "</ul>";
+  if (l.glossary && l.glossary.length) lab += "<details><summary>Glossary (" + l.glossary.length + ")</summary><ul>" + l.glossary.map(g => "<li><strong>" + esc(g.term) + "</strong> — " + inline(g.meaning) + "</li>").join("") + "</ul></details>";
+  const anyOs = (l.steps || []).some(s => s.mac || s.windows);
+  lab += "<h3>Steps</h3>" + (anyOs ? '<div class="os" id="osSw"><button type="button" data-os="mac">🍎 Mac mini</button><button type="button" data-os="windows">🪟 Windows</button></div>' : "");
+  (l.steps || []).forEach((s, i) => {
+    lab += '<div class="step"><div class="num">' + (i + 1) + '</div><div class="body"><strong>' + inline(s.title) + "</strong><div>" + inline(s.detail) + "</div>" +
+      (s.mac ? '<div data-osb="mac">' + codeBlock(s.mac, "zsh") + "</div>" : "") +
+      (s.windows ? '<div data-osb="windows">' + codeBlock(s.windows, "powershell") + "</div>" : "") +
+      (s.expected ? '<div class="exp">✅ ' + inline(s.expected) + "</div>" : "") +
+      (s.ifNot ? '<div class="ifnot">⚠️ If not: ' + inline(s.ifNot) + "</div>" : "") + "</div></div>";
+  });
+  if (l.expectedResults && l.expectedResults.length) lab += "<h3>Expected results</h3><ul>" + l.expectedResults.map(x => "<li>" + inline(x) + "</li>").join("") + "</ul>";
+  if (l.testCases && l.testCases.length) lab += "<h3>Test cases</h3>" + tbl(["Action","Expected"], l.testCases.map(x => [x.action, x.expected]));
+  if (l.troubleshooting && l.troubleshooting.length) lab += "<h3>Troubleshooting</h3>" + tbl(["Symptom","Action"], l.troubleshooting.map(x => [x.symptom, x.action]));
+  if (l.equivalents && l.equivalents.length) lab += "<h3>Equivalents</h3><ul>" + l.equivalents.map(x => "<li>" + inline(x) + "</li>").join("") + "</ul>";
+  if (l.simulatorVsReal) lab += "<p><strong>Simulator vs real:</strong> " + inline(l.simulatorVsReal) + "</p>";
+  if (l.caution) lab += '<div class="card caution"><strong>Caution:</strong> ' + inline(l.caution) + "</div>";
+  h += sec("lab", "Lab", lab);
+
+  if (has.code) h += sec("code", "Code", codeBlock(l.code, l.codeLanguage) +
+    (l.codeWalkthrough ? "<h3>Code walkthrough</h3><ul>" + l.codeWalkthrough.map(w => "<li><strong>" + inline(w.title) + "</strong> — " + inline(w.detail) + "</li>").join("") + "</ul>" : ""));
+
+  if (has.harden){
+    let x = "";
+    const f = l.failureLab;
+    if (f) x += '<div class="grid"><div class="card fail"><strong>Fault injected</strong><p>' + inline(txt(f.fault || f.inject)) + "</p><strong>Symptom (observed)</strong><p>" + inline(txt(f.symptom)) + "</p>" + (f.diagnose ? "<strong>How to diagnose</strong><p>" + inline(txt(f.diagnose)) + "</p>" : "") + '</div><div class="card fix"><strong>Fix</strong><p>' + inline(txt(f.fix)) + "</p><strong>Proof</strong><p>" + inline(txt(f.proof || f.test)) + "</p></div></div>";
+    if (l.tradeOffs) x += "<h3>Trade-offs</h3>" + tbl(["Option","Gains","Costs","Choose when"], l.tradeOffs.map(t => [t.option, t.gains, t.costs, t.chooseWhen]));
+    h += sec("harden", "Failure lab", x);
+  }
+  if (has.design){
+    let x = "";
+    const b = l.designBrief;
+    if (b) x += '<div class="card outcome"><strong>Design brief</strong><p>' + inline(b.context) + "</p><strong>Constraints</strong><ul>" + (b.constraints || []).map(c => "<li>" + inline(c) + "</li>").join("") + "</ul><p><strong>Decide:</strong> " + inline(b.question) + "</p></div>";
+    if (l.architecture) x += "<h3>Architecture</h3><p>" + inline(typeof l.architecture === "object" ? (l.architecture.summary || "") : l.architecture) + "</p>";
+    if (l.options) x += "<h3>Options compared (measured)</h3>" + tbl(["Option","Description","Evidence","Verdict"], l.options.map(o => [o.name, o.description, o.evidence, o.verdict]));
+    if (l.decisionRecord) x += "<p><strong>Decision record (ADR):</strong> <code>" + esc(l.decisionRecord) + "</code></p>";
+    if (l.decisionRecords) x += "<p><strong>Decision records:</strong> " + l.decisionRecords.map(r => "<code>" + esc(typeof r === "string" ? r : (r.path || r.title || JSON.stringify(r))) + "</code>").join(", ") + "</p>";
+    const ff = l.fitnessFunction;
+    if (ff) x += '<div class="card fix"><strong>Fitness function:</strong> ' + inline(ff.what) + " — <code>" + esc(ff.test) + "</code>, threshold " + inline(ff.threshold) + "</div>";
+    if (l.fitnessFunctions) x += "<h3>Fitness functions</h3><ul>" + l.fitnessFunctions.map(f => "<li>" + (typeof f === "object" ? inline(f.what || JSON.stringify(f)) + (f.threshold ? " — threshold: " + inline(txt(f.threshold)) : "") + (f.test ? " <code>" + esc(f.test) + "</code>" : "") : inline(f)) + "</li>").join("") + "</ul>";
+    if (l.scalingLimits) x += "<h3>Scaling limits</h3><ul>" + l.scalingLimits.map(s => "<li>" + inline(s) + "</li>").join("") + "</ul>";
+    if (l.milestones) x += "<h3>Milestones</h3>" + tbl(["Milestone","Deliverable","Test"], l.milestones.map(m => [m.title, m.deliverable, m.test]));
+    if (l.rubric) x += "<h3>Rubric</h3>" + tbl(["Criterion","Measure","Pass"], l.rubric.map(r => [r.criterion, r.measure, r.pass]));
+    h += sec("design", "Design", x);
+  }
+
+  if (has.integration){
+    let x = "";
+    const nameOf = s => (KB.topics.find(t => t.slug === s) || {name: s}).name;
+    if (l.combines) x += '<p><strong>Combines:</strong> ' + l.combines.map(c => '<a class="chip" href="#/' + esc(c) + '">' + esc(nameOf(c)) + "</a>").join(" ") + "</p>";
+    if (l.buildsOn && l.buildsOn.length) x += "<h3>Builds on these lessons</h3>" + '<ul>' + l.buildsOn.map(b => '<li><a href="#/' + esc(b.topic) + "/" + esc(b.lesson) + '">' + esc(nameOf(b.topic)) + " #" + esc(b.lesson) + " — " + esc(b.title || "") + "</a>" + (b.uses ? '<br><span class="muted" style="font-size:13px">Reused: ' + inline(txt(b.uses)) + "</span>" : "") + "</li>").join("") + "</ul>";
+    if (l.seams && l.seams.length) x += "<h3>The seams (where the topics meet — and where things break)</h3>" + tbl(["Between","Contract","Risk","Guarded by"], l.seams.map(m => [m.between, m.contract, m.risk, m.test]));
+    h += sec("integration", "Integration", x);
+  }
+  if (has.mac){
+    const m = l.macMini, n = m.needs || {}; let x = "";
+    if (m.gains) x += '<div class="card outcome"><strong>What the Mac mini adds:</strong> ' + inline(txt(m.gains)) + "</div>";
+    if (n.minRamGB || (n.tools && n.tools.length)) x += "<p><strong>Needs:</strong> " + (n.minRamGB ? "at least " + esc(n.minRamGB) + " GB memory. " : "") + "</p>" +
+      (n.tools && n.tools.length ? tbl(["Tool","Licence","Install"], n.tools.map(t => [t.name, t.licence, t.install])) : "");
+    (Array.isArray(m.experiments) ? m.experiments : []).forEach((e, ei) => {
+      x += "<h3>Experiment " + (ei + 1) + ": " + inline(txt(e.title)) + "</h3>" + (e.why ? "<p>" + inline(txt(e.why)) + "</p>" : "");
+      (Array.isArray(e.steps) ? e.steps : []).forEach((st, i) => {
+        x += '<div class="step"><div class="num">' + (i + 1) + '</div><div class="body"><strong>' + inline(txt(st.title)) + "</strong><div>" + inline(txt(st.detail)) + "</div>" +
+          (st.mac ? codeBlock(txt(st.mac), "zsh") : "") + (st.expected ? '<div class="exp">✅ ' + inline(txt(st.expected)) + "</div>" : "") + "</div></div>";
+      });
+      if (e.measure) x += "<p><strong>Record:</strong> " + inline(txt(e.measure)) + "</p>";
+      if (e.decides) x += '<div class="card fix"><strong>What the result decides:</strong> ' + inline(txt(e.decides)) + "</div>";
+    });
+    if (m.overnight) x += '<div class="card agent"><strong>Leave it running overnight:</strong> ' + inline(txt(m.overnight)) + "</div>";
+    const mv = m.validation || {};
+    if (mv.here || (mv.pendingMac && mv.pendingMac.length)) x += '<div class="card caution"><strong>Status:</strong> ' + inline(txt(mv.here)) + (mv.pendingMac && mv.pendingMac.length ? "<br><strong>Run on your Mac to confirm:</strong>" + ul(mv.pendingMac) : "") + "</div>";
+    h += sec("mac", "On your Mac mini", x);
+  }
+  if (has.objectives) h += sec("objectives", "Learning objectives", ul(l.learningObjectives));
+  if (l.theorems && l.theorems.length) h += sec("theory", "Theorems & proofs", l.theorems.map((th, i) => '<div class="card"><h3 style="margin-block-start:0">' + (i + 1) + ". " + inline(th.name) + "</h3>" +
+      '<div class="card outcome"><strong>Statement.</strong> ' + inline(th.statement) + "</div><details><summary>Proof / derivation</summary>" + md(th.proof) + "</details>" +
+      (th.check ? '<p class="muted" style="font-size:12.5px"><strong>Numerical check:</strong> <code>' + esc(th.check) + "</code></p>" : "") +
+      (th.checkOutput ? codeBlock(th.checkOutput, "") : "") + "</div>").join(""));
+
+  if (l.codeCheck){ const c = l.codeCheck;
+    h += sec("theory", "Code check", '<div class="card">' + (c.purpose ? "<p>" + inline(c.purpose) + "</p>" : "") +
+      ((c.script || c.path || c.check) ? '<p class="muted" style="font-size:12.5px"><strong>Script:</strong> <code>' + esc(c.script || c.path || c.check) + "</code></p>" : "") +
+      ((c.output || c.checkOutput) ? codeBlock(c.output || c.checkOutput, "") : "") + "</div>"); }
+  if (l.runCommands){ const rc = l.runCommands;
+    h += sec("theory", "Run the checks", '<div data-osb="mac">' + codeBlock(rc.mac || "", "zsh") + '</div><div data-osb="windows">' + codeBlock(rc.windows || "", "powershell") + "</div>"); }
+  if (has.problems) h += sec("problems", "Problem set", l.problemSet.map((p, i) => '<div class="card"><strong>Problem ' + (i + 1) + "</strong> " +
+      '<span class="chip">' + esc(p.type || "") + '</span> <span class="chip">difficulty ' + esc(p.difficulty || "") + '</span>' + (p.marks ? ' <span class="chip">' + esc(p.marks) + " marks</span>" : "") +
+      md(p.problem) + "<details><summary>Worked solution</summary>" + md(p.solution) + "</details></div>").join(""));
+  if (has.case){ const c = l.caseStudy;
+    h += sec("case", "Case study", '<div class="card"><p>' + inline(c.case) + "</p>" + (c.stakeholders ? "<h4>Stakeholders</h4>" + ul(c.stakeholders) : "") +
+      (c.frameworks ? "<h4>Frameworks</h4>" + ul(c.frameworks) : "") + (c.questions ? "<h4>Questions</h4>" + ul(c.questions) : "") +
+      (c.modelAnswer ? "<details><summary>Model answer</summary>" + md(c.modelAnswer) + "</details>" : "") + "</div>"); }
+  if (has.readings) h += sec("readings", "Readings", l.readings.map(r => '<div class="card"><strong>' + inline(r.citation) + "</strong>" +
+      (r.url ? '<p><a href="' + esc(r.url) + '" target="_blank" rel="noopener noreferrer">' + esc(r.url) + "</a></p>" : "") + (r.why ? "<p>" + inline(r.why) + "</p>" : "") +
+      (r.guidingQuestions ? "<h4>Guiding questions</h4>" + ul(r.guidingQuestions) : "") + (r.responsePrompt ? '<div class="card outcome"><strong>Response assignment:</strong> ' + inline(r.responsePrompt) + "</div>" : "") + "</div>").join(""));
+  if (has.rubric) h += sec("rubric", "Rubric", tbl(["Criterion","Excellent","Adequate","Inadequate","Weight"], l.rubric.map(r => [r.criterion, r.excellent, r.adequate, r.inadequate, r.weight])));
+  if (has.build){
+    const b = l.buildTask;
+    h += sec("build", "Build task", '<div class="card"><strong>' + inline(b.task) + "</strong><ul>" + (b.hints || []).map(x => "<li>Hint: " + inline(x) + "</li>").join("") +
+      "</ul><p><strong>Check:</strong> " + inline(b.check) + "</p><details><summary>Show solution path</summary><p><code>" + esc(b.solution) + "</code> (in the lab folder)</p></details></div>");
+  }
+  if (has.try) h += sec("try", "Try it", l.tryIt.map((x, i) => '<div class="card"><strong>' + (i + 1) + ". " + inline(x.task) + "</strong>" +
+      (x.predict ? '<p class="muted">Predict first: ' + inline(x.predict) + "</p>" : "") +
+      "<details><summary>What actually happens</summary><p>" + inline(x.expected) + "</p></details></div>").join(""));
+  if (has.tools) h += sec("tools", "Learning tools (open source)", '<div class="grid">' + l.learningTools.map(x => '<div class="card"><strong>' + esc(x.name) + '</strong> <span class="chip">' + esc(x.role || "") + "</span>" +
+      '<div class="muted" style="font-size:12.5px">' + esc(x.licence || "") + "</div><p>" + inline(x.exercise) + "</p><p><strong>Expect:</strong> " + inline(x.expected) + "</p>" +
+      (x.mac ? '<div data-osb="mac">' + codeBlock(x.mac, "zsh") + "</div>" : "") + (x.windows ? '<div data-osb="windows">' + codeBlock(x.windows, "powershell") + "</div>" : "") +
+      (x.url ? '<p><a href="' + esc(x.url) + '" target="_blank" rel="noopener noreferrer">' + esc(x.url) + "</a></p>" : "") + "</div>").join("") + "</div>");
+  if (has.agent){
+    const a = l.agentAssist;
+    h += sec("agent", "Agent assist (local model)", '<div class="card agent"><p><strong>Rule:</strong> the agent proposes or explains; code decides and checks.</p><p><strong>Task:</strong> ' + inline(a.task) + "</p>" +
+      (a.prompt ? "<details><summary>Prompt</summary><p>" + inline(a.prompt) + "</p></details>" : "") +
+      "<p><strong>How code checks it:</strong> " + inline(a.check) + "</p><details><summary>Observed (stand-in model server)</summary><p>" + inline(a.expected) + "</p></details>" +
+      (a.realModelNote ? '<p class="muted">Real model: ' + inline(a.realModelNote) + "</p>" : "") + "</div>");
+  }
+  let ck = '<div class="card outcome">' + inline(l.checkpoint) + "</div>";
+  if (l.checkYourself) ck += l.checkYourself.map(q => "<details><summary>" + inline(q.q) + "</summary><p>" + inline(q.a) + "</p></details>").join("");
+  if (l.seeAlso && l.seeAlso.length) ck += "<h3>See also (other topics)</h3><ul>" + l.seeAlso.map(s => "<li>" + inline(s) + "</li>").join("") + "</ul>";
+  if (l.next) ck += "<p><strong>Next:</strong> " + inline(l.next) + "</p>";
+  ck += '<p class="muted" style="font-size:12.5px"><strong>Validation:</strong> ' + inline(v.status || "") + " — " + inline(v.how || "") + "</p>" +
+    (v.pendingCi ? '<p class="muted" style="font-size:12.5px"><strong>Not yet run (CI):</strong> ' + inline(txt(v.pendingCi)) + "</p>" : "");
+  h += sec("check", "Checkpoint", ck);
+  const lq = qbank(t).filter(q => q.lesson === l.number);
+  if (lq.length) h += sec("practice", "Practice", '<p>' + lq.length + ' multiple-choice questions for this lesson.</p><button type="button" class="btn primary" data-qstart="lesson-' + l.number + '">Practise this lesson</button>');
+  if (has.refs) h += sec("refs", "Sources", "<ul>" + l.sources.map(s => '<li><a href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">' + esc(s.title) + "</a></li>").join("") + "</ul>");
+
+  h += '<div class="pager">' + (prev ? '<button type="button" class="btn" data-lesson="' + prev.number + '">← Previous lesson</button>' : "<span></span>") +
+    '<span><button type="button" class="btn" id="toggleDone">' + (isDone ? "Mark not complete" : "Mark complete") + "</button> " +
+    (next ? '<button type="button" class="btn primary" id="completeNext" data-next="' + next.number + '">Complete and continue →</button>' : "") + "</span></div>";
+  view.innerHTML = h;
+  applyOs();
+  $("#toggleDone").addEventListener("click", () => { setDone(l.id, !done().includes(l.id)); lesson(num); });
+  const cn = $("#completeNext"); if (cn) cn.addEventListener("click", () => { setDone(l.id, true); go(+cn.dataset.next); });
+  document.querySelectorAll("#ltabs button").forEach(b => b.addEventListener("click", () => {
+    document.querySelectorAll("#ltabs button").forEach(x => x.classList.toggle("on", x === b));
+    document.querySelectorAll(".panel-sec").forEach(s => s.classList.toggle("hidden", b.dataset.s !== "all" && s.dataset.s !== b.dataset.s));
+  }));
+}
+function sec(key, title, body){ return '<section class="panel-sec" data-s="' + key + '"><h2>' + esc(title) + "</h2>" + body + "</section>"; }
+function tbl(head, rows){ return "<table><thead><tr>" + head.map(x => "<th>" + esc(x) + "</th>").join("") + "</tr></thead><tbody>" +
+  rows.map(r => "<tr>" + r.map(c => "<td>" + inline(txt(c)) + "</td>").join("") + "</tr>").join("") + "</tbody></table>"; }
+function applyOs(){
+  document.querySelectorAll("[data-osb]").forEach(e => e.classList.toggle("hidden", e.dataset.osb !== state.os));
+  document.querySelectorAll("[data-os]").forEach(b => b.classList.toggle("on", b.dataset.os === state.os));
+}
+
+
+/* ---------- practice (grind Q&A) ---------- */
+const qstatsKey = slug => "qstats:" + slug;
+const qstats = slug => store.get(qstatsKey(slug), {});
+function qbank(t){ return t.qbank || []; }
+function qFilter(t, f){
+  const all = qbank(t), st = qstats(t.slug);
+  if (f === "inventory") return (t.inventory || []).map(q => Object.assign({ lesson: 23, level: "L500" }, q));
+  if (f === "all" || !f) return all;
+  if (/^L\d00$/.test(f)) return all.filter(q => q.level === f);
+  if (/^lesson-\d+$/.test(f)) return all.filter(q => q.lesson === +f.split("-")[1]);
+  if (f === "missed") return all.filter(q => st[q.id] && st[q.id].last === 0);
+  if (f === "new") return all.filter(q => !st[q.id]);
+  if (f === "hard") return all.filter(q => q.difficulty === 3);
+  return all;
+}
+function shuffle(a, seed){ a = a.slice(); for (let i = a.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+let quiz = null, pendingQuiz = null;
+function practiceSummary(t){
+  const all = qbank(t), st = qstats(t.slug);
+  const seen = all.filter(q => st[q.id]).length, right = all.filter(q => st[q.id] && st[q.id].last === 1).length;
+  return { total: all.length, seen, right, missed: all.filter(q => st[q.id] && st[q.id].last === 0).length };
+}
+function practiceHome(f){
+  const t = topic(); state.lesson = null; renderNav();
+  const s = practiceSummary(t), levels = ["L100","L200","L300","L400","L500"];
+  const counts = {}; qbank(t).forEach(q => counts[q.level] = (counts[q.level] || 0) + 1);
+  const filters = [["all","All (" + s.total + ")"]].concat(levels.filter(l => counts[l]).map(l => [l, l + " (" + counts[l] + ")"]),
+    (t.inventory && t.inventory.length ? [["inventory","Concept inventory: pre/post test (" + t.inventory.length + ")"]] : []),
+    [["new","Not seen yet (" + (s.total - s.seen) + ")"],["missed","Missed last time (" + s.missed + ")"],["hard","Hardest (difficulty 3)"]]);
+  view.innerHTML = '<div class="crumb"><a href="#/">Home</a> / <a href="#/' + t.slug + '">' + esc(t.name) + "</a> / Practice</div>" +
+    "<h1>Practice: " + esc(t.name) + "</h1>" +
+    '<div class="chips"><span class="chip">' + s.total + ' questions</span><span class="chip ok">' + s.right + ' right last time</span><span class="chip warn">' + s.missed + ' to review</span><span class="chip">' + s.seen + " seen</span></div>" +
+    '<div class="card outcome">Multiple choice, one correct answer. Answer, read the explanation, move on. Keys: <code>1</code>–<code>4</code> to answer, <code>Enter</code> for next. Your results are saved in this browser.</div>' +
+    "<h3>Choose a set</h3>" +
+    '<div class="q-filters">' + filters.map(x => '<button type="button" data-qstart="' + x[0] + '"' + (x[0] === "missed" && !s.missed ? " disabled" : "") + ">" + esc(x[1]) + "</button>").join("") + "</div>" +
+    "<h3>By lesson</h3><table><thead><tr><th>#</th><th>Lesson</th><th>Questions</th><th>Right last time</th><th></th></tr></thead><tbody>" +
+    t.lessons.map(l => { const qs = qbank(t).filter(q => q.lesson === l.number), st = qstats(t.slug), r = qs.filter(q => st[q.id] && st[q.id].last === 1).length;
+      return qs.length ? "<tr><td>" + l.number + "</td><td>" + esc(shortTitle(l.title)) + "</td><td>" + qs.length + "</td><td>" + r + " / " + qs.length + '</td><td><button type="button" class="btn" data-qstart="lesson-' + l.number + '">Practise</button></td></tr>' : ""; }).join("") +
+    "</tbody></table>" +
+    '<p><button type="button" class="btn" id="qreset">Reset my practice history for this topic</button></p>';
+  const r = $("#qreset"); if (r) r.addEventListener("click", () => { if (confirm("Clear practice history for " + t.name + "?")){ store.set(qstatsKey(t.slug), {}); practiceHome(); } });
+}
+function startQuiz(f){
+  const t = topic(), qs = shuffle(qFilter(t, f));
+  if (!qs.length){ practiceHome(); return; }
+  quiz = { slug: t.slug, filter: f, qs, i: 0, right: 0, answered: false, missed: [] };
+  showQ();
+}
+function showQ(){
+  const t = topic(); if (!quiz || quiz.slug !== t.slug) return practiceHome();
+  if (quiz.i >= quiz.qs.length) return quizEnd();
+  const q = quiz.qs[quiz.i]; quiz.answered = false;
+  const order = shuffle([0,1,2,3]); quiz.order = order;
+  const les = t.lessons.find(l => l.number === q.lesson);
+  view.innerHTML = '<div class="crumb"><a href="#/">Home</a> / <a href="#/' + t.slug + '">' + esc(t.name) + '</a> / <a href="#/' + t.slug + '/practice">Practice</a></div>' +
+    '<div class="q-meta">Question ' + (quiz.i + 1) + " of " + quiz.qs.length + " · score " + quiz.right + " · " + esc(q.level) + " · lesson " + q.lesson + " · " + esc(q.type || "") + " · difficulty " + esc(q.difficulty || "") + "</div>" +
+    '<div class="bar" style="margin:6px 0 14px"><i style="inline-size:' + Math.round(100 * quiz.i / quiz.qs.length) + '%"></i></div>' +
+    '<h2 style="border:0;margin-block-start:6px;padding:0">' + inline(q.question) + "</h2>" + (q.code ? codeBlock(q.code, "") : "") +
+    '<div class="q-opts">' + order.map((oi, k) => '<button type="button" class="q-opt" data-qopt="' + oi + '"><span class="k">' + (k + 1) + "</span><span>" + inline(q.options[oi]) + "</span></button>").join("") + "</div>" +
+    '<div id="qfb"></div>' +
+    '<div class="pager"><button type="button" class="btn" id="qquit">End session</button><button type="button" class="btn primary hidden" id="qnext">Next →</button></div>';
+  $("#qquit").addEventListener("click", quizEnd);
+  $("#qnext").addEventListener("click", () => { quiz.i++; showQ(); });
+}
+function answerQ(oi){
+  if (!quiz || quiz.answered) return;
+  const t = topic(), q = quiz.qs[quiz.i], ok = oi === q.answer; quiz.answered = true;
+  if (ok) quiz.right++; else quiz.missed.push(q);
+  const st = qstats(t.slug), r = st[q.id] || { seen: 0, correct: 0 };
+  r.seen++; if (ok) r.correct++; r.last = ok ? 1 : 0; st[q.id] = r; store.set(qstatsKey(t.slug), st);
+  document.querySelectorAll(".q-opt").forEach(b => { b.disabled = true; const v = +b.dataset.qopt;
+    if (v === q.answer) b.classList.add("right"); else if (v === oi) b.classList.add("wrong"); });
+  const les = t.lessons.find(l => l.number === q.lesson);
+  $("#qfb").innerHTML = '<div class="card ' + (ok ? "fix" : "fail") + '"><strong>' + (ok ? "Correct." : "Not quite.") + "</strong> " + inline(q.explanation) +
+    '<div class="q-meta" style="margin-block-start:6px">Source: ' + inline(q.source || "") + (les ? ' · <a href="#/' + t.slug + "/" + les.number + '">Open lesson ' + les.number + "</a>" : "") + "</div></div>";
+  $("#qnext").classList.remove("hidden");
+}
+function quizEnd(){
+  const t = topic(); if (!quiz) return practiceHome();
+  const done = Math.min(quiz.i + (quiz.answered ? 1 : 0), quiz.qs.length), pct = done ? Math.round(100 * quiz.right / done) : 0;
+  view.innerHTML = '<div class="crumb"><a href="#/">Home</a> / <a href="#/' + t.slug + '">' + esc(t.name) + '</a> / <a href="#/' + t.slug + '/practice">Practice</a></div>' +
+    "<h1>Session result: " + quiz.right + " / " + done + " (" + pct + "%)</h1>" +
+    (quiz.missed.length ? "<h3>Review what you missed</h3>" + quiz.missed.map(q => '<div class="card fail"><strong>' + inline(q.question) + "</strong>" + (q.code ? codeBlock(q.code, "") : "") +
+      "<p><strong>Answer:</strong> " + inline(q.options[q.answer]) + "</p><p>" + inline(q.explanation) + '</p><p class="q-meta">Lesson ' + q.lesson + "</p></div>").join("") : '<div class="card fix">No misses in this session.</div>') +
+    '<div class="pager"><a class="btn" href="#/' + t.slug + '/practice">Choose another set</a>' + (quiz.missed.length ? '<button type="button" class="btn primary" data-qstart="missed">Retry missed questions</button>' : "") + "</div>";
+  quiz = null;
+}
+
+/* ---------- routing ---------- */
+function go(num){ location.hash = "#/" + state.topic + (num ? "/" + num : ""); }
+function goHome(){ location.hash = "#/"; }
+function route(){
+  const m = location.hash.match(/^#\/([^/]+)(?:\/(\d+|practice))?/);
+  if (m && KB.topics.some(t => t.slug === m[1])){ state.topic = m[1]; store.set("topic", m[1]); }
+  renderTopicSel();
+  document.body.classList.remove("nav-open");
+  if (!m) return homeAll();
+  if (m[2] === "practice"){ if (pendingQuiz){ const f = pendingQuiz; pendingQuiz = null; return startQuiz(f); } return practiceHome(); }
+  if (m[2]) lesson(+m[2]); else home();
+}
+
+/* ---------- search ---------- */
+const index = [];
+KB.topics.forEach(t => t.lessons.forEach(l => index.push({ t, l, hay: (l.title + " " + (l.conceptSummary || "") + " " + (l.category || "") + " " +
+  (l.learningTools || []).map(x => x.name).join(" ") + " " + t.name + " " + l.level).toLowerCase() })));
+let sel = -1;
+function search(q){
+  const box = $("#results"); q = q.trim().toLowerCase();
+  if (!q){ box.classList.remove("show"); return; }
+  const words = q.split(/\s+/);
+  const hits = index.filter(x => words.every(w => x.hay.includes(w))).slice(0, 30);
+  sel = -1;
+  box.innerHTML = hits.length ? hits.map((x, i) => '<button type="button" data-t="' + x.t.slug + '" data-n="' + x.l.number + '"><strong>' + esc(x.l.title) + "</strong><br><small>" + esc(x.t.name) + " · " + esc(x.l.level) + " · lesson " + x.l.number + "</small></button>").join("") : '<div style="padding:10px" class="muted">No match</div>';
+  box.classList.add("show");
+}
+
+/* ---------- events ---------- */
+document.addEventListener("click", e => {
+  const c = e.target.closest("[data-copy]");
+  if (c){ const code = c.parentElement.querySelector("code").textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).then(() => { c.textContent = "Copied"; setTimeout(() => c.textContent = "Copy", 1200); }, () => { c.textContent = "Select & copy"; });
+    return; }
+  const same = e.target.closest('a[href^="#/"]'); if (same && same.getAttribute("href") === location.hash){ e.preventDefault(); quiz = null; route(); return; }
+  const qo = e.target.closest("[data-qopt]"); if (qo){ answerQ(+qo.dataset.qopt); return; }
+  const qs = e.target.closest("[data-qstart]"); if (qs){ const want = "#/" + state.topic + "/practice";
+    if (location.hash !== want){ pendingQuiz = qs.dataset.qstart; location.hash = want; } else startQuiz(qs.dataset.qstart); return; }
+  const ln = e.target.closest("[data-lesson]"); if (ln){ go(+ln.dataset.lesson); return; }
+  const tp = e.target.closest("[data-topic]"); if (tp){ state.topic = tp.dataset.topic; go(0); return; }
+  const r = e.target.closest("#results button"); if (r){ $("#results").classList.remove("show"); $("#q").value = ""; state.topic = r.dataset.t; go(+r.dataset.n); return; }
+  const os = e.target.closest("[data-os]"); if (os){ state.os = os.dataset.os; store.set("os", state.os); applyOs(); return; }
+  const hb = e.target.closest("#htabs button"); if (hb){ showHome(hb.dataset.h); return; }
+  if (!e.target.closest(".search")) $("#results").classList.remove("show");
+});
+$("#topicSel").addEventListener("change", e => { state.topic = e.target.value; go(0); });
+$("#homeBtn").addEventListener("click", goHome);
+$("#focusBtn").addEventListener("click", () => { document.body.classList.toggle("focus"); $("#focusBtn").textContent = document.body.classList.contains("focus") ? "Exit focus" : "Focus mode"; });
+$("#menuBtn").addEventListener("click", () => document.body.classList.toggle("nav-open"));
+$("#q").addEventListener("input", e => search(e.target.value));
+$("#q").addEventListener("keydown", e => {
+  const items = [...document.querySelectorAll("#results button")];
+  if (e.key === "ArrowDown" || e.key === "ArrowUp"){ e.preventDefault(); sel = Math.max(0, Math.min(items.length - 1, sel + (e.key === "ArrowDown" ? 1 : -1)));
+    items.forEach((b, i) => b.classList.toggle("sel", i === sel)); }
+  if (e.key === "Enter" && items.length) (items[sel >= 0 ? sel : 0]).click();
+  if (e.key === "Escape") $("#results").classList.remove("show");
+});
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k"){ e.preventDefault(); $("#q").focus(); return; }
+  if (!quiz || document.activeElement === $("#q")) return;
+  if (!quiz.answered && /^[1-4]$/.test(e.key)){ const b = document.querySelectorAll(".q-opt")[+e.key - 1]; if (b) answerQ(+b.dataset.qopt); }
+  else if (quiz.answered && e.key === "Enter"){ quiz.i++; showQ(); }
+});
+window.addEventListener("hashchange", route);
+if (!location.hash) location.hash = "#/"; else route();
+})();
+</script>
+</body>
+</html>

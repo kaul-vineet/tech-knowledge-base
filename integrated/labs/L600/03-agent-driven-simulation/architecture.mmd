@@ -1,0 +1,34 @@
+flowchart LR
+  U[Analyst brief<br/>'compare mu 1.0 vs 1.05 ...'] --> AG
+  subgraph AI["ai-agents: proposes + writes"]
+    AG[agent.py<br/>tool-calling loop<br/>Budget: 8 calls]
+    M[(local model<br/>Ollama / fake_sim_agent)]
+    AG <-->|chat + tools| M
+  end
+  AG -->|tool call JSON| G1
+  subgraph ARCH["application-architecture: job pipeline decides"]
+    G1{contract.py<br/>JSON Schema + envelope<br/>rho <= 0.9}
+    G2{SimBudget<br/>reserve BEFORE run<br/>300,000 customers}
+    P[pipeline.py<br/>PROPOSED > VALIDATED > PLANNED<br/>> RAN > ANALYSED > DONE]
+    R[(registry.jsonl<br/>append-only<br/>run_id = sha256 model+version+params+seed)]
+    C{claims.py<br/>every sentence vs facts<br/>of the cited exp-id}
+  end
+  subgraph SIM["simulation: runs + statistics"]
+    S[model.py<br/>L200 #10 help desk M/M/1<br/>SeedSequence spawn_key arm, rep]
+    MO[L300 #14 morris]
+    ST[stats.py exact t<br/>Welch CI<br/>n from target half-width]
+  end
+  G1 -->|rejected: errors back to agent| AG
+  G1 --> G2
+  G2 -->|over budget: rejected| AG
+  G2 --> P
+  P --> S
+  P --> MO --> S
+  S -->|value_hex| R
+  P --> ST
+  ST -->|facts + run ids| R
+  P -->|tool result + exp-id| AG
+  AG -->|summary text| C
+  R --> C
+  C --> OUT[published report<br/>verified sentences +<br/>code-written lines]
+  C --> SC[(scorecard.jsonl<br/>milestones, seams, fitness)]

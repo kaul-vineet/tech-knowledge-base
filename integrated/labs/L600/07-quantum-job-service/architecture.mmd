@@ -1,0 +1,21 @@
+%% L600 #07 quantum-job service (Mermaid). Render: any Mermaid viewer, e.g. GitHub markdown or mermaid.live.
+flowchart LR
+    C[Client\njob_id = idempotency key\nOpenQASM 2/3 + shots + seed + fidelity floor] -->|submit| I[Intake\nfingerprint: replay or 422\ncanon.py: parse -> cancel pairs -> moments -> hash]
+    I --> K{Result cache\nkey = canonical hash + backend\n+ calibration version + shots + seed}
+    K -->|hit, same version| R
+    K -->|miss| S[Scheduler\nfidelity floor -> wait target 15 s\n-> best estimated fidelity]
+    S --> Q1[[queue fast-noisy]] & Q2[[queue slow-clean]] & Q3[[queue flaky-mid]]
+    subgraph Backends[Simulated backends - L300 #12 noise on the density-matrix simulator]
+        B1[fast-noisy\n4 slots, 1 s]
+        B2[slow-clean\n2 slots, 3 s, 15% x5 slow]
+        B3[flaky-mid\n3 slots, 25% rejects, outage 100-140 s]
+    end
+    Q1 -->|bulkhead + breaker| B1
+    Q2 -->|bulkhead + breaker| B2
+    Q3 -->|bulkhead + breaker| B3
+    B1 & B2 & B3 -->|chunk counts + token + calibration version| L[(Ledger\nlease per chunk attempt\nfencing token, FencedStorage slot\none calibration per job)]
+    L -->|lease expired: redeliver| Q1 & Q2 & Q3
+    L -->|all chunks| R[Result\ncounts, probs +- stderr\nreadout-mitigated +- propagated stderr\nbackend + calibration version]
+    R --> K
+    D[[Recalibration\nversion + 1]] -.-> B2 & B1
+    F[[run_project.py\nscorecard: milestones, seams, fitness\n--inject lease-expiry / stale-cache / text-key]] -.-> L & K & S

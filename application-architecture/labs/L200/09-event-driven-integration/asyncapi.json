@@ -1,0 +1,77 @@
+{
+  "asyncapi": "3.1.0",
+  "info": {
+    "title": "Library Loans events",
+    "version": "1.0.0",
+    "description": "Domain events the Library Loans service sends after a loan changes. Delivered at least once: consumers must ignore an eventId they have already processed."
+  },
+  "defaultContentType": "application/json",
+  "channels": {
+    "loanCreated": {
+      "address": "library.loans.created",
+      "messages": {
+        "LoanCreated": {"$ref": "#/components/messages/LoanCreated"}
+      }
+    },
+    "loanReturned": {
+      "address": "library.loans.returned",
+      "messages": {
+        "LoanReturned": {"$ref": "#/components/messages/LoanReturned"}
+      }
+    }
+  },
+  "operations": {
+    "sendLoanCreated": {
+      "action": "send",
+      "channel": {"$ref": "#/channels/loanCreated"},
+      "messages": [{"$ref": "#/channels/loanCreated/messages/LoanCreated"}]
+    },
+    "sendLoanReturned": {
+      "action": "send",
+      "channel": {"$ref": "#/channels/loanReturned"},
+      "messages": [{"$ref": "#/channels/loanReturned/messages/LoanReturned"}]
+    }
+  },
+  "components": {
+    "messages": {
+      "LoanCreated": {
+        "name": "LoanCreated",
+        "title": "A member borrowed a book",
+        "payload": {"$ref": "#/components/schemas/LoanCreatedPayload"}
+      },
+      "LoanReturned": {
+        "name": "LoanReturned",
+        "title": "A member returned a book",
+        "payload": {"$ref": "#/components/schemas/LoanReturnedPayload"}
+      }
+    },
+    "schemas": {
+      "LoanCreatedPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["eventId", "eventType", "occurredAt", "loanId", "bookId", "memberId"],
+        "properties": {
+          "eventId": {"type": "string", "format": "uuid"},
+          "eventType": {"type": "string", "const": "LoanCreated"},
+          "occurredAt": {"type": "string", "format": "date-time"},
+          "loanId": {"type": "integer"},
+          "bookId": {"type": "string"},
+          "memberId": {"type": "string"}
+        }
+      },
+      "LoanReturnedPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["eventId", "eventType", "occurredAt", "loanId", "bookId", "memberId"],
+        "properties": {
+          "eventId": {"type": "string", "format": "uuid"},
+          "eventType": {"type": "string", "const": "LoanReturned"},
+          "occurredAt": {"type": "string", "format": "date-time"},
+          "loanId": {"type": "integer"},
+          "bookId": {"type": "string"},
+          "memberId": {"type": "string"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "openapi": "3.1.2",
+  "info": {
+    "title": "Library Loans API",
+    "version": "1.0.0",
+    "summary": "Borrow and look up library book loans."
+  },
+  "servers": [{ "url": "http://127.0.0.1:8000" }],
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Service is up.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Health" } } }
+          }
+        }
+      }
+    },
+    "/loans": {
+      "post": {
+        "operationId": "createLoan",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NewLoan" } } }
+        },
+        "responses": {
+          "201": {
+            "description": "Loan created.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Loan" } } }
+          },
+          "400": {
+            "description": "Missing or invalid fields.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "409": {
+            "description": "Book is already on loan.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    },
+    "/loans/{loanId}": {
+      "get": {
+        "operationId": "getLoan",
+        "parameters": [
+          { "name": "loanId", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The loan.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Loan" } } }
+          },
+          "404": {
+            "description": "No loan with that id.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "required": ["status"],
+        "properties": { "status": { "type": "string" } }
+      },
+      "NewLoan": {
+        "type": "object",
+        "required": ["bookId", "memberId"],
+        "properties": { "bookId": { "type": "string" }, "memberId": { "type": "string" } }
+      },
+      "Loan": {
+        "type": "object",
+        "required": ["id", "bookId", "memberId", "status"],
+        "properties": {
+          "id": { "type": "integer" },
+          "bookId": { "type": "string" },
+          "memberId": { "type": "string" },
+          "status": { "type": "string", "enum": ["active", "returned"] }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": { "error": { "type": "string" } }
+      }
+    }
+  }
+}

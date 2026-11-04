@@ -1,0 +1,860 @@
+[
+ {
+  "id": "as-L300-001",
+  "level": "L300",
+  "lesson": 12,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Using Kasten & Young (1989), X = 1/(sin h + 0.50572 (h + 6.07995)^-1.6364) with h in degrees, what airmass does a star at altitude 30 deg have?",
+  "options": [
+   "2.000",
+   "1.994",
+   "0.500",
+   "1.155"
+  ],
+  "answer": 1,
+  "explanation": "At 30 deg the curved-atmosphere formula gives 1.994, almost the plane-parallel 2.000. 1/cos(30) uses altitude where the zenith angle belongs.",
+  "source": "Lesson 12 build task (solution airmass)"
+ },
+ {
+  "id": "as-L300-002",
+  "level": "L300",
+  "lesson": 12,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "At altitude 5 deg, what do Kasten & Young and plane-parallel sec z give?",
+  "options": [
+   "11.47 vs 10.31",
+   "10.31 vs 10.31",
+   "1.99 vs 2.00",
+   "10.31 vs 11.47"
+  ],
+  "answer": 3,
+  "explanation": "Near the horizon sec z overestimates the path through a curved atmosphere (11.47 vs 10.31), and it diverges at 0 deg while Kasten & Young stays near 38.",
+  "source": "Lesson 12 tradeOffs"
+ },
+ {
+  "id": "as-L300-003",
+  "level": "L300",
+  "lesson": 12,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "The shipped airmass() is 1/sin(alt) and the rule is 'airmass <= 2, lowest wins'. What does this snippet print for Sirius at -34.6 deg and Deneb at +40 deg?",
+  "code": "import numpy as np\nairmass = lambda alt: 1.0 / np.sin(np.radians(alt))\nx_sirius, x_deneb = airmass(-34.6), airmass(40.0)\nprint(round(float(x_sirius), 2), bool(x_sirius <= 2.0 and x_sirius < x_deneb))",
+  "options": [
+   "1.76 False",
+   "inf False",
+   "1.56 False",
+   "-1.76 True"
+  ],
+  "answer": 3,
+  "explanation": "sin of a negative altitude is negative, so the 'airmass' is -1.76; it passes 'airmass <= 2' and is the lowest value, which is why the greedy scheduler starts with a star below the ground.",
+  "source": "Lesson 12 failureLab"
+ },
+ {
+  "id": "as-L300-004",
+  "level": "L300",
+  "lesson": 12,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does the fixed airmass() print for altitudes 90, 30 and -10 deg?",
+  "code": "import numpy as np\ndef airmass(alt):\n    h = np.asarray(alt, float)\n    hp = np.where(h > 0, h, 1.0)\n    x = 1 / (np.sin(np.radians(hp)) + 0.50572 * (hp + 6.07995) ** -1.6364)\n    return np.where(h > 0, np.maximum(x, 1.0), np.inf)\nprint(np.round(airmass([90, 30, -10]), 3).tolist())",
+  "options": [
+   "[1.0, 2.0, -5.759]",
+   "[1.0, 1.994, inf]",
+   "[0.9997, 1.994, inf]",
+   "[1.0, 1.994, -5.759]"
+  ],
+  "answer": 1,
+  "explanation": "The fit dips to 0.9997 at the zenith so it is clamped to 1; at or below the horizon the value is inf, so a 'lowest airmass wins' rule can never pick it.",
+  "source": "Lesson 12 build task (solution/plan.py)"
+ },
+ {
+  "id": "as-L300-005",
+  "level": "L300",
+  "lesson": 12,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does the scheduler check each 60-minute block at its start, middle and end?",
+  "options": [
+   "Three samples make the mean airmass of the block mathematically exact",
+   "Astroplan requires exactly three samples",
+   "A target can rise, set or approach the Moon within the hour",
+   "The Sun's altitude is only known at those times"
+  ],
+  "answer": 2,
+  "explanation": "One sample at the start says nothing about the end of the block; a star can set mid-block. Three samples are a cheap guard, not an exact average.",
+  "source": "Lesson 12 checkYourself"
+ },
+ {
+  "id": "as-L300-006",
+  "level": "L300",
+  "lesson": 12,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The fixed greedy plan schedules 3 targets; an urgency-first order schedules 4. What does that show?",
+  "options": [
+   "The greedy plan has a bug that drops a target",
+   "'Best now' is not 'best night': setting targets need to go first",
+   "Urgency-first always gives lower airmass, so it schedules more targets",
+   "Four targets means the Moon constraint was ignored"
+  ],
+  "answer": 1,
+  "explanation": "Picking the lowest airmass now lets setting targets slip away; urgency-first trades some airmass for more targets. Both respect the constraints.",
+  "source": "Lesson 12 concepts and tradeOffs"
+ },
+ {
+  "id": "as-L300-007",
+  "level": "L300",
+  "lesson": 12,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "The whole night's plan comes out shifted by 5.5 hours. What is the most likely cause?",
+  "options": [
+   "A naive datetime was treated as UTC; keep tzinfo on every datetime",
+   "The Moon separation used degrees instead of radians",
+   "The block length is 60 instead of 30 minutes",
+   "The Sun limit should be -12 deg (nautical), not -18 deg (astronomical)"
+  ],
+  "answer": 0,
+  "explanation": "IST is UTC+5:30, so dropping the time zone shifts everything by exactly that. The other settings change which targets fit, not the clock.",
+  "source": "Lesson 12 troubleshooting"
+ },
+ {
+  "id": "as-L300-008",
+  "level": "L300",
+  "lesson": 12,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "A target that is high all night never gets scheduled. What should you print first?",
+  "options": [
+   "The JSON plan file, to see whether the output was truncated before that target was written",
+   "The Sun's RA and Dec at midnight",
+   "The list of targets sorted by name",
+   "observable() for that target: usually the Moon rule or the 60-min block length"
+  ],
+  "answer": 3,
+  "explanation": "observable() returns ok, altitude, airmass and Moon separation per step, so you see which rule blocks it. Near full Moon, the 30-deg separation often does.",
+  "source": "Lesson 12 troubleshooting"
+ },
+ {
+  "id": "as-L300-009",
+  "level": "L300",
+  "lesson": 12,
+  "type": "design",
+  "difficulty": 3,
+  "question": "You plan to observe a comet only 8 deg above the horizon at dawn. Which airmass model should your planner use?",
+  "options": [
+   "Kasten & Young: finite and realistic down to the horizon",
+   "Plane-parallel sec z with no limit",
+   "sec z with min = 1, as in astroplan's AirmassConstraint",
+   "A fixed airmass of 2 for everything below 30 deg"
+  ],
+  "answer": 0,
+  "explanation": "Low-altitude work is exactly where sec z overestimates; the curved-atmosphere fit stays within 0.5 % of the standard atmosphere. sec z with a domain is fine for limits around X <= 2-3.",
+  "source": "Lesson 12 tradeOffs"
+ },
+ {
+  "id": "as-L300-010",
+  "level": "L300",
+  "lesson": 12,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "A plan looks perfect on paper. How does the lesson recommend you verify it before using it?",
+  "options": [
+   "Run the same scheduler twice and compare",
+   "Recompute altitudes independently (--check) and list anything below 30 deg",
+   "Ask a language model to read the plan and say whether it looks physically sensible",
+   "Trust it if no exceptions were raised"
+  ],
+  "answer": 1,
+  "explanation": "Re-running the same code repeats the same bug; an independent recomputation caught 4 of 6 blocks below the horizon. Absence of exceptions proves nothing about physics.",
+  "source": "Lesson 12 concepts and codeWalkthrough (--check)"
+ },
+ {
+  "id": "as-L300-011",
+  "level": "L300",
+  "lesson": 12,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "The planner's first constraint is 'Sun below -18 deg'. What does that define?",
+  "options": [
+   "Civil twilight, when streetlights switch on",
+   "Astronomical darkness (the lab's dark window, 18:50-05:20)",
+   "The time when the Moon has set",
+   "The hours when every target on the list is above 30 deg altitude"
+  ],
+  "answer": 1,
+  "explanation": "-18 deg is the astronomical twilight limit (astroplan's AtNightConstraint); the other two rules are airmass and Moon distance. Civil twilight ends at -6 deg.",
+  "source": "Lesson 12 code docstring and expectedResults"
+ },
+ {
+  "id": "as-L300-012",
+  "level": "L300",
+  "lesson": 13,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "In which order does the lab remove the camera's layers?",
+  "options": [
+   "(light - bias - dark) / flat",
+   "(light / flat) - bias - dark",
+   "(light - dark) * flat - bias",
+   "(light - dark) / (flat - light)"
+  ],
+  "answer": 0,
+  "explanation": "Remove layers in the reverse order the camera added them: additive pedestal and dark current first, then divide out the multiplicative flat. Dividing first scales the bias by the flat.",
+  "source": "Lesson 13 concepts and code docstring"
+ },
+ {
+  "id": "as-L300-013",
+  "level": "L300",
+  "lesson": 13,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Raw flats have a 1000 ADU bias pedestal plus 10000 ADU of light at the centre and 80 % of that in a vignetted corner. Normalised WITHOUT removing the bias, what does the flat report for the corner?",
+  "options": [
+   "0.800",
+   "0.727",
+   "0.900",
+   "0.818"
+  ],
+  "answer": 3,
+  "explanation": "(1000 + 8000)/(1000 + 10000) = 0.818 instead of the true 0.800, so the vignetting is only partly divided out and a drifting star looks variable.",
+  "source": "Lesson 13 checkYourself and failureLab"
+ },
+ {
+  "id": "as-L300-014",
+  "level": "L300",
+  "lesson": 13,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A constant star collects about 200,000 e- per frame. Ignoring sky and read noise, what is its photon-noise floor on relative flux?",
+  "options": [
+   "0.0005 %",
+   "0.0224 %",
+   "0.224 %",
+   "0.447 %"
+  ],
+  "answer": 2,
+  "explanation": "Poisson noise is sqrt(N), so the relative error is 1/sqrt(N) = 0.224 %, the lab's floor. Robust rms well above that floor is what flags a star as variable.",
+  "source": "Lesson 13 failureLab"
+ },
+ {
+  "id": "as-L300-015",
+  "level": "L300",
+  "lesson": 13,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "Five bias frames, one hit by a cosmic ray. What does this snippet print (plain mean vs clipped mean)?",
+  "code": "import numpy as np\nstack = np.array([[100.0], [101.0], [99.0], [100.0], [5000.0]])\nmed = np.median(stack, axis=0)\nmad = 1.4826 * np.median(np.abs(stack - med), axis=0)\nkeep = np.abs(stack - med) <= 3 * mad\nprint(float(stack.mean()), float((stack * keep).sum() / keep.sum()))",
+  "options": [
+   "100.0 100.0",
+   "1080.0 100.0",
+   "1080.0 1080.0",
+   "100.0 1080.0"
+  ],
+  "answer": 1,
+  "explanation": "The cosmic ray drags the plain mean to 1080; rejecting values beyond 3 robust sigmas (1.4826 x MAD) keeps only the four good frames.",
+  "source": "Lesson 13 code (sigma_clip_mean)"
+ },
+ {
+  "id": "as-L300-016",
+  "level": "L300",
+  "lesson": 13,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why can't you median-combine the science (light) frames to remove cosmic rays in this lab?",
+  "options": [
+   "Light frames have no cosmic rays; only the long dark frames collect them",
+   "Median combining needs at least 100 frames",
+   "The star drifts between frames, so a per-pixel median would erase it",
+   "The median cannot be computed on floating-point data"
+  ],
+  "answer": 2,
+  "explanation": "Each frame is needed on its own for the light curve and the star moves, so cosmic rays must be found in single frames by sharpness. Darks and biases can be median- or clip-combined.",
+  "source": "Lesson 13 checkYourself"
+ },
+ {
+  "id": "as-L300-017",
+  "level": "L300",
+  "lesson": 13,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "clean_cosmics() flags a pixel only if it is far above its 3x3 median AND more than 3x brighter (above sky) than its 4 neighbours. Why does a star survive?",
+  "options": [
+   "Stars are always fainter than cosmic rays",
+   "The test ignores pixels above the sky level",
+   "A star's PSF spreads light: its peak is only ~1.4x its neighbours",
+   "Stars are masked using a reference catalogue before the cleaning runs"
+  ],
+  "answer": 2,
+  "explanation": "Cosmic rays are sharp (one or two pixels), while a PSF with FWHM 3 px is smooth. Brightness alone cannot separate them, which is why sharpness is used.",
+  "source": "Lesson 13 code (clean_cosmics)"
+ },
+ {
+  "id": "as-L300-018",
+  "level": "L300",
+  "lesson": 13,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "A supposedly constant star's flux rises and falls with its x position on the detector. Where do you look first?",
+  "options": [
+   "The cosmic-ray count per frame",
+   "The exposure-time keyword of each light frame, in case the frames differ",
+   "master_flat in calib_log.jsonl: was the bias removed before normalising?",
+   "The annulus radii of the photometry"
+  ],
+  "answer": 2,
+  "explanation": "Flux that follows position is a flat-field error carried across the detector; the shipped flat's min/max 0.8527/1.0792 vs truth 0.821/1.094 gives it away. Cosmic rays would give isolated spikes, not a smooth trend.",
+  "source": "Lesson 13 troubleshooting and failureLab"
+ },
+ {
+  "id": "as-L300-019",
+  "level": "L300",
+  "lesson": 13,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "After cosmic-ray cleaning, the brightest stars lose a few percent of their flux. What is the fix?",
+  "options": [
+   "Lower CR_SIGMA so that more of the star's sharp pixels get repaired by the cleaner",
+   "Skip the bias subtraction for bright stars",
+   "Use a smaller photometry aperture",
+   "The cosmic-ray test is too eager: raise the neighbour ratio or CR_SIGMA"
+  ],
+  "answer": 3,
+  "explanation": "Bright, sharp star cores can pass a loose test and get 'repaired' with their neighbours' mean. Lowering the threshold makes it worse.",
+  "source": "Lesson 13 troubleshooting"
+ },
+ {
+  "id": "as-L300-020",
+  "level": "L300",
+  "lesson": 13,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "One frame has a cosmic ray on the star (+16.4 %). Plain rms flags the constant star as variable. What does the lesson recommend?",
+  "options": [
+   "Flag variability with a robust rms, and inspect outliers separately",
+   "Delete every frame that deviates by more than 1 %",
+   "Use the plain rms but double the variability threshold to absorb spikes",
+   "Average neighbouring frames until the spike disappears"
+  ],
+  "answer": 0,
+  "explanation": "A robust statistic ignores a single excursion while still seeing real variability; outliers are then inspected, not silently dropped. Smoothing would also hide genuine short events.",
+  "source": "Lesson 13 tradeOffs"
+ },
+ {
+  "id": "as-L300-021",
+  "level": "L300",
+  "lesson": 14,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why do triangle invariants such as L2/L1 and L1/L0 not change with the image's rotation, shift or scale?",
+  "options": [
+   "They are measured in sky coordinates, not pixels",
+   "They are ratios of side lengths, which those transformations preserve",
+   "They use only the brightest star of each triangle",
+   "Each invariant is normalised by the field's pixel scale before matching"
+  ],
+  "answer": 1,
+  "explanation": "Rotation and shift keep lengths; scale multiplies all sides equally, so ratios are unchanged (mirroring too). That is why matching invariants proposes pairs without knowing the WCS.",
+  "source": "Lesson 14 checkYourself"
+ },
+ {
+  "id": "as-L300-022",
+  "level": "L300",
+  "lesson": 14,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "The shipped solver projects with raw (dRA, dDec). By what factor does that stretch the RA direction at Dec +62.1 compared with the true sky?",
+  "options": [
+   "4.57x",
+   "2.14x",
+   "0.47x",
+   "1.00x"
+  ],
+  "answer": 1,
+  "explanation": "One degree of RA spans cos(Dec) degrees on the sky, so raw offsets are 1/cos(62.1) = 2.14x too wide; at Orion (Dec -5.4) the factor is only 1.004, which hides the bug.",
+  "source": "Lesson 14 checkYourself and failureLab"
+ },
+ {
+  "id": "as-L300-023",
+  "level": "L300",
+  "lesson": 14,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "A solved CD matrix is [[-0.000481, 0.000278], [0.000278, 0.000481]] deg/px (a 2 arcsec/px scale rotated by 30 deg). What pixel scale does sqrt|det CD| give?",
+  "options": [
+   "1.73 arcsec/px",
+   "4.00 arcsec/px",
+   "2.00 arcsec/px",
+   "3.46 arcsec/px"
+  ],
+  "answer": 2,
+  "explanation": "The determinant is the area scale per pixel, so its square root is the linear scale: 2.00 arcsec/px. Reading |CD1_1| alone (1.73) ignores the rotation.",
+  "source": "Lesson 14 codeWalkthrough (check)"
+ },
+ {
+  "id": "as-L300-024",
+  "level": "L300",
+  "lesson": 14,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print?",
+  "code": "import numpy as np\ndef inv(p):\n    L = sorted(np.linalg.norm(p[i] - p[j]) for i, j in ((0, 1), (1, 2), (0, 2)))\n    return round(float(L[2] / L[1]), 4), round(float(L[1] / L[0]), 4)\ntri = np.array([[0, 0], [4, 0], [0, 3]], float)\nc, s = np.cos(0.7), np.sin(0.7)\nmoved = 2.5 * tri @ np.array([[c, -s], [s, c]]) + [100, 50]\nprint(inv(tri) == inv(moved), inv(tri))",
+  "options": [
+   "True (1.25, 1.3333)",
+   "False (1.25, 1.3333)",
+   "True (5.0, 4.0)",
+   "False (3.125, 3.3333)"
+  ],
+  "answer": 0,
+  "explanation": "Rotating by 0.7 rad, scaling by 2.5 and shifting leave side-length ratios unchanged, so the invariants match: 5/4 = 1.25 and 4/3 = 1.3333.",
+  "source": "Lesson 14 code (triangles invariants)"
+ },
+ {
+  "id": "as-L300-025",
+  "level": "L300",
+  "lesson": 14,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The solver gets many votes but finds no solution. What does the lesson suggest?",
+  "options": [
+   "Lower the vote threshold to 1",
+   "Use more triangles built from the faintest detected stars in the image",
+   "Count pairs that agree with one RANSAC geometry, not raw votes",
+   "Switch off the residual check"
+  ],
+  "answer": 2,
+  "explanation": "Votes propose pairs; geometry disposes. Wrong pairs from spurious detections cannot outvote a consistent transformation, and a loose tolerance inflates raw votes.",
+  "source": "Lesson 14 concepts and troubleshooting"
+ },
+ {
+  "id": "as-L300-026",
+  "level": "L300",
+  "lesson": 14,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "Your solution is off by exactly one pixel everywhere. What is the cause?",
+  "options": [
+   "The tangent point is at the wrong declination, which shifts every star equally",
+   "FITS pixels are 1-based and numpy arrays 0-based; convert once at the boundary",
+   "The CD matrix is transposed",
+   "The catalogue magnitudes are in the wrong band"
+  ],
+  "answer": 1,
+  "explanation": "A uniform one-pixel offset is the classic 0-based/1-based mix-up. A transposed CD matrix or wrong tangent point would give rotated or scale-dependent errors.",
+  "source": "Lesson 14 troubleshooting"
+ },
+ {
+  "id": "as-L300-027",
+  "level": "L300",
+  "lesson": 14,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "This projection solves an Orion field (Dec -5.4) but fails at Cassiopeia (Dec +62.1). What is the fix?",
+  "code": "def to_plane(ra, dec, ra0, dec0):\n    return ra - ra0, dec - dec0",
+  "options": [
+   "Use the TAN (gnomonic) projection, which includes the cos(Dec) shrink",
+   "Swap the order to (dec - dec0, ra - ra0)",
+   "Convert both offsets to radians",
+   "Search a wider 1.2 deg radius around the hint so more triangles can match"
+  ],
+  "answer": 0,
+  "explanation": "Raw offsets distort triangle shapes by 1/cos(Dec); at Dec 62 they are 36 % distorted, so no invariants match. Unit changes or a wider search keep the distortion.",
+  "source": "Lesson 14 failureLab"
+ },
+ {
+  "id": "as-L300-028",
+  "level": "L300",
+  "lesson": 14,
+  "type": "design",
+  "difficulty": 3,
+  "question": "You must solve images with no pointing hint from anywhere on the sky. Which approach fits?",
+  "options": [
+   "Quads with geometric hashing and pre-built index files (astrometry.net)",
+   "Triangles of the 10 brightest stars with no hint",
+   "A brute-force affine fit of every detection against the whole sky catalogue",
+   "The lab's solver with SEARCH_DEG = 180"
+  ],
+  "answer": 0,
+  "explanation": "Quads give far fewer false matches and support blind all-sky solving at the cost of large index files. Triangles suit small fields with a hint.",
+  "source": "Lesson 14 tradeOffs"
+ },
+ {
+  "id": "as-L300-029",
+  "level": "L300",
+  "lesson": 14,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "After solving, residuals are small in the centre but grow towards the image corners. What should you add?",
+  "options": [
+   "SIP distortion terms on top of the affine (CD) fit",
+   "A larger triangle tolerance",
+   "More iterations of the same affine refit",
+   "A second tangent point at the corner"
+  ],
+  "answer": 0,
+  "explanation": "An affine CD matrix cannot model optical distortion, which grows with radius; SIP adds polynomial terms. More iterations of the same model converge to the same residual pattern.",
+  "source": "Lesson 14 tradeOffs"
+ },
+ {
+  "id": "as-L300-030",
+  "level": "L300",
+  "lesson": 14,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "A solve returns a WCS, but you have not looked at its residuals yet. A colleague wants to publish positions from it now. What does the lesson say?",
+  "options": [
+   "A returned WCS is correct by construction",
+   "Residuals matter only for fields near the poles",
+   "Check residuals only if fewer than 10 stars matched in the solve",
+   "Never trust a solution without a residual check in arcsec"
+  ],
+  "answer": 3,
+  "explanation": "Wrong matches can still produce a WCS; residuals (the lab's rms < 0.6 arcsec) show whether it fits all stars. Pole fields are where bugs show up first, not the only place they exist.",
+  "source": "Lesson 14 caution and concepts"
+ },
+ {
+  "id": "as-L300-031",
+  "level": "L300",
+  "lesson": 15,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A fit reports a formal sigma(t0) = 0.0060 h and chi^2_red = 4.13. Scaling the covariance by chi^2_red, what is the corrected error?",
+  "options": [
+   "0.0248 h",
+   "0.0030 h",
+   "0.0060 h",
+   "0.0122 h"
+  ],
+  "answer": 3,
+  "explanation": "Covariance scales by chi^2_red, so errors scale by its square root: 0.0122 h, close to the bootstrap 0.0128 h. Multiplying the error by 4.13 scales it twice.",
+  "source": "Lesson 15 failureLab"
+ },
+ {
+  "id": "as-L300-032",
+  "level": "L300",
+  "lesson": 15,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "If every reported error bar is half the true scatter, what fraction of +/-1 sigma intervals will contain the truth (Gaussian errors)?",
+  "options": [
+   "0.683",
+   "0.500",
+   "0.383",
+   "0.954"
+  ],
+  "answer": 2,
+  "explanation": "The interval is really +/-0.5 true sigma, which covers erf(0.5/sqrt 2) = 0.383; the shipped coverage of 0.22-0.36 is in that range. 0.683 is what honest errors give.",
+  "source": "Lesson 15 failureLab and concepts"
+ },
+ {
+  "id": "as-L300-033",
+  "level": "L300",
+  "lesson": 15,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "A transit is 1.0 % deep on a star of 0.8 solar radii (R_sun = 695,700 km, R_earth = 6,378.1 km). What planet radius does depth = (Rp/R*)^2 imply?",
+  "options": [
+   "0.87 Earth radii",
+   "8.73 Earth radii",
+   "10.91 Earth radii",
+   "13.63 Earth radii"
+  ],
+  "answer": 1,
+  "explanation": "Rp/R* = sqrt(0.010) = 0.1, so Rp = 0.1 x 0.8 x 109.08 = 8.73 Earth radii. Using the depth itself as the radius ratio forgets the square.",
+  "source": "Lesson 15 model (depth) and code docstring"
+ },
+ {
+  "id": "as-L300-034",
+  "level": "L300",
+  "lesson": 15,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "What does a coverage test check that a single good-looking fit cannot?",
+  "options": [
+   "Whether the best-fit parameters are unbiased on the one dataset you observed",
+   "Whether the +/-1 sigma intervals contain the truth about 68 % of the time",
+   "Whether chi^2 is below 1",
+   "Whether the optimiser converged"
+  ],
+  "answer": 1,
+  "explanation": "Coverage uses many synthetic datasets with known truth to test the error bars themselves. A converged fit with chi^2 near 1 can still carry wrong uncertainties.",
+  "source": "Lesson 15 concepts"
+ },
+ {
+  "id": "as-L300-035",
+  "level": "L300",
+  "lesson": 15,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print (formal error, then error scaled by chi^2_red = 4)?",
+  "code": "import numpy as np\nJ = np.column_stack([np.ones(100), np.linspace(-1, 1, 100)])\ncov = np.linalg.inv(J.T @ J / 0.001 ** 2)\nchi2_red = 4.0\nprint(round(float(np.sqrt(cov[0, 0])), 5), round(float(np.sqrt(cov[0, 0] * max(chi2_red, 1))), 5))",
+  "options": [
+   "0.0001 0.0004",
+   "0.0002 0.0001",
+   "0.0001 0.0001",
+   "0.0001 0.0002"
+  ],
+  "answer": 3,
+  "explanation": "Scaling the covariance by 4 doubles the error, since errors are square roots of the diagonal. Scaling the error itself by 4 would overshoot.",
+  "source": "Lesson 15 build task (scale by max(chi^2_red, 1))"
+ },
+ {
+  "id": "as-L300-036",
+  "level": "L300",
+  "lesson": 15,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "After scaling by chi^2_red, t0 covers 0.73 but T14 and T12 still under-cover (0.555, 0.56). Why?",
+  "options": [
+   "T14 and T12 need a larger chi^2_red factor than t0",
+   "Bootstrap errors are always smaller than formal ones",
+   "The coverage test uses too few datasets to measure the contact times, so 0.56 is within noise of 0.68",
+   "The trapezoid's kinks make the linear (J^T W J)^-1 approximation underestimate their spread"
+  ],
+  "answer": 3,
+  "explanation": "Covariance from the Jacobian assumes a locally linear model; contact times sit at kinks. MCMC percentiles handle that nonlinearity better.",
+  "source": "Lesson 15 checkYourself"
+ },
+ {
+  "id": "as-L300-037",
+  "level": "L300",
+  "lesson": 15,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "Your MCMC results change noticeably when you change the random seed. What do you check?",
+  "options": [
+   "The chain is too short: check len/tau > 50 and the acceptance rate",
+   "The seed must be fixed at 0, otherwise MCMC results are not reproducible or valid",
+   "The noise parameter must be removed",
+   "Switch to least squares, which has no seed"
+  ],
+  "answer": 0,
+  "explanation": "Seed-dependent answers mean the chain has not sampled the posterior enough; the autocorrelation time tau tells you how long it must be. Fixing the seed hides the problem.",
+  "source": "Lesson 15 troubleshooting"
+ },
+ {
+  "id": "as-L300-038",
+  "level": "L300",
+  "lesson": 15,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "chi^2_red is 4 but you are sure the pipeline's flux errors are right. What should you do before scaling anything?",
+  "options": [
+   "Scale by chi^2_red anyway; it is always correct",
+   "Look at the residuals: either the model or the error bars are wrong",
+   "Drop the worst 20 % of points until chi^2_red = 1",
+   "Report the formal errors unchanged, since the pipeline's flux_err is trusted"
+  ],
+  "answer": 1,
+  "explanation": "chi^2_red >> 1 means the residuals do not match the stated errors; structured residuals point to a wrong model. Clipping points to force chi^2_red = 1 manufactures precision.",
+  "source": "Lesson 15 troubleshooting"
+ },
+ {
+  "id": "as-L300-039",
+  "level": "L300",
+  "lesson": 15,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Your real light curve has time-correlated (red) noise from systematics. Which statement from the lesson guides the uncertainty method?",
+  "options": [
+   "chi^2 scaling handles red noise if chi^2_red > 2",
+   "A residual bootstrap is exact for any noise, because it resamples the real residuals",
+   "Neither chi^2 scaling nor a residual bootstrap captures time-correlated noise",
+   "MCMC with a white-noise scale fixes red noise automatically"
+  ],
+  "answer": 2,
+  "explanation": "Both shortcuts assume white noise; reshuffling residuals destroys their time correlation. Correlated noise needs to be modelled explicitly.",
+  "source": "Lesson 15 caution and tradeOffs"
+ },
+ {
+  "id": "as-L300-040",
+  "level": "L300",
+  "lesson": 15,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does the lesson report MCMC results for T14 and T12 as percentiles (15.87 / 50 / 84.13) instead of mean +/- standard deviation?",
+  "options": [
+   "Percentiles are faster to compute than a standard deviation",
+   "The mean of an MCMC chain is always biased",
+   "Percentiles remove the need for a burn-in period at the start of the chain",
+   "Nonlinear parameters can have asymmetric posteriors that +/- hides"
+  ],
+  "answer": 3,
+  "explanation": "When the posterior is skewed, a symmetric +/- misstates one side; percentiles describe it directly. Burn-in and convergence checks are still needed.",
+  "source": "Lesson 15 concepts"
+ },
+ {
+  "id": "as-L300-041",
+  "level": "L300",
+  "lesson": 16,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "What must a correct cache key for a pipeline step include?",
+  "options": [
+   "The step name, the input file name and the parameters",
+   "The input file's modification time only",
+   "A hash of the step, its code, the upstream data and the parameters",
+   "The output file name and the run date, so each day gets its own entry"
+  ],
+  "answer": 2,
+  "explanation": "If any of code, data or parameters change, the result can change, so all must be in the key. The shipped key used the file name, which stays the same when the data change.",
+  "source": "Lesson 16 concepts"
+ },
+ {
+  "id": "as-L300-042",
+  "level": "L300",
+  "lesson": 16,
+  "type": "debugging",
+  "difficulty": 3,
+  "question": "The v2 data release replaces data/lightcurve.csv under the same name, yet both steps report 'cache': 'hit' and the old 0.43049 d period. Which line is at fault?",
+  "code": "def cache_key(self, step, input_path, upstream, params):\n    return sha256({\"step\": step.__name__, \"input\": Path(input_path).name, \"params\": params})",
+  "options": [
+   "The key hashes the file name, not the file's bytes or upstream data",
+   "sort_keys=True makes all keys collide",
+   "The params dict is empty for load()",
+   "sha256 is too short a hash to tell two versions of the file contents apart"
+  ],
+  "answer": 0,
+  "explanation": "Same name + same params = same key, so v2 gets v1's cached result. The provenance log noticed because it records the input bytes' hash.",
+  "source": "Lesson 16 failureLab"
+ },
+ {
+  "id": "as-L300-043",
+  "level": "L300",
+  "lesson": 16,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "What does this snippet print?",
+  "code": "import hashlib, json\ndef key(d):\n    return hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8]\na = key({\"step\": \"load\", \"input\": \"lightcurve.csv\", \"params\": {}})\nb = key({\"params\": {}, \"input\": \"lightcurve.csv\", \"step\": \"load\"})\nc = key({\"step\": \"load\", \"input\": \"lightcurve.csv\", \"params\": {}, \"data\": \"6141395bece9\"})\nprint(a == b, a == c)",
+  "options": [
+   "True False",
+   "False False",
+   "True True",
+   "False True"
+  ],
+  "answer": 0,
+  "explanation": "sort_keys=True makes the hash independent of dict order, so a and b match; adding the data hash changes the key. That is how content-addressing notices new bytes.",
+  "source": "Lesson 16 code (sha256)"
+ },
+ {
+  "id": "as-L300-044",
+  "level": "L300",
+  "lesson": 16,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "In v1, telescope B wrote times as JD - 2460000 while A wrote MJD - 60000. For an observation at JD 2460500.25, how far apart are the two time stamps?",
+  "options": [
+   "0.0 d",
+   "1.0 d",
+   "0.5 d",
+   "2400000.5 d"
+  ],
+  "answer": 2,
+  "explanation": "MJD = JD - 2400000.5, so MJD - 60000 = JD - 2460000.5: the two differ by 0.5 d. That half-day offset created the 0.43049 d alias.",
+  "source": "Lesson 16 codeWalkthrough (make_data.py)"
+ },
+ {
+  "id": "as-L300-045",
+  "level": "L300",
+  "lesson": 16,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "After the fix, changing the module constant FREQ still returns a cached result. Why?",
+  "options": [
+   "inspect.getsource() hashes the whole file",
+   "numpy arrays cannot be hashed",
+   "FREQ is read inside the step but is not in the key or the step's source",
+   "The cache ignores every parameter after the first one passed to the step"
+  ],
+  "answer": 2,
+  "explanation": "Module constants are hidden inputs. Pass them as parameters or include them in the hashed code.",
+  "source": "Lesson 16 checkYourself"
+ },
+ {
+  "id": "as-L300-046",
+  "level": "L300",
+  "lesson": 16,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "Two machines produce different results from the same cached pipeline. What is the likely cause?",
+  "options": [
+   "SHA-256 gives different digests on different CPUs",
+   "The cache folder must be on the same disk",
+   "JSON key order differs between operating systems, so the keys hash differently",
+   "Hidden inputs such as globals, library versions or locale are not in the key"
+  ],
+  "answer": 3,
+  "explanation": "SHA-256 is deterministic and the key uses sort_keys, so the difference must come from inputs outside the key; add them to the parameters or the code hash.",
+  "source": "Lesson 16 troubleshooting"
+ },
+ {
+  "id": "as-L300-047",
+  "level": "L300",
+  "lesson": 16,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "The content-addressed cache folder keeps growing. What is the recommended practice?",
+  "options": [
+   "Evict by age or size, and keep the provenance log",
+   "Switch back to name-keyed entries so files get overwritten",
+   "Delete the provenance log to save space",
+   "Store only the latest key per step name"
+  ],
+  "answer": 0,
+  "explanation": "Content addressing never overwrites, so eviction must be explicit; the provenance log is the record of what ran. Name keys bring back stale results.",
+  "source": "Lesson 16 troubleshooting"
+ },
+ {
+  "id": "as-L300-048",
+  "level": "L300",
+  "lesson": 16,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Which caching strategy does the lesson recommend for which situation?",
+  "options": [
+   "Content-addressed by default; no cache for cheap steps or final release runs",
+   "Name/mtime keys by default; content hashes only for large files",
+   "No cache ever, since caches can be wrong",
+   "Content-addressed for release runs only; name or mtime keys during development"
+  ],
+  "answer": 0,
+  "explanation": "Content addressing is correct by construction; name/mtime keys go stale and are never for science outputs. A final release run without a cache is always fresh.",
+  "source": "Lesson 16 tradeOffs"
+ },
+ {
+  "id": "as-L300-049",
+  "level": "L300",
+  "lesson": 16,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "A data provider re-saves the same table with different number formatting (same values). What happens to its hash, and what does the lesson conclude?",
+  "options": [
+   "The hash stays the same, since the values are equal",
+   "The hash changes: hashes identify bytes, not meaning",
+   "The hash changes only if row order changed",
+   "The hash stays the same if the file name is unchanged"
+  ],
+  "answer": 1,
+  "explanation": "Any byte change changes SHA-256, so a reformatted file is a new input even if the science is the same; conversely, identical bytes are the same input whatever the release name.",
+  "source": "Lesson 16 caution"
+ },
+ {
+  "id": "as-L300-050",
+  "level": "L300",
+  "lesson": 16,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which kind of step must never be cached?",
+  "options": [
+   "A step whose output is larger than its input, since the cache would explode",
+   "A step that uses numpy",
+   "A step with more than three parameters",
+   "A step with side effects, such as sending a notice or writing elsewhere"
+  ],
+  "answer": 3,
+  "explanation": "A cache hit skips the step, so its side effects would silently not happen. Output size, libraries and parameter count do not matter.",
+  "source": "Lesson 16 caution"
+ }
+]

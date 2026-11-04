@@ -1,0 +1,31 @@
+%% Capstone: classroom environmental monitor network (labs/L400/22-capstone). Render with Mermaid.
+flowchart LR
+  subgraph Classroom["Classroom: 6 micro:bit sensor boards (build/classroom_node.py)"]
+    S1["n1..n6<br/>temp / light / motion<br/>firmware alarm (lab 21)<br/>SipHash tag + counter (lab 19)<br/>ARQ + jitter (lab 12/17)"]
+    CFG["config agent<br/>two-phase + rollback (lab 18)"]
+  end
+  EVE["Eve: replay + forge<br/>(seeded attacker)"]
+  R["relay board on USB<br/>acks, dedupe (seq, payload)<br/>lab 15 serial frames"]
+  subgraph PC["Gateway PC: Mac mini or Windows 11 (trust boundary)"]
+    F["framer: length + CRC + resync (lab 15)"]
+    V["verifier: device key, MAC, replay window (lab 19)"]
+    B["MQTT QoS 1<br/>MiniBroker | Mosquitto (pending-ci)"]
+    DB[("SQLite store<br/>key (dev, seq)")]
+    T["digital twin + CUSUM (lab 20)"]
+    A["alarm rules: TEMP_HIGH, DRIFT_*, AUTH_REJECTS<br/>freeze + SHA-256 (lab 21)"]
+    M["local model (Ollama)<br/>explains only; reply checked"]
+    FL["fleet controller + registry (lab 18)"]
+    D["exports: dashboard.csv, metrics.txt"]
+  end
+  UI["Superset (CSV) | Prometheus -> Grafana<br/>(manual, pending)"]
+  S1 -- "radio group 17" --> R
+  EVE -. "radio" .-> R
+  FL -- "C / G / OK" --> CFG
+  CFG -- "K / A / R" --> FL
+  R -- "USB serial 115200" --> F --> V --> B --> DB
+  DB --> T --> A
+  V -- "reject counts" --> A
+  DB --> A
+  A -- "read-only copy" --> M
+  M -- "text only" --> A
+  DB --> D --> UI

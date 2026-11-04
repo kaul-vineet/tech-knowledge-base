@@ -1,0 +1,1220 @@
+[
+ {
+  "id": "input-modelling",
+  "number": 7,
+  "level": "L200",
+  "title": "Input modelling: fit service times and check the fit",
+  "phase": "Inputs",
+  "category": "input-modelling",
+  "description": "Fit exponential, normal and lognormal to 200 service times, rank them by KS distance and Q-Q points, and see what a wrong choice does to a queue.",
+  "outcome": "You can fit a distribution to data with MLE or method of moments, compute the KS statistic yourself, and show the cost of a wrong input distribution.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3 (stdlib statistics.NormalDist for normal CDF/quantiles); SciPy 1.18.1 in CI; optional Ollama for agent assist",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "Fit each candidate distribution to the data, measure how far it is from the data, and test what it changes in the model."
+  ],
+  "prerequisites": [
+   "Lessons 2, 3 and 6"
+  ],
+  "glossary": [
+   {
+    "term": "MLE",
+    "meaning": "Maximum likelihood estimate: parameters that make the data most probable."
+   },
+   {
+    "term": "method of moments",
+    "meaning": "Parameters chosen so model mean/variance equal the data's."
+   },
+   {
+    "term": "KS statistic D",
+    "meaning": "Largest gap between the empirical CDF and the fitted CDF."
+   }
+  ],
+  "concepts": [
+   "Fit with closed-form estimators.",
+   "Rank candidates by distance to the data.",
+   "Shape, not just mean, changes waits and tails."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python fit_inputs.py` reads service_times.csv (200 synthetic repair times, see make_data.py).",
+    "mac": "cd labs/L200/07-input-modelling\npython fit_inputs.py",
+    "windows": "cd labs\\L200\\07-input-modelling\npython fit_inputs.py",
+    "expected": "First line: n=200 mean=4.75 sd=3.46 cv=0.73 max=24.30 min.",
+    "ifNot": "Run from the lab folder so service_times.csv is found."
+   },
+   {
+    "title": "Read the fitted parameters",
+    "detail": "exponential: rate = 1/mean; normal: mean and sd; lognormal: mean and sd of log(data).",
+    "expected": "exponential rate=0.211; lognormal mu=1.344 sigma=0.655.",
+    "ifNot": "Check you use ddof=0 sd (MLE)."
+   },
+   {
+    "title": "Rank by KS distance",
+    "detail": "D = largest gap between data ECDF and fitted CDF, both sides of each step.",
+    "expected": "D: exponential 0.217, normal 0.132, lognormal 0.031; reference 1.36/sqrt(200) ~0.096.",
+    "ifNot": "D > 1 or < 0 means the CDF is wrong (check log for lognormal)."
+   },
+   {
+    "title": "Check the Q-Q points",
+    "detail": "Fitted vs data quantiles for the best fit at p = 0.10, 0.50, 0.90, 0.99.",
+    "expected": "0.10: 1.66 vs 1.75 ... 0.99: 17.59 vs 18.17 (close all the way into the tail).",
+    "ifNot": "Large gaps at 0.99 = wrong tail; try another family."
+   },
+   {
+    "title": "See the consequence",
+    "detail": "Same 85% load, each candidate as service time in a single-server queue.",
+    "expected": "Mean wait: exponential 26.38, normal 24.11, lognormal 20.48, resampled data 21.18 min.",
+    "ifNot": "Different numbers: check seed 7 in queue_waits()."
+   },
+   {
+    "title": "Run the tests (+ SciPy in CI)",
+    "detail": "`python -m unittest -v`; CI also runs `python fit_scipy.py`.",
+    "mac": "cd labs/L200/07-input-modelling\npython -m unittest -v",
+    "windows": "cd labs\\L200\\07-input-modelling\npython -m unittest -v",
+    "expected": "Ran 16 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the SciPy equivalence test (pending-ci)."
+   },
+   {
+    "title": "Agent assist (optional)",
+    "detail": "`python agent_assist.py --fake` (drop --fake to use local Ollama).",
+    "expected": "Agent proposes exponential; code decides lognormal (agent rank 3 of 3); 0.05 and 99 flagged UNVERIFIED.",
+    "ifNot": "No server: use --fake."
+   }
+  ],
+  "code": "\"\"\"L200 input modelling: fit candidate distributions to measured service times, check the fit, see why it matters.\n\nData: service_times.csv (200 bike-repair service times, minutes). Candidates: exponential, normal, lognormal.\npython fit_inputs.py\n\"\"\"\nimport csv\nfrom pathlib import Path\nfrom statistics import NormalDist\n\nimport numpy as np\n\nDATA = Path(__file__).with_name(\"service_times.csv\")\nZ = NormalDist()  # standard normal: cdf / inv_cdf from the stdlib, no SciPy needed\nphi, phi_inv = np.vectorize(Z.cdf), np.vectorize(Z.inv_cdf)\n\n\ndef load(path=DATA):\n    with path.open(encoding=\"utf-8\", newline=\"\") as f:  # explicit encoding: same result on Windows\n        return np.array([float(row[\"minutes\"]) for row in csv.DictReader(f)])\n\n\ndef fit_exponential(x):\n    rate = 1 / x.mean()  # MLE (and method of moments): rate = 1 / sample mean\n    return {\"name\": \"exponential\", \"params\": {\"rate\": rate},\n            \"cdf\": lambda v: 1 - np.exp(-rate * v), \"ppf\": lambda p: -np.log(1 - p) / rate,\n            \"sample\": lambda rng, n: rng.exponential(1 / rate, n)}\n\n\ndef fit_normal(x):\n    mu, sd = x.mean(), x.std()  # method of moments = MLE for the normal (ddof=0)\n    return {\"name\": \"normal\", \"params\": {\"mu\": mu, \"sigma\": sd},\n            \"cdf\": lambda v: phi((v - mu) / sd), \"ppf\": lambda p: mu + sd * phi_inv(p),\n            \"sample\": lambda rng, n: np.maximum(rng.normal(mu, sd, n), 0.0)}  # a time can't be negative: clip\n\n\ndef fit_lognormal(x):\n    mu, s = np.log(x).mean(), np.log(x).std()  # MLE: mean and sd of log(data)\n    return {\"name\": \"lognormal\", \"params\": {\"mu\": mu, \"sigma\": s},\n            \"cdf\": lambda v: phi((np.log(v) - mu) / s), \"ppf\": lambda p: np.exp(mu + s * phi_inv(p)),\n            \"sample\": lambda rng, n: rng.lognormal(mu, s, n)}\n\n\nFITTERS = [fit_exponential, fit_normal, fit_lognormal]\n\n\ndef ks_statistic(x, cdf):\n    \"\"\"Kolmogorov-Smirnov D: largest gap between the empirical CDF (steps of 1/n) and the fitted CDF.\"\"\"\n    x = np.sort(x)\n    n, F, i = len(x), cdf(x), np.arange(1, len(x) + 1)\n    return float(max((F - (i - 1) / n).max(), (i / n - F).max()))  # check BOTH sides of every step\n\n\ndef qq_points(x, ppf, probs=(0.10, 0.50, 0.90, 0.99)):\n    \"\"\"Q-Q data: fitted quantile vs data quantile at the same probability (on a straight line if the fit is good).\"\"\"\n    return [(p, float(ppf(np.array(p))), float(np.quantile(x, p))) for p in probs]\n\n\ndef queue_waits(sample, lam, n=200_000, seed=7):\n    \"\"\"Single-server queue fed by the fitted service distribution (Lindley rule), Poisson arrivals.\"\"\"\n    rng = np.random.default_rng(seed)\n    service, gaps = sample(rng, n).tolist(), rng.exponential(1 / lam, n).tolist()\n    w, out = 0.0, []\n    for s, a in zip(service, gaps):\n        out.append(w)\n        w = max(0.0, w + s - a)\n    return np.array(out[5_000:])  # drop warm-up (lesson 10)\n\n\ndef main():\n    x = load()\n    print(f\"data: n={len(x)} mean={x.mean():.2f} sd={x.std():.2f} cv={x.std() / x.mean():.2f} max={x.max():.2f} min\")\n    fits = [f(x) for f in FITTERS]\n    print(f\"{'candidate':12} {'parameters':28} KS D   (5% critical ~{1.36 / np.sqrt(len(x)):.3f} if params were known)\")\n    for fit in fits:\n        params = \" \".join(f\"{k}={v:.3f}\" for k, v in fit[\"params\"].items())\n        print(f\"{fit['name']:12} {params:28} {ks_statistic(x, fit['cdf']):.3f}\")\n    best = min(fits, key=lambda f: ks_statistic(x, f[\"cdf\"]))  # D ranks candidates; it is not a valid p-value here\n    qq = \"  \".join(f\"{p:.2f}: {q:.2f} vs {d:.2f}\" for p, q, d in qq_points(x, best[\"ppf\"]))\n    print(f\"smallest D: {best['name']} | Q-Q (p: fitted vs data):\", qq)\n    lam = 0.85 / x.mean()  # same 85% utilisation for every candidate: only the SHAPE differs\n    print(f\"queue at 85% load (lam={lam:.3f}/min): mean wait / p95 wait / P(service > 10 min)\")\n    resampled = {\"name\": \"data (resampled)\", \"sample\": lambda rng, n: rng.choice(x, n),  # reference: the data itself\n                 \"cdf\": lambda v: (x[:, None] <= v).mean(axis=0)}\n    for fit in fits + [resampled]:\n        w = queue_waits(fit[\"sample\"], lam)\n        tail = 1 - float(fit[\"cdf\"](np.array([10.0]))[0])\n        print(f\"  {fit['name']:16} {w.mean():6.2f} min / {np.quantile(w, 0.95):6.2f} min / {tail:.3f}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "fit_lognormal()",
+    "detail": "Closed-form MLE: mean and ddof=0 sd of log(data); cdf/ppf via statistics.NormalDist, so no SciPy."
+   },
+   {
+    "title": "ks_statistic()",
+    "detail": "Compare the fitted CDF with the ECDF just before ((i-1)/n) and after (i/n) each step; D is the largest gap (NIST)."
+   },
+   {
+    "title": "best = min(... ks_statistic ...)",
+    "detail": "D ranks the candidates; with fitted parameters 1.36/sqrt(n) is a reference, not a test."
+   },
+   {
+    "title": "queue_waits(fit['sample'], lam)",
+    "detail": "Same queue, same load, different input shape: differences in waits come from the input alone."
+   }
+  ],
+  "buildTask": {
+   "task": "Add a shifted-exponential candidate (minimum set-up time + exponential tail): fit, cdf, ppf, sample, and include it in FITTERS.",
+   "hints": [
+    "MLE: loc = min(data), rate = 1 / (mean - loc).",
+    "cdf must be 0 below loc: use np.where.",
+    "ppf(p) = loc - log(1 - p) / rate."
+   ],
+   "solution": "labs/L200/07-input-modelling/solution/shifted_exponential.py",
+   "check": "python -m unittest test_build_task -v  (Ran 4 tests ... OK; shifted exponential D=0.176 ranks between exponential 0.217 and lognormal 0.031)"
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L200/07-input-modelling/fit_inputs.py",
+    "purpose": "main lab code"
+   },
+   {
+    "path": "labs/L200/07-input-modelling/service_times.csv",
+    "purpose": "200 synthetic service times (minutes)"
+   },
+   {
+    "path": "labs/L200/07-input-modelling/make_data.py",
+    "purpose": "how the CSV was generated (seed 2026, lognormal)"
+   },
+   {
+    "path": "labs/L200/07-input-modelling/fit_scipy.py",
+    "purpose": "SciPy 1.18.1 equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L200/07-input-modelling/solution/shifted_exponential.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L200/07-input-modelling/agent_assist.py",
+    "purpose": "agent proposes a distribution; code decides and checks"
+   },
+   {
+    "path": "labs/L200/07-input-modelling/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "Lognormal has the smallest D (0.031)",
+   "Q-Q close up to p=0.99",
+   "Exponential input overstates the mean wait by ~25%"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 16 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "Lognormal-fed queue at 70% load",
+    "expected": "Within 5% of the Pollaczek-Khinchine formula"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "RuntimeWarning: log of zero",
+    "action": "Lognormal needs strictly positive data; remove zero timings."
+   },
+   {
+    "symptom": "Normal fit looks fine but waits are high",
+    "action": "Clipping negatives at 0 raises the mean; prefer a positive family."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Fit only the first 30 rows.",
+    "predict": "Can the KS distance still reject the normal?",
+    "expected": "n=30: exponential D=0.326, normal D=0.175, lognormal D=0.098 | 1.36/sqrt(30)=0.248"
+   },
+   {
+    "task": "Feed the exponential fit into the queue at 50%, 70%, 85% load.",
+    "predict": "Does the error shrink at low load?",
+    "expected": "load 0.50: exponential input   4.67 min vs data   3.65 min -> 1.28x | load 0.70: exponential input  10.84 min vs data   8.48 min -> 1.28x | load 0.85: exponential input  26.38 min vs data  21.18 min -> 1.25x"
+   }
+  ],
+  "equivalents": [
+   "SciPy: stats.lognorm.fit(x, floc=0) + stats.kstest(x, 'lognorm', args=...).",
+   "R fitdistrplus::fitdist + gofstat; Julia Distributions.fit_mle."
+  ],
+  "learningTools": [
+   {
+    "name": "Orange Data Mining 3.40.0",
+    "role": "SEE",
+    "exercise": "File widget -> labs/L200/07-input-modelling/service_times.csv; connect a Distributions widget on 'minutes' and overlay a fitted curve. Eyeball the shape before running fit_inputs.py.",
+    "expected": "A right-skewed histogram: n=200, mean 4.75, sd 3.46, max 24.30 min. A normal curve misses the long right tail. The lab's KS ranking then decides: lognormal D=0.031 < normal 0.132 < exponential 0.217. Pending a manual run; the widget's list of fitted curves was not re-verified.",
+    "mac": "Orange3-3.40.0-Python3.12.10-arm64.dmg from https://orangedatamining.com/download/ (or pip install PyQt6 PyQt6-WebEngine orange3)",
+    "windows": "winget install --id UniversityofLjubljana.Orange   # or Orange3-3.40.0-x86_64.exe",
+    "licence": "GPL-3.0-or-later (OSI: yes)",
+    "url": "https://orangedatamining.com/download/"
+   }
+  ],
+  "seeAlso": [
+   "microbit L200 #8 Data logging: logged sensor rows are measured input data - the kind of CSV this lesson fits distributions to before a model uses it."
+  ],
+  "inRealSystems": [
+   "Call-centre and clinic models fit handling times (often lognormal) from logged data before staffing runs.",
+   "Reliability teams fit lognormal/Weibull failure times (NIST handbook) for spares planning."
+  ],
+  "useWhen": "Use when a model input comes from measurements; resample the data instead if it is plentiful and tails do not matter.",
+  "caution": "The CSV is synthetic (true process lognormal), so the 'right' answer is known; real data can fit no family well. Agent assist: the model sees only summary statistics and the KS table, never decides, and gets no secrets.",
+  "checkpoint": "PASS: lognormal chosen with D 0.031; the shifted-exponential buildTask test passes.",
+  "checkYourself": [
+   {
+    "q": "Why is 1.36/sqrt(n) not a valid test here?",
+    "a": "Parameters were estimated from the same data; NIST says the critical region is then invalid."
+   },
+   {
+    "q": "Mean matches the data. Why is the exponential wait 25% too high?",
+    "a": "Mean wait grows with 1 + cv^2; exponential cv = 1 vs data 0.73."
+   }
+  ],
+  "sources": [
+   {
+    "title": "NIST/SEMATECH e-Handbook 1.3.5.16: Kolmogorov-Smirnov goodness-of-fit test",
+    "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda35g.htm"
+   },
+   {
+    "title": "NIST/SEMATECH e-Handbook 1.3.6.6.9: Lognormal distribution (MLE)",
+    "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda3669.htm"
+   },
+   {
+    "title": "NIST/SEMATECH e-Handbook 1.3.3.24: Quantile-quantile plot",
+    "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/qqplot.htm"
+   },
+   {
+    "title": "SciPy v1.18 manual: scipy.stats.kstest",
+    "url": "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.kstest.html"
+   },
+   {
+    "title": "SciPy v1.18 manual: scipy.stats.lognorm",
+    "url": "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.lognorm.html"
+   },
+   {
+    "title": "MIT 6.263 (Modiano), Lecture 8: M/G/1 queues, Pollaczek-Khinchin formula",
+    "url": "https://web.mit.edu/modiano/www/6.263/lec8.pdf"
+   },
+   {
+    "title": "Python docs: statistics (NormalDist)",
+    "url": "https://docs.python.org/3/library/statistics.html"
+   },
+   {
+    "title": "Ollama docs: OpenAI compatibility",
+    "url": "https://docs.ollama.com/api/openai-compatibility"
+   }
+  ],
+  "next": "L300 #13 Calibration: fit to data, validate on data you did not fit (from fitting input distributions to calibrating the whole model against measured output)",
+  "validation": {
+   "status": "validated-local",
+   "how": "fit_inputs.py, try_it.py, agent_assist.py --fake and unittests (Ran 16 tests ... OK (skipped=1)) ran locally on Python 3.12.15 + numpy 2.5.3; outputs pasted. fit_scipy.py and its equivalence test are pending-ci (SciPy not installed offline). Agent assist tested against the deterministic fake server only.",
+   "pendingCi": [
+    "labs/L200/07-input-modelling/fit_scipy.py",
+    "test_fit_inputs.py: test_scipy_gives_same_parameters_and_ks",
+    "agent_assist.py against a real local model (fake server only)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "agentAssist": {
+   "task": "A local model proposes which distribution fits from summary statistics and explains the KS table; code fits every candidate, decides by smallest D and checks quoted numbers.",
+   "prompt": "[[SIM-FIT]] Service times ...: {stats}. Which ONE of [exponential, lognormal, normal] fits best? Reply with ONE JSON object: {\"distribution\": ..., \"reason\": ...}. Then: explain this KS table ... quote only numbers in the table.",
+   "check": "validate_proposal(): name must be one of the fittable candidates (else rejected, nothing runs). The decision is the smallest KS D computed by code; the agent's pick is reported as agrees/overruled with its rank. check_numbers(): every quoted number must match a table D or a summary statistic to its shown decimals, else UNVERIFIED.",
+   "expected": "2. agent proposed: {\"distribution\": \"exponential\", \"reason\": \"cv is close to 1, so service times look memoryless\"}\n4. code decided: lognormal - the agent's pick (exponential) is overruled (rank 3 of 3); data cv is 0.73\n6. code checked 4 quoted numbers: 2 match; UNVERIFIED (treat as the model's guess): 0.05, 99",
+   "realModelNote": "`python agent_assist.py` uses LOCAL_MODEL_URL (default http://localhost:11434/v1) and LOCAL_MODEL (default qwen2.5:1.5b). Real replies vary; an unknown family is rejected. Not run here: no model in the sandbox."
+  },
+  "conceptNote": "content/concepts/L200/07-input-modelling.md",
+  "conceptSummary": "Fit candidate distributions with closed-form estimators, rank them by the KS distance and Q-Q points, then check what the choice does to the model. A wrong shape with the right mean still gives wrong waits and tails."
+ },
+ {
+  "id": "multi-server-queue",
+  "number": 8,
+  "level": "L200",
+  "title": "Resources and queues: c desks, one line, Erlang C",
+  "phase": "Event-driven",
+  "category": "discrete-event",
+  "description": "Clinic reception: 3 desks, one shared line, heapq event list; time-weighted Lq and utilisation checked against Erlang C; SimPy Resource in CI.",
+  "outcome": "You can model a pool of c identical servers, measure time-average statistics correctly, and size the pool with Erlang C.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3 (stdlib heapq, random); SimPy 4.1.2 in CI",
+  "estimatedTime": "40 minutes",
+  "overview": [
+   "A resource is c tokens: take one if free, else queue; on release hand it to the next in line."
+  ],
+  "prerequisites": [
+   "Lessons 3 and 6"
+  ],
+  "glossary": [
+   {
+    "term": "resource",
+    "meaning": "Pool of c identical servers (desks, workers, pumps)."
+   },
+   {
+    "term": "Erlang C",
+    "meaning": "P(an arrival must wait) in M/M/c."
+   },
+   {
+    "term": "offered load a",
+    "meaning": "lam/mu in Erlangs: servers' worth of work arriving."
+   }
+  ],
+  "concepts": [
+   "Acquire, queue, release-and-hand-over.",
+   "Time-weighted averages for Lq and utilisation.",
+   "Check against Erlang C, then size the pool."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python mmc_queue.py` (200,000 patients).",
+    "mac": "cd labs/L200/08-multi-server-queue\npython mmc_queue.py",
+    "windows": "cd labs\\L200\\08-multi-server-queue\npython mmc_queue.py",
+    "expected": "Header: M/M/3: lam=2.4/min, mu=1.0/min per desk, utilisation 80%.",
+    "ifNot": "Takes a few seconds."
+   },
+   {
+    "title": "Compare with Erlang C",
+    "detail": "Simulated vs formula for Wq, Lq, util, P_wait.",
+    "expected": "Wq 1.110 vs 1.079; P_wait 0.652 vs 0.647 (within ~3%).",
+    "ifNot": "Gap > 10%: check that a release hands the desk over (busy unchanged)."
+   },
+   {
+    "title": "Check the time averages",
+    "detail": "Lq and util are areas under step curves / total time. Little's law: Lq = lam * Wq.",
+    "expected": "Lq 2.665 = 2.4 x 1.110; util 0.803 vs 0.800.",
+    "ifNot": "Lq per event (not per time) breaks Little's law."
+   },
+   {
+    "title": "Size the desks",
+    "detail": "Erlang C table for c = 3..6.",
+    "expected": "c=4: P(wait)=0.287; c=5: 0.114 -> 5 desks keep P(wait) < 20%.",
+    "ifNot": "lam >= c*mu raises ValueError (unstable)."
+   },
+   {
+    "title": "SimPy version (CI)",
+    "detail": "`python simpy_mmc.py`: simpy.Resource(env, capacity=3).",
+    "expected": "Wq near 1.08, util near 0.80 (pending-ci).",
+    "ifNot": "ModuleNotFoundError locally is expected."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L200/08-multi-server-queue\npython -m unittest -v",
+    "windows": "cd labs\\L200\\08-multi-server-queue\npython -m unittest -v",
+    "expected": "Ran 11 tests ... OK (skipped=1)",
+    "ifNot": "The skip is SimPy (pending-ci)."
+   }
+  ],
+  "code": "\"\"\"L200 resources and queues: a clinic reception with c desks and ONE shared line, built on heapq.\n\nPoisson arrivals, exponential service -> M/M/c, so the Erlang C formula checks the simulation.\npython mmc_queue.py\n\"\"\"\nimport heapq\nimport itertools\nimport math\nimport random\nfrom collections import deque\n\nLAM, MU, C = 2.4, 1.0, 3  # 2.4 patients/min, each desk serves 1.0/min, 3 desks -> utilisation 80%\n\n\ndef simulate(n_customers, c=C, lam=LAM, mu=MU, seed=1):\n    rng = random.Random(seed)\n    events, seq = [], itertools.count()  # event list (min-heap); seq keeps equal times FIFO\n    heapq.heappush(events, (rng.expovariate(lam), next(seq), \"arrive\", 0))\n    busy, line, waits = 0, deque(), []\n    area_line = area_busy = last = 0.0  # time-weighted integrals -> time-average queue length and utilisation\n    while events:\n        t, _, kind, cust = heapq.heappop(events)\n        area_line += len(line) * (t - last)  # the line had len(line) people since the last event\n        area_busy += busy * (t - last)\n        last = t\n        if kind == \"arrive\":\n            if cust + 1 < n_customers:\n                heapq.heappush(events, (t + rng.expovariate(lam), next(seq), \"arrive\", cust + 1))\n            if busy < c:  # a desk is free: the resource is acquired immediately\n                busy += 1\n                waits.append(0.0)\n                heapq.heappush(events, (t + rng.expovariate(mu), next(seq), \"depart\", cust))\n            else:\n                line.append(t)  # all c desks busy: join the shared FIFO line\n        elif line:  # a desk is released and handed straight to the next in line\n            waits.append(t - line.popleft())\n            heapq.heappush(events, (t + rng.expovariate(mu), next(seq), \"depart\", None))\n        else:\n            busy -= 1\n    return {\"Wq\": sum(waits) / len(waits), \"Lq\": area_line / last, \"util\": area_busy / (c * last),\n            \"P_wait\": sum(w > 0 for w in waits) / len(waits)}\n\n\ndef erlang_c(c=C, lam=LAM, mu=MU):\n    a = lam / mu  # offered load in Erlangs\n    rho = a / c\n    if rho >= 1:\n        raise ValueError(\"unstable: lam >= c * mu, the line grows forever\")\n    top = a ** c / math.factorial(c) / (1 - rho)\n    p_wait = top / (sum(a ** k / math.factorial(k) for k in range(c)) + top)  # Erlang C: P(an arrival waits)\n    wq = p_wait / (c * mu - lam)\n    return {\"Wq\": wq, \"Lq\": lam * wq, \"util\": rho, \"P_wait\": p_wait}  # Lq = lam * Wq (Little's law)\n\n\ndef main():\n    sim, exact = simulate(200_000), erlang_c()\n    print(f\"M/M/{C}: lam={LAM}/min, mu={MU}/min per desk, utilisation {LAM / (C * MU):.0%}\")\n    print(f\"{'metric':8} {'simulated':>10} {'Erlang C':>10}\")\n    for key in (\"Wq\", \"Lq\", \"util\", \"P_wait\"):\n        print(f\"{key:8} {sim[key]:10.3f} {exact[key]:10.3f}\")\n    print(\"desks needed so that P(wait) < 20%:\")\n    for c in range(3, 7):\n        print(f\"  c={c}: P(wait)={erlang_c(c)['P_wait']:.3f}  Wq={erlang_c(c)['Wq']:.3f} min\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "area_line += len(line) * (t - last)",
+    "detail": "Time-weighted integral: divided by the end time it gives the time-average Lq (same for busy desks -> utilisation)."
+   },
+   {
+    "title": "if busy < c: ... else: line.append(t)",
+    "detail": "Acquire a free desk or join the one shared FIFO line, remembering the arrival time."
+   },
+   {
+    "title": "elif line: waits.append(t - line.popleft())",
+    "detail": "Release hands the desk to the next in line: busy is unchanged."
+   },
+   {
+    "title": "erlang_c()",
+    "detail": "P(wait) from a = lam/mu and rho = a/c; Wq = P(wait)/(c mu - lam); Lq by Little's law."
+   }
+  ],
+  "buildTask": {
+   "task": "Add a waiting-room limit max_queue: arrivals that find max_queue people in line leave and are counted as blocked. max_queue=0 must reproduce Erlang B.",
+   "hints": [
+    "Check the limit only when all desks are busy.",
+    "Return blocked / n_customers in the result dict.",
+    "Erlang B recursion: B = a*B / (k + a*B) for k = 1..c."
+   ],
+   "solution": "labs/L200/08-multi-server-queue/solution/mmc_capacity.py",
+   "check": "python -m unittest test_build_task -v  (Ran 3 tests ... OK; max_queue=0 blocks 0.269 vs Erlang B 0.268)"
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L200/08-multi-server-queue/mmc_queue.py",
+    "purpose": "main lab code"
+   },
+   {
+    "path": "labs/L200/08-multi-server-queue/simpy_mmc.py",
+    "purpose": "SimPy 4.1.2 Resource equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L200/08-multi-server-queue/solution/mmc_capacity.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L200/08-multi-server-queue/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "Simulation within ~3% of Erlang C",
+   "Little's law holds for the simulated Lq",
+   "5 desks for P(wait) < 20%"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 11 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "erlang_c(3, 30, 12)",
+    "expected": "P(wait) = 0.702 (NPTEL lecture example)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Utilisation above 1",
+    "action": "busy was incremented on hand-over; keep it unchanged."
+   },
+   {
+    "symptom": "ValueError: unstable",
+    "action": "lam >= c * mu: add desks or lower lam."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Give each desk its own line (3 x M/M/1, lam/3 each).",
+    "predict": "Same capacity, same wait?",
+    "expected": "3 separate lines: Wq=3.87 min | 1 shared line, 3 desks: Wq=1.11 min | formula 4.00 vs 1.08"
+   },
+   {
+    "task": "Add 10% more patients (lam 2.4 -> 2.64).",
+    "predict": "Wq +10%?",
+    "expected": "lam=2.4: utilisation 80%, simulated Wq=1.11 min, Erlang C Wq=1.08 min | lam=2.64: utilisation 88%, simulated Wq=2.30 min, Erlang C Wq=2.17 min"
+   }
+  ],
+  "equivalents": [
+   "SimPy 4.1.2: simpy.Resource(env, capacity=c); PriorityResource for priorities.",
+   "R simmer / Julia ConcurrentSim: same resource-and-process style."
+  ],
+  "learningTools": [
+   {
+    "name": "JaamSim 2026-07",
+    "role": "BUILD WITHOUT CODE",
+    "exercise": "Open the 'Shared vs Unshared Queue' example. Set 3 servers, exponential inter-arrival mean 0.4167 min (lam 2.4/min) and exponential service mean 1.0 min; compare one shared line with three separate lines.",
+    "expected": "Shared line: mean wait near Erlang C 1.079 min (lab simulation 1.110). Three separate lines: much longer, near the lab's 3.87 min (formula 4.00, try_it.py). Pending a manual run.",
+    "mac": "java -jar JaamSim2026-07.jar   # Universal JAR from the releases page; Java 17+, OpenGL 2.1+; no native Mac build (partial)",
+    "windows": "Run the self-contained JaamSim2026-07.exe from https://jaamsim.com/downloads.html",
+    "licence": "Apache-2.0 (OSI: yes)",
+    "url": "https://github.com/jaamsim/jaamsim/releases"
+   },
+   {
+    "name": "SimPy 4.1.2",
+    "role": "CHECK",
+    "exercise": "Run `python simpy_mmc.py`: simpy.Resource(capacity=3) with lam 2.4, mu 1.0. Compare Wq and utilisation with mmc_queue.py and Erlang C.",
+    "expected": "Should match Erlang C Wq 1.079 within 6% and utilisation 0.800 within 0.01 (test_simpy_matches_erlang_c); the lab's heapq simulation gave 1.110 / 0.803. Pending-ci: SimPy is not installed here.",
+    "mac": "pip install simpy   # pinned as simpy==4.1.2 in labs/L100/01-setup-workbench/requirements.txt",
+    "windows": "pip install simpy   # same pin",
+    "licence": "MIT (OSI: yes)",
+    "url": "https://pypi.org/project/simpy/"
+   }
+  ],
+  "inRealSystems": [
+   "Contact centres staff agents per interval with Erlang C and simulation for abandonment.",
+   "Worker pools (web servers, build agents) are c-server queues; pooling one shared queue beats per-worker queues."
+  ],
+  "useWhen": "Use for any pool of identical servers sharing work; switch to simulation when arrivals vary or customers abandon.",
+  "caution": "Erlang C assumes Poisson arrivals, exponential service, no abandonment and steady state; real receptions have peaks.",
+  "checkpoint": "PASS: simulated Wq within 6% of 1.079; buildTask test passes.",
+  "checkYourself": [
+   {
+    "q": "Utilisation 80% with 3 desks. Why do 65% of patients wait?",
+    "a": "All three must be busy at once; that happens often near 80% load (Erlang C 0.647)."
+   },
+   {
+    "q": "Why is pooling better than three lines?",
+    "a": "No desk sits idle while another line has people; Wq 1.11 vs 3.87 min."
+   }
+  ],
+  "sources": [
+   {
+    "title": "NPTEL Introduction to Queueing Theory (IIT Guwahati, Prof. N. Selvaraju), Lec 15: M/M/c Queues, Erlang Delay Formula",
+    "url": "https://nptel.ac.in/courses/111103159"
+   },
+   {
+    "title": "SimPy docs: Shared Resources (Resource, Container, Store)",
+    "url": "https://simpy.readthedocs.io/en/latest/topical_guides/resources.html"
+   },
+   {
+    "title": "Python docs: heapq",
+    "url": "https://docs.python.org/3/library/heapq.html"
+   }
+  ],
+  "next": "L300 #16 Performance and scale: vectorise, parallelise, keep streams independent (the same queue, replicated fast and with independent streams; abandonment and staffing under an SLA follow in Capstone #22; priorities remain an L400 candidate)",
+  "validation": {
+   "status": "validated-local",
+   "how": "mmc_queue.py, try_it.py, solution/mmc_capacity.py and unittests (Ran 11 tests ... OK (skipped=1)) ran locally on Python 3.12.15; outputs pasted. Erlang C checked against the NPTEL worked example (0.702). simpy_mmc.py follows the SimPy 4.1.2 Resource docs but is pending-ci.",
+   "pendingCi": [
+    "labs/L200/08-multi-server-queue/simpy_mmc.py",
+    "test_mmc_queue.py: test_simpy_matches_erlang_c"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L200/08-multi-server-queue.md",
+  "conceptSummary": "A resource is a pool of c servers: acquire or queue, and hand over on release. Time-weighted averages give queue length and utilisation, and Erlang C checks the model before you use it to size the pool."
+ },
+ {
+  "id": "adaptive-ode",
+  "number": 9,
+  "level": "L200",
+  "title": "ODE solvers in practice: adaptive steps, tolerances, stiffness",
+  "phase": "Continuous",
+  "category": "time-stepped",
+  "description": "Compact Dormand-Prince RK45 with error control on coffee cooling, rabbits and foxes, and a stiff RC filter where an implicit method wins; SciPy solve_ivp in CI.",
+  "outcome": "You can explain what rtol/atol control, read step statistics, and recognise a stiff problem.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; SciPy 1.18.1 solve_ivp in CI",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "Take a step, estimate its error from an embedded lower-order answer, accept or retry, and size the next step from the error."
+  ],
+  "prerequisites": [
+   "Lesson 4"
+  ],
+  "glossary": [
+   {
+    "term": "embedded pair",
+    "meaning": "Two RK formulas sharing stages; their difference estimates the error."
+   },
+   {
+    "term": "rtol / atol",
+    "meaning": "Allowed error = atol + rtol * |y| per component."
+   },
+   {
+    "term": "stiff",
+    "meaning": "A fast-decaying mode forces tiny explicit steps though the solution is smooth."
+   }
+  ],
+  "concepts": [
+   "Error estimate drives step size.",
+   "Tolerance trades steps for accuracy.",
+   "Stiffness: stability, not accuracy, limits explicit steps."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python adaptive_ode.py`",
+    "mac": "cd labs/L200/09-adaptive-ode\npython adaptive_ode.py",
+    "windows": "cd labs\\L200\\09-adaptive-ode\npython adaptive_ode.py",
+    "expected": "Three sections: coffee, rabbits/foxes, stiff RC filter.",
+    "ifNot": "Needs numpy only."
+   },
+   {
+    "title": "Tolerances (coffee)",
+    "detail": "rtol 1e-3, 1e-6, 1e-9 against the exact 35.619111 C at 30 min.",
+    "expected": "5, 9, 26 steps; error 1.3e-02, 8.2e-06, 7.9e-09 C.",
+    "ifNot": "Error not falling: check the scale uses atol + rtol*|y|."
+   },
+   {
+    "title": "Adaptive steps (rabbits/foxes)",
+    "detail": "Where does the solver take its smallest and largest steps?",
+    "expected": "204 steps; smallest 0.0316 at t=12.72 (rabbit boom), largest 0.1852 at t=7.40 (foxes 0.02).",
+    "ifNot": "Step 0 is our initial guess; it is skipped."
+   },
+   {
+    "title": "Stiffness (RC filter, tau = 1 ms)",
+    "detail": "Explicit RK45 at two tolerances vs implicit backward Euler with dt = 10 ms.",
+    "expected": "RK45 3027 and 3586 steps; backward Euler 1000 steps; all -0.83961.",
+    "ifNot": "Step counts barely change with rtol: that is the sign of stiffness."
+   },
+   {
+    "title": "SciPy version (CI)",
+    "detail": "`python ode_scipy.py`: RK45 vs Radau, BDF, LSODA on the RC filter + a terminal event.",
+    "expected": "Implicit methods need far fewer f-evaluations (pending-ci).",
+    "ifNot": "ModuleNotFoundError locally is expected."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L200/09-adaptive-ode\npython -m unittest -v",
+    "windows": "cd labs\\L200\\09-adaptive-ode\npython -m unittest -v",
+    "expected": "Ran 11 tests ... OK (skipped=2)",
+    "ifNot": "The skips are SciPy (pending-ci)."
+   }
+  ],
+  "code": "\"\"\"L200 ODE solvers: an adaptive Dormand-Prince RK45 (SciPy's default) on coffee cooling (tolerances),\nrabbits and foxes (adaptive steps) and a stiff 1 ms RC filter (stability limits the step).\npython adaptive_ode.py\n\"\"\"\nimport numpy as np\n\nC = [0, 1/5, 3/10, 4/5, 8/9, 1]  # Dormand-Prince tableau, written as in scipy/integrate/_ivp/rk.py\nA = [[], [1/5], [3/40, 9/40], [44/45, -56/15, 32/9], [19372/6561, -25360/2187, 64448/6561, -212/729],\n     [9017/3168, -355/33, 46732/5247, 49/176, -5103/18656]]\nB = [35/384, 0, 500/1113, 125/192, -2187/6784, 11/84]  # 5th-order weights: the step we keep\nE = [-71/57600, 0, 71/16695, -71/1920, 17253/339200, -22/525, 1/40]  # 5th minus embedded 4th order\n\n\ndef dp_step(f, t, y, h):\n    k = [f(t, y)]\n    for c, a in zip(C[1:], A[1:]):\n        k.append(f(t + c * h, y + h * sum(ai * ki for ai, ki in zip(a, k))))\n    y_new = y + h * sum(b * ki for b, ki in zip(B, k))\n    k.append(f(t + h, y_new))\n    return y_new, h * sum(e * ki for e, ki in zip(E, k))  # error estimate comes almost for free\n\n\ndef solve(f, t0, y0, t_end, rtol=1e-6, atol=1e-9, h=0.01):\n    t, y = t0, np.asarray(y0, dtype=float)\n    ts, ys, rejected = [t], [y], 0\n    while t < t_end:\n        h = min(h, t_end - t)\n        y_new, err = dp_step(f, t, y, h)\n        scale = atol + rtol * np.maximum(np.abs(y), np.abs(y_new))  # tolerance per component\n        e = float(np.sqrt(np.mean((err / scale) ** 2)))  # error relative to tolerance (RMS, like SciPy)\n        if e <= 1:  # accept the step\n            t, y = t + h, y_new\n            ts.append(t)\n            ys.append(y)\n        else:\n            rejected += 1  # reject: retry the same step with a smaller h\n        h *= min(10.0, max(0.2, 0.9 * e ** -0.2)) if e > 0 else 10.0  # error ~ h^5 -> next h\n    return np.array(ts), np.array(ys), rejected\n\n\ndef coffee(t, y, k=0.05, room=20.0):\n    return -k * (y - room)  # Newton cooling, k per minute\n\n\ndef lotka_volterra(t, z, a=1.5, b=1.0, c=3.0, d=1.0):\n    x, y = z\n    return np.array([a * x - b * x * y, -c * y + d * x * y])  # rabbits grow, foxes eat rabbits\n\n\ndef rc_filter(t, v, tau=1e-3):\n    return (np.cos(t) - v) / tau  # capacitor voltage chases a slow 1 rad/s input with a 1 ms time constant\n\n\ndef main():\n    exact = 20 + 70 * np.exp(-0.05 * 30)\n    print(\"1. coffee 90 C -> 30 min, room 20 C (exact {:.6f} C)\".format(exact))\n    for rtol in (1e-3, 1e-6, 1e-9):\n        ts, ys, rej = solve(coffee, 0, [90.0], 30, rtol=rtol, atol=1e-12)\n        print(f\"   rtol={rtol:.0e}: {len(ts) - 1:3d} steps, {rej} rejected, error {abs(ys[-1, 0] - exact):.1e} C\")\n    ts, ys, rej = solve(lotka_volterra, 0, [10.0, 5.0], 15, rtol=1e-6)\n    h = np.diff(ts)\n    lo, hi = np.argmin(h[1:]) + 1, np.argmax(h)  # skip step 0: its size is our initial guess, not the solver's choice\n    v = lambda z: z[0] - 3 * np.log(z[0]) + z[1] - 1.5 * np.log(z[1])  # conserved quantity: should not drift\n    print(f\"2. rabbits/foxes 0-15: {len(h)} steps, invariant drift {abs(v(ys[-1]) - v(ys[0])):.1e}\")\n    for name, i in ((\"smallest\", lo), (\"largest\", hi)):\n        print(f\"   {name} step {h[i]:.4f} at t={ts[i]:5.2f}: rabbits {ys[i, 0]:5.2f}, foxes {ys[i, 1]:5.2f}\")\n    tau = 1e-3\n    exact = (np.cos(10) + tau * np.sin(10)) / (1 + tau ** 2)  # closed form once the 1 ms start-up transient is gone\n    print(f\"3. stiff RC filter (tau = 1 ms), 0-10 s, exact v(10)={exact:.5f}:\")\n    for rtol in (1e-3, 1e-6):\n        ts, ys, rej = solve(rc_filter, 0, [0.0], 10, rtol=rtol, atol=1e-9)\n        print(f\"   explicit RK45 rtol={rtol:.0e}: {len(ts) - 1:5d} steps ({rej:3d} rejected), v(10)={ys[-1, 0]:.5f}\")\n    v, dt = 0.0, 0.01\n    for n in range(1, 1001):  # backward (implicit) Euler: v_new = v + dt * (cos(t_new) - v_new) / tau, solved for v_new\n        v = (v + dt / tau * np.cos(n * dt)) / (1 + dt / tau)\n    print(f\"   implicit backward Euler dt=0.01: 1000 steps, v(10)={v:.5f}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "C, A, B, E tableau",
+    "detail": "Dormand-Prince coefficients as in SciPy's rk.py; E (5th minus 4th order weights) gives the error estimate."
+   },
+   {
+    "title": "scale = atol + rtol * max(|y|, |y_new|)",
+    "detail": "Allowed error per component; e is the RMS of error/scale, so e <= 1 means within tolerance."
+   },
+   {
+    "title": "h *= min(10, max(0.2, 0.9 * e ** -0.2))",
+    "detail": "Error ~ h^5: aim the next step at e ~ 1 with safety 0.9, limits x0.2..x10 (SciPy's)."
+   },
+   {
+    "title": "backward Euler loop",
+    "detail": "Implicit step solved exactly (linear ODE): stable at dt = 10 tau."
+   }
+  ],
+  "buildTask": {
+   "task": "Add event detection: solve_until(f, t0, y0, t_end, event) stops where event(t, y) changes sign (coffee reaches 60 C) and returns (t_event, y_event).",
+   "hints": [
+    "After each accepted step compare the sign of event at both ends.",
+    "Bisect the step size from the start of that step until the bracket is < 1e-10.",
+    "Return (None, y) if no sign change before t_end."
+   ],
+   "solution": "labs/L200/09-adaptive-ode/solution/ode_events.py",
+   "check": "python -m unittest test_build_task -v  (Ran 3 tests ... OK; 60 C at t=11.192316 min = ln(70/40)/0.05)"
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L200/09-adaptive-ode/adaptive_ode.py",
+    "purpose": "main lab code"
+   },
+   {
+    "path": "labs/L200/09-adaptive-ode/ode_scipy.py",
+    "purpose": "SciPy 1.18.1 solve_ivp equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L200/09-adaptive-ode/solution/ode_events.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L200/09-adaptive-ode/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "Error falls with rtol; steps rise",
+   "Small steps during the rabbit boom",
+   "Stiff RC: ~3,000 explicit steps at any tolerance"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 11 tests ... OK (skipped=2)"
+   },
+   {
+    "action": "One step of y'=y at h=0.2 vs 0.1",
+    "expected": "Error ratio > 40 (5th order: ~64)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Solver crawls, millions of steps",
+    "action": "Probably stiff: use an implicit method (Radau/BDF)."
+   },
+   {
+    "symptom": "Tolerance tightened, answer unchanged but wrong",
+    "action": "atol too large for small components."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Rabbits/foxes at rtol 1e-3, 1e-6, 1e-9.",
+    "predict": "How far does the conserved quantity drift?",
+    "expected": "rabbits/foxes rtol=1e-03:   55 steps, invariant drift 1.4e-01 | rabbits/foxes rtol=1e-06:  204 steps, invariant drift 2.6e-05 | rabbits/foxes rtol=1e-09:  639 steps, invariant drift 3.1e-08"
+   },
+   {
+    "task": "Make the RC filter 10x stiffer (tau 0.1 ms).",
+    "predict": "Explicit step count?",
+    "expected": "RC tau=1e-03 s: explicit RK45   3027 steps, v(10)=-0.83987 | RC tau=1e-04 s: explicit RK45  30226 steps, v(10)=-0.83929"
+   }
+  ],
+  "equivalents": [
+   "SciPy: solve_ivp(method='RK45' | 'Radau' | 'BDF' | 'LSODA', rtol=, atol=, events=).",
+   "Julia DifferentialEquations.jl: Tsit5() non-stiff, Rodas5() / FBDF() stiff."
+  ],
+  "learningTools": [
+   {
+    "name": "Scilab 2027.0.0 + Xcos",
+    "role": "BUILD WITHOUT CODE",
+    "exercise": "Build coffee cooling dT/dt = -0.05 (T - 20), T(0) = 90 C from a sum, a gain and an integrator block; simulate 30 min with a loose and a tight solver tolerance.",
+    "expected": "T(30) should approach the exact 35.619111 C; adaptive_ode.py's RK45 error was 1.3e-2 C at rtol 1e-3 and 7.9e-9 C at rtol 1e-9. Xcos solver and tolerance settings were not checked. Pending a manual run.",
+    "mac": "Native macOS ARM64 .dmg from https://www.scilab.org/download, then type xcos in the Scilab console",
+    "windows": "64-bit Windows .exe from https://www.scilab.org/download, then type xcos in the Scilab console",
+    "licence": "GPL-2.0 (OSI: yes)",
+    "url": "https://www.scilab.org/software/xcos"
+   },
+   {
+    "name": "OpenModelica 1.27.1 (OMEdit)",
+    "role": "CHECK",
+    "exercise": "In OMEdit write the stiff RC filter: parameter Real tau = 1e-3; Real v(start = 0); equation der(v) = (cos(time) - v) / tau; simulate 0-10 s with DASSL, then GBODE, at two tolerances.",
+    "expected": "v(10) should be -0.83961 (exact; the lab's backward Euler and RK45 at rtol 1e-6 agree). Compare the solver's step statistics with the lab: explicit RK45 needed 3,027 steps, implicit backward Euler 1,000. Best on the Windows PC. Pending a manual run.",
+    "mac": "No native Mac build since 1.16: official Linux Docker image + XQuartz (https://openmodelica.org/download/download-mac/); easier on the Windows PC",
+    "windows": "Official installer from https://openmodelica.org/download/download-windows/, then open OMEdit",
+    "licence": "OSMC-PL 1.8, public use under AGPL-3.0 (OSI: yes)",
+    "url": "https://github.com/OpenModelica/OpenModelica/releases"
+   }
+  ],
+  "inRealSystems": [
+   "Circuit simulators (SPICE family) and chemical-kinetics codes use implicit stiff solvers.",
+   "Modelica/FMI tools let you pick the solver and tolerances per model."
+  ],
+  "useWhen": "Use an adaptive explicit solver first; switch to implicit when step counts explode regardless of tolerance.",
+  "caution": "A tolerance bounds the local error per step, not the global error; check against an exact case or invariant.",
+  "checkpoint": "PASS: errors fall with rtol, stiff RC needs > 2,000 explicit steps; event buildTask test passes.",
+  "checkYourself": [
+   {
+    "q": "rtol 1e-3 -> 1e-6 barely changes the RC step count. Why?",
+    "a": "Stability (h ~ 3 tau) limits the step, not accuracy: stiffness."
+   },
+   {
+    "q": "Why is the error estimate nearly free?",
+    "a": "The 4th-order answer reuses the 5th-order stages."
+   }
+  ],
+  "sources": [
+   {
+    "title": "SciPy source: scipy/integrate/_ivp/rk.py (RK45 Dormand-Prince tableau, step control)",
+    "url": "https://github.com/scipy/scipy/blob/main/scipy/integrate/_ivp/rk.py"
+   },
+   {
+    "title": "SciPy v1.18 manual: solve_ivp",
+    "url": "https://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.solve_ivp.html"
+   },
+   {
+    "title": "Wikipedia: Dormand-Prince method",
+    "url": "https://en.wikipedia.org/wiki/Dormand%E2%80%93Prince_method"
+   },
+   {
+    "title": "Python Numerical Methods (UC Berkeley), 22.4 Numerical Error and Instability",
+    "url": "https://pythonnumericalmethods.berkeley.edu/notebooks/chapter22.04-Numerical-Error-and-Instability.html"
+   }
+  ],
+  "next": "L300 #15 Co-simulation with FMI: master algorithm and communication step (solver steps inside each unit, communication steps between units)",
+  "validation": {
+   "status": "validated-local",
+   "how": "adaptive_ode.py, try_it.py, solution/ode_events.py and unittests (Ran 11 tests ... OK (skipped=2)) ran locally on Python 3.12.15 + numpy 2.5.3; outputs pasted. Tableau copied from SciPy's rk.py and checked by row-sum and order tests. ode_scipy.py and its two tests are pending-ci.",
+   "pendingCi": [
+    "labs/L200/09-adaptive-ode/ode_scipy.py",
+    "test_adaptive_ode.py: 2 SciPy tests (incl. test_event_time_matches_exact)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L200/09-adaptive-ode.md",
+  "conceptSummary": "An embedded Runge-Kutta pair estimates each step's error, so the solver grows or shrinks its steps to meet rtol/atol. On stiff problems stability, not accuracy, caps explicit steps, and an implicit method is the fix."
+ },
+ {
+  "id": "warmup-replications",
+  "number": 10,
+  "level": "L200",
+  "title": "Warm-up, replications and confidence",
+  "phase": "Trust",
+  "category": "output-analysis",
+  "description": "Help desk opening with a 30-ticket backlog: Welch's method proposes a warm-up, deletion removes the bias, replications give a CI that shrinks like 1/sqrt(n).",
+  "outcome": "You can find and delete a warm-up period and report a steady-state estimate with an honest confidence interval.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3 (stdlib random, statistics); SciPy 1.18.1 t-quantile check in CI",
+  "estimatedTime": "40 minutes",
+  "overview": [
+   "Start state != steady state: delete the warm-up, then treat each replication's mean as one independent observation."
+  ],
+  "prerequisites": [
+   "Lessons 2 and 6"
+  ],
+  "glossary": [
+   {
+    "term": "initial bias",
+    "meaning": "Early outputs reflect the chosen start state, not steady state."
+   },
+   {
+    "term": "Welch's method",
+    "meaning": "Moving average of the across-replication mean; warm-up where it flattens."
+   },
+   {
+    "term": "replication/deletion",
+    "meaning": "n independent runs, first d observations dropped from each."
+   }
+  ],
+  "concepts": [
+   "Find the warm-up from many replications.",
+   "Delete it from every run.",
+   "CI from replication means; width ~ 1/sqrt(n)."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python warmup.py` (M/M/1 at 80% load, true mean wait 4.0 min, 30 tickets at start).",
+    "mac": "cd labs/L200/10-warmup-replications\npython warmup.py",
+    "windows": "cd labs\\L200\\10-warmup-replications\npython warmup.py",
+    "expected": "Three sections; takes a few seconds.",
+    "ifNot": "Needs numpy only."
+   },
+   {
+    "title": "Welch's curve",
+    "detail": "20 replications x 5,000 customers, window 50; code proposes the first point inside a 5% band around the second-half level.",
+    "expected": "0: 29.19  100: 8.69  200: 3.39 ... code proposes warm-up = 169.",
+    "ifNot": "Different numbers: check seeds 1-20."
+   },
+   {
+    "title": "Initial bias",
+    "detail": "40 short runs of 1,000 customers, with and without deleting 169.",
+    "expected": "No deletion 5.59 +/- 0.61 (misses 4.0); deleted 3.71 +/- 0.53 (covers 4.0).",
+    "ifNot": "Delete from each run, not from the pooled data."
+   },
+   {
+    "title": "Replications and CI width",
+    "detail": "n = 10, 20, 40, 80 replications of 5,000 customers.",
+    "expected": "Half-width 0.50 -> 0.31 -> 0.25 -> 0.16; half-width x sqrt(n) stays ~1.4-1.6.",
+    "ifNot": "Width not shrinking: replications share a seed."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L200/10-warmup-replications\npython -m unittest -v",
+    "windows": "cd labs\\L200\\10-warmup-replications\npython -m unittest -v",
+    "expected": "Ran 10 tests ... OK (skipped=1)",
+    "ifNot": "The skip compares t975() with scipy.stats.t.ppf (pending-ci)."
+   }
+  ],
+  "code": "\"\"\"L200 warm-up, replications and confidence: an IT help desk opens on Monday with 30 weekend tickets waiting.\n\nQuestion: long-run mean wait at 80% load (M/M/1: 4.0 min). The backlog biases early waits HIGH: find it, delete it.\npython warmup.py\n\"\"\"\nimport math\nimport random\nfrom statistics import NormalDist\n\nimport numpy as np\n\nLAM, MU, BACKLOG = 0.8, 1.0, 30\nTRUE_WQ = LAM / (MU * (MU - LAM))  # 4.0 min\n\n\ndef waits(m, seed, lam=LAM, mu=MU, backlog=BACKLOG):\n    rng = random.Random(seed)  # one independent stream per replication\n    w = sum(rng.expovariate(mu) for _ in range(backlog))  # first arrival waits for the whole backlog\n    out = np.empty(m)\n    for i in range(m):\n        out[i] = w\n        w = max(0.0, w + rng.expovariate(mu) - rng.expovariate(lam))  # Lindley rule (lesson 6)\n    return out\n\n\ndef welch(runs, window):\n    \"\"\"Welch's moving average of the across-replication mean (Currie & Cheng, WSC 2016, section 3.1.1).\"\"\"\n    ybar = runs.mean(axis=0)  # average over replications at each customer index\n    out = [ybar[:2 * t + 1].mean() for t in range(window)]  # short symmetric windows at the start\n    csum = np.concatenate(([0.0], np.cumsum(ybar)))\n    out += [(csum[t + window + 1] - csum[t - window]) / (2 * window + 1) for t in range(window, len(ybar) - window)]\n    return np.array(out)\n\n\ndef warmup_point(smooth, tol=0.05):\n    \"\"\"Code PROPOSES a warm-up: first index where the curve enters a +/-5% band around its second-half level.\"\"\"\n    level = smooth[len(smooth) // 2:].mean()\n    return int(np.nonzero(np.abs(smooth - level) <= tol * level)[0][0]), float(level)  # still look at the curve\n\n\ndef t975(df):\n    z = NormalDist().inv_cdf(0.975)  # Cornish-Fisher expansion of the t quantile; within 0.005 of tables for df >= 9\n    return z + (z ** 3 + z) / (4 * df) + (5 * z ** 5 + 16 * z ** 3 + 3 * z) / (96 * df ** 2)\n\n\ndef ci(means):\n    n = len(means)  # one mean per independent replication -> the t-interval is valid\n    return float(np.mean(means)), t975(n - 1) * float(np.std(means, ddof=1)) / math.sqrt(n)\n\n\ndef main():\n    runs = np.array([waits(5_000, seed) for seed in range(1, 21)])\n    smooth = welch(runs, window=50)\n    d, level = warmup_point(smooth)\n    print(\"1. Welch: 20 replications x 5,000 customers, window 50. Moving average at customer:\")\n    print(\"   \" + \"  \".join(f\"{i}: {smooth[i]:.2f}\" for i in (0, 50, 100, 150, 200, 500, 2000, 4000)))\n    print(f\"   code proposes warm-up = {d} customers (enters 5% band around level {level:.2f})\")\n    short = [waits(1_000, seed) for seed in range(101, 141)]  # 40 short runs: the warm-up is a big share of each\n    for cut in (0, d):\n        m, h = ci([r[cut:].mean() for r in short])\n        print(f\"2. 40 runs x 1,000 customers, delete first {cut:3d}: {m:.2f} +/- {h:.2f} min (true {TRUE_WQ:.1f})\")\n    print(\"3. replications of 5,000 customers, warm-up deleted: 95% CI\")\n    means = [waits(5_000, seed)[d:].mean() for seed in range(201, 281)]\n    for n in (10, 20, 40, 80):\n        m, h = ci(means[:n])\n        print(f\"   n={n:2d}: {m:.2f} +/- {h:.2f} min  (half-width x sqrt(n) = {h * math.sqrt(n):.2f})\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "w = sum(... range(backlog))",
+    "detail": "The start state: the first customer waits for 30 tickets - the bias to remove."
+   },
+   {
+    "title": "welch()",
+    "detail": "Point-by-point mean over replications, then a centred moving average via cumulative sums (Currie & Cheng)."
+   },
+   {
+    "title": "warmup_point()",
+    "detail": "An automatable rule that PROPOSES d; Welch is graphical, so a person checks the curve."
+   },
+   {
+    "title": "ci() with t975()",
+    "detail": "One mean per replication -> independent -> valid t-interval; t975 is a Cornish-Fisher expansion, tested against tables."
+   }
+  ],
+  "buildTask": {
+   "task": "Add reps_for_precision(rel=0.05): start with 10 replications and add one at a time until the CI half-width is within rel of the mean (relative-error rule).",
+   "hints": [
+    "Stop when half / |mean| <= rel / (1 + rel) (Currie & Cheng 5.2).",
+    "Reuse waits(..)[warmup:].mean() and ci().",
+    "Cap the loop with max_reps."
+   ],
+   "solution": "labs/L200/10-warmup-replications/solution/sequential_reps.py",
+   "check": "python -m unittest test_build_task -v  (Ran 3 tests ... OK; stopped after 64 replications: 4.04 +/- 0.19 min (4.7% of the mean))"
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L200/10-warmup-replications/warmup.py",
+    "purpose": "main lab code"
+   },
+   {
+    "path": "labs/L200/10-warmup-replications/solution/sequential_reps.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L200/10-warmup-replications/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L200/10-warmup-replications/export_csv.py",
+    "purpose": "writes replications.csv for Orange / JupyterLab (learning tools)"
+   },
+   {
+    "path": "labs/L200/10-warmup-replications/test_export_csv.py",
+    "purpose": "checks both scenario means (5.59 / 3.71)"
+   }
+  ],
+  "expectedResults": [
+   "Welch curve flattens near customer 170-200",
+   "Deletion removes the bias",
+   "CI half-width ~1/sqrt(n)"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 10 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "t975(9), t975(19)",
+    "expected": "Within 0.005 of 2.262 and 2.093"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Proposed warm-up jumps around",
+    "action": "More replications or a larger window; then check the curve by eye."
+   },
+   {
+    "symptom": "CI never covers the truth",
+    "action": "Bias not removed, or runs not independent."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Open empty instead (backlog=0), no deletion.",
+    "predict": "Which way is the bias now?",
+    "expected": "backlog 30, no deletion: 5.59 +/- 0.61 min (true 4.0) | backlog  0, no deletion: 3.57 +/- 0.43 min (true 4.0)"
+   },
+   {
+    "task": "Repeat Welch with three new seed sets.",
+    "predict": "Does the proposal stay near 169?",
+    "expected": "proposed warm-up for three new seed sets: [215, 195, 961] | 80 replications, delete first 169: 4.01 +/- 0.16 min | 80 replications, delete first 961: 3.98 +/- 0.17 min"
+   }
+  ],
+  "equivalents": [
+   "Batch means on one long run; MSER-5 for automated warm-up choice (Currie & Cheng).",
+   "SciPy: scipy.stats.t.ppf(0.975, n-1) for the t quantile."
+  ],
+  "learningTools": [
+   {
+    "name": "JupyterLab 4.6.4",
+    "role": "CHECK",
+    "exercise": "In a notebook in this lab folder: from warmup import waits, welch, warmup_point; build runs for seeds 1-20 (5,000 customers each), plot welch(runs, 50) and draw a vertical line at warmup_point(...).",
+    "expected": "The curve starts at 29.19, is 3.39 by customer 200 and levels near 4.32; the line sits at 169, where the curve flattens. Same numbers as warmup.py step 1. Pending a manual run in JupyterLab.",
+    "mac": "pip install jupyterlab, then jupyter lab   # or the JupyterLab Desktop arm64 installer",
+    "windows": "pip install jupyterlab, then jupyter lab   # or winget install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   },
+   {
+    "name": "Orange Data Mining 3.40.0",
+    "role": "SEE",
+    "exercise": "Run `python export_csv.py` (writes replications.csv: 40 per-replication mean waits for 'delete 0' and 'delete 169'). In Orange: File -> Box Plot of mean_wait_min grouped by scenario.",
+    "expected": "The 'delete 0' box sits higher: means 5.59 vs 3.71 min (export_csv.py printed these; true 4.0), showing the backlog bias the warm-up removes. Pending a manual run in Orange.",
+    "mac": "Orange3-3.40.0-Python3.12.10-arm64.dmg from https://orangedatamining.com/download/ (or pip install PyQt6 PyQt6-WebEngine orange3)",
+    "windows": "winget install --id UniversityofLjubljana.Orange   # or Orange3-3.40.0-x86_64.exe",
+    "licence": "GPL-3.0-or-later (OSI: yes)",
+    "url": "https://orangedatamining.com/download/"
+   }
+  ],
+  "inRealSystems": [
+   "Capacity studies report steady-state KPIs with warm-up deleted and replication CIs.",
+   "Commercial and open-source DES tools offer warm-up periods and replication counts as run settings."
+  ],
+  "useWhen": "Use for steady-state questions; skip deletion when the transient itself (e.g. Monday morning) is the question.",
+  "caution": "The warm-up rule is a heuristic; a long busy period can fool it (tryIt 2). Over-deleting is cheap, under-deleting biases results.",
+  "checkpoint": "PASS: deleted-warm-up CI covers 4.0; sequential-replication buildTask test passes.",
+  "checkYourself": [
+   {
+    "q": "Why not one long run with 400,000 waits and s/sqrt(400000)?",
+    "a": "Waits are autocorrelated; the CI would be far too narrow."
+   },
+   {
+    "q": "Half-width 0.50 at n=10. About how many runs for 0.25?",
+    "a": "~4x as many: about 40 (observed 0.25 at n=40)."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Currie & Cheng, A Practical Introduction to Analysis of Simulation Output Data (WSC 2016)",
+    "url": "https://www.informs-sim.org/wsc16papers/013.pdf"
+   },
+   {
+    "title": "Law, Statistical Analysis of Simulation Output Data: The Practical State of the Art (WSC 2015)",
+    "url": "https://www.informs-sim.org/wsc15papers/188.pdf"
+   },
+   {
+    "title": "NIST/SEMATECH e-Handbook: Confidence limits for the mean",
+    "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda352.htm"
+   }
+  ],
+  "next": "L300 #12 Variance reduction: same precision, fewer runs (narrower intervals from the same replications; batch means is an L400 candidate)",
+  "validation": {
+   "status": "validated-local",
+   "how": "warmup.py, try_it.py, solution/sequential_reps.py and unittests (Ran 10 tests ... OK (skipped=1)) ran locally on Python 3.12.15 + numpy 2.5.3; outputs pasted. The SciPy check of t975() is pending-ci; table values 2.262/2.093/2.023/1.990 are used locally.",
+   "pendingCi": [
+    "test_warmup.py: test_t975_matches_scipy"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L200/10-warmup-replications.md",
+  "conceptSummary": "A simulation's start state biases early output, so find the warm-up with Welch's method and delete it from every run. Independent replications then give a valid t-interval whose width shrinks like 1/sqrt(n)."
+ },
+ {
+  "id": "supply-chain-inventory",
+  "number": 11,
+  "level": "L200",
+  "title": "A supply-chain model: (s, S) inventory with common random numbers",
+  "phase": "Decisions",
+  "category": "supply-chain",
+  "description": "Bike shop reorders inner tubes with an (s, S) policy under random weekly demand and 1-4 day lead times; cost trade-offs and common random numbers for a fair comparison.",
+  "outcome": "You can simulate an (s, S) policy, read its cost trade-off, and compare policies with paired CRN replications.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3 (Generator seed lists per purpose); SimPy 4.1.2 Container version in CI",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "Give both policies the same random year; the paired difference has a much narrower CI."
+  ],
+  "prerequisites": [
+   "Lessons 2, 6 and 10"
+  ],
+  "glossary": [
+   {
+    "term": "(s, S) policy",
+    "meaning": "If inventory position <= s, order up to S."
+   },
+   {
+    "term": "inventory position",
+    "meaning": "On hand + on order (not yet delivered)."
+   },
+   {
+    "term": "lead time",
+    "meaning": "Days between placing and receiving an order."
+   }
+  ],
+  "concepts": [
+   "Order on position, not on-hand.",
+   "Costs trade holding vs ordering vs lost sales.",
+   "Paired CRN differences, one stream per purpose."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python inventory.py` (365 days, 30 replications per policy).",
+    "mac": "cd labs/L200/11-supply-chain-inventory\npython inventory.py",
+    "windows": "cd labs\\L200\\11-supply-chain-inventory\npython inventory.py",
+    "expected": "Policy table, then two comparison lines.",
+    "ifNot": "Needs numpy only."
+   },
+   {
+    "title": "Read the trade-off",
+    "detail": "Cost per day, orders per year and lost tubes per year for (20,80), (30,80), (30,90).",
+    "expected": "8.71 / 8.56 / 8.30 per day; lost tubes 217.9 -> 111.3 -> 89.9 as s and S rise.",
+    "ifNot": "Lost sales near 0 everywhere: demand stream not loaded."
+   },
+   {
+    "title": "Compare with and without CRN",
+    "detail": "Same 30 replications; S=90 minus S=80.",
+    "expected": "independent +0.03 +/- 0.44 -> cannot tell; CRN -0.25 +/- 0.12 -> S=90 is cheaper.",
+    "ifNot": "CRN not narrower: both policies must call streams(r) with the same r."
+   },
+   {
+    "title": "One stream per purpose",
+    "detail": "Read streams(): weather+demand from default_rng([rep, 0]), lead times from default_rng([rep, 1]), all drawn up front. tryIt 1 breaks this.",
+    "expected": "One shared, drawn-as-needed stream widens the CI to +/- 0.31.",
+    "ifNot": "See try_it.py simulate_one_stream()."
+   },
+   {
+    "title": "SimPy Container version (CI)",
+    "detail": "`python simpy_inventory.py`: tubes in simpy.Container; same streams.",
+    "expected": "Identical cost per day to numpy (pending-ci).",
+    "ifNot": "ModuleNotFoundError locally is expected."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L200/11-supply-chain-inventory\npython -m unittest -v",
+    "windows": "cd labs\\L200\\11-supply-chain-inventory\npython -m unittest -v",
+    "expected": "Ran 9 tests ... OK (skipped=1)",
+    "ifNot": "The skip is SimPy (pending-ci)."
+   }
+  ],
+  "code": "\"\"\"L200 supply chain: a bike shop's (s, S) reorder policy for inner tubes, compared fairly with common random numbers.\n\nDemand ~ Poisson(8 x weekly weather factor, mean 1); lead time 1-4 days; unmet demand is lost.\nCosts: holding 0.10/tube/day, 25 per order, 4.00 per lost sale.\npython inventory.py\n\"\"\"\nimport math\n\nimport numpy as np\n\nDAYS, MEAN_DEMAND = 365, 8\nHOLD, ORDER, LOST = 0.10, 25.0, 4.0\nT975 = {29: 2.045}  # Student t quantile, 95% two-sided, 29 degrees of freedom (30 replications)\n\n\ndef streams(rep, days=DAYS):\n    \"\"\"Common random numbers: one stream per PURPOSE, so a policy change cannot shift who-gets-which-number.\"\"\"\n    rng = np.random.default_rng([rep, 0])  # [rep, purpose] seed list, as in the NumPy parallel-streams docs\n    weather = np.repeat(rng.gamma(4.0, 0.25, days // 7 + 1), 7)[:days]  # one busy/quiet factor per week\n    demand = rng.poisson(MEAN_DEMAND * weather)\n    lead = np.random.default_rng([rep, 1]).integers(1, 5, days)  # lead time IF an order is placed on day t\n    return demand, lead\n\n\ndef simulate(s, S, demand, lead):\n    on_hand, arriving = S, np.zeros(len(demand) + 5, dtype=int)  # arriving[t]: tubes delivered on morning t\n    cost = lost = orders = 0.0\n    for t, d in enumerate(demand):\n        on_hand += arriving[t]\n        sold = min(on_hand, d)\n        lost += d - sold  # lost sales, not backorders\n        on_hand -= sold\n        position = on_hand + arriving[t + 1:].sum()  # inventory position includes what is already on order\n        if position <= s:\n            arriving[t + lead[t]] += S - position  # order up to S; arrives lead[t] days later\n            orders += 1\n        cost += HOLD * on_hand\n    cost += ORDER * orders + LOST * lost\n    return {\"cost_per_day\": cost / len(demand), \"orders\": orders, \"lost\": lost}\n\n\ndef ci(x):\n    x = np.asarray(x, dtype=float)\n    return float(x.mean()), T975[len(x) - 1] * float(x.std(ddof=1)) / math.sqrt(len(x))\n\n\ndef compare(a, b, reps=30, crn=True):\n    \"\"\"Cost difference b - a per day over `reps` replications; CRN: both policies see the same demand and lead times.\"\"\"\n    diffs = []\n    for r in range(reps):\n        cost_a = simulate(*a, *streams(r))[\"cost_per_day\"]\n        cost_b = simulate(*b, *streams(r if crn else r + 10_000))[\"cost_per_day\"]  # independent: other numbers\n        diffs.append(cost_b - cost_a)\n    return ci(diffs)\n\n\ndef main():\n    a, b = (30, 80), (30, 90)\n    print(f\"(s, S) policies over {DAYS} days, 30 replications: mean cost per day +/- 95% CI\")\n    for pol in ((20, 80), a, b):\n        runs = [simulate(*pol, *streams(r)) for r in range(30)]\n        m, h = ci([x[\"cost_per_day\"] for x in runs])\n        print(f\"  s={pol[0]:2d} S={pol[1]:2d}: {m:6.2f} +/- {h:.2f}  orders/yr {np.mean([x['orders'] for x in runs]):5.1f}\"\n              f\"  lost tubes/yr {np.mean([x['lost'] for x in runs]):6.1f}\")\n    for crn in (False, True):\n        m, h = compare(a, b, crn=crn)\n        verdict = \"S=90 is cheaper\" if m + h < 0 else \"S=80 is cheaper\" if m - h > 0 else \"cannot tell\"\n        print(f\"difference S=90 minus S=80, {'CRN        ' if crn else 'independent'}: {m:+.2f} +/- {h:.2f} -> {verdict}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "streams(rep)",
+    "detail": "default_rng([rep, purpose]): one stream per random input, all drawn up front, so a policy cannot shift the other's numbers."
+   },
+   {
+    "title": "position = on_hand + arriving[t + 1:].sum()",
+    "detail": "Reorder on inventory position (incl. on order), or it re-orders every day of the lead time."
+   },
+   {
+    "title": "arriving[t + lead[t]] += S - position",
+    "detail": "Lead time indexed by order day: same day, same delay for every policy."
+   },
+   {
+    "title": "compare(..., crn=True)",
+    "detail": "Per-replication differences on identical streams -> one t-interval of the difference."
+   }
+  ],
+  "buildTask": {
+   "task": "Add the fill rate (units served from stock / units demanded) to the results and compare it between S=80 and S=90 with CRN.",
+   "hints": [
+    "fill_rate = 1 - lost / total demand.",
+    "Use the same streams(rep) for both policies.",
+    "Report one CI of the per-replication difference."
+   ],
+   "solution": "labs/L200/11-supply-chain-inventory/solution/fill_rate.py",
+   "check": "python -m unittest test_build_task -v  (Ran 3 tests ... OK; S=90 minus S=80 fill rate +0.0073 +/- 0.0043)"
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L200/11-supply-chain-inventory/inventory.py",
+    "purpose": "main lab code"
+   },
+   {
+    "path": "labs/L200/11-supply-chain-inventory/simpy_inventory.py",
+    "purpose": "SimPy 4.1.2 Container equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L200/11-supply-chain-inventory/solution/fill_rate.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L200/11-supply-chain-inventory/try_it.py",
+    "purpose": "tryIt script"
+   }
+  ],
+  "expectedResults": [
+   "Higher s/S: fewer lost sales, more stock",
+   "CRN CI ~1/4 the width of independent",
+   "S=90 cheaper by 0.25/day"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 9 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "Hand case: s=5, S=10, demand 7,2,0, lead 2",
+    "expected": "1 order, 0 lost, cost (0.1*(3+1+8)+25)/3"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Orders every day",
+    "action": "Use inventory position (include on-order), not on-hand."
+   },
+   {
+    "symptom": "IndexError in arriving",
+    "action": "Pad the array by the maximum lead time (+5)."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Draw weather, demand and lead times from ONE generator as needed.",
+    "predict": "Same seeds - still a sharp comparison?",
+    "expected": "same seeds, ONE shared stream: S=90 minus S=80 = -0.19 +/- 0.31 | same seeds, one stream per purpose (lab): -0.25 +/- 0.12"
+   },
+   {
+    "task": "Halve the lost-sale cost (4.00 -> 2.00).",
+    "predict": "Does S=90 still pay?",
+    "expected": "lost sale costs 2.00: S=90 minus S=80 = -0.13 +/- 0.08 per day"
+   }
+  ],
+  "equivalents": [
+   "SimPy 4.1.2: simpy.Container(env, init=S) with put/get/level.",
+   "QuantEcon inventory dynamics: (s, S) paths in NumPy/JAX."
+  ],
+  "learningTools": [
+   {
+    "name": "SimPy 4.1.2",
+    "role": "CHECK",
+    "exercise": "Run `python simpy_inventory.py`: the same (s, S) shop with simpy.Container and the same streams(rep) per replication.",
+    "expected": "Should print the same table as inventory.py, e.g. s=30 S=90: 8.30 +/- 0.22 per day and the CRN difference -0.25 +/- 0.12 (test_container_model_gives_identical_results requires identical results). Pending-ci: SimPy is not installed here.",
+    "mac": "pip install simpy   # pinned as simpy==4.1.2 in labs/L100/01-setup-workbench/requirements.txt",
+    "windows": "pip install simpy   # same pin",
+    "licence": "MIT (OSI: yes)",
+    "url": "https://pypi.org/project/simpy/"
+   }
+  ],
+  "inRealSystems": [
+   "Retail and spare-parts planning use (s, S) / min-max reorder rules tuned by simulation.",
+   "Design comparisons in simulation studies use CRN so small improvements are detectable."
+  ],
+  "useWhen": "Use CRN whenever you compare configurations of the same model; use independent runs for one system's absolute numbers.",
+  "caution": "Costs and demand parameters are illustrative, not from a real shop; lost sales are assumed (no backorders).",
+  "checkpoint": "PASS: CRN identifies S=90 as cheaper; fill-rate buildTask test passes.",
+  "checkYourself": [
+   {
+    "q": "Why can't two overlapping CIs settle the comparison?",
+    "a": "They ignore the positive correlation; the paired-difference CI uses it."
+   },
+   {
+    "q": "Why one stream per purpose?",
+    "a": "An extra order in one policy would otherwise shift every later demand draw."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Sigman, Columbia IEOR 4404 notes: Inventory models, the classic (s, S) policy",
+    "url": "https://www.columbia.edu/~ks20/4404-Sigman/4404-Notes-inventory.pdf"
+   },
+   {
+    "title": "QuantEcon (Sargent & Stachurski): Inventory Dynamics",
+    "url": "https://python.quantecon.org/inventory_dynamics.html"
+   },
+   {
+    "title": "Currie & Cheng, A Practical Introduction to Analysis of Simulation Output Data (WSC 2016)",
+    "url": "https://www.informs-sim.org/wsc16papers/013.pdf"
+   },
+   {
+    "title": "NumPy v2.5 manual: Parallel random number generation (SeedSequence, seed lists)",
+    "url": "https://numpy.org/doc/stable/reference/random/parallel.html"
+   },
+   {
+    "title": "SimPy docs: Shared Resources (Resource, Container, Store)",
+    "url": "https://simpy.readthedocs.io/en/latest/topical_guides/resources.html"
+   }
+  ],
+  "next": "L300 #12 Variance reduction: same precision, fewer runs (antithetic and control variates; CRN from this lesson, recapped)",
+  "validation": {
+   "status": "validated-local",
+   "how": "inventory.py, try_it.py, solution/fill_rate.py and unittests (Ran 9 tests ... OK (skipped=1)) ran locally on Python 3.12.15 + numpy 2.5.3; outputs pasted. simpy_inventory.py is pending-ci (logic cross-checked locally against a minimal stand-in scheduler, not SimPy itself).",
+   "pendingCi": [
+    "labs/L200/11-supply-chain-inventory/simpy_inventory.py",
+    "test_inventory.py: test_container_model_gives_identical_results"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L200/11-supply-chain-inventory.md",
+  "conceptSummary": "An (s, S) policy reorders up to S when inventory position falls to s, trading holding, ordering and lost-sale costs. Common random numbers, one stream per purpose, make small policy differences visible."
+ }
+]

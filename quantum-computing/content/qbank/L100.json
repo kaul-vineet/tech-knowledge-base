@@ -1,0 +1,880 @@
+[
+  {
+    "id": "qc-L100-001",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "In lab 01, which object actually executes the 1-qubit circuit and returns counts?",
+    "options": [
+      "qiskit.primitives.StatevectorSampler",
+      "transpile(), which runs the circuit while rewriting it",
+      "QuantumCircuit.measure_all(), which samples the qubit",
+      "The pinned requirements.txt file"
+    ],
+    "answer": 0,
+    "explanation": "StatevectorSampler holds the 2^n amplitudes and samples shots. transpile() only rewrites the circuit into the basis gates; it never runs anything.",
+    "source": "Lesson 1 checkYourself"
+  },
+  {
+    "id": "qc-L100-002",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Why does the setup lesson pin exact package versions (for example qiskit 2.6.1, cirq 1.7.0)?",
+    "options": [
+      "Pinned versions make the simulator run faster because old releases skip optimisation passes",
+      "Pinning seeds the random number generator so counts repeat",
+      "A cloud account requires exact versions before it will accept jobs",
+      "Quantum SDK APIs change between releases, so pins keep the labs reproducible"
+    ],
+    "answer": 3,
+    "explanation": "Quantum SDKs rename and remove APIs between major releases; pins in a venv keep the whole chain reproducible. Repeatable counts come from a sampler seed, not from version pins.",
+    "source": "Lesson 1 concepts"
+  },
+  {
+    "id": "qc-L100-003",
+    "level": "L100",
+    "lesson": 1,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A statevector simulator stores 2^n complex128 amplitudes (16 bytes each). About how much memory does a 30-qubit statevector need?",
+    "options": [
+      "16 GiB",
+      "480 bytes",
+      "1 GiB",
+      "30 GiB"
+    ],
+    "answer": 0,
+    "explanation": "2^30 amplitudes x 16 bytes = 16 GiB. 480 bytes (30 x 16) is the classic mistake of counting qubits instead of amplitudes: memory doubles with every added qubit.",
+    "source": "Lesson 1 checkYourself"
+  },
+  {
+    "id": "qc-L100-004",
+    "level": "L100",
+    "lesson": 1,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Your machine has 8 GiB free for one complex128 statevector (16 bytes per amplitude). What is the largest number of qubits you can simulate?",
+    "options": [
+      "29",
+      "30",
+      "33",
+      "23"
+    ],
+    "answer": 0,
+    "explanation": "2^29 x 16 B = 8 GiB fits exactly; one more qubit doubles it to 16 GiB. Memory grows as 2^n, so a few extra GiB never buys more than a qubit or so.",
+    "source": "Lesson 1 conceptSummary"
+  },
+  {
+    "id": "qc-L100-005",
+    "level": "L100",
+    "lesson": 1,
+    "type": "debugging",
+    "difficulty": 1,
+    "question": "Running check_env.py prints ModuleNotFoundError: No module named 'qiskit'. What is the right fix?",
+    "options": [
+      "pip install the newest qiskit globally, without a pin, so every lab gets the latest API",
+      "Activate the lab's venv, then pip install -r labs/L100/requirements.txt",
+      "Install only qiskit-aer, which provides the qiskit package",
+      "Switch to Python 3.9, which ships with qiskit built in"
+    ],
+    "answer": 1,
+    "explanation": "The packages live in the lab's virtual environment; installing the pinned requirements there fixes it. An unpinned global install may pull a release with a different API.",
+    "source": "Lesson 1 troubleshooting"
+  },
+  {
+    "id": "qc-L100-006",
+    "level": "L100",
+    "lesson": 1,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "On Python 3.10, pip reports that it cannot find cirq 1.7.0 or qiskit-aer 0.18.2. What should you do?",
+    "options": [
+      "Use Python 3.11-3.13, which those pinned versions require",
+      "Lower the pins to whatever versions pip can find for 3.10",
+      "Skip the venv and install the packages with sudo",
+      "Ignore it: cirq is never used anywhere in L100"
+    ],
+    "answer": 0,
+    "explanation": "cirq 1.7.0 and qiskit-aer 0.18.2 need Python 3.11 or newer. Loosening the pins hides the problem and breaks reproducibility, and cirq is needed in lesson 6.",
+    "source": "Lesson 1 troubleshooting"
+  },
+  {
+    "id": "qc-L100-007",
+    "level": "L100",
+    "lesson": 1,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "This numpy/qsim version of lab 01 samples 100 shots of X|0>. What does it print?",
+    "code": "import numpy as np\nfrom qsim import statevector as sv\n\nstate = sv.run(1, [sv.x(0)])\np = np.abs(state) ** 2\ncounts = np.random.default_rng(7).multinomial(100, p)\nprint(dict(zip([\"0\", \"1\"], counts.tolist())))",
+    "options": [
+      "{'0': 100, '1': 0}",
+      "{'0': 0, '1': 100}",
+      "{'0': 50, '1': 50}",
+      "{'0': 48, '1': 52}"
+    ],
+    "answer": 1,
+    "explanation": "X|0> = |1>, so P(1) = 1 and every one of the 100 shots reads 1. A 50/50 split would need H, not X.",
+    "source": "Lesson 1 expectedResults"
+  },
+  {
+    "id": "qc-L100-008",
+    "level": "L100",
+    "lesson": 2,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A qubit is in the state 0.6|0> + 0.8i|1>. What is the probability of measuring 1?",
+    "options": [
+      "0.8",
+      "0.64",
+      "0.64i",
+      "0.36"
+    ],
+    "answer": 1,
+    "explanation": "Probability is |amplitude|^2 = |0.8i|^2 = 0.64; the i only changes the phase. 0.8 is the amplitude itself, not its squared magnitude.",
+    "source": "Lesson 2 conceptSummary"
+  },
+  {
+    "id": "qc-L100-009",
+    "level": "L100",
+    "lesson": 2,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "What does this qsim snippet print?",
+    "code": "from qsim import statevector as sv\n\nstate = sv.run(1, [sv.h(0), sv.h(0)])\nprint(sv.probabilities(state))",
+    "options": [
+      "{'0': 0.5, '1': 0.5}",
+      "{'0': 1.0}",
+      "{'1': 1.0}",
+      "{'0': 0.25, '1': 0.75}"
+    ],
+    "answer": 1,
+    "explanation": "H is its own inverse, so H then H returns |0> exactly (interference). Expecting 50/50 treats the second H as a second coin toss.",
+    "source": "Lesson 2 concepts"
+  },
+  {
+    "id": "qc-L100-010",
+    "level": "L100",
+    "lesson": 2,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "A 2-qubit Qiskit result reads '10'. Which qubit was measured as 1?",
+    "options": [
+      "Qubit 0, because it is the leftmost character",
+      "Qubit 1, because qubit 0 is the rightmost character",
+      "Both qubits, since '10' is the binary number two",
+      "Neither: '10' is a register name, not bits"
+    ],
+    "answer": 1,
+    "explanation": "Qiskit prints bitstrings little-endian: qubit 0 is the rightmost bit. Reading left-to-right as qubit 0 first is the most common bit-order mistake.",
+    "source": "Lesson 2 checkYourself"
+  },
+  {
+    "id": "qc-L100-011",
+    "level": "L100",
+    "lesson": 2,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The simulator uses Qiskit's bit order. What does this print?",
+    "code": "from qsim import statevector as sv\n\nstate = sv.run(3, [sv.x(0)])\nprint(sv.probabilities(state))",
+    "options": [
+      "{'001': 1.0}",
+      "{'100': 1.0}",
+      "{'010': 1.0}",
+      "{'000': 0.5, '001': 0.5}"
+    ],
+    "answer": 0,
+    "explanation": "Only qubit 0 is flipped, and qubit 0 is printed as the rightmost bit, giving '001'. '100' is what a big-endian (qubit 0 first) reading would show.",
+    "source": "Lesson 2 expectedResults (x_on_q0_of_2)"
+  },
+  {
+    "id": "qc-L100-012",
+    "level": "L100",
+    "lesson": 2,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Starting from |0>, you apply X and then H. Which state results (qsim amplitudes rounded to 4 places)?",
+    "options": [
+      "[0.7071, -0.7071] - 50/50 odds, minus sign on |1>",
+      "[0.7071, 0.7071] - exactly the same state that H|0> produces",
+      "[0.0, 1.0] - H undoes the X",
+      "[1.0, 0.0] - X and H cancel each other"
+    ],
+    "answer": 0,
+    "explanation": "X gives |1>, and H|1> = (|0> - |1>)/sqrt(2). The probabilities are 50/50 like H|0>, which is why that option is tempting, but the minus sign is real and matters for interference.",
+    "source": "Lesson 2 conceptSummary"
+  },
+  {
+    "id": "qc-L100-013",
+    "level": "L100",
+    "lesson": 2,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A circuit built with qc.measure(0, 0) on a register named 'c' fails at result[0].data.meas with AttributeError: 'DataBin' object has no attribute 'meas'. What is the fix?",
+    "options": [
+      "Increase the number of shots to 1000",
+      "Add qc.barrier() before measuring",
+      "Read the register name from qc.cregs[0].name, or use measure_all()",
+      "Replace StatevectorSampler with Aer's SamplerV2, which always names the register 'meas'"
+    ],
+    "answer": 2,
+    "explanation": "Results are stored under the classical register's name; only measure_all() names it 'meas'. Shots and barriers do not change the register name.",
+    "source": "Lesson 2 troubleshooting"
+  },
+  {
+    "id": "qc-L100-014",
+    "level": "L100",
+    "lesson": 2,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Running H then measure for 1000 shots gave 489 zeros and 511 ones. What does this show?",
+    "options": [
+      "The H gate is miscalibrated in the simulator",
+      "The qubit was not reset to |0> before the run",
+      "Normal sampling: each shot is an independent random draw",
+      "Measurement changed the probabilities halfway through"
+    ],
+    "answer": 2,
+    "explanation": "With P = 0.5 each, counts scatter around 500 from shot to shot; an exact 500/500 would be the surprise. A noise-free simulator has no miscalibrated gates.",
+    "source": "Lesson 2 troubleshooting"
+  },
+  {
+    "id": "qc-L100-015",
+    "level": "L100",
+    "lesson": 2,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "How does a measurement differ from a gate such as X or H?",
+    "options": [
+      "It is a reversible 2x2 matrix like every gate",
+      "It only works on qubits that are already in |1>",
+      "It always returns 0 when the qubit is in superposition",
+      "It returns a classical bit and cannot be undone"
+    ],
+    "answer": 3,
+    "explanation": "Gates are reversible matrices; measurement turns amplitudes into one classical outcome with probability |amplitude|^2 and the superposition is lost.",
+    "source": "Lesson 2 overview"
+  },
+  {
+    "id": "qc-L100-016",
+    "level": "L100",
+    "lesson": 3,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "You want P('1') to within +/-0.01 (one standard error) for a 50/50 qubit. Using SE = sqrt(p(1-p)/N), how many shots do you need?",
+    "options": [
+      "2500",
+      "100",
+      "10000",
+      "50"
+    ],
+    "answer": 0,
+    "explanation": "N = p(1-p)/SE^2 = 0.25/0.0001 = 2500. 10000 shots is the answer for +/-0.005: halving the error costs 4x the shots.",
+    "source": "Lesson 3 checkYourself"
+  },
+  {
+    "id": "qc-L100-017",
+    "level": "L100",
+    "lesson": 3,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "What is the standard error of an estimated probability when the true p = 0.2 and you take 400 shots?",
+    "options": [
+      "0.04",
+      "0.0004",
+      "0.05",
+      "0.02"
+    ],
+    "answer": 3,
+    "explanation": "SE = sqrt(0.2 x 0.8 / 400) = 0.02. 0.0004 forgets the square root; 0.04 forgets to divide by N inside the root.",
+    "source": "Lesson 3 conceptSummary"
+  },
+  {
+    "id": "qc-L100-018",
+    "level": "L100",
+    "lesson": 3,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A 50/50 qubit is measured 4000 times. Using +/-1.96 standard errors of the count (sqrt(N p (1-p))), which range should contain the number of ones about 95% of the time?",
+    "options": [
+      "1968-2032",
+      "1800-2200",
+      "1938-2062",
+      "1996-2004"
+    ],
+    "answer": 2,
+    "explanation": "The count's SE is sqrt(4000 x 0.25) = 31.6, so 1.96 SE is about 62. 1968-2032 uses one standard error only (about 68% coverage).",
+    "source": "Lesson 3 checkYourself"
+  },
+  {
+    "id": "qc-L100-019",
+    "level": "L100",
+    "lesson": 3,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Four learners each ran H + measure for 1000 shots and got these numbers of ones. Which result falls outside the ~95% range (500 +/- 1.96 x sqrt(1000 x 0.25)) and deserves a closer look?",
+    "options": [
+      "560",
+      "470",
+      "515",
+      "529"
+    ],
+    "answer": 0,
+    "explanation": "The 95% range is about 469-531; 560 is roughly 3.8 standard errors away. 470 looks low but is just inside the range.",
+    "source": "Lesson 3 checkYourself"
+  },
+  {
+    "id": "qc-L100-020",
+    "level": "L100",
+    "lesson": 3,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "You increase the shot count from 100 to 10,000. How does the statistical error of P('1') change?",
+    "options": [
+      "It shrinks 100x, in proportion to the shots",
+      "It stays the same, because only a fixed seed can reduce the statistical error",
+      "It disappears completely above 1000 shots",
+      "It shrinks about 10x, since error scales as 1/sqrt(shots)"
+    ],
+    "answer": 3,
+    "explanation": "Error scales as 1/sqrt(N): 100x more shots gives sqrt(100) = 10x less error. Expecting a 100x improvement confuses N with sqrt(N).",
+    "source": "Lesson 3 concepts"
+  },
+  {
+    "id": "qc-L100-021",
+    "level": "L100",
+    "lesson": 3,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "What does this print?",
+    "code": "import numpy as np\n\na = np.random.default_rng(2024).multinomial(100, [0.5, 0.5])\nb = np.random.default_rng(2024).multinomial(100, [0.5, 0.5])\nprint(bool((a == b).all()), int(a.sum()))",
+    "options": [
+      "True 100",
+      "False 100",
+      "True 50",
+      "False 200"
+    ],
+    "answer": 0,
+    "explanation": "Two generators with the same seed replay the same random draws, so the counts are identical and each sums to the 100 shots. A seed makes runs repeatable, not more accurate.",
+    "source": "Lesson 3 concepts"
+  },
+  {
+    "id": "qc-L100-022",
+    "level": "L100",
+    "lesson": 3,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A unit test asserts that 1000 unseeded H shots give exactly {'0': 500, '1': 500}; it fails on most machines. What is the best change?",
+    "options": [
+      "Retry the test until it passes once",
+      "Pass a fixed seed and compare P('1') with a statistical tolerance",
+      "Raise the shots to 1,000,000 so an exact 50/50 split becomes reliable enough to assert",
+      "Delete the test because sampling cannot be tested"
+    ],
+    "answer": 1,
+    "explanation": "Seeds make the run repeatable and a tolerance accepts normal shot noise. More shots shrink the noise but almost never give an exact 50/50 split.",
+    "source": "Lesson 3 troubleshooting"
+  },
+  {
+    "id": "qc-L100-023",
+    "level": "L100",
+    "lesson": 3,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "You seed Qiskit's StatevectorSampler with seed=7 and Cirq's simulator with seed=7. Will the counts match?",
+    "options": [
+      "Yes: seed 7 is a universal sequence",
+      "No: each simulator has its own RNG, so equal seeds are unrelated",
+      "Yes, but only when both use 1000 shots",
+      "No, because Cirq ignores the seed argument and always draws fresh random numbers"
+    ],
+    "answer": 1,
+    "explanation": "A seed only fixes its own simulator's random stream; both are seeded and repeatable, but not with each other. Compare distributions across frameworks instead.",
+    "source": "Lesson 3 checkYourself"
+  },
+  {
+    "id": "qc-L100-024",
+    "level": "L100",
+    "lesson": 4,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "What does this Bell-pair snippet print?",
+    "code": "from qsim import statevector as sv\n\nstate = sv.run(2, [sv.h(0), sv.cx(0, 1)])\nprint(sv.probabilities(state))",
+    "options": [
+      "{'00': 0.25, '01': 0.25, '10': 0.25, '11': 0.25}",
+      "{'00': 0.5, '01': 0.5}",
+      "{'00': 0.5, '11': 0.5}",
+      "{'01': 0.5, '10': 0.5}"
+    ],
+    "answer": 2,
+    "explanation": "H then CNOT gives (|00> + |11>)/sqrt(2): the qubits always agree. Four equal outcomes would be two independent coin flips without the CNOT's correlation.",
+    "source": "Lesson 4 expectedResults"
+  },
+  {
+    "id": "qc-L100-025",
+    "level": "L100",
+    "lesson": 4,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A learner wrote the Bell circuit with the gates in the wrong order. What does this print?",
+    "code": "from qsim import statevector as sv\n\nstate = sv.run(2, [sv.cx(0, 1), sv.h(0)])\nprint(sv.probabilities(state))",
+    "options": [
+      "{'00': 0.5, '11': 0.5}",
+      "{'00': 0.5, '10': 0.5}",
+      "{'00': 0.5, '01': 0.5}",
+      "{'00': 1.0}"
+    ],
+    "answer": 2,
+    "explanation": "CX acts first on |00> and does nothing; H then puts only qubit 0 in superposition, so '00' and '01' appear. Getting '01' from an ideal simulator means checking gate order (H before CX).",
+    "source": "Lesson 4 troubleshooting"
+  },
+  {
+    "id": "qc-L100-026",
+    "level": "L100",
+    "lesson": 4,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A 2-qubit state has amplitudes [0.5, 0.5, 0.5, -0.5] for |00>, |01>, |10>, |11>. Compute a00*a11 - a01*a10. Is the state entangled?",
+    "options": [
+      "0, so it is a product state",
+      "-0.5, so it is entangled",
+      "0.5, so it is a product state",
+      "-0.25, so it is entangled"
+    ],
+    "answer": 1,
+    "explanation": "0.5 x (-0.5) - 0.5 x 0.5 = -0.5, which is not 0, so the state cannot be written as a product. Equal-looking magnitudes tempt a 'product' answer, but the minus sign makes the difference.",
+    "source": "Lesson 4 checkYourself"
+  },
+  {
+    "id": "qc-L100-027",
+    "level": "L100",
+    "lesson": 4,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A Bell pair is followed by X on qubit 1. What does this print?",
+    "code": "from qsim import statevector as sv\n\nstate = sv.run(2, [sv.h(0), sv.cx(0, 1), sv.x(1)])\nprint(sv.probabilities(state))",
+    "options": [
+      "{'00': 0.5, '11': 0.5}",
+      "{'10': 0.5, '11': 0.5}",
+      "{'01': 0.5, '10': 0.5}",
+      "{'00': 0.5, '01': 0.5}"
+    ],
+    "answer": 2,
+    "explanation": "(|00> + |11>)/sqrt(2) with qubit 1 flipped becomes (|10> + |01>)/sqrt(2): the qubits now always disagree. X keeps the correlation; it only changes its sign.",
+    "source": "Lesson 4 concepts"
+  },
+  {
+    "id": "qc-L100-028",
+    "level": "L100",
+    "lesson": 4,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In a Bell pair, Alice measures qubit 0 before Bob measures qubit 1. What does Bob see if he looks only at his own results?",
+    "options": [
+      "Always 0, because Alice's measurement collapses it",
+      "Always the opposite of Alice's bit",
+      "A bias toward 1 that reveals Alice's choice",
+      "50/50 random bits, unchanged by Alice's measurement"
+    ],
+    "answer": 3,
+    "explanation": "Bob's qubit alone stays 50/50; the correlation only appears when both lists of results are compared. That is why entanglement cannot send signals.",
+    "source": "Lesson 4 checkYourself"
+  },
+  {
+    "id": "qc-L100-029",
+    "level": "L100",
+    "lesson": 4,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Your ideal-simulator Bell test passes, but on real hardware 3% of shots read '01' or '10'. What is the most likely explanation?",
+    "options": [
+      "The CNOT's control and target are swapped",
+      "Shot noise, which also produces '01' on the ideal simulator",
+      "Hardware noise; impossible outcomes appear with small counts",
+      "Entanglement only works below 100 shots"
+    ],
+    "answer": 2,
+    "explanation": "Real devices add gate and readout errors, so ideal-zero outcomes show up rarely. Swapping control and target on |+0> would give a very different result, not a 3% leak.",
+    "source": "Lesson 4 simulatorVsReal"
+  },
+  {
+    "id": "qc-L100-030",
+    "level": "L100",
+    "lesson": 4,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the Bell lab check exact statevector probabilities and sampled counts separately?",
+    "options": [
+      "Counts are always exact, so probabilities are redundant",
+      "The statevector includes hardware noise",
+      "Sampled counts are only needed for circuits with one qubit; larger ones use the statevector",
+      "Probabilities test the circuit exactly; counts test sampling with tolerance"
+    ],
+    "answer": 3,
+    "explanation": "The statevector gives the exact distribution (0.5/0.5) with no shot noise, while counts must be checked with a tolerance or a subset test. Counts are samples, never exact probabilities.",
+    "source": "Lesson 4 concepts"
+  },
+  {
+    "id": "qc-L100-031",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Why does the lab verify an OpenQASM round-trip by comparing unitaries or seeded counts, not the .qasm text?",
+    "options": [
+      "Text comparison is slower than simulation",
+      "OpenQASM files cannot be read by Python",
+      "Exporters can format the same circuit differently",
+      "The text changes every time you open the file"
+    ],
+    "answer": 2,
+    "explanation": "Two tools may write different but equivalent text (spacing, gate names, register names). Behaviour is what must match.",
+    "source": "Lesson 5 checkYourself"
+  },
+  {
+    "id": "qc-L100-032",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Which line in an OpenQASM 3 file makes standard gates such as h and cx available?",
+    "options": [
+      "OPENQASM 3.0;",
+      "qubit[2] q;",
+      "include \"stdgates.inc\";",
+      "include \"qelib1.inc\"; (the OpenQASM 2 library)"
+    ],
+    "answer": 2,
+    "explanation": "stdgates.inc defines the standard gate library. 'OPENQASM 3.0;' only declares the language version.",
+    "source": "Lesson 5 checkYourself"
+  },
+  {
+    "id": "qc-L100-033",
+    "level": "L100",
+    "lesson": 5,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Simulated ideally (Qiskit bit order), what probabilities does this OpenQASM 3 program produce?",
+    "code": "OPENQASM 3.0;\ninclude \"stdgates.inc\";\nqubit[2] q;\nbit[2] c;\nh q[1];\ncx q[1], q[0];\nc = measure q;",
+    "options": [
+      "{'00': 0.5, '11': 0.5}",
+      "{'00': 0.5, '10': 0.5}",
+      "{'00': 0.5, '01': 0.5}",
+      "{'01': 0.5, '10': 0.5}"
+    ],
+    "answer": 0,
+    "explanation": "H on q[1] then cx q[1], q[0] (control first) entangles both qubits, giving a Bell pair. Reading the control as the second argument would leave q[0] untouched.",
+    "source": "Lesson 5 concepts"
+  },
+  {
+    "id": "qc-L100-034",
+    "level": "L100",
+    "lesson": 5,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "RZ(pi) and Z differ by a global phase. What does this print?",
+    "code": "import numpy as np\nfrom qsim import statevector as sv\n\nu1 = sv.unitary(1, [(sv.rz(np.pi), 0, ())])\nu2 = sv.unitary(1, [(sv.Z, 0, ())])\nprint(np.allclose(u1, u2), sv.equal_up_to_global_phase(u1, u2))",
+    "options": [
+      "True True",
+      "False False",
+      "False True",
+      "True False"
+    ],
+    "answer": 2,
+    "explanation": "RZ(pi) = diag(-i, i) = -i Z, so the matrices are not equal entry by entry, but they are equal up to a global phase, which no measurement can see. Operator.equiv makes the same comparison.",
+    "source": "Lesson 5 concepts"
+  },
+  {
+    "id": "qc-L100-035",
+    "level": "L100",
+    "lesson": 5,
+    "type": "debugging",
+    "difficulty": 1,
+    "question": "qasm3.loads(text) raises an error mentioning qiskit_qasm3_import. What should you do?",
+    "options": [
+      "Switch the export to qasm3.dumps",
+      "pip install qiskit-qasm3-import==0.6.0",
+      "Delete the include line",
+      "Upgrade numpy to the newest release"
+    ],
+    "answer": 1,
+    "explanation": "qasm3.loads depends on the separate qiskit-qasm3-import package (pinned at 0.6.0). dumps writes text and does not need it.",
+    "source": "Lesson 5 troubleshooting"
+  },
+  {
+    "id": "qc-L100-036",
+    "level": "L100",
+    "lesson": 5,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A colleague's tool rejects your exported OpenQASM 3 file. What is the most portable next step?",
+    "options": [
+      "Send them your Python source instead",
+      "Rename the file extension from .qasm to .txt",
+      "Export OpenQASM 2 or keep to stdgates.inc gates",
+      "Add experimental export flags to the file"
+    ],
+    "answer": 2,
+    "explanation": "Many tools support only a subset of OpenQASM 3; OpenQASM 2 or standard gates are widely accepted. Experimental flags make the file less portable, not more.",
+    "source": "Lesson 5 troubleshooting"
+  },
+  {
+    "id": "qc-L100-037",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Someone emails you an OpenQASM file to load into your pipeline. What does the lesson's caution recommend?",
+    "options": [
+      "Load it directly; QASM cannot contain errors",
+      "Convert it to OpenQASM 3 with experimental flags first",
+      "Paste it into an AI model with your API token",
+      "Load only from trusted sources and review it like code"
+    ],
+    "answer": 3,
+    "explanation": "A circuit file is input to your tools and should be reviewed like code; never put secrets in a prompt. QASM files can certainly be wrong or unexpected.",
+    "source": "Lesson 5 caution"
+  },
+  {
+    "id": "qc-L100-038",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why can a Bell pair NOT catch a bit-order bug when you compare Qiskit and Cirq?",
+    "options": [
+      "'00' and '11' read the same when reversed",
+      "Bell pairs give random results in Cirq",
+      "Cirq cannot build a CNOT gate",
+      "Bit order only matters for circuits with three qubits"
+    ],
+    "answer": 0,
+    "explanation": "The only outcomes are symmetric strings, so reversing them changes nothing. An asymmetric probe like X on qubit 0 exposes the bug.",
+    "source": "Lesson 6 checkYourself"
+  },
+  {
+    "id": "qc-L100-039",
+    "level": "L100",
+    "lesson": 6,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Cirq returns the histogram {2: 1000} for X on q0 (measured as q0, q1). What does this normalisation print?",
+    "code": "hist = {2: 1000}\nraw = {format(k, \"02b\"): v for k, v in hist.items()}\n\n\ndef to_qiskit_order(counts):\n    return {bits[::-1]: v for bits, v in counts.items()}\n\n\nprint(to_qiskit_order(raw))",
+    "options": [
+      "{'10': 1000}",
+      "{'01': 1000}",
+      "{'2': 1000}",
+      "{'00': 1000}"
+    ],
+    "answer": 1,
+    "explanation": "Cirq's integer 2 is '10' with q0 as the highest bit; reversing gives '01', Qiskit's order with q0 rightmost. Stopping at '10' is the raw Cirq order.",
+    "source": "Lesson 6 expectedResults"
+  },
+  {
+    "id": "qc-L100-040",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A 3-qubit Cirq histogram key prints as '110' with q0 first (q0 q1 q2). What is the same outcome in Qiskit's order (q2 q1 q0)?",
+    "options": [
+      "011",
+      "110",
+      "001",
+      "100"
+    ],
+    "answer": 0,
+    "explanation": "Reverse the string: q0=1, q1=1, q2=0 becomes '011' with q0 rightmost. Leaving it as '110' is the silent bit-order bug.",
+    "source": "Lesson 6 concepts"
+  },
+  {
+    "id": "qc-L100-041",
+    "level": "L100",
+    "lesson": 6,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Two frameworks ran a Bell pair. This compares their distributions with total variation distance. What does it print?",
+    "code": "qiskit = {\"00\": 508, \"11\": 492}\ncirq = {\"00\": 489, \"11\": 511}\nkeys = set(qiskit) | set(cirq)\ntvd = 0.5 * sum(abs(qiskit.get(k, 0) / 1000 - cirq.get(k, 0) / 1000) for k in keys)\nprint(round(tvd, 3), tvd < 0.05)",
+    "options": [
+      "0.038 True",
+      "0.019 False",
+      "19 False",
+      "0.019 True"
+    ],
+    "answer": 3,
+    "explanation": "TVD = 0.5 x (|0.508-0.489| + |0.492-0.511|) = 0.019, inside the 0.05 tolerance. 0.038 forgets the 0.5 factor.",
+    "source": "Lesson 6 concepts"
+  },
+  {
+    "id": "qc-L100-042",
+    "level": "L100",
+    "lesson": 6,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "A cross-framework test does assert qiskit_counts == cirq_counts for X on qubit 0 and fails. What should change?",
+    "options": [
+      "Use the same seed in both frameworks",
+      "Normalise bit order, then compare distributions with a tolerance",
+      "Increase both runs to 10,000 shots",
+      "Replace the X probe with a Bell pair, whose result is the same in every framework"
+    ],
+    "answer": 1,
+    "explanation": "Cirq's raw keys are reversed and each simulator has its own RNG, so raw dicts never match exactly. A Bell pair would just hide the bit-order bug.",
+    "source": "Lesson 6 troubleshooting"
+  },
+  {
+    "id": "qc-L100-043",
+    "level": "L100",
+    "lesson": 6,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "You must add one regression circuit that proves your Qiskit-vs-Cirq comparison handles bit order. Which circuit should you pick?",
+    "options": [
+      "X on qubit 0 only of 2 qubits",
+      "A Bell pair (H, CX)",
+      "H on both qubits",
+      "No gates, so every result is '00'"
+    ],
+    "answer": 0,
+    "explanation": "X on q0 gives the asymmetric result '01' that flips to '10' if the order is wrong. The other three give symmetric outcomes that look identical either way.",
+    "source": "Lesson 6 caution"
+  },
+  {
+    "id": "qc-L100-044",
+    "level": "L100",
+    "lesson": 6,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Which statement about Qiskit and Cirq is accurate?",
+    "options": [
+      "Their H gates are different matrices",
+      "Cirq cannot simulate entanglement",
+      "Qiskit counts are always more accurate than Cirq's, because Qiskit is the reference",
+      "They share gates and physics but differ in result conventions"
+    ],
+    "answer": 3,
+    "explanation": "qc.h(0) and cirq.H(q0) are the same gate; the differences are API names, bit order and RNGs. Neither simulator is more accurate: both are ideal.",
+    "source": "Lesson 6 conceptSummary"
+  },
+  {
+    "id": "qc-L100-045",
+    "level": "L100",
+    "lesson": 6,
+    "type": "design",
+    "difficulty": 2,
+    "question": "You are writing a helper that compares any two frameworks' results. Which design is most robust?",
+    "options": [
+      "Compare the raw count dicts key by key",
+      "Compare only the most frequent outcome's exact count, since it is the most stable value",
+      "Sort both dicts by value and compare the lists",
+      "Convert both to one bit order and compare probabilities"
+    ],
+    "answer": 3,
+    "explanation": "One canonical bit order plus normalised distributions with tolerances catches real differences without flagging RNG noise. Exact counts differ even when both frameworks are correct.",
+    "source": "Lesson 6 concepts"
+  },
+  {
+    "id": "qc-L100-046",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "What happens to a statevector simulator's memory when you add one more qubit?",
+    "options": [
+      "It grows by 16 bytes for the new amplitude",
+      "It grows by a fixed 1 GiB per qubit",
+      "It doubles, because the amplitude count doubles",
+      "It stays the same until 30 qubits"
+    ],
+    "answer": 2,
+    "explanation": "n qubits need 2^n amplitudes, so n + 1 qubits need twice as many. Adding 16 bytes is the linear-thinking mistake.",
+    "source": "Lesson 1 conceptSummary"
+  },
+  {
+    "id": "qc-L100-047",
+    "level": "L100",
+    "lesson": 1,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Why can every L100 lab run with no account, token or network access?",
+    "options": [
+      "The SDK caches results from a cloud device",
+      "Qiskit includes a free remote quantum computer",
+      "A local simulator on your CPU stands in for hardware",
+      "The labs replay counts that were recorded on hardware and stored in the repository"
+    ],
+    "answer": 2,
+    "explanation": "StatevectorSampler and cirq.Simulator compute the circuit locally. Nothing is fetched or replayed; you would only need tokens for real hardware, and those must never be committed.",
+    "source": "Lesson 1 overview"
+  },
+  {
+    "id": "qc-L100-048",
+    "level": "L100",
+    "lesson": 2,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "You need a 2-qubit test circuit whose correct Qiskit result is exactly '10'. Which gate do you apply to |00>?",
+    "options": [
+      "X on qubit 0",
+      "X on qubit 1",
+      "H on qubit 1",
+      "X on both qubits"
+    ],
+    "answer": 1,
+    "explanation": "Qiskit prints qubit 1 on the left, so '10' means qubit 1 is 1 and qubit 0 is 0. X on qubit 0 would print '01'; H would give a 50/50 mix.",
+    "source": "Lesson 2 concepts"
+  },
+  {
+    "id": "qc-L100-049",
+    "level": "L100",
+    "lesson": 3,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which statement best describes the counts a sampler returns?",
+    "options": [
+      "The exact probabilities multiplied by shots",
+      "Fixed values that never change once the circuit and the shot count are fixed",
+      "Hardware noise added to the probabilities",
+      "Random samples drawn from the circuit's exact distribution"
+    ],
+    "answer": 3,
+    "explanation": "Each shot is one random draw, so counts scatter around N x p. Treating counts as exact probabilities is the root of flaky exact-match tests; an ideal simulator has no hardware noise.",
+    "source": "Lesson 3 concepts"
+  },
+  {
+    "id": "qc-L100-050",
+    "level": "L100",
+    "lesson": 4,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What makes the Bell state (|00> + |11>)/sqrt(2) entangled?",
+    "options": [
+      "The two qubits are physically wired together by the CNOT gate's coupler",
+      "It cannot be written as a product of two 1-qubit states",
+      "Both qubits are guaranteed to read 1",
+      "Both qubits have the same amplitudes"
+    ],
+    "answer": 1,
+    "explanation": "Entanglement is a property of the joint state: no pair of 1-qubit states multiplies to it. Wiring is not required and each qubit alone is random, not fixed.",
+    "source": "Lesson 4 conceptSummary"
+  },
+  {
+    "id": "qc-L100-051",
+    "level": "L100",
+    "lesson": 5,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "When would you export OpenQASM 2 (qasm2.dumps) rather than OpenQASM 3?",
+    "options": [
+      "When you need more accurate simulation results",
+      "When the circuit contains measurements",
+      "When the circuit uses the cx gate",
+      "When the receiving tool only reads OpenQASM 2"
+    ],
+    "answer": 3,
+    "explanation": "OpenQASM 2 is older and simpler but widely accepted; both formats describe the same circuit exactly. Measurements and cx exist in both versions.",
+    "source": "Lesson 5 concepts"
+  }
+]

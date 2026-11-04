@@ -1,0 +1,759 @@
+[
+  {
+    "id": "ds-L500-001",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which statement about Lamport clocks with rules IR1 and IR2 is guaranteed for every execution?",
+    "options": [
+      "If a happened before b, then L(a) < L(b)",
+      "If L(a) < L(b), then a happened before b",
+      "Events with equal L ran at the same physical instant",
+      "If L(a) = L(b), then a and b are in one process"
+    ],
+    "answer": 0,
+    "explanation": "IR1 and IR2 give the clock condition (T23.1). The converse fails: concurrent events can have any order of Lamport times, as 11,063 concurrent pairs in the check showed.",
+    "source": "Lesson 23 T23.1"
+  },
+  {
+    "id": "ds-L500-002",
+    "level": "L500",
+    "lesson": 23,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this vector-clock comparison print?",
+    "code": "def compare(a, b):\n    le = all(x <= y for x, y in zip(a, b))\n    ge = all(x >= y for x, y in zip(a, b))\n    if le and not ge:\n        return \"a -> b\"\n    if ge and not le:\n        return \"b -> a\"\n    return \"equal\" if le else \"concurrent\"\n\nprint(compare((2, 0, 1), (1, 1, 1)))",
+    "options": [
+      "a -> b",
+      "concurrent",
+      "b -> a",
+      "equal"
+    ],
+    "answer": 1,
+    "explanation": "Component 1 says a is ahead (2 > 1), component 2 says b is ahead (0 < 1), so neither vector is <= the other: the events are concurrent (T23.2). 'b -> a' would need every component of b <= a.",
+    "source": "Lesson 23 T23.2"
+  },
+  {
+    "id": "ds-L500-003",
+    "level": "L500",
+    "lesson": 23,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Process P2's Lamport clock is 9 when it receives a message stamped 14. What timestamp does the receive event get?",
+    "options": [
+      "10",
+      "14",
+      "15",
+      "24"
+    ],
+    "answer": 2,
+    "explanation": "IR2: set the clock above both the current value and the message stamp, then tick: max(9, 14) + 1 = 15. 10 forgets the incoming stamp, which breaks the clock condition for this send/receive pair.",
+    "source": "Lesson 23 T23.1 (IR2)"
+  },
+  {
+    "id": "ds-L500-004",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "A protocol must stay correct for any delays, but may assume that after some unknown time all delays stay below an unknown bound. Which system model is this?",
+    "options": [
+      "Synchronous",
+      "Asynchronous",
+      "Crash-recovery",
+      "Partially synchronous"
+    ],
+    "answer": 3,
+    "explanation": "Dwork, Lynch and Stockmeyer's partial synchrony: bounds exist but are unknown or hold only after GST. Synchronous would make the bound known in advance; crash-recovery is a fault model, not a timing model.",
+    "source": "Lesson 23 glossary; Dwork, Lynch & Stockmeyer 1988"
+  },
+  {
+    "id": "ds-L500-005",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "'Every request is answered within 200 ms' is which kind of property?",
+    "options": [
+      "Safety: a late answer is a finite violation no future repairs",
+      "Liveness: it requires that every request is answered eventually",
+      "Neither: it mixes timing with correctness",
+      "Both: it is its own safety and liveness parts"
+    ],
+    "answer": 0,
+    "explanation": "A response that misses its 200 ms deadline is a bad thing at an identifiable instant, so this is safety (Alpern & Schneider). 'Every request is eventually answered' would be liveness.",
+    "source": "Lesson 23 T23.3, problem 23-P5"
+  },
+  {
+    "id": "ds-L500-006",
+    "level": "L500",
+    "lesson": 23,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "This receive handler is used in a Lamport-clock library. Which guarantee does it break?",
+    "code": "def on_receive(clock, msg_ts):\n    return clock + 1   # ignores msg_ts",
+    "options": [
+      "Unique (L, pid) keys within one process",
+      "send -> receive implies L(send) < L(receive)",
+      "Clocks never decrease within one process",
+      "Nothing: the max is only an optimisation"
+    ],
+    "answer": 1,
+    "explanation": "Without max(clock, msg_ts) a receiver with a small clock can stamp the receive below the send (Lamport's C2 fails); the check found 990 such violations. Per-process monotonicity and key uniqueness still hold because it still ticks.",
+    "source": "Lesson 23 T23.1 check"
+  },
+  {
+    "id": "ds-L500-007",
+    "level": "L500",
+    "lesson": 23,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "An engineer sets the heartbeat timeout to the p99.99 of observed round trips and claims the detector never suspects a live node. When is the claim true?",
+    "options": [
+      "Always, because p99.99 covers almost every delay",
+      "Only if the timeout is doubled after each mistake",
+      "Only if round trips are bounded below the timeout",
+      "Never, even with a known delay bound"
+    ],
+    "answer": 2,
+    "explanation": "With a known bound (synchronous model) a timeout above it is perfect (T23.4a). A percentile is not a bound: in an asynchronous network some live round trip exceeds any finite timeout. Doubling makes mistakes finite, not zero.",
+    "source": "Lesson 23 T23.4"
+  },
+  {
+    "id": "ds-L500-008",
+    "level": "L500",
+    "lesson": 23,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "Every one-way delay is at most 30 ms and a node replies to a ping within at most 4 ms of receiving it. What is the smallest timeout that never suspects a live node?",
+    "options": [
+      "34 ms",
+      "60 ms",
+      "68 ms",
+      "64 ms"
+    ],
+    "answer": 3,
+    "explanation": "Round trip <= 30 + 4 + 30 = 64 ms (T23.4a). 34 ms forgets the reply leg; 68 ms is safe but not the smallest.",
+    "source": "Lesson 23 T23.4, problem 23-P6"
+  },
+  {
+    "id": "ds-L500-009",
+    "level": "L500",
+    "lesson": 23,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why must a Raft voter write votedFor to stable storage before it replies to RequestVote?",
+    "options": [
+      "So a restart cannot let it vote twice in one term",
+      "So the leader can read the vote after a crash",
+      "So the vote survives a network partition between voters",
+      "So followers can replay the vote to clients"
+    ],
+    "answer": 0,
+    "explanation": "In the crash-recovery model a node that forgets its vote can grant a second vote in the same term, and two candidates can each reach a majority (problem 23-P8). A partition does not erase memory; a restart does.",
+    "source": "Lesson 23 problem 23-P8; Raft Figure 2"
+  },
+  {
+    "id": "ds-L500-010",
+    "level": "L500",
+    "lesson": 23,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this Lamport-clock trace print?",
+    "code": "c = {\"A\": 0, \"B\": 0}\nc[\"A\"] += 1                  # local\nc[\"A\"] += 1; m = c[\"A\"]      # send m\nc[\"B\"] += 1                  # local\nc[\"B\"] += 1                  # local\nc[\"B\"] += 1                  # local\nc[\"B\"] = max(c[\"B\"], m) + 1  # receive m\nprint(c[\"A\"], c[\"B\"])",
+    "options": [
+      "2 5",
+      "2 4",
+      "3 4",
+      "2 3"
+    ],
+    "answer": 1,
+    "explanation": "A ticks twice and sends m = 2; B reaches 3 locally, then max(3, 2) + 1 = 4. '2 3' forgets that the receive itself is an event that ticks.",
+    "source": "Lesson 23 T23.1"
+  },
+  {
+    "id": "ds-L500-011",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In Gilbert and Lynch's CAP proof, what does 'available' mean?",
+    "options": [
+      "Every request is answered within the SLA latency",
+      "A majority of replicas is reachable from every client at all times",
+      "Every request to a non-failing node eventually gets a response",
+      "Every node can reach every other node"
+    ],
+    "answer": 2,
+    "explanation": "Their availability has no time bound: any algorithm must eventually terminate (§2.2). A latency SLA is a stronger, practical notion that CAP does not use.",
+    "source": "Lesson 24 T24.3; Gilbert & Lynch 2002"
+  },
+  {
+    "id": "ds-L500-012",
+    "level": "L500",
+    "lesson": 24,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A leaderless store has N = 9 replicas and W = 6. What is the smallest R so that every read quorum meets every write quorum?",
+    "options": [
+      "R = 3",
+      "R = 5",
+      "R = 9",
+      "R = 4"
+    ],
+    "answer": 3,
+    "explanation": "Overlap needs R + W > N, so R > 3 and the smallest value is 4 (T24.4a). R = 3 makes R + W = N, and a read can hit exactly the three replicas the write missed.",
+    "source": "Lesson 24 T24.4"
+  },
+  {
+    "id": "ds-L500-013",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "FLP's impossibility result applies to which protocols?",
+    "options": [
+      "Deterministic ones, fully asynchronous, one crash possible",
+      "Any protocol, including randomised ones",
+      "Only protocols that must also tolerate Byzantine (malicious) faults",
+      "Synchronous protocols over a lossy network"
+    ],
+    "answer": 0,
+    "explanation": "FLP assumes deterministic processes, no timing bounds, reliable messages and one crash (§1-2). Randomised protocols can terminate with probability 1, which is one of the escape routes the paper itself mentions.",
+    "source": "Lesson 24 T24.2; FLP 1985"
+  },
+  {
+    "id": "ds-L500-014",
+    "level": "L500",
+    "lesson": 24,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A Paxos proposer received these phase-1 promises. What does it print?",
+    "code": "promises = [(4, \"blue\"), None, (7, \"red\")]   # (ballot, value) accepted\nprior = [p for p in promises if p is not None]\nvalue = max(prior)[1] if prior else \"mine\"\nprint(value)",
+    "options": [
+      "blue",
+      "red",
+      "mine",
+      "(7, 'red')"
+    ],
+    "answer": 1,
+    "explanation": "Phase 2 must use the value of the highest-numbered accepted proposal among the promises (P2c): ballot 7 carries 'red'. 'mine' is allowed only when no promise reports an accepted value.",
+    "source": "Lesson 24 T24.4, problem 24-P6"
+  },
+  {
+    "id": "ds-L500-015",
+    "level": "L500",
+    "lesson": 24,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A shop and a payment service talk over an unreliable network, and the shop must not ship unpaid goods. Which design sidesteps the two generals problem?",
+    "options": [
+      "A third acknowledgement round before the shop ships the goods",
+      "TCP, because it retransmits lost packets",
+      "Idempotent, refundable charges and later reconciliation",
+      "A longer timeout before the shop decides"
+    ],
+    "answer": 2,
+    "explanation": "No number of acknowledgements gives certainty (T24.1); practice makes the action reversible or repeatable instead (Kleppmann's refund example; labs 5 and 14). TCP still gives up after a timeout.",
+    "source": "Lesson 24 T24.1"
+  },
+  {
+    "id": "ds-L500-016",
+    "level": "L500",
+    "lesson": 24,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "A Paxos proposer computes its phase-2 value like this. Which property can the system now violate?",
+    "code": "def phase2_value(my_value, promises):\n    return my_value   # promises ignored",
+    "options": [
+      "Proposals can never be chosen at all",
+      "Acceptors can accept two different proposals with the same ballot",
+      "Learners can no longer detect a chosen value",
+      "Two different values can be chosen for one instance"
+    ],
+    "answer": 3,
+    "explanation": "Ignoring phase-1 values breaks P2c, so a later ballot can overwrite a value that was already chosen; the broken variant chose two values in 2,296 of 3,000 runs. Values still get chosen, so liveness is not the issue.",
+    "source": "Lesson 24 T24.4 check"
+  },
+  {
+    "id": "ds-L500-017",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What plays the role of Paxos's phase-1 value adoption in Raft?",
+    "options": [
+      "The election restriction on up-to-date logs",
+      "Randomised election timeouts",
+      "Heartbeats sent as empty AppendEntries",
+      "Joint consensus during membership changes"
+    ],
+    "answer": 0,
+    "explanation": "Paxos forces a proposer to adopt a possibly-chosen value; Raft instead refuses votes to candidates whose logs are less up-to-date, so the leader already holds every committed entry (§5.4.1). Timeouts only affect liveness.",
+    "source": "Lesson 24 T24.4; Raft §5.4"
+  },
+  {
+    "id": "ds-L500-018",
+    "level": "L500",
+    "lesson": 24,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Five Raft voters must survive the loss of any single availability zone. Which placement across three zones works?",
+    "options": [
+      "3 + 1 + 1 voters",
+      "2 + 2 + 1 voters",
+      "4 + 1 + 0 voters",
+      "5 + 0 + 0 voters"
+    ],
+    "answer": 1,
+    "explanation": "A majority is 3. With 2 + 2 + 1, losing any zone leaves at least 3 voters. With 3 + 1 + 1, losing the 3-voter zone leaves only 2, so no leader can be elected and nothing commits.",
+    "source": "Lesson 24 T24.4a; L400 #19"
+  },
+  {
+    "id": "ds-L500-019",
+    "level": "L500",
+    "lesson": 24,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "During a partition a store answers reads on both sides from local replicas and acknowledges writes locally. What does Gilbert and Lynch's theorem imply?",
+    "options": [
+      "Writes will block until the partition heals",
+      "Reads stay linearizable because each side is consistent",
+      "A read after a completed write may return the old value",
+      "Only writes are affected; reads stay correct"
+    ],
+    "answer": 2,
+    "explanation": "This is the theorem's execution: a write completes on one side and a later read on the other returns v0 (T24.3; the check's AP designs). The store chose availability, so it gave up atomicity.",
+    "source": "Lesson 24 T24.3"
+  },
+  {
+    "id": "ds-L500-020",
+    "level": "L500",
+    "lesson": 24,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why can't more acknowledgement rounds solve the two generals problem?",
+    "options": [
+      "Each extra round doubles the chance that some message is lost",
+      "Acknowledgements need synchronised clocks to work",
+      "The receiver may misread a duplicated message",
+      "The sender of the last message cannot know it arrived"
+    ],
+    "answer": 3,
+    "explanation": "In the proof, the minimal run where someone attacks differs from the previous one only by the last delivered message, which its sender cannot observe (T24.1). Loss probability is irrelevant: the argument is about what each side can know.",
+    "source": "Lesson 24 T24.1"
+  },
+  {
+    "id": "ds-L500-021",
+    "level": "L500",
+    "lesson": 25,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "An M/M/1 server has λ = 45 per second and μ = 50 per second. What is the mean time in system W?",
+    "options": [
+      "200 ms",
+      "20 ms",
+      "180 ms",
+      "22 ms"
+    ],
+    "answer": 0,
+    "explanation": "W = 1/(μ - λ) = 1/5 s = 200 ms (T25.1). 20 ms is the bare service time; queueing multiplies it by 1/(1 - ρ) = 10.",
+    "source": "Lesson 25 T25.1"
+  },
+  {
+    "id": "ds-L500-022",
+    "level": "L500",
+    "lesson": 25,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "A service handles 500 requests per second with a mean latency of 80 ms. How many requests are in flight on average?",
+    "options": [
+      "6.25 requests",
+      "40 requests",
+      "400 requests",
+      "80 requests"
+    ],
+    "answer": 1,
+    "explanation": "Little's law: L = λW = 500 x 0.08 = 40 (T25.2). 6.25 divides instead of multiplying.",
+    "source": "Lesson 25 T25.2"
+  },
+  {
+    "id": "ds-L500-023",
+    "level": "L500",
+    "lesson": 25,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A root request fans out to 20 leaves; each leaf is slow 5% of the time, independently. About what fraction of root requests wait for a slow leaf?",
+    "options": [
+      "about 5%",
+      "about 100%",
+      "about 64%",
+      "about 36%"
+    ],
+    "answer": 2,
+    "explanation": "1 - 0.95^20 = 0.64 (T25.3). 5% is a single leaf; 36% is the probability that all 20 are fast.",
+    "source": "Lesson 25 T25.3"
+  },
+  {
+    "id": "ds-L500-024",
+    "level": "L500",
+    "lesson": 25,
+    "type": "code-reading",
+    "difficulty": 1,
+    "question": "What does this print?",
+    "code": "p, n = 0.01, 100\nprint(round(1 - (1 - p) ** n, 2))",
+    "options": [
+      "1.0",
+      "0.01",
+      "0.37",
+      "0.63"
+    ],
+    "answer": 3,
+    "explanation": "1 - 0.99^100 = 0.634, Dean and Barroso's 63% (T25.3). 0.37 is 0.99^100, the chance that no leaf is slow.",
+    "source": "Lesson 25 T25.3"
+  },
+  {
+    "id": "ds-L500-025",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which assumption does Little's law L = λW actually need?",
+    "options": [
+      "Stationary long-run averages, or a window starting and ending empty",
+      "Poisson arrivals",
+      "Exponentially distributed service times",
+      "First-in-first-out service order"
+    ],
+    "answer": 0,
+    "explanation": "The area argument counts each customer's stay once; it needs no distributional or ordering assumption (T25.2, Little & Graves). The check used uniform-jitter arrivals and log-normal service.",
+    "source": "Lesson 25 T25.2"
+  },
+  {
+    "id": "ds-L500-026",
+    "level": "L500",
+    "lesson": 25,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In an M/M/1 queue, why does the mean delay explode as utilisation approaches 1?",
+    "options": [
+      "Service gets slower when the server is busy",
+      "Mean delay is service time x 1/(1 - ρ)",
+      "Arrivals speed up when the queue is long",
+      "Little's law stops holding near saturation"
+    ],
+    "answer": 1,
+    "explanation": "W = (1/μ)/(1 - ρ): 2 service times at ρ = 0.5, 10 at 0.9, unbounded at 1 (T25.1). The service rate stays constant; the waiting is pure queueing.",
+    "source": "Lesson 25 T25.1"
+  },
+  {
+    "id": "ds-L500-027",
+    "level": "L500",
+    "lesson": 25,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A job is 10% serial. What speedup does Amdahl's law predict on 8 processors?",
+    "options": [
+      "8.00",
+      "7.20",
+      "4.71",
+      "10.00"
+    ],
+    "answer": 2,
+    "explanation": "S(8) = 8/(1 + 0.1 x 7) = 4.71 (T25.4a). 10 is the limit 1/σ for infinitely many processors.",
+    "source": "Lesson 25 T25.4"
+  },
+  {
+    "id": "ds-L500-028",
+    "level": "L500",
+    "lesson": 25,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this USL calculation print?",
+    "code": "import math\nsigma, kappa = 0.05, 0.0002\nprint(round(math.sqrt((1 - sigma) / kappa)))",
+    "options": [
+      "95",
+      "4750",
+      "20",
+      "69"
+    ],
+    "answer": 3,
+    "explanation": "p* = sqrt(0.95/0.0002) = sqrt(4750) = 68.9, rounded to 69 (T25.4b). 20 is Amdahl's 1/σ, which ignores coherency.",
+    "source": "Lesson 25 T25.4"
+  },
+  {
+    "id": "ds-L500-029",
+    "level": "L500",
+    "lesson": 25,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Measured throughput rises up to 12 nodes and then falls at 16 and 24 nodes. Which model explains the fall?",
+    "options": [
+      "USL with a coherency cost κ > 0",
+      "Amdahl's law with a large serial fraction",
+      "Little's law with a growing latency",
+      "M/M/1 with utilisation above 1"
+    ],
+    "answer": 0,
+    "explanation": "Amdahl's speedup only saturates at 1/σ; it never falls. A positive κ adds a p(p - 1) term, so throughput peaks at sqrt((1 - σ)/κ) and becomes retrograde (T25.4b; the simulated lock system peaked at 13).",
+    "source": "Lesson 25 T25.4"
+  },
+  {
+    "id": "ds-L500-030",
+    "level": "L500",
+    "lesson": 25,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "A dashboard estimates the p99 of a root that fans out to four leaves like this. What is wrong?",
+    "code": "leaf_p99 = [40, 42, 38, 41]   # ms\nroot_p99 = sum(leaf_p99) / len(leaf_p99)\nprint(root_p99)",
+    "options": [
+      "It should use the median of the leaf p99s",
+      "The root's p99 is at least the highest leaf's p99",
+      "It should divide by the fan-out squared",
+      "Nothing: averaging percentiles is valid"
+    ],
+    "answer": 1,
+    "explanation": "The root waits for all leaves, so P(root <= t) is the product of the leaves' probabilities and its quantile is at least each leaf's (T25.3). Percentiles cannot be averaged or median-ed into another percentile.",
+    "source": "Lesson 25 T25.3"
+  },
+  {
+    "id": "ds-L500-031",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "According to Google's SRE book, what makes a post-mortem blameless?",
+    "options": [
+      "It leaves out the timeline of who did what",
+      "It is written only after data loss",
+      "It finds contributing causes without indicting people",
+      "It is reviewed only by the on-call engineer"
+    ],
+    "answer": 2,
+    "explanation": "Chapter 15: a blameless post-mortem focuses on contributing causes 'without indicting any individual or team'. It still has a full timeline and is reviewed broadly ('no postmortem left unreviewed').",
+    "source": "Lesson 26; Google SRE ch. 15"
+  },
+  {
+    "id": "ds-L500-032",
+    "level": "L500",
+    "lesson": 26,
+    "type": "calculation",
+    "difficulty": 1,
+    "question": "How much downtime does 99.9% availability over a 30-day month allow?",
+    "options": [
+      "4.3 minutes",
+      "21.6 minutes",
+      "8.8 hours",
+      "43.2 minutes"
+    ],
+    "answer": 3,
+    "explanation": "0.001 x 30 x 24 x 60 = 43.2 minutes. 21.6 minutes is the 99.95% budget; 8.8 hours is 99.9% of a whole year.",
+    "source": "Lesson 26 problem 26-P1"
+  },
+  {
+    "id": "ds-L500-033",
+    "level": "L500",
+    "lesson": 26,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "According to AWS's summary of the December 2021 us-east-1 event, which behaviour amplified the congestion?",
+    "options": [
+      "Client retries whose back-off failed due to a latent issue",
+      "An operator manually rebooting network devices",
+      "A DNS record deleted during maintenance",
+      "S3 buckets that were stored in only a single availability zone"
+    ],
+    "answer": 0,
+    "explanation": "The summary says an automated scaling activity triggered a surge, delays caused 'even more connection attempts and retries', and a latent issue prevented clients from backing off. S3 itself was not impacted.",
+    "source": "Lesson 26 case; AWS summary 2021"
+  },
+  {
+    "id": "ds-L500-034",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "How does GDPR Article 32 treat availability?",
+    "options": [
+      "As a business goal outside data protection",
+      "As part of security, including timely restoration",
+      "Only as a duty to notify within 72 hours",
+      "As optional where data is encrypted"
+    ],
+    "answer": 1,
+    "explanation": "Art. 32(1)(b)-(c) lists the ability to ensure availability and resilience and to restore availability 'in a timely manner' among security measures. The 72-hour rule is breach notification (Art. 33), a different duty.",
+    "source": "Lesson 26; GDPR Art. 32"
+  },
+  {
+    "id": "ds-L500-035",
+    "level": "L500",
+    "lesson": 26,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A team wants to replicate EU patients' personal data to a disaster-recovery region outside the EEA. At policy level, what must be in place?",
+    "options": [
+      "Nothing, provided the data is encrypted at rest",
+      "A cookie banner that mentions the second region",
+      "Adequacy decision, or safeguards with enforceable rights",
+      "Notice to the supervisory authority within 72 hours"
+    ],
+    "answer": 2,
+    "explanation": "Chapter V: transfers need an adequacy decision or appropriate safeguards (e.g. standard contractual clauses) with enforceable rights and effective remedies (CJEU 91/20). Encryption reduces risk but does not remove the transfer question.",
+    "source": "Lesson 26; CJEU C-311/18"
+  },
+  {
+    "id": "ds-L500-036",
+    "level": "L500",
+    "lesson": 26,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A service runs 30 kW of IT load all year in a facility with PUE 1.5. About how much facility energy does it use per year?",
+    "options": [
+      "262.8 MWh",
+      "45 MWh",
+      "591.3 MWh",
+      "394.2 MWh"
+    ],
+    "answer": 3,
+    "explanation": "30 kW x 1.5 x 8,760 h = 394,200 kWh. 262.8 MWh forgets the PUE overhead (IT energy only).",
+    "source": "Lesson 26 problem 26-P5"
+  },
+  {
+    "id": "ds-L500-037",
+    "level": "L500",
+    "lesson": 26,
+    "type": "concept",
+    "difficulty": 1,
+    "question": "Which ACM Code principle singles out systems integrated into the infrastructure of society?",
+    "options": [
+      "3.7",
+      "1.4",
+      "2.8",
+      "1.5"
+    ],
+    "answer": 0,
+    "explanation": "3.7: 'Recognize and take special care of systems that become integrated into the infrastructure of society'. 1.4 is fairness and non-discrimination; 2.8 is authorised access.",
+    "source": "Lesson 26; ACM Code 2018"
+  },
+  {
+    "id": "ds-L500-038",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does Lamport define 'happened before' without physical clocks?",
+    "options": [
+      "Physical clocks did not exist in the 1978 networks it studied",
+      "Specs must use events observable in the system; clocks drift",
+      "Logical clocks are faster to read than physical ones",
+      "Physical time is irrelevant to distributed systems"
+    ],
+    "answer": 1,
+    "explanation": "The paper argues a specification must be stated in terms of events observable within the system, and that real clocks are not perfectly accurate. Physical clocks return later in the paper to fix anomalous behaviour.",
+    "source": "Lesson 27 reading 1"
+  },
+  {
+    "id": "ds-L500-039",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Lamport's 'anomalous behaviour' (request A, phone call, request B) can be prevented by which remedy from the paper?",
+    "options": [
+      "A larger Lamport counter increment on receive",
+      "Vector clocks instead of scalar clocks",
+      "Physical clocks meeting the Strong Clock Condition",
+      "Retrying request B until it is ordered after A"
+    ],
+    "answer": 2,
+    "explanation": "The phone call is outside the system, so no algorithm on system events alone can order A before B. Lamport's remedies: carry A's timestamp to B's issuer, or use synchronised physical clocks satisfying the Strong Clock Condition. Vector clocks see only system events too.",
+    "source": "Lesson 27 reading 1, problem 27-P2"
+  },
+  {
+    "id": "ds-L500-040",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What rule does Raft's Figure 8 motivate?",
+    "options": [
+      "Leaders must persist their log before each heartbeat",
+      "Followers reject entries from terms they never saw",
+      "Candidates must wait one timeout before voting",
+      "Leaders count replicas only for current-term entries"
+    ],
+    "answer": 3,
+    "explanation": "An old-term entry stored on a majority can still be overwritten, so a leader commits only entries from its current term by counting replicas; earlier ones commit indirectly through Log Matching (§5.4.2).",
+    "source": "Lesson 27 reading 2, problem 27-P3"
+  },
+  {
+    "id": "ds-L500-041",
+    "level": "L500",
+    "lesson": 27,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "In Lamport's mutual exclusion algorithm with N = 7 processes, how many messages does one request-use-release cycle send at most?",
+    "options": [
+      "18 messages",
+      "21 messages",
+      "12 messages",
+      "6 messages"
+    ],
+    "answer": 0,
+    "explanation": "N - 1 requests, at most N - 1 acknowledgements and N - 1 releases: 3(N - 1) = 18. 21 counts messages to itself.",
+    "source": "Lesson 27 problem 27-P1"
+  },
+  {
+    "id": "ds-L500-042",
+    "level": "L500",
+    "lesson": 27,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What evidence does the Raft paper offer for its claim of understandability?",
+    "options": [
+      "A formal proof that Raft has fewer states than Paxos",
+      "A user study with 43 students at two universities",
+      "Benchmarks showing Raft elects leaders faster",
+      "A survey of production systems that adopted Raft"
+    ],
+    "answer": 1,
+    "explanation": "The paper reports a study with 43 students; 33 answered Raft questions better than Paxos questions. Its formal proof concerns safety, not understandability - keep empirical and proven claims apart.",
+    "source": "Lesson 27 reading 2"
+  },
+  {
+    "id": "ds-L500-043",
+    "level": "L500",
+    "lesson": 27,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Raft voters compare logs as (last_term, last_index). What does this print?",
+    "code": "def more_up_to_date(a, b):          # (last_term, last_index)\n    if a[0] != b[0]:\n        return a[0] > b[0]\n    return a[1] >= b[1]\n\nvoter, cand = (3, 7), (2, 9)\nprint(\"grant\" if more_up_to_date(cand, voter) else \"deny\")",
+    "options": [
+      "grant",
+      "grant (longer log)",
+      "deny",
+      "deny (same term)"
+    ],
+    "answer": 2,
+    "explanation": "Different last terms are compared first: the candidate's 2 < the voter's 3, so the vote is denied even though the candidate's log is longer (§5.4.1).",
+    "source": "Lesson 27 reading 2; Raft §5.4.1"
+  },
+  {
+    "id": "ds-L500-044",
+    "level": "L500",
+    "lesson": 27,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A team runs Raft over a WAN where a broadcast round trip sometimes takes longer than the election timeout. What does the paper predict?",
+    "options": [
+      "Two leaders may commit different entries",
+      "Committed entries may be lost after a crash",
+      "Followers apply entries out of order",
+      "Repeated elections hurt availability; safety holds"
+    ],
+    "answer": 3,
+    "explanation": "Raft requires broadcastTime << electionTimeout << MTBF for a steady leader, but safety must not depend on timing (§5.6). Violating it causes election churn, not divergence.",
+    "source": "Lesson 27 reading 2"
+  }
+]

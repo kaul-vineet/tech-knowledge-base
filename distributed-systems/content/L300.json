@@ -1,0 +1,1593 @@
+[
+  {
+    "id": "raft-replicated-log",
+    "number": 12,
+    "level": "L300",
+    "title": "Replicated log with Raft (simplified): terms, commit index, re-election, election restriction",
+    "phase": "Consensus",
+    "category": "consensus",
+    "description": "Three Raft nodes on a deterministic simulated network elect a leader, replicate and commit a log, survive a leader crash — then a stale follower wins an election and erases committed entries until you add the election restriction.",
+    "outcome": "You can explain and trace Raft's election, replication and commit rules, spot a lost committed entry with a safety checker, and implement the up-to-date vote check from the Raft paper.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Optional: Maelstrom 0.2.4 (JDK 11+) for the Raft chapter (manual).",
+    "estimatedTime": "60 minutes",
+    "overview": [
+      "A majority-replicated log stays correct through crashes only if a voter refuses candidates with older logs; without that one check, a node that missed committed writes can become leader and overwrite them."
+    ],
+    "prerequisites": [
+      "Lesson 6 (Lamport clocks: terms are a logical clock)",
+      "Lesson 7 (leader election with leases)"
+    ],
+    "glossary": [
+      {
+        "term": "term",
+        "meaning": "Raft's logical clock: each election starts a new, higher term; at most one leader per term."
+      },
+      {
+        "term": "commit index",
+        "meaning": "Highest log index known to be stored on a majority (from the leader's current term); safe to apply."
+      },
+      {
+        "term": "AppendEntries",
+        "meaning": "Leader-to-follower RPC that carries new entries plus the index and term of the entry before them (the consistency check); empty = heartbeat."
+      },
+      {
+        "term": "election restriction",
+        "meaning": "Vote only for a candidate whose log is at least as up-to-date as yours (later last term, or same last term and at least as long)."
+      }
+    ],
+    "concepts": [
+      "A majority elects and a majority commits; any two majorities overlap.",
+      "A log entry is identified by (index, term); matching (index, term) means matching prefixes.",
+      "Safety must not depend on timing; availability may."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python raft.py`",
+        "expected": "`t=17 n1 becomes leader for term 1 with votes ['n1', 'n2']`; identical output on every run.",
+        "ifNot": "Different output -> HEARTBEAT/TIMEOUT or the seed was edited; compare with the README."
+      },
+      {
+        "title": "Follow replication and the commit index",
+        "detail": "Read part 1): every node's log and commit index.",
+        "expected": "All three show `log [1:x=1 1:x=2 1:x=3] commit 3`.",
+        "ifNot": "If followers lag, check that propose() sends AppendEntries and the append_reply branch updates match/next."
+      },
+      {
+        "title": "Crash the leader and watch re-election",
+        "detail": "Read part 2) and 3).",
+        "expected": "n2 and n3 both start term 2 at t=40 (split vote); `n3 becomes leader for term 3` at t=57; x=4 commits on 2 nodes; restarted n1 catches up to `commit 4`.",
+        "ifNot": "A node that never steps down: check the 'newer term -> follower' rule at the top of receive()."
+      },
+      {
+        "title": "Failure lab: a stale follower wins",
+        "detail": "Read part 4): n3 missed x=1 and x=2, n1 crashed, n3's timer fired first.",
+        "expected": "`n3 becomes leader for term 2`, `safety violations: 3`, starting `LOST committed entry 1 (1:x=1): n2 now has 2:x=9 there`.",
+        "ifNot": "No violation -> you already added the vote check (compare with solution_raft.py)."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 8 tests ... OK",
+        "ifNot": "Run from the lab folder; a firewall blocking 127.0.0.1 is the usual cause for the HTTP-based tests."
+      },
+      {
+        "title": "Build task (the hardening change)",
+        "detail": "Make the change in buildTask.task in the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK. Before your change they fail (FAILED (failures=3), e.g. `LOST committed entry 1 ...` != []); the reference is solution_raft.py.",
+        "ifNot": "Diff your file against solution_raft.py; run without BUILD_TARGET to see the reference pass."
+      }
+    ],
+    "code": "\"\"\"L300 lesson 12 (python raft.py): a simplified Raft replicated log on 3 in-process nodes over a deterministic\nsimulated network (helpers.Network, driven by helpers.Cluster). Terms, leader election, log replication, commit index, leader crash and\nre-election, then the failure lab: a follower with a stale log wins an election. Simplified: no disk, no\nsnapshots, no membership changes, no PreVote. Seeded: identical output on every run.\"\"\"\nimport random\n\nfrom helpers import Cluster, demo, fmt\n\nHEARTBEAT, TIMEOUT = 3, (10, 20)  # ticks; each node draws its election timeout from a seeded RNG\n\n\nclass Node:\n    def __init__(self, name, peers, net, seed):\n        self.name, self.peers, self.net, self.rng = name, peers, net, random.Random(f\"{seed}-{name}\")\n        self.term, self.voted_for, self.log = 0, None, []  # persistent state; log[i-1] = (term, command)\n        self.commit, self.role, self.votes = 0, \"follower\", set()  # volatile state\n        self.reset_timer()\n\n    def reset_timer(self):\n        self.deadline = self.net.now + self.rng.randint(*TIMEOUT)  # randomized timeout: split votes stay rare\n\n    def last(self):\n        return (self.log[-1][0] if self.log else 0), len(self.log)  # (last log term, last log index)\n\n    def tick(self):\n        if self.role == \"leader\":\n            if self.net.now % HEARTBEAT == 0:\n                for p in self.peers:\n                    self.send_append(p)  # heartbeat = AppendEntries, carries new entries if any\n        elif self.net.now >= self.deadline:  # heard no leader for a whole timeout: new term, vote for me\n            self.term, self.role, self.voted_for, self.votes = self.term + 1, \"candidate\", self.name, {self.name}\n            self.reset_timer()\n            last_term, last_index = self.last()\n            self.net.log(f\"{self.name} starts election for term {self.term} (log {fmt(self.log)})\")\n            for p in self.peers:\n                self.net.send(self.name, p, {\"type\": \"vote\", \"term\": self.term, \"last_term\": last_term, \"last_index\": last_index})\n\n    def send_append(self, p):\n        prev = self.next[p] - 1  # consistency check: the follower must hold my entry at prev\n        self.net.send(self.name, p, {\"type\": \"append\", \"term\": self.term, \"prev_index\": prev,\n                                     \"prev_term\": self.log[prev - 1][0] if prev else 0,\n                                     \"entries\": self.log[prev:], \"commit\": self.commit})\n\n    def propose(self, command):  # client request; only the leader appends (Leader Append-Only)\n        self.log.append((self.term, command))\n        for p in self.peers:\n            self.send_append(p)\n\n    def receive(self, src, m):\n        if m[\"term\"] > self.term:  # terms are a logical clock: a newer term turns anyone into a follower\n            self.term, self.role, self.voted_for = m[\"term\"], \"follower\", None\n        kind, reply = m[\"type\"], {\"term\": self.term}\n        if kind == \"vote\":\n            # RequestVote: one vote per term, first come first served. (Raft also checks the candidate's log.)\n            granted = m[\"term\"] == self.term and self.voted_for in (None, src)\n            if granted:\n                self.voted_for = src\n                self.reset_timer()\n            self.net.send(self.name, src, {**reply, \"type\": \"vote_reply\", \"granted\": granted})\n        elif kind == \"vote_reply\" and self.role == \"candidate\" and m[\"term\"] == self.term and m[\"granted\"]:\n            self.votes.add(src)\n            if 2 * len(self.votes) > len(self.peers) + 1:  # majority of the FULL cluster (2 of 3)\n                self.role, self.next, self.match = \"leader\", {p: len(self.log) + 1 for p in self.peers}, {p: 0 for p in self.peers}\n                self.net.log(f\"{self.name} becomes leader for term {self.term} with votes {sorted(self.votes)}\")\n                for p in self.peers:\n                    self.send_append(p)\n        elif kind == \"append\":\n            ok = m[\"term\"] == self.term\n            if ok:\n                self.role = \"follower\"\n                self.reset_timer()  # a live leader for my term: no election\n                prev = m[\"prev_index\"]\n                ok = prev <= len(self.log) and (prev == 0 or self.log[prev - 1][0] == m[\"prev_term\"])\n            if ok:\n                for i, entry in enumerate(m[\"entries\"], start=prev + 1):\n                    if i <= len(self.log) and self.log[i - 1][0] != entry[0]:\n                        del self.log[i - 1:]  # conflict: drop my entry and everything after it\n                    if i > len(self.log):\n                        self.log.append(entry)\n                reply[\"match\"] = prev + len(m[\"entries\"])\n                self.commit = max(self.commit, min(m[\"commit\"], reply[\"match\"]))  # learn the commit index\n            self.net.send(self.name, src, {**reply, \"type\": \"append_reply\", \"ok\": ok})\n        elif kind == \"append_reply\" and self.role == \"leader\" and m[\"term\"] == self.term:\n            if m[\"ok\"]:\n                self.match[src], self.next[src] = m[\"match\"], m[\"match\"] + 1\n                for n in range(len(self.log), self.commit, -1):  # commit index: highest N on a majority ...\n                    if self.log[n - 1][0] == self.term and 2 * (1 + sum(v >= n for v in self.match.values())) > len(self.peers) + 1:\n                        self.commit = n  # ... from MY term only (paper section 5.4.2)\n                        break\n            else:\n                self.next[src] = max(1, self.next[src] - 1)  # walk back until the logs match\n                self.send_append(src)\n\n\ndef stale_leader_scenario(node_class=Node, seed=7):\n    \"\"\"Failure lab: a follower misses committed entries, the leader crashes, the stale follower's timer fires first.\"\"\"\n    c = Cluster(node_class, seed)\n    leader = c.run_until_leader()\n    follower, stale = [n for n in c.nodes if n != leader.name]\n    c.crash(stale)  # stale is down (or partitioned) while the others commit\n    leader.propose(\"x=1\")\n    leader.propose(\"x=2\")\n    c.run(6)\n    c.crash(leader.name)\n    c.restart(stale)\n    c.nodes[stale].deadline = c.net.now + 1  # fault: stale's randomized timer happens to fire first\n    c.run_until_leader().propose(\"x=9\")\n    c.run(12)\n    return c\n\n\nif __name__ == \"__main__\":\n    demo(Node, stale_leader_scenario)  # helpers.demo: happy path, crash + re-election, restart, failure lab\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Randomized election timeout",
+        "detail": "`reset_timer()` draws 10-19 ticks from a per-node seeded RNG; a follower whose deadline passes becomes a candidate for `term + 1` and votes for itself. Randomness makes split votes (t=40) rare and short."
+      },
+      {
+        "title": "Newer term wins",
+        "detail": "The first lines of `receive()`: any message with a higher term turns the receiver into a follower of that term and clears its vote. This is how a restarted old leader learns it is deposed."
+      },
+      {
+        "title": "RequestVote",
+        "detail": "`granted = m['term'] == self.term and self.voted_for in (None, src)` — one vote per term. The lesson file stops here; the build task adds `(m['last_term'], m['last_index']) >= self.last()`."
+      },
+      {
+        "title": "AppendEntries consistency check",
+        "detail": "A follower accepts only if it holds the entry at `prev_index` with `prev_term`; then it deletes any conflicting entry and everything after it and appends the rest. On refusal the leader decrements `next[p]` and retries."
+      },
+      {
+        "title": "Commit rule",
+        "detail": "The leader scans from its last index down: the first N stored on a majority (`1 + sum(match >= N)`) whose entry has the leader's current term becomes the commit index (paper 5.4.2). Followers copy `min(leader commit, last new index)`."
+      },
+      {
+        "title": "Persistent vs volatile state",
+        "detail": "`Cluster.restart()` keeps term, vote and log (as if on disk) but resets role and commit index; the node relearns the commit index from the leader."
+      },
+      {
+        "title": "Safety checker",
+        "detail": "`helpers.SafetyChecker` remembers the first committed entry per index and reports any node that later has something else there — the State Machine Safety property as a test oracle."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L300/12-raft-replicated-log/raft.py",
+        "purpose": "Node (RequestVote, AppendEntries, commit rule), failure-lab scenario; `python raft.py` runs helpers.demo"
+      },
+      {
+        "path": "labs/L300/12-raft-replicated-log/helpers.py",
+        "purpose": "Plumbing: deterministic Network, Cluster driver (ticks, crash, restart), SafetyChecker, the narrated demo"
+      },
+      {
+        "path": "labs/L300/12-raft-replicated-log/solution_raft.py",
+        "purpose": "Build-task reference: election restriction"
+      },
+      {
+        "path": "labs/L300/12-raft-replicated-log/test_raft.py",
+        "purpose": "unittest: happy path, re-election, majority rule, determinism, failure-lab symptom"
+      },
+      {
+        "path": "labs/L300/12-raft-replicated-log/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine tests your file)"
+      },
+      {
+        "path": "labs/L300/12-raft-replicated-log/try_it.py",
+        "purpose": "The two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "n1 leads term 1; x=1..x=3 committed on all three nodes (commit 3)",
+      "After n1 crashes: split vote at t=40, n3 leads term 3 after 34 ticks; x=4 commits without n1",
+      "Failure lab (lesson file): safety violations: 3 — committed x=1 and x=2 lost",
+      "Failure lab (solution): n2 denies n3, n2 leads term 3, x=9 at index 3, safety violations: 0"
+    ],
+    "testCases": [
+      {
+        "action": "Propose 3 entries on a healthy cluster",
+        "expected": "Same committed log on every node"
+      },
+      {
+        "action": "Crash the leader, elect a new one, restart the old",
+        "expected": "New leader has a higher term; old leader becomes follower and catches up"
+      },
+      {
+        "action": "Crash both followers, propose",
+        "expected": "Entry appended on the leader, commit index unchanged"
+      },
+      {
+        "action": "Stale-leader scenario, seeds 1-20, with the vote check",
+        "expected": "No safety violation in any seed"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Crash both followers, then propose x=5 on the leader (`python try_it.py`).",
+        "predict": "Does the commit index move?",
+        "expected": "followers down -> n1 log has 2 entries, commit index stays 1 (x=5 appended, never committed)."
+      },
+      {
+        "task": "Run the failure lab with seeds 1-20, without and with the election restriction (`python try_it.py`).",
+        "predict": "Does the bug happen in every seed?",
+        "expected": "raft.py (no log check): committed entries lost in 11 of 20 seeds; solution_raft.py (log check): 0 of 20."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Elections never settle (candidates keep timing out together)",
+        "action": "Widen the random timeout range relative to the message delay (heartbeat 3 ticks, timeout 10-19 here)."
+      },
+      {
+        "symptom": "A committed entry disappears after a failover",
+        "action": "Check the vote rule compares (last term, last index), and that leaders only count replicas for current-term entries."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Go: etcd's raft library (go.etcd.io/raft/v3) — only the algorithm; you provide storage and transport, as `helpers.py` does here. It powers etcd, Kubernetes (via etcd), CockroachDB and TiDB.",
+      "Same idea in Maelstrom: chapter 6 builds a linearizable key-value store on Raft and checks it with the lin-kv workload.",
+      "Same idea, different algorithm: (Multi-)Paxos and Viewstamped Replication reach the same result; Raft's paper compares them."
+    ],
+    "learningTools": [
+      {
+        "name": "Maelstrom (Jepsen)",
+        "role": "CHECK",
+        "exercise": "Follow Maelstrom's Raft chapter (doc/06-raft) to turn this lab's Node into a Maelstrom node, then run the lin-kv workload with a partition nemesis.",
+        "expected": "Maelstrom's checker should report the history valid only with the election restriction in place — the same verdict as this lab's tryIt 2 (11 of 20 seeds lose data without it, 0 with it). Pending a manual run.",
+        "mac": "JDK 11+, Graphviz, Gnuplot; untar release and run ./maelstrom",
+        "windows": "partial — No official statement; WSL2 likely (unverified)",
+        "licence": "EPL-1.0 (OSI: yes)",
+        "url": "https://github.com/jepsen-io/maelstrom/blob/main/doc/06-raft/index.md"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L100 #6 Ordering events with Lamport clocks: Raft terms are a logical clock — a message with a higher term always wins",
+      "distributed-systems L200 #7 Leader election with leases and fencing tokens: a lease store like etcd is itself kept correct by Raft",
+      "distributed-systems L400 #19 Multi-region design: latency budget, leader placement, follower reads, failover RTO/RPO: majority commit and the election restriction are what make RPO 0 across regions (reverse link)",
+      "distributed-systems L400 #21 Verifying correctness: model checking and linearizability checking: a model checker proves why votedFor must be persisted (reverse link)"
+    ],
+    "inRealSystems": [
+      "etcd runs Raft over its key space; Kubernetes stores all cluster state in etcd.",
+      "etcd's raft library separates the algorithm (deterministic state machine: messages in, messages and entries out) from disk and network, the same split as Node vs helpers here."
+    ],
+    "useWhen": "Use a Raft-backed store (etcd, or a database built on Raft) when a small amount of critical state must survive any minority of failed nodes; avoid writing your own consensus for production, and avoid it for high-volume data that tolerates weaker consistency.",
+    "simulatorVsReal": "In-process nodes, simulated ticks and a lossless-unless-cut network; no disk, so 'persistent' state is just kept in memory across a simulated crash.",
+    "caution": "A real implementation must write term, vote and new entries to disk (fsync) before answering an RPC; skipping that reintroduces lost commits after a power loss.",
+    "checkpoint": "PASS if the demo matches the README, `python -m unittest` runs 8 tests OK and your vote check passes test_build_task with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "Five nodes, two are down. Can the cluster commit? Elect a leader?",
+        "a": "Yes to both: 3 of 5 is a majority."
+      },
+      {
+        "q": "Logs end (term 2, index 5) and (term 3, index 3). Which is more up-to-date?",
+        "a": "The one ending in term 3 — the last term is compared first, length only breaks ties."
+      },
+      {
+        "q": "Why may a leader not commit an older-term entry just because a majority holds it?",
+        "a": "A newer candidate can still win without it (paper Figure 8); committing a current-term entry on top makes the older one safe too."
+      }
+    ],
+    "buildTask": {
+      "task": "Add the election restriction to Node.receive: grant a vote only if the candidate's (last_term, last_index) is >= your own self.last(); log the denial.",
+      "hints": [
+        "self.last() already returns (last log term, last log index).",
+        "Python compares tuples element by element: last term first, then length.",
+        "Keep the 'one vote per term' rule; the new check is an extra AND."
+      ],
+      "solution": "labs/L300/12-raft-replicated-log/solution_raft.py",
+      "check": "labs/L300/12-raft-replicated-log/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "failureLab": {
+      "fault": "Seeded scenario: n3 is down while x=1 and x=2 commit on n1+n2; n1 crashes; n3 restarts with an empty log and its election timer is forced to fire first.",
+      "symptom": "n3 becomes leader for term 2 with n2's vote, writes x=9 at index 1, and the SafetyChecker prints `safety violations: 3` (`LOST committed entry 1 (1:x=1): n2 now has 2:x=9 there`).",
+      "fix": "Election restriction in RequestVote (Raft paper 5.4.1): deny the vote if the candidate's log is less up-to-date.",
+      "proof": "labs/L300/12-raft-replicated-log/test_build_task.py: 3 failures against raft.py (BUILD_TARGET=mine), 3 passes against solution_raft.py; tryIt 2 shows 11/20 seeds losing data before, 0/20 after."
+    },
+    "tradeOffs": [
+      {
+        "option": "Raft / consensus-replicated log",
+        "gains": "Linearizable writes that survive any minority of failures; automatic failover",
+        "costs": "Every write waits for a majority round trip; no progress without a majority",
+        "chooseWhen": "Small, critical state: configuration, locks, leases, metadata"
+      },
+      {
+        "option": "Primary-backup with async replication",
+        "gains": "Lowest write latency; simple",
+        "costs": "Failover can lose the last acknowledged writes; split brain needs fencing",
+        "chooseWhen": "Losing a few seconds of writes on failover is acceptable"
+      },
+      {
+        "option": "Leaderless quorums (Dynamo-style)",
+        "gains": "Writes accepted with any W replicas; no election pause",
+        "costs": "Conflicts to resolve; no single order of writes",
+        "chooseWhen": "High availability matters more than one global order"
+      }
+    ],
+    "sources": [
+      {
+        "title": "Ongaro & Ousterhout, In Search of an Understandable Consensus Algorithm (Extended Version)",
+        "url": "https://raft.github.io/raft.pdf"
+      },
+      {
+        "title": "etcd-io/raft: Raft library (README)",
+        "url": "https://github.com/etcd-io/raft"
+      },
+      {
+        "title": "Maelstrom docs: Chapter 6, Raft",
+        "url": "https://github.com/jepsen-io/maelstrom/blob/main/doc/06-raft/index.md"
+      }
+    ],
+    "next": "L300 #13 Network partitions and fault injection: proxy toxics, split brain, fencing and linearizability checking — break the network on purpose and check what clients saw",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python raft.py`, `python solution_raft.py`, `python try_it.py` and `python -m unittest -v` (8 tests OK) on Python 3.12.15 (Linux); output pasted in the README, identical on repeated runs (seeded, simulated ticks). BUILD_TARGET=mine against the unmodified raft.py: 3 failures, as intended. The election rule and Figure 2 receiver rules were checked against the Raft paper.",
+      "pendingCi": [
+        "macOS and Windows runs (CI matrix)",
+        "Maelstrom Raft exercise (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L300/12-raft-replicated-log.md",
+    "conceptSummary": "Raft keeps one log on a majority: a leader per term appends entries, replicates them with a consistency check and commits once a majority stores a current-term entry. The election restriction — vote only for candidates whose log is at least as up-to-date — guarantees every new leader holds every committed entry.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "partitions-fault-injection",
+    "number": 13,
+    "level": "L300",
+    "title": "Network partitions and fault injection: proxy toxics, split brain, fencing and linearizability checking",
+    "phase": "Testing distributed systems",
+    "category": "fault injection",
+    "description": "A Toxiproxy-style proxy cuts one node off the lease store; two nodes believe they lead and both write; a Jepsen-style history check proves clients saw something impossible until storage checks fencing tokens.",
+    "outcome": "You can inject partitions, delays and drops between components, record a client history as JSON lines, check it for linearizability, and close the split-brain write path with fencing tokens.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Optional: Toxiproxy 2.13.0 and Maelstrom 0.2.4 (manual); agent assist uses the vendored fake model server (or Ollama).",
+    "estimatedTime": "60 minutes",
+    "overview": [
+      "A partition turns 'the leader' into two leaders for a while; only a check at the shared resource (fencing) or a history checker that looks at what clients saw will tell you."
+    ],
+    "prerequisites": [
+      "Lesson 7 (leases and fencing tokens)",
+      "Lesson 12 (Raft: majorities and terms)"
+    ],
+    "glossary": [
+      {
+        "term": "toxic",
+        "meaning": "Toxiproxy's word for a fault applied to one direction of a proxied link: latency, timeout, reset_peer, packet loss...; 'down' = proxy disabled."
+      },
+      {
+        "term": "split brain",
+        "meaning": "Two nodes act as leader at the same time because they cannot see each other or the arbiter."
+      },
+      {
+        "term": "history",
+        "meaning": "The list of client operations with invoke and completion times and results (Jepsen style)."
+      },
+      {
+        "term": "linearizable",
+        "meaning": "Every operation appears to take effect at one instant between its start and end, as if on a single copy."
+      }
+    ],
+    "concepts": [
+      "To the caller, 'down' and 'slow' look the same: a timeout.",
+      "Check the client history, not just the final state.",
+      "Fencing makes stale writes fail; it does not make stale reads correct."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo (happy path first)",
+        "detail": "`python partition.py`",
+        "expected": "`happy path (no faults): leaders per tick n1 n1 ...` and `linearizable: True`.",
+        "ifNot": "Check OPS / FAULTS were not edited; output is identical on every run."
+      },
+      {
+        "title": "Inject the partition",
+        "detail": "Read the event lines after `t=2 fault: partition n1 | lease store; latency 0.3 n1->storage`.",
+        "expected": "`n1 renew timed out (n1->lease) -> still thinks it leads` from t=2; `t=4 n2 acquired the lease, token 2`; leaders per tick `4:n1+n2` ... `8:n1+n2`.",
+        "ifNot": "No second leader -> TTL changed; n2 can only acquire after the last renewal (t=1) + TTL 3."
+      },
+      {
+        "title": "Read the history and the verdict",
+        "detail": "The JSON lines are the evidence; the checker searches for an order that explains them.",
+        "expected": "`linearizable: False` and `stale read: c2 read -> 2 via n2 [8, 8.5], but c1 write 3 via n1 [7, 7.8] had already finished`.",
+        "ifNot": "If True: Storage already checks tokens (you did the build task)."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v` (includes 4 agent-assist tests against the fake model server)",
+        "expected": "Ran 13 tests ... OK",
+        "ifNot": "Run from the lab folder; a firewall blocking 127.0.0.1 is the usual cause for the HTTP-based tests."
+      },
+      {
+        "title": "Build task (the hardening change)",
+        "detail": "Make the change in buildTask.task in the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK. Before your change they fail (FAILED (failures=3): the stale write is accepted); the reference is solution_partition.py.",
+        "ifNot": "Diff your file against solution_partition.py; run without BUILD_TARGET to see the reference pass."
+      },
+      {
+        "title": "(Optional) Agent assist",
+        "detail": "A local model explains the history; code checks each claim.",
+        "mac": "python agent_assist.py --fake\nLOCAL_MODEL=qwen2.5:1.5b python agent_assist.py",
+        "windows": "python agent_assist.py --fake\n$env:LOCAL_MODEL=\"qwen2.5:1.5b\"; python agent_assist.py",
+        "expected": "With --fake: `stale_leader  agent: n2  code: n1  WRONG` and `lost_write  agent: c1 write 1  code: c1 write 3  WRONG`.",
+        "ifNot": "`no model server reachable` -> start Ollama (WORKSTATION-SETUP) or use --fake."
+      }
+    ],
+    "code": "\"\"\"L300 lesson 13 (python partition.py): fault injection with a Toxiproxy-style proxy. Three nodes reach the\nlease store (lesson 7) and a shared register (\"storage\") only through the proxy. Happy path: one leader serves\nclient writes and reads. Fault: a partition cuts n1 off the lease store; n2 takes the lease and for a while\nTWO nodes believe they lead and both write. The client history is printed as JSON lines and checked for\nlinearizability (checker.py). Seeded, simulated ticks: identical output on every run.\"\"\"\nimport random\n\nfrom checker import check_register, describe, stale_reads\nfrom helpers import LeaseStore, jsonl\n\nTTL = 3.0\n\n\nclass Timeout(Exception):\n    pass\n\n\nclass Proxy:\n    \"\"\"Toxiproxy concepts: a link per (src, dst); 'down' (enabled=false) and 'drop' (toxicity) lose the request,\n    'latency' delays it. A lost request is a Timeout to the caller: it cannot tell 'down' from 'slow'.\"\"\"\n    def __init__(self, seed=13):\n        self.rng, self.toxics = random.Random(seed), {}\n\n    def add(self, src, dst, **toxic):\n        self.toxics.setdefault((src, dst), {}).update(toxic)\n\n    def partition(self, side_a, side_b):\n        for a in side_a:\n            for b in side_b:\n                self.add(a, b, down=True)\n                self.add(b, a, down=True)\n\n    def heal(self):\n        self.toxics.clear()\n\n    def call(self, src, dst, fn, *args):\n        t = self.toxics.get((src, dst), {})\n        if t.get(\"down\") or self.rng.random() < t.get(\"drop\", 0.0):\n            raise Timeout(f\"{src}->{dst}\")\n        return fn(*args), t.get(\"latency\", 0.0)\n\n\nclass Storage:\n    \"\"\"The shared register every leader writes. (Build task: make it check fencing tokens.)\"\"\"\n    def __init__(self):\n        self.value, self.writes = 0, []\n\n    def write(self, token, value):\n        self.value = value\n        self.writes.append((token, value))\n        return \"accepted\"\n\n    def read(self, token):\n        return self.value\n\n\nclass Node:\n    def __init__(self, name, proxy, lease, storage, log):\n        self.name, self.proxy, self.lease, self.storage, self.log = name, proxy, lease, storage, log\n        self.token, self.cache = None, None  # cache: leaders answer reads locally while they hold the lease\n\n    def step(self, now):  # once per tick: renew my lease, or try to take a free one\n        try:\n            if self.token is None:\n                (ok, token), _ = self.proxy.call(self.name, \"lease\", self.lease.acquire, self.name, now, TTL)\n                if ok:\n                    self.token = token\n                    self.cache, _ = self.proxy.call(self.name, \"storage\", self.storage.read, token)\n                    self.log(f\"t={now} {self.name} acquired the lease, token {token}, loaded value {self.cache}\")\n            else:\n                (ok, _) = self.proxy.call(self.name, \"lease\", self.lease.renew, self.name, self.token, now, TTL)\n                if not ok:\n                    self.log(f\"t={now} {self.name} renew refused -> steps down\")\n                    self.token = None\n        except Timeout as e:\n            if self.token is not None:  # no answer is not a \"no\": n1 keeps believing it leads\n                self.log(f\"t={now} {self.name} renew timed out ({e}) -> still thinks it leads\")\n\n    def handle(self, now, process, f, value):\n        op = {\"process\": process, \"node\": self.name, \"f\": f, \"value\": value, \"start\": now, \"end\": now + 0.5, \"ok\": False}\n        if self.token is None:\n            op[\"error\"] = \"not leader\"\n        elif f == \"read\":\n            op.update(value=self.cache, ok=True)  # local read: fast, and only correct if I really still lead\n        else:\n            try:\n                result, latency = self.proxy.call(self.name, \"storage\", self.storage.write, self.token, value)\n                op[\"end\"] += latency\n                if result == \"accepted\":\n                    self.cache, op[\"ok\"] = value, True\n            except Timeout as e:\n                op[\"error\"] = str(e)\n        return op\n\n\ndef run(ops, faults, seed=13, ticks=11, storage=None):\n    \"\"\"ops: {tick: (process, node, f, value)}; faults: {tick: callable(proxy)}. Returns events, history, leaders.\"\"\"\n    proxy, lease, storage, events, history, leaders = Proxy(seed), LeaseStore(), storage or Storage(), [], [], []\n    nodes = {n: Node(n, proxy, lease, storage, events.append) for n in (\"n1\", \"n2\", \"n3\")}\n    for t in range(ticks):\n        if t in faults:\n            events.append(f\"t={t} fault: {faults[t](proxy)}\")\n        for node in nodes.values():\n            node.step(t)\n        leaders.append(sorted(n.name for n in nodes.values() if n.token is not None))\n        if t in ops:\n            process, node, f, value = ops[t]\n            history.append(nodes[node].handle(t, process, f, value))\n    return events, history, leaders\n\n\nOPS = {1: (\"c1\", \"n1\", \"write\", 1), 6: (\"c2\", \"n2\", \"write\", 2), 7: (\"c1\", \"n1\", \"write\", 3), 8: (\"c2\", \"n2\", \"read\", None)}\nFAULTS = {2: lambda p: (p.partition({\"n1\"}, {\"lease\"}), p.add(\"n1\", \"storage\", latency=0.3), \"partition n1 | lease store; latency 0.3 n1->storage\")[2],\n          9: lambda p: (p.heal(), \"heal\")[1]}\n\nif __name__ == \"__main__\":\n    events, history, leaders = run(OPS, {})\n    print(\"happy path (no faults): leaders per tick\", \" \".join(\"+\".join(l) or \"-\" for l in leaders))\n    print(\"  linearizable:\", check_register(history)[0])\n    events, history, leaders = run(OPS, FAULTS)\n    print(\"\\n\".join(events))\n    print(\"leaders per tick:\", \" \".join(f\"{t}:{'+'.join(l) or '-'}\" for t, l in enumerate(leaders)))\n    print(\"history (JSON lines):\", *jsonl(history), sep=\"\\n  \")\n    print(\"linearizable:\", check_register(history)[0])\n    for read, write in stale_reads(history):\n        print(f\"  stale read: {describe(read)}, but {describe(write)} had already finished\")\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Proxy.call",
+        "detail": "Looks up the toxics for (src, dst): `down` or a seeded `drop` raises Timeout, otherwise the call runs and the link's `latency` is returned for the history. Same vocabulary as Toxiproxy (enabled=false, latency, toxicity)."
+      },
+      {
+        "title": "Timeout is not 'no'",
+        "detail": "`Node.step` catches Timeout on renew and keeps its token: the classic split-brain bug. A refused renewal (after the heal) makes it step down."
+      },
+      {
+        "title": "Leader-local reads",
+        "detail": "`handle()` answers reads from `self.cache` — fast, and correct only while the node really leads. That is why n2's read returns 2 after n1 wrote 3."
+      },
+      {
+        "title": "Write path",
+        "detail": "Writes go through the proxy to `Storage.write(token, value)`. The lesson Storage ignores the token; the build task makes it reject lower tokens."
+      },
+      {
+        "title": "Scenario as data",
+        "detail": "`OPS` maps ticks to client operations and `FAULTS` maps ticks to proxy changes, so a test can replay exactly the same partition."
+      },
+      {
+        "title": "History checker",
+        "detail": "`checker.check_register` searches orders of the successful operations that respect real time and register semantics; `stale_reads` names the read no order can explain."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L300/13-partitions-fault-injection/partition.py",
+        "purpose": "Proxy (toxics), Storage, Node, scenario runner, demo"
+      },
+      {
+        "path": "labs/L300/13-partitions-fault-injection/checker.py",
+        "purpose": "Linearizability check for one register + stale-read explanation"
+      },
+      {
+        "path": "labs/L300/13-partitions-fault-injection/helpers.py",
+        "purpose": "Plumbing: in-process LeaseStore (TTL, CAS, growing token), JSON-lines history writer"
+      },
+      {
+        "path": "labs/L300/13-partitions-fault-injection/solution_partition.py",
+        "purpose": "Build-task reference: fenced Storage, step down on rejection"
+      },
+      {
+        "path": "labs/L300/13-partitions-fault-injection/test_partition.py",
+        "purpose": "unittest: checker (incl. Porcupine README histories), proxy, happy path, split brain"
+      },
+      {
+        "path": "labs/L300/13-partitions-fault-injection/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine tests your file)"
+      },
+      {
+        "path": "labs/L300/13-partitions-fault-injection/agent_assist.py",
+        "purpose": "Optional: local model explains the history; code checks every claim"
+      },
+      {
+        "path": "labs/L300/13-partitions-fault-injection/test_agent_assist.py",
+        "purpose": "unittest: truth computed by code; fake model's two wrong claims flagged"
+      },
+      {
+        "path": "labs/_shared/local_agent/fake_model_server.py",
+        "purpose": "Vendored fake model; rule [[PARTITION-HISTORY]] added for this lab"
+      },
+      {
+        "path": "labs/L300/13-partitions-fault-injection/try_it.py",
+        "purpose": "The two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "Happy path: one leader every tick, linearizable: True",
+      "Partition: two leaders at t=4..8; history linearizable: False (stale read of 2 after write 3 finished)",
+      "With fencing: c1's write 3 fails `rejected: token 1 < 2`, n1 steps down at t=7, linearizable: True"
+    ],
+    "testCases": [
+      {
+        "action": "Porcupine README histories (put 100 with concurrent reads; put 200, read 200, then read 0)",
+        "expected": "First linearizable, second not"
+      },
+      {
+        "action": "Proxy link down",
+        "expected": "Timeout in both directions; latency toxic reported as 0.3"
+      },
+      {
+        "action": "Partition scenario, lesson Storage",
+        "expected": "Leaders n1+n2 at ticks 4-8; history not linearizable"
+      },
+      {
+        "action": "Partition scenario, fenced Storage",
+        "expected": "Stale write rejected; history linearizable; leaders at t=8 = [n2]"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Replace the clean partition with a flaky link: drop 50% of n1's lease requests (seeds 13, 14, 15) (`python try_it.py`).",
+        "predict": "Does every seed produce two leaders?",
+        "expected": "seed 13: n2 takes the lease at t=3, two-leader ticks 0; seed 14: t=5, 1; seed 15: t=5, 0 — partial loss causes leadership changes, split brain only sometimes."
+      },
+      {
+        "task": "Keep fencing (solution) but let c1 READ through n1 at t=7 instead of writing (`python try_it.py`).",
+        "predict": "Is the history linearizable with fencing?",
+        "expected": "without fencing: c1 read via n1 -> 1, linearizable: False; with fencing: c1 read via n1 -> 1, linearizable: False — fencing guards writes, not a deposed leader's local reads."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Checker takes very long",
+        "action": "It is exhaustive: keep histories to ~10 operations, or use Porcupine/Knossos for real tests."
+      },
+      {
+        "symptom": "History looks fine but data is wrong later",
+        "action": "You checked final state only; record every operation with invoke/complete times and check the history."
+      }
+    ],
+    "equivalents": [
+      "Same idea with Toxiproxy: one proxy per dependency; POST /proxies/{name} with enabled=false = this lab's `down`; latency, timeout, reset_peer and packet_loss toxics (toxicity = the share of connections affected).",
+      "Same idea in Jepsen/Maelstrom: nemeses inject partitions; Knossos checks linearizability of the recorded history (Maelstrom's lin-kv workload).",
+      "Same idea in Go: Porcupine checks linearizability (used by etcd's robustness tests)."
+    ],
+    "learningTools": [
+      {
+        "name": "Toxiproxy",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Proxy a real lab server: start lesson 16's `python serve_realtime.py` (127.0.0.1:8016), `toxiproxy-cli create -l localhost:26016 -u localhost:8016 work`, call http://127.0.0.1:26016/work, then add `toxiproxy-cli toxic add -t latency -a latency=300 work` and finally disable the proxy (POST /proxies/work with enabled=false on the API, :8474).",
+        "expected": "Should mirror this lab's Proxy: with the latency toxic each call takes at least 0.3 s longer (the lab's `latency 0.3`); with the proxy disabled the call fails without reaching the server — the caller sees an error/timeout and cannot tell down from slow (the lab's `Timeout`). Pending a manual run.",
+        "mac": "brew tap shopify/shopify && brew install toxiproxy (or ghcr.io/shopify/toxiproxy)",
+        "windows": "toxiproxy-server/cli-windows-amd64.exe from releases",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/Shopify/toxiproxy"
+      },
+      {
+        "name": "Maelstrom (Jepsen)",
+        "role": "CHECK",
+        "exercise": "Run the lin-kv workload against a single-node register that answers reads from a local cache, with a partition nemesis.",
+        "expected": "Maelstrom's checker should report the history invalid — the same verdict as this lab's checker (`linearizable: False`). Pending a manual run.",
+        "mac": "JDK 11+, Graphviz, Gnuplot; untar release and run ./maelstrom",
+        "windows": "partial — No official statement; WSL2 likely (unverified)",
+        "licence": "EPL-1.0 (OSI: yes)",
+        "url": "https://github.com/jepsen-io/maelstrom/blob/main/doc/workloads.md"
+      }
+    ],
+    "agentAssist": {
+      "task": "A local model reads the partition events and the JSON-lines history and claims: is it linearizable, which node was the stale leader, which acknowledged write was lost. Code checks every claim.",
+      "prompt": "system: You review distributed-system test histories. Answer with exactly four lines: 'linearizable: yes|no', 'stale_leader: <node>', 'lost_write: <process> write <value>', 'summary: <one sentence>'. user: [[PARTITION-HISTORY]] Events: <event lines> History (one operation event per line): <history lines> Which node acted on a stale lease, and whose acknowledged write was lost?",
+      "check": "facts() computes the truth: check_register() for linearizability, the node with the LOWER token among nodes that kept leading after a timeout, and the write that stale_reads() says a later read should have seen. Each claim is printed with OK or WRONG; the agent's summary is shown as unverified prose.",
+      "expected": "python agent_assist.py --fake -> linearizable agent: no code: no OK; stale_leader agent: n2 code: n1 WRONG; lost_write agent: c1 write 1 code: c1 write 3 WRONG (the fake model blames the newest lease holder and the first write on purpose).",
+      "realModelNote": "Ollama on the Mac mini (Metal) or the Windows PC: `ollama pull qwen2.5:1.5b`, then `LOCAL_MODEL=qwen2.5:1.5b python agent_assist.py` (Windows: `$env:LOCAL_MODEL=...`). Not run against a real model here; small models often mix up 'newest leader' and 'stale leader' — the checker catches it."
+    },
+    "seeAlso": [
+      "distributed-systems L200 #7 Leader election with leases and fencing tokens: the same lease and token, now broken by the network instead of a pause",
+      "distributed-systems L300 #12 Replicated log with Raft (simplified): terms, commit index, re-election, election restriction: a majority-based store keeps a partitioned minority from writing at all",
+      "application-architecture L300 #13 Resilience patterns: timeouts, circuit breaker, bulkhead, fallback: the same Toxiproxy latency toxic, used to trip a circuit breaker and fill a bulkhead instead of splitting a lease",
+      "microbit L300 #16 Close-sibling low-level code: a timer interrupt race in Rust: same problem seen from the microbit side (reverse link).",
+      "distributed-systems L400 #17 Consistency models in practice: quorums (N, R, W), staleness and PACELC: its fast history checks are cross-checked against this lab's exhaustive checker (reverse link)"
+    ],
+    "inRealSystems": [
+      "Jepsen tests of real databases inject partitions with a nemesis and check histories with Knossos or Elle; Maelstrom packages the same approach for toy nodes.",
+      "etcd's robustness tests check linearizability with Porcupine; Toxiproxy is used in development and CI to prove a service survives a dead or slow dependency."
+    ],
+    "useWhen": "Use fault injection plus history checking for anything that claims consistency under failure (leader election, replication, caches with invalidation); avoid relying on it alone — exhaustive checkers only scale to small histories, so keep scenarios short and targeted.",
+    "simulatorVsReal": "Simulated ticks and an in-process proxy instead of TCP; the lease store and register are in-process objects. Toxiproxy does the same on real sockets (pending manual run).",
+    "caution": "Run fault-injection tools only against test environments; the Toxiproxy API on :8474 is unauthenticated by default (TOXIPROXY_AUTH_TOKEN since 2.13.0) — bind it to localhost. Agent assist: the model never decides which node is fenced or what data to repair; never send secrets to a model.",
+    "checkpoint": "PASS if the demo matches the README, `python -m unittest` runs 13 tests OK and your fenced Storage passes test_build_task with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "Write w1 [0,10] is still running when a read [2,3] returns w1's value, and a later read [4,5] returns the old value. Linearizable?",
+        "a": "No: once a read has seen w1, every later read must see w1 (or something newer)."
+      },
+      {
+        "q": "Fencing is on. Can a deposed leader still serve wrong data?",
+        "a": "Yes, from local reads (tryIt 2); reads must go through the fenced resource or a quorum."
+      },
+      {
+        "q": "Why does a dropped request look the same as a slow one to the caller?",
+        "a": "Both end in a timeout; the caller cannot know whether the request ran."
+      }
+    ],
+    "buildTask": {
+      "task": "Fence the storage: Storage.write(token, value) keeps max_token and returns 'rejected: token X < Y' for lower tokens; Node.handle makes a rejected node step down (token = None) and fails the client operation.",
+      "hints": [
+        "Accept equal tokens: the current leader writes many times.",
+        "Return the rejection as a value, not an exception, so handle() can log and step down.",
+        "The checker ignores failed operations: a rejected write had no effect."
+      ],
+      "solution": "labs/L300/13-partitions-fault-injection/solution_partition.py",
+      "check": "labs/L300/13-partitions-fault-injection/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "failureLab": {
+      "fault": "At t=2 the proxy marks n1<->lease store down and adds 0.3 latency on n1->storage (seeded, scripted in FAULTS); healed at t=9.",
+      "symptom": "n1 keeps leading after its renewals time out; n2 acquires token 2 at t=4; leaders per tick show n1+n2 for t=4..8; both write; the checker prints `linearizable: False` and the stale read.",
+      "fix": "Fencing tokens at the shared storage; a fenced-out node steps down.",
+      "proof": "labs/L300/13-partitions-fault-injection/test_build_task.py: 3 failures against partition.py (BUILD_TARGET=mine), 3 passes against solution_partition.py (stale write rejected, history linearizable)."
+    },
+    "tradeOffs": [
+      {
+        "option": "Fencing tokens at the resource",
+        "gains": "Stale writes fail no matter how long a node was paused or cut off",
+        "costs": "Every resource must store and compare tokens; does not fix stale reads",
+        "chooseWhen": "A lease or lock protects writes to storage you control"
+      },
+      {
+        "option": "Majority quorum for every operation (Raft)",
+        "gains": "A minority side cannot read or write at all: no split brain",
+        "costs": "Unavailable on the minority side; extra round trips",
+        "chooseWhen": "Correctness matters more than availability during partitions"
+      },
+      {
+        "option": "Leader leases with clock bounds for reads",
+        "gains": "Fast local reads",
+        "costs": "Correct only if clock drift and pauses stay below the bound",
+        "chooseWhen": "Read latency dominates and clocks are well behaved"
+      }
+    ],
+    "sources": [
+      {
+        "title": "Toxiproxy README (toxics, HTTP API, enabled=false)",
+        "url": "https://github.com/Shopify/toxiproxy"
+      },
+      {
+        "title": "Maelstrom docs: Workloads (lin-kv)",
+        "url": "https://github.com/jepsen-io/maelstrom/blob/main/doc/workloads.md"
+      },
+      {
+        "title": "Porcupine: a fast linearizability checker (README)",
+        "url": "https://github.com/anishathalye/porcupine"
+      },
+      {
+        "title": "Kleppmann, How to do distributed locking (background, fencing tokens)",
+        "url": "https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html"
+      }
+    ],
+    "next": "L300 #14 Sagas with compensation: orchestration vs choreography, idempotent steps, saga log — when one request spans services that cannot share a transaction",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python partition.py`, `python solution_partition.py`, `python try_it.py`, `python agent_assist.py --fake` and `python -m unittest -v` (13 tests OK) on Python 3.12.15 (Linux); output identical on repeated runs. BUILD_TARGET=mine against the unmodified partition.py: 3 failures, as intended. Checker validated on the two register histories from the Porcupine README. Shared helper tests still pass with the new fake-model rule.",
+      "pendingCi": [
+        "macOS and Windows runs (CI matrix)",
+        "agent_assist.py against a real local model (Ollama)",
+        "Toxiproxy and Maelstrom exercises (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L300/13-partitions-fault-injection.md",
+    "conceptSummary": "Inject faults per link (down, delay, drop) and record what clients saw as a history; a history is linearizable if one order of operations, consistent with real time, explains every result. A partition gives two leaders; fencing tokens make the stale leader's writes fail, but its local reads stay stale.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "sagas-compensation",
+    "number": 14,
+    "level": "L300",
+    "title": "Sagas with compensation: orchestration vs choreography, idempotent steps, saga log",
+    "phase": "Cross-service workflows",
+    "category": "sagas",
+    "description": "An order saga across orders, payments and shipping: when shipping fails (seeded) the lesson orchestrator keeps the customer's money; you add reverse-order, idempotent compensation and crash recovery from the saga log.",
+    "outcome": "You can design a saga with compensating actions, keep every step and compensation idempotent, recover a crashed orchestrator from its log, and compare orchestration with choreography.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps).",
+    "estimatedTime": "50 minutes",
+    "overview": [
+      "Without a distributed transaction, a failed late step must be undone by compensating actions, newest first — and recovery after a crash will run some of them twice, so they must be idempotent."
+    ],
+    "prerequisites": [
+      "Lesson 5 (idempotency keys)",
+      "Lesson 8 (at-least-once messaging, idempotent consumer)"
+    ],
+    "glossary": [
+      {
+        "term": "saga",
+        "meaning": "A sequence of local transactions T1..Tn; if one fails, compensations Cj..C1 undo the completed ones (Garcia-Molina & Salem, 1987)."
+      },
+      {
+        "term": "compensating action",
+        "meaning": "A semantic undo (refund, cancel) recorded as a new change, not a rollback."
+      },
+      {
+        "term": "orchestration / choreography",
+        "meaning": "One coordinator calls each step / each service reacts to events and publishes the next."
+      },
+      {
+        "term": "saga log",
+        "meaning": "Durable record of every step's status; the source of truth for recovery."
+      }
+    ],
+    "concepts": [
+      "Undo completed steps in reverse order.",
+      "Every step and every compensation is idempotent and keyed by the saga id.",
+      "A step whose outcome is unknown after a crash is 'in doubt': compensate it (safe because idempotent)."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo (happy path first)",
+        "detail": "`python saga.py`",
+        "expected": "`happy path: {'o1': 'completed', ... 'o6': 'completed'} | audit: OK`.",
+        "ifNot": "Check Shipping(fail_rate=0.0) for the happy path."
+      },
+      {
+        "title": "Inject shipping failures",
+        "detail": "Read the `fault (30% of shipments fail, seed 14)` line and the audit.",
+        "expected": "o1, o5, o6 `failed`; audit `o1: FAILED, shipped=False, money kept=10 of 10` (also 50 and 60).",
+        "ifNot": "Different orders fail -> the seed or fail_rate was edited."
+      },
+      {
+        "title": "Read the saga log",
+        "detail": "The JSON lines for o1 are what an on-call engineer would query.",
+        "expected": "`create done`, `charge done`, `ship failed` (`no courier slot`) and no compensation line.",
+        "ifNot": "If compensation lines appear you are running the solution."
+      },
+      {
+        "title": "Compare choreography",
+        "detail": "`python choreography.py` — no orchestrator; services react to events on a bus.",
+        "expected": "`choreography: 21 events delivered, audit: OK` (its ShippingFailed handler refunds).",
+        "ifNot": "Run from the lab folder (it imports saga.py)."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v`",
+        "expected": "Ran 8 tests ... OK",
+        "ifNot": "Run from the lab folder; a firewall blocking 127.0.0.1 is the usual cause for the HTTP-based tests."
+      },
+      {
+        "title": "Build task (the hardening change)",
+        "detail": "Make the change in buildTask.task in the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK. Before your change they fail (FAILED (failures=3, errors=1): no recover(), money kept); the reference is solution_saga.py.",
+        "ifNot": "Diff your file against solution_saga.py; run without BUILD_TARGET to see the reference pass."
+      }
+    ],
+    "code": "\"\"\"L300 lesson 14 (python saga.py): an order saga across three services - orders, payments, shipping - each\nowning its own data (no shared database, no distributed transaction). An orchestrator runs the steps in order\nand records each one in a saga log (JSON lines). Happy path: every order ships. Fault (seeded): the shipping\nservice has no courier slot for some orders. Watch what the lesson code does with the money.\"\"\"\nimport random\n\nfrom helpers import SagaLog, StepFailed\n\n\nclass Orders:\n    def __init__(self):\n        self.status, self.amount = {}, {}\n\n    def create(self, saga, amount):\n        self.status[saga], self.amount[saga] = \"PENDING\", amount\n\n    def cancel(self, saga, amount):  # compensation for create\n        self.status[saga] = \"CANCELLED\"\n\n\nclass Payments:\n    def __init__(self):\n        self.ledger = []  # (saga, +amount) for a charge, (saga, -amount) for a refund\n\n    def charge(self, saga, amount):  # idempotency key = saga id (lesson 5): a retried charge is a no-op\n        if not any(s == saga and a > 0 for s, a in self.ledger):\n            self.ledger.append((saga, amount))\n\n    def refund(self, saga, amount):  # compensation for charge (semantic undo: a new entry, not a delete)\n        self.ledger.append((saga, -amount))\n\n    def net(self, saga):\n        return sum(a for s, a in self.ledger if s == saga)\n\n\nclass Shipping:\n    def __init__(self, fail_rate=0.0, seed=14):\n        self.rng, self.fail_rate, self.outcome = random.Random(seed), fail_rate, {}\n\n    def ship(self, saga, amount):  # the last step: once it succeeds the saga cannot be undone (pivot)\n        if saga not in self.outcome:  # idempotent: decide once per saga, a retry gets the same answer\n            failed = self.rng.random() < self.fail_rate  # fault injection: seeded -> same orders fail every run\n            self.outcome[saga] = \"no courier slot\" if failed else \"shipped\"\n        if self.outcome[saga] != \"shipped\":\n            raise StepFailed(self.outcome[saga])\n\n    @property\n    def shipped(self):\n        return {s for s, o in self.outcome.items() if o == \"shipped\"}\n\n\nclass Orchestrator:\n    def __init__(self, orders, payments, shipping, log):\n        self.orders, self.payments, self.log = orders, payments, log\n        self.steps = [(\"create\", orders.create, orders.cancel), (\"charge\", payments.charge, payments.refund),\n                      (\"ship\", shipping.ship, None)]  # (step, action, compensating action)\n\n    def run(self, saga, amount):\n        self.log.write(saga, \"saga\", \"started\", amount=amount)\n        for name, action, _compensation in self.steps:\n            try:\n                action(saga, amount)\n            except StepFailed as e:\n                self.log.write(saga, name, \"failed\", error=str(e))\n                self.orders.status[saga] = \"FAILED\"  # tell the customer ... and keep their money?\n                return \"failed\"\n            self.log.write(saga, name, \"done\")\n        self.orders.status[saga] = \"APPROVED\"\n        self.log.write(saga, \"saga\", \"completed\")\n        return \"completed\"\n\n\ndef audit(orders, payments, shipping):\n    \"\"\"Invariant, checked from each service's own data: a shipped order is APPROVED and paid in full; an order\n    that did not ship is not APPROVED and the shop keeps none of its money. Returns the violations.\"\"\"\n    bad = []\n    for s, status in sorted(orders.status.items()):\n        shipped = s in shipping.shipped\n        if payments.net(s) != (orders.amount[s] if shipped else 0) or (status == \"APPROVED\") != shipped:\n            bad.append(f\"{s}: {status}, shipped={shipped}, money kept={payments.net(s)} of {orders.amount[s]}\")\n    return bad\n\n\ndef run_orders(n=6, fail_rate=0.0, seed=14, orchestrator_class=Orchestrator):\n    services = Orders(), Payments(), Shipping(fail_rate, seed)\n    log = SagaLog()\n    orch = orchestrator_class(*services, log)\n    results = {f\"o{i}\": orch.run(f\"o{i}\", 10 * i) for i in range(1, n + 1)}\n    return results, services, log, orch\n\n\nif __name__ == \"__main__\":\n    results, services, log, _ = run_orders()\n    print(\"happy path:\", results, \"| audit:\", audit(*services) or \"OK\")\n    results, services, log, _ = run_orders(fail_rate=0.3)\n    print(\"fault (30% of shipments fail, seed 14):\", results)\n    failed = [s for s, r in results.items() if r != \"completed\"]\n    print(f\"saga log of {failed[0]} (JSON lines):\", *(l for l in log.lines if f'\"{failed[0]}\"' in l), sep=\"\\n  \")\n    print(\"audit:\", *(audit(*services) or [\"OK\"]), sep=\"\\n  \")\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Services own their data",
+        "detail": "Orders, Payments and Shipping each keep their own state; nothing spans them, so no rollback exists — only compensations (`cancel`, `refund`)."
+      },
+      {
+        "title": "Idempotent forward steps",
+        "detail": "`charge` adds a ledger entry only once per saga id; `ship` decides once per saga and replays that decision, so a retried step changes nothing."
+      },
+      {
+        "title": "Semantic undo",
+        "detail": "`refund` appends a negative entry instead of deleting the charge — the ledger keeps the full story, as accounting requires."
+      },
+      {
+        "title": "Steps as data",
+        "detail": "`self.steps` lists (name, action, compensation); shipping has no compensation — it is the last, irreversible step (the pivot)."
+      },
+      {
+        "title": "The gap",
+        "detail": "On StepFailed the lesson orchestrator logs `failed`, sets FAILED and returns: no compensation, so the charge stays."
+      },
+      {
+        "title": "Audit from the services' own data",
+        "detail": "`audit()` checks the invariant (money kept == amount if shipped, else 0; APPROVED iff shipped) without trusting the orchestrator's view."
+      },
+      {
+        "title": "Saga log",
+        "detail": "`SagaLog.write` appends a JSON line per step status; after a crash the log is all a new orchestrator knows."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L300/14-sagas-compensation/saga.py",
+        "purpose": "Services, Orchestrator, audit, demo"
+      },
+      {
+        "path": "labs/L300/14-sagas-compensation/choreography.py",
+        "purpose": "The same saga as event handlers on an at-least-once bus"
+      },
+      {
+        "path": "labs/L300/14-sagas-compensation/helpers.py",
+        "purpose": "Plumbing: SagaLog (JSON lines), StepFailed, Crash, crash_once_after fault injector"
+      },
+      {
+        "path": "labs/L300/14-sagas-compensation/solution_saga.py",
+        "purpose": "Build-task reference: compensate(), idempotent refund, recover()"
+      },
+      {
+        "path": "labs/L300/14-sagas-compensation/test_saga.py",
+        "purpose": "unittest: happy path, idempotent steps, choreography, failure-lab symptom"
+      },
+      {
+        "path": "labs/L300/14-sagas-compensation/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine tests your file)"
+      },
+      {
+        "path": "labs/L300/14-sagas-compensation/try_it.py",
+        "purpose": "The two tryIt experiments"
+      }
+    ],
+    "expectedResults": [
+      "Happy path: 6 completed, audit OK",
+      "Fault (lesson): o1, o5, o6 failed; audit lists 3 orders whose money was kept",
+      "Fault (solution): o1, o5, o6 compensated; log shows charge then create compensated; audit OK",
+      "Choreography: 21 events delivered, audit OK"
+    ],
+    "testCases": [
+      {
+        "action": "Charge the same saga twice; ship the same saga three times",
+        "expected": "One charge; the same shipping decision every time"
+      },
+      {
+        "action": "Shipping fails (solution)",
+        "expected": "Compensations in reverse order: charge, then create; saga compensated"
+      },
+      {
+        "action": "Orchestrator dies right after the refund call, a new one recovers",
+        "expected": "Exactly one refund; recovering twice changes nothing"
+      },
+      {
+        "action": "Orchestrator dies right after the charge call (before logging it)",
+        "expected": "Recovery treats charge as in doubt, refunds it; order CANCELLED"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Crash the orchestrator right after the refund call, then recover from the saga log — with the plain refund and with the idempotent one (`python try_it.py`).",
+        "predict": "How many refunds does the customer get?",
+        "expected": "idempotent refund=False: refunds [-10, -10], audit o1 money kept=-10 of 10; idempotent refund=True: refunds [-10], audit OK."
+      },
+      {
+        "task": "Run the choreography over a bus that duplicates ~20% of events (seeded), with the lesson's Payments and with the solution's (`python try_it.py`).",
+        "predict": "Does choreography's built-in refund stay correct?",
+        "expected": "lesson Payments: 32 deliveries, audit o6: money kept=-60 of 60 (refunded twice); solution Payments: 32 deliveries, audit OK."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Customers refunded twice",
+        "action": "Make the refund idempotent per saga id (and per step), and check it in the payment service, not only in the orchestrator."
+      },
+      {
+        "symptom": "Sagas stuck half-way after a deploy",
+        "action": "Run recover() at startup and alert on sagas with no final log entry older than N minutes."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Java: Eventuate Tram Sagas implements orchestration-based sagas (the example application from microservices.io).",
+      "Same idea with messaging: choreography over Kafka, RabbitMQ or NATS topics; publish events with a transactional outbox so a step's database change and its event cannot diverge.",
+      "Same idea in the original paper: Garcia-Molina & Salem's saga execution component logs every step and runs compensations in reverse (backward recovery)."
+    ],
+    "seeAlso": [
+      "application-architecture L200 #9 Event-driven integration: outbox, bus and AsyncAPI: publish each saga step's event reliably with an outbox",
+      "distributed-systems L100 #5 Idempotency keys: exactly-once effect over at-least-once delivery: the saga id is the idempotency key for every step and compensation",
+      "ai-agents L300 #15 Safe tool execution: an agent-triggered refund made idempotent behind an approval queue — the same rule as this saga's idempotent compensation",
+      "application-architecture L300 #12 CQRS and read models: projections that survive crashes: same problem seen from the application architecture side (reverse link).",
+      "distributed-systems L400 #20 Chaos engineering: hypotheses, steady state, blast radius and seeded fault campaigns: chaos experiments attack this saga as shipped and as hardened (reverse link)"
+    ],
+    "inRealSystems": [
+      "Order, booking and payment flows across services use sagas because one database transaction cannot span services owned by different teams or vendors.",
+      "Orchestrators persist saga state in a table or log and resume after restarts; choreographed sagas rely on idempotent consumers and an outbox."
+    ],
+    "useWhen": "Use a saga when one business operation spans services with separate databases and each step has a meaningful undo; avoid it when a single database transaction is possible, or when a step cannot be compensated and cannot be moved to the end.",
+    "simulatorVsReal": "In-process services and an in-memory saga log; crashes are simulated by an exception after a successful call.",
+    "caution": "Compensations are business actions: a refund moves money. Log them, make them idempotent, and send any compensation that keeps failing to a person instead of dropping it.",
+    "checkpoint": "PASS if the demo matches the README, `python -m unittest` runs 8 tests OK and your compensating orchestrator passes test_build_task with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "Steps: reserve stock, charge card, ship. Charge fails. Which compensations run, in which order?",
+        "a": "Only release stock: compensate completed steps in reverse; the failed charge did nothing."
+      },
+      {
+        "q": "The orchestrator crashed after calling charge but before logging it. What should recovery do?",
+        "a": "Treat the charge as in doubt and refund it (a no-op if it never happened) — or query the payment service by saga id."
+      },
+      {
+        "q": "Why put shipping last?",
+        "a": "It cannot be undone; every step that can still fail should come before the irreversible one."
+      }
+    ],
+    "buildTask": {
+      "task": "In saga.py: (1) on StepFailed, compensate the completed steps in reverse order, logging compensating/compensated and 'saga compensated'; (2) make Payments.refund idempotent (one refund per saga, for the charged amount, no-op if nothing charged); (3) add Orchestrator.recover() that finishes every saga without a final log entry, compensating the in-doubt step too.",
+      "hints": [
+        "Track the names of completed steps in run(); reversed(self.steps) gives the order.",
+        "Skip compensations already logged 'compensated' — that makes recover() safe to run twice.",
+        "In-doubt step = the step after the last 'done' entry in the log."
+      ],
+      "solution": "labs/L300/14-sagas-compensation/solution_saga.py",
+      "check": "labs/L300/14-sagas-compensation/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "failureLab": {
+      "fault": "Shipping rejects 30% of orders (seeded RNG, seed 14: o1, o5, o6); a second fault crashes the orchestrator right after a successful refund or charge call (helpers.crash_once_after).",
+      "symptom": "Lesson orchestrator: o1/o5/o6 FAILED but `money kept=10 of 10` (50, 60) — paid, not shipped, never refunded; the saga log has no compensation lines.",
+      "fix": "Reverse-order compensation, idempotent refund, recover() from the saga log.",
+      "proof": "labs/L300/14-sagas-compensation/test_build_task.py: 3 failures + 1 error against saga.py (BUILD_TARGET=mine), 4 passes against solution_saga.py; tryIt 1 shows two refunds before idempotency, one after."
+    },
+    "tradeOffs": [
+      {
+        "option": "Orchestration",
+        "gains": "The whole flow in one place; easy to test, log and recover",
+        "costs": "A central component to run and keep available; services coupled to its commands",
+        "chooseWhen": "Many steps, branching logic, or strict audit needs"
+      },
+      {
+        "option": "Choreography",
+        "gains": "No coordinator; services stay loosely coupled",
+        "costs": "Flow spread across handlers; harder to see and change; duplicates on at-least-once buses",
+        "chooseWhen": "Few steps, stable flow, teams that own their events"
+      },
+      {
+        "option": "Two-phase commit",
+        "gains": "Atomic and isolated",
+        "costs": "Blocking coordinator, locks held across services; rarely supported across vendors",
+        "chooseWhen": "All participants are databases you control that support it"
+      }
+    ],
+    "sources": [
+      {
+        "title": "Garcia-Molina & Salem, Sagas (SIGMOD 1987)",
+        "url": "https://www.cs.cornell.edu/andru/cs711/2002fa/reading/sagas.pdf"
+      },
+      {
+        "title": "microservices.io: Pattern: Saga (background; vendor-authored pattern site)",
+        "url": "https://microservices.io/patterns/data/saga.html"
+      }
+    ],
+    "next": "L300 #15 Distributed tracing with W3C traceparent: propagation, spans as JSON lines, critical path — follow one request (or saga) across every service it touches",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python saga.py`, `python solution_saga.py`, `python choreography.py`, `python try_it.py` and `python -m unittest -v` (8 tests OK) on Python 3.12.15 (Linux); output identical on repeated runs (seeded). BUILD_TARGET=mine against the unmodified saga.py: 3 failures + 1 error, as intended.",
+      "pendingCi": [
+        "Temporal CLI exercise (manual; temporalio 1.34.0 SDK not installed here)",
+        "macOS and Windows runs (CI matrix)"
+      ]
+    },
+    "conceptNote": "content/concepts/L300/14-sagas-compensation.md",
+    "conceptSummary": "A saga replaces a cross-service transaction with local steps plus compensating actions: on failure, completed steps are undone newest first. A saga log lets a new orchestrator finish after a crash; because recovery may repeat work, every step and compensation must be idempotent. Choreography spreads the same flow over event handlers.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "Temporal CLI dev server + Web UI",
+        "role": "SEE",
+        "exercise": "Start `temporal server start-dev`, then port saga.py's orchestrator to a Temporal workflow with the temporalio Python SDK (`python -m pip install temporalio==1.34.0` in the venv, macOS and Windows): activities create, charge and ship; on a ship failure run the compensations refund, then cancel (reverse order). Run the seed-14 fault (o1, o5 and o6 fail at ship) and open o1's event history at http://localhost:8233.",
+        "expected": "Should tell the lab's story: without compensations o1's history ends at the failed ship activity with the charge kept — the lesson audit's `o1: FAILED, shipped=False, money kept=10 of 10`; with them (the build task) the history shows ship failed, then refund and cancel, like solution_saga.py's log (`charge compensated`, `create compensated`, `saga compensated`) and `audit: OK`. Pending a manual run; temporalio 1.34.0 is the PyPI release checked 2026-10-28 (licence not shown on the fetched page).",
+        "mac": "brew install temporal; temporal server start-dev (UI http://localhost:8233)",
+        "windows": "Windows amd64 archive from the CLI README; temporal.exe server start-dev",
+        "licence": "MIT, CLI repository (OSI: yes)",
+        "url": "https://github.com/temporalio/cli"
+      }
+    ]
+  },
+  {
+    "id": "distributed-tracing",
+    "number": 15,
+    "level": "L300",
+    "title": "Distributed tracing with W3C traceparent: propagation, spans as JSON lines, critical path",
+    "phase": "Observability",
+    "category": "tracing",
+    "description": "Three stdlib HTTP services propagate W3C traceparent and record spans as JSON lines; an analyzer rebuilds the trace and its critical path — until one hop drops the header and the trace breaks in two.",
+    "outcome": "You can propagate trace context across HTTP hops, validate traceparent per the W3C spec, rebuild a trace from spans, find the critical path, and fix propagation once in middleware.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Optional (pending-ci): opentelemetry-api / -sdk / -exporter-otlp-proto-http 1.45.1 for otel_equivalent.py; Jaeger 2.22.0 (manual).",
+    "estimatedTime": "50 minutes",
+    "overview": [
+      "A trace is only as good as its weakest hop: every service must continue the incoming trace id and pass its own span id on, ideally in middleware so no call site can forget."
+    ],
+    "prerequisites": [
+      "Lesson 2 (two services over HTTP)",
+      "Lesson 3 (timeouts: where latency hides)"
+    ],
+    "glossary": [
+      {
+        "term": "span",
+        "meaning": "One unit of work (here: one request handled by one service) with start, end, its own id and its parent's id."
+      },
+      {
+        "term": "traceparent",
+        "meaning": "W3C header `version-traceid-parentid-flags`, e.g. 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01."
+      },
+      {
+        "term": "critical path",
+        "meaning": "The chain of spans that decides when the request finishes; shortening anything else does not help."
+      },
+      {
+        "term": "self time",
+        "meaning": "A span's duration minus the time covered by its children on the critical path."
+      }
+    ],
+    "concepts": [
+      "Continue the incoming trace id; send your own span id as the next parent id.",
+      "Invalid or missing header -> start a new trace (and count how often).",
+      "Propagate in middleware, not at each call site."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python tracing.py` (starts 3 services on 127.0.0.1, sends one checkout, stops them).",
+        "expected": "4 span JSON lines; ids repeat every run (seeded), times vary by a few ms.",
+        "ifNot": "Port or firewall issue: the services bind 127.0.0.1 on OS-chosen ports."
+      },
+      {
+        "title": "Group the spans into traces",
+        "detail": "Read the `trace ...: N span(s)` lines.",
+        "expected": "`trace 85750621..: 3 span(s)` and `trace 0e111600..: 1 span(s): payments GET /authorize` — one request, two traces.",
+        "ifNot": "One trace of 4 spans -> you already fixed propagation (compare with solution_tracing.py)."
+      },
+      {
+        "title": "Read the critical path and the problems",
+        "detail": "Self time shows where the time seems to go.",
+        "expected": "`orders GET /create self 88 ms` (varies) and `2 trace ids for one request (a hop did not propagate traceparent)`.",
+        "ifNot": "Times much larger on a busy machine are fine; the structure must match."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v` (real HTTP on 127.0.0.1, ~1 s)",
+        "expected": "Ran 11 tests ... OK",
+        "ifNot": "Run from the lab folder; a firewall blocking 127.0.0.1 is the usual cause for the HTTP-based tests."
+      },
+      {
+        "title": "Build task (the hardening change)",
+        "detail": "Make the change in buildTask.task in the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK. Before your change they fail (FAILED (failures=3): 2 != 1 trace ids); the reference is solution_tracing.py.",
+        "ifNot": "Diff your file against solution_tracing.py; run without BUILD_TARGET to see the reference pass."
+      },
+      {
+        "title": "(Optional) Same with OpenTelemetry",
+        "detail": "Install the pinned SDK in the venv and run the cross-check (CI runs it; not run in the sandbox).",
+        "mac": "python -m pip install -r requirements-otel.txt\npython otel_equivalent.py",
+        "windows": "python -m pip install -r requirements-otel.txt\npython otel_equivalent.py",
+        "expected": "Ends with `otel equivalent OK` (pending-ci).",
+        "ifNot": "Versions must match requirements-otel.txt (1.45.1 for api, sdk and exporter)."
+      }
+    ],
+    "code": "\"\"\"L300 lesson 15 (python tracing.py): W3C Trace Context across three stdlib HTTP services on 127.0.0.1.\ngateway /checkout -> orders /create -> payments /authorize, then gateway -> payments /receipt. Every service\nrecords a span (JSON lines); analyze.py groups them into traces and finds the critical path.\nHappy path: one trace, four spans. Fault: one hop forgets the traceparent header -> the trace breaks in two.\"\"\"\nimport json, random, re, threading, time\n\nfrom analyze import critical_path, problems, traces\nfrom helpers import QuietHandler, call, serve\n\nTRACEPARENT = re.compile(r\"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(-.*)?$\")  # version-trace-parent-flags\nWORK = {\"/checkout\": 0.005, \"/create\": 0.02, \"/authorize\": 0.06, \"/receipt\": 0.01}  # seconds of fake work\nURL, SPANS, LOCK, CURRENT = {}, [], threading.Lock(), threading.local()\nRNG = random.Random(15)  # seeded ids so runs are comparable; production ids come from a CSPRNG\n\n\ndef new_id(bits):\n    with LOCK:\n        return f\"{RNG.getrandbits(bits):0{bits // 4}x}\"\n\n\ndef parse_traceparent(value):\n    \"\"\"'00-<32 hex trace-id>-<16 hex parent-id>-<2 hex flags>' -> (trace_id, parent_id, flags), else None.\n    All-zero ids, version ff and extra fields on version 00 are invalid; a higher version keeps its first four\n    fields (W3C 3.2.4). An invalid or missing header means: start a NEW trace (W3C section 4).\"\"\"\n    m = TRACEPARENT.match((value or \"\").strip())\n    if not m or m[1] == \"ff\" or (m[1] == \"00\" and m[5]) or m[2] == \"0\" * 32 or m[3] == \"0\" * 16:\n        return None\n    return m[2], m[3], m[4]\n\n\ndef traced_call(url):\n    \"\"\"Client side of propagation: send MY span id as the callee's parent-id, same trace-id and flags\n    (the caller's sampled flag passes on unchanged: this service never makes its own sampling decision).\"\"\"\n    ctx = getattr(CURRENT, \"span\", None)\n    headers = {\"traceparent\": f\"00-{ctx['trace_id']}-{ctx['span_id']}-{CURRENT.flags}\"} if ctx else {}\n    return call(url, headers=headers)\n\n\nclass Service(QuietHandler):\n    name, routes = \"service\", {}\n\n    def do_GET(self):\n        incoming = parse_traceparent(self.headers.get(\"traceparent\"))  # header names are case-insensitive\n        trace_id, parent_id, flags = incoming or (new_id(128), None, \"01\")  # new trace: sampled\n        span = {\"trace_id\": trace_id, \"span_id\": new_id(64), \"parent_id\": parent_id, \"service\": self.name,\n                \"name\": f\"GET {self.path}\", \"start\": time.perf_counter()}\n        CURRENT.span, CURRENT.flags = span, flags  # server middleware: this request is the current context\n        try:\n            status, body = self.routes[self.path](self)\n        finally:\n            span[\"end\"], CURRENT.span = time.perf_counter(), None\n            with LOCK:\n                SPANS.append(span)\n        self.reply(status, body)\n\n\nclass Gateway(Service):\n    name = \"gateway\"\n    routes = {\"/checkout\": lambda h: (time.sleep(WORK[\"/checkout\"]), traced_call(URL[\"orders\"] + \"/create\"),\n                                      traced_call(URL[\"payments\"] + \"/receipt\"), (200, {\"ok\": True}))[-1]}\n\n\nclass Orders(Service):\n    name = \"orders\"\n    # BUG on purpose: a raw call() - written before tracing existed - so this hop sends no traceparent\n    routes = {\"/create\": lambda h: (time.sleep(WORK[\"/create\"]), call(URL[\"payments\"] + \"/authorize\"), (200, {}))[-1]}\n\n\nclass Payments(Service):\n    name = \"payments\"\n    routes = {\"/authorize\": lambda h: (time.sleep(WORK[\"/authorize\"]), (200, {}))[-1],\n              \"/receipt\": lambda h: (time.sleep(WORK[\"/receipt\"]), (200, {}))[-1]}\n\n\ndef run_checkout(services=(Gateway, Orders, Payments), headers=None):\n    \"\"\"Start the three services, send one checkout, stop them. Returns the spans as dicts (times in ms).\"\"\"\n    SPANS.clear()\n    servers = {cls.name: serve(cls) for cls in services}\n    URL.update({name: f\"http://127.0.0.1:{srv.server_port}\" for name, srv in servers.items()})\n    call(URL[\"gateway\"] + \"/checkout\", headers=headers)\n    for srv in servers.values():\n        srv.shutdown()\n        srv.server_close()\n    t0 = min(s[\"start\"] for s in SPANS)\n    return [{**s, \"start\": round((s[\"start\"] - t0) * 1000, 1), \"end\": round((s[\"end\"] - t0) * 1000, 1)} for s in SPANS]\n\n\nif __name__ == \"__main__\":\n    spans = run_checkout()\n    print(\"spans (JSON lines, one per request):\", *(json.dumps(s) for s in sorted(spans, key=lambda s: s[\"start\"])), sep=\"\\n  \")\n    for trace_id, members in traces(spans).items():\n        print(f\"trace {trace_id[:8]}..: {len(members)} span(s):\", \", \".join(f\"{s['service']} {s['name']}\" for s in members))\n    root = min((s for s in spans if s[\"parent_id\"] is None), key=lambda s: s[\"start\"])\n    print(\"critical path:\", \" | \".join(f\"{s['service']} {s['name']} self {ms:.0f} ms\" for s, ms in critical_path(spans, root)))\n    print(\"trace problems:\", *(problems(spans) or [\"none\"]), sep=\"\\n  \")\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Strict parsing",
+        "detail": "`TRACEPARENT` + `parse_traceparent` accept lowercase hex only; all-zero trace or parent ids, version `ff` and extra fields on version 00 are rejected, while a higher version keeps its first four fields (W3C 3.2.4). Invalid -> `None` -> new trace, as the W3C processing model says."
+      },
+      {
+        "title": "Server middleware",
+        "detail": "`Service.do_GET` parses the header, starts a span (new span id, parent = incoming parent-id), stores it and the incoming trace-flags in the thread-local `CURRENT` (a new trace gets `01`, sampled), runs the route and records the span — every service gets this without writing tracing code."
+      },
+      {
+        "title": "Client propagation",
+        "detail": "`traced_call` sends `00-<same trace id>-<my span id>-<incoming flags>`, so the callee's span becomes my child and the caller's sampling decision (`01` sampled, `00` not) travels on unchanged."
+      },
+      {
+        "title": "The broken hop",
+        "detail": "`Orders.routes` uses the raw `call()` — no header — so payments starts a new trace with `parent_id: null`."
+      },
+      {
+        "title": "Spans as JSON lines",
+        "detail": "Each span is one dict (trace_id, span_id, parent_id, service, name, start, end); the demo prints them as JSON lines, the format a collector would ingest."
+      },
+      {
+        "title": "Analysis",
+        "detail": "`analyze.traces` groups by trace id; `critical_path` walks back from the root's end through the last-finishing children; `problems` flags extra roots and orphan parents."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L300/15-distributed-tracing/tracing.py",
+        "purpose": "traceparent parsing, middleware, the three services, demo"
+      },
+      {
+        "path": "labs/L300/15-distributed-tracing/analyze.py",
+        "purpose": "Group spans into traces, critical path, broken-trace problems, JSON-lines loader"
+      },
+      {
+        "path": "labs/L300/15-distributed-tracing/helpers.py",
+        "purpose": "Plumbing: quiet JSON handler, proxy-free call(), serve()"
+      },
+      {
+        "path": "labs/L300/15-distributed-tracing/solution_tracing.py",
+        "purpose": "Build-task reference: propagating client middleware"
+      },
+      {
+        "path": "labs/L300/15-distributed-tracing/test_tracing.py",
+        "purpose": "unittest: W3C header cases, critical path, problems, services, failure-lab symptom"
+      },
+      {
+        "path": "labs/L300/15-distributed-tracing/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine tests your file)"
+      },
+      {
+        "path": "labs/L300/15-distributed-tracing/try_it.py",
+        "purpose": "The two tryIt experiments"
+      },
+      {
+        "path": "labs/L300/15-distributed-tracing/otel_equivalent.py",
+        "purpose": "OpenTelemetry SDK cross-check both directions; --otlp exports to Jaeger (pending-ci)"
+      },
+      {
+        "path": "labs/L300/15-distributed-tracing/requirements-otel.txt",
+        "purpose": "Pinned OpenTelemetry packages (1.45.1) for the optional cross-check"
+      }
+    ],
+    "expectedResults": [
+      "Lesson file: 4 spans in 2 traces; payments /authorize has parent_id null; problems: 2 trace ids for one request",
+      "Critical path (lesson): orders /create shows ~88 ms self time (hidden payments call)",
+      "Solution: 1 trace of 4 spans; critical path checkout -> create -> authorize (self ~60 ms) -> receipt; problems: none"
+    ],
+    "testCases": [
+      {
+        "action": "Parse the W3C example header; uppercase, all-zero ids, truncated",
+        "expected": "Example parsed; all others None"
+      },
+      {
+        "action": "Call the gateway with a valid traceparent",
+        "expected": "Gateway span continues that trace id and parent id"
+      },
+      {
+        "action": "Synthetic spans a[0,100] b[10,90] c[20,85] d[5,8]",
+        "expected": "Critical path a(17) d(3) b(15) c(65)"
+      },
+      {
+        "action": "Run the checkout with the solution",
+        "expected": "1 trace, no orphans, /authorize child of /create"
+      },
+      {
+        "action": "Call the gateway with trace-flags 00, then 01; capture the traceparent payments /receipt receives",
+        "expected": "Same trace id; flags 00 and 01 passed on unchanged"
+      },
+      {
+        "action": "Parse a version cc header with an extra field; version ff; version 00 with an extra field",
+        "expected": "cc parsed (first four fields); the other two None"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Call the gateway with three traceparent headers: the W3C example, the same in uppercase, and an all-zero trace id (`python try_it.py`).",
+        "predict": "Which ones does the gateway continue?",
+        "expected": "Valid example -> gateway trace 4bf92f3577b3.., parent 00f067aa0ba902b7; uppercase -> new trace, parent None; all-zero -> new trace, parent None."
+      },
+      {
+        "task": "Make payments /authorize 3x slower (60 -> 180 ms of work) (`python try_it.py`).",
+        "predict": "How much of the checkout is /authorize now?",
+        "expected": "60 ms -> its span is 55% of the checkout; 180 ms -> 76%; on the critical path both times (percentages vary by a few points)."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Traces stop at one service",
+        "action": "That hop does not propagate: look for raw HTTP clients, queues or thread pools without context; inject in middleware."
+      },
+      {
+        "symptom": "Child spans start before their parent",
+        "action": "Clock skew between hosts; compare durations, not absolute times across machines."
+      },
+      {
+        "symptom": "Sampled traces miss some services' spans (or unsampled requests show up downstream)",
+        "action": "A hop overwrites trace-flags (e.g. hard-codes 01). Pass the incoming sampled flag on unchanged unless the service makes its own sampling decision (W3C 3.2.2.5.1); test_sampled_flag_is_propagated_unchanged checks it."
+      }
+    ],
+    "equivalents": [
+      "Same idea with OpenTelemetry Python: TraceContextTextMapPropagator().inject(headers) / .extract(carrier) — the W3C header this lab builds by hand; instrumentation libraries do it as middleware.",
+      "Same idea in Jaeger: collects spans over OTLP (:4318) and shows the trace timeline and critical path in its UI (:16686).",
+      "Same idea in other formats: B3 headers (Zipkin) carry the same trace id / span id / sampled information."
+    ],
+    "learningTools": [
+      {
+        "name": "Jaeger",
+        "role": "SEE",
+        "exercise": "Start Jaeger, then `python otel_equivalent.py --otlp` (exports the script's spans over OTLP/HTTP to :4318); open http://localhost:16686 and search for trace 4bf92f3577b34da6a3ce929d0e0e4736.",
+        "expected": "Should show that trace with `orders GET /create` and its child `payments GET /authorize` (the script continues the W3C example header), plus a separate one-span `gateway GET /checkout` trace; compare the parent links with this lab's solution output. Pending a manual run.",
+        "mac": "jaeger-2.22.0-darwin-arm64.tar.gz or container cr.jaegertracing.io/jaegertracing/jaeger:2.22.0",
+        "windows": "Windows binary or container",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://www.jaegertracing.io/docs/latest/getting-started/"
+      },
+      {
+        "name": "Grafana OSS",
+        "role": "INSPECT",
+        "exercise": "Add Jaeger as a data source (core) and open the same trace in Explore.",
+        "expected": "Should list the same spans and parent links as Jaeger; a broken hop shows up as a separate trace, like the lesson file's `trace 0e111600..: 1 span(s)`. Pending a manual run.",
+        "mac": "brew install grafana && brew services start grafana; open http://localhost:3000",
+        "windows": "Windows installer or zip (choose the Open Source edition, not Enterprise); open http://localhost:3000",
+        "licence": "AGPL-3.0-only (OSI: yes)",
+        "url": "https://grafana.com/docs/grafana/latest/datasources/"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L100 #2 Two services talking over HTTP: its Jaeger exercise instruments the same kind of A -> B call",
+      "distributed-systems L300 #14 Sagas with compensation: orchestration vs choreography, idempotent steps, saga log: a saga id plus a trace id makes a multi-service failure readable",
+      "ai-agents L300 #13 Tracing and observability: the same trace/span model for one agent run — GenAI spans with gen_ai.* attributes instead of HTTP hops"
+    ],
+    "inRealSystems": [
+      "OpenTelemetry instrumentation libraries add the server and client middleware for common frameworks; manual propagation is for hops they do not cover (custom clients, queues).",
+      "Tracing backends (Jaeger, Grafana) build the same tree from parent ids and highlight the critical path."
+    ],
+    "useWhen": "Use distributed tracing as soon as a request crosses more than one service and latency or errors need explaining; avoid tracing every request at full detail under high load — sample, and keep personal data out of trace headers.",
+    "simulatorVsReal": "Real HTTP on 127.0.0.1 with sleep-based work and seeded ids; spans are collected in-process instead of being exported to a backend.",
+    "caution": "Trace headers cross trust boundaries: never put personal data in traceparent/tracestate (W3C privacy section), and a public edge may restart incoming traces to avoid abuse. Production ids must come from a cryptographic random source, not a seeded RNG.",
+    "checkpoint": "PASS if the demo matches the README (structure; times vary), `python -m unittest` runs 9 tests OK and your middleware passes test_build_task with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "A service receives traceparent 00-...-00f067aa0ba902b7-01. What does it send downstream?",
+        "a": "Same version, trace id and flags, with its own new span id in the parent-id field."
+      },
+      {
+        "q": "Why can 'self time' be misleading?",
+        "a": "It includes calls the trace cannot see; a broken hop shows up as large self time in the caller."
+      },
+      {
+        "q": "Why fix propagation in middleware rather than at the call site?",
+        "a": "The next raw client someone adds would break the trace again; one code path cannot be forgotten."
+      }
+    ],
+    "buildTask": {
+      "task": "Replace `call` in tracing.py with client middleware: a wrapper around helpers.call that adds `traceparent: 00-<trace id>-<current span id>-<current flags>` to every outgoing request when a span is current; make traced_call the same function.",
+      "hints": [
+        "Import helpers.call under another name (raw_call) and define your own call() with the same signature.",
+        "Read the current span from the thread-local CURRENT; outside a request there is none -> send no header.",
+        "Keep caller-supplied headers: merge, do not replace."
+      ],
+      "solution": "labs/L300/15-distributed-tracing/solution_tracing.py",
+      "check": "labs/L300/15-distributed-tracing/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "failureLab": {
+      "fault": "The orders -> payments hop uses a raw HTTP call without traceparent (a call site written before tracing existed).",
+      "symptom": "One checkout yields two trace ids; payments /authorize has parent_id null; the critical path hides payments and blames `orders GET /create` (~88 ms self time).",
+      "fix": "Propagating client middleware: every outgoing call injects the current context.",
+      "proof": "labs/L300/15-distributed-tracing/test_build_task.py: 3 failures against tracing.py (BUILD_TARGET=mine), 4 passes against solution_tracing.py (one trace, /authorize child of /create, critical path includes /authorize)."
+    },
+    "tradeOffs": [
+      {
+        "option": "Middleware / auto-instrumentation",
+        "gains": "Every hop propagates; no per-call code",
+        "costs": "Must cover every client library, queue and thread pool you use",
+        "chooseWhen": "Default for services built on common frameworks"
+      },
+      {
+        "option": "Manual propagation at call sites",
+        "gains": "Full control over what is traced",
+        "costs": "Easy to forget; one missed site breaks the trace",
+        "chooseWhen": "Custom transports the middleware does not support"
+      },
+      {
+        "option": "Logs with a correlation id only",
+        "gains": "Cheap; works with any log stack",
+        "costs": "No tree, no timing, no critical path",
+        "chooseWhen": "Few services and no latency questions"
+      }
+    ],
+    "sources": [
+      {
+        "title": "W3C Trace Context (Recommendation, 23 November 2021)",
+        "url": "https://www.w3.org/TR/trace-context/"
+      },
+      {
+        "title": "OpenTelemetry Python: Propagation",
+        "url": "https://opentelemetry.io/docs/languages/python/propagation/"
+      },
+      {
+        "title": "PyPI: opentelemetry-sdk 1.45.1",
+        "url": "https://pypi.org/project/opentelemetry-sdk/"
+      },
+      {
+        "title": "Jaeger docs: Getting Started",
+        "url": "https://www.jaegertracing.io/docs/latest/getting-started/"
+      }
+    ],
+    "next": "L300 #16 Backpressure and load shedding: bounded queues, 503 + Retry-After, AIMD concurrency limits — what the trace shows when the slow span is a queue",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python tracing.py`, `python solution_tracing.py`, `python try_it.py` and `python -m unittest -v` (11 tests OK, incl. sampled-flag propagation and the version rules) on Python 3.12.15 (Linux); span ids repeat (seeded) and times vary by run. BUILD_TARGET=mine against the unmodified tracing.py: 3 failures, as intended. Header rules checked against the W3C Trace Context Recommendation. otel_equivalent.py was NOT run (no PyPI access in the sandbox).",
+      "pendingCi": [
+        "labs/L300/15-distributed-tracing/otel_equivalent.py with requirements-otel.txt (OpenTelemetry 1.45.1) — CI job `otel`",
+        "Jaeger and Grafana exercises (manual)",
+        "macOS and Windows runs (CI matrix)"
+      ]
+    },
+    "conceptNote": "content/concepts/L300/15-distributed-tracing.md",
+    "conceptSummary": "A trace is a tree of spans sharing one trace id; each hop continues the incoming W3C traceparent and sends its own span id as the next parent. Rebuilding the tree gives the critical path. One hop that drops the header splits the trace and hides its time, so propagation belongs in middleware.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  },
+  {
+    "id": "backpressure-load-shedding",
+    "number": 16,
+    "level": "L300",
+    "title": "Backpressure and load shedding: bounded queues, 503 + Retry-After, AIMD concurrency limits",
+    "phase": "Overload protection",
+    "category": "load shedding",
+    "description": "A 4-worker server under open-model load: queueing delay vs throughput measured, then a 150% burst makes an unbounded queue's p99 explode; a bounded queue that sheds with 503 + Retry-After keeps p99 near 160 ms.",
+    "outcome": "You can measure queueing delay against throughput, explain why unbounded queues turn bursts into long outages, add admission control with 503 + Retry-After, and use an AIMD concurrency limit on the caller.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux), stdlib only, no installs beyond lesson 1; macOS (Apple silicon) and Windows 11: same commands (env-var syntax differs, see steps). Optional: Grafana k6 v2.3.0 against serve_realtime.py (manual).",
+    "estimatedTime": "50 minutes",
+    "overview": [
+      "Throughput stops at capacity but waiting does not: bound the queue to bound latency, and answer the excess quickly with 503 + Retry-After."
+    ],
+    "prerequisites": [
+      "Lesson 3 (timeouts)",
+      "Lesson 11 (rate limiting, Retry-After)"
+    ],
+    "glossary": [
+      {
+        "term": "open model",
+        "meaning": "Requests arrive at a rate independent of how fast the server answers (real users, k6 arrival-rate executors)."
+      },
+      {
+        "term": "goodput",
+        "meaning": "Answers that arrive while the client is still waiting (here: within 1 s)."
+      },
+      {
+        "term": "load shedding",
+        "meaning": "Refusing work early (503) so the work you accept finishes in time."
+      },
+      {
+        "term": "AIMD",
+        "meaning": "Additive increase, multiplicative decrease: grow a limit slowly on success, cut it fast on overload (TCP congestion control)."
+      }
+    ],
+    "concepts": [
+      "Little's law: requests in system = arrival rate x time in system.",
+      "Near capacity, waiting grows much faster than load.",
+      "Bound every queue by a latency budget, not by memory."
+    ],
+    "steps": [
+      {
+        "title": "Run the demo",
+        "detail": "`python backpressure.py`",
+        "expected": "`capacity 400 requests/s (4 workers x 10 ms)`; identical numbers every run (simulated, seeded).",
+        "ifNot": "Check WORKERS, SERVICE_MS and the seed."
+      },
+      {
+        "title": "Read the load sweep",
+        "detail": "Throughput vs mean wait vs p99 at 50-95% load.",
+        "expected": "80%: 312/s, 5.9 ms wait, p99 59.3 ms; 95%: 371/s, 30.4 ms, p99 204.6 ms.",
+        "ifNot": "If waits do not grow, arrivals are not Poisson (check helpers.simulate)."
+      },
+      {
+        "title": "Read the burst metrics (JSON lines)",
+        "detail": "5 s at 60%, 10 s at 150%, 15 s at 60%; every third second shown.",
+        "expected": "p99 812 ms at t=6, 3733 ms at t=12, 4689 ms at t=15 (after the burst); summary goodput 3781 of 10686.",
+        "ifNot": "shed > 0 means you are running the solution."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "`python -m unittest -v` (~5 s: includes a 2 s real-clock test of serve_realtime.py)",
+        "expected": "Ran 11 tests ... OK",
+        "ifNot": "Run from the lab folder; a firewall blocking 127.0.0.1 is the usual cause for the HTTP-based tests."
+      },
+      {
+        "title": "Build task (the hardening change)",
+        "detail": "Make the change in buildTask.task in the lesson file, then run its test against YOUR file.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest test_build_task -v",
+        "expected": "All build-task tests OK. Before your change they fail (FAILED (failures=3): p99 4619.1 not less than 250); the reference is solution_backpressure.py.",
+        "ifNot": "Diff your file against solution_backpressure.py; run without BUILD_TARGET to see the reference pass."
+      },
+      {
+        "title": "(Optional) Real clock and k6",
+        "detail": "Python cross-check first, then k6 against the same target.",
+        "mac": "python serve_realtime.py --check\npython serve_realtime.py   # terminal 1\nk6 run load_test.js        # terminal 2",
+        "windows": "python serve_realtime.py --check\npython serve_realtime.py   # terminal 1\nk6 run load_test.js        # terminal 2",
+        "expected": "--check: `{'200': 780, '503': 420, 'p99_ms': 193, '503_without_retry_after': 0}` (timing-based; varies a little); k6 pending a manual run.",
+        "ifNot": "Port 8016 busy -> set LAB_PORT (and the URL in load_test.js)."
+      }
+    ],
+    "code": "\"\"\"L300 lesson 16 (python backpressure.py): a server with 4 workers (10 ms per request on average, so capacity\nis 400 requests/s) and a queue in front of them. Open-model load (Poisson, seeded): clients keep sending no\nmatter how slow the server gets. Part 1 measures queueing delay vs throughput as load approaches capacity.\nPart 2 is the fault: a 10 s burst at 150% of capacity, with per-second metrics as JSON lines.\nThe lesson server's queue is unbounded - watch p99 and how long the server stays slow after the burst.\"\"\"\nimport json\nfrom collections import deque\n\nfrom helpers import simulate\n\nWORKERS, SERVICE_MS = 4, 10.0\nCAPACITY = WORKERS * 1000 / SERVICE_MS  # 400 requests/s\nTIMEOUT_MS = 1000  # clients give up after 1 s: work finished later is wasted\n\n\nclass Server:\n    def __init__(self, workers=WORKERS):\n        self.workers, self.queue = workers, deque()\n\n    def admit(self, now):\n        \"\"\"Admission control: return None to queue the request, or Retry-After seconds to shed it with a 503.\"\"\"\n        return None  # unbounded queue: everything waits, however long the line already is\n\n\ndef pct(values, p):\n    values = sorted(values)\n    return values[min(len(values) - 1, int(p / 100 * len(values)))] if values else 0.0\n\n\ndef summary(records):\n    ok = [r for r in records if r[\"status\"] == 200]\n    lat = [r[\"end\"] - r[\"arrive\"] for r in ok]\n    secs = (max(r[\"end\"] for r in records) - min(r[\"arrive\"] for r in records)) / 1000\n    return {\"offered\": len(records), \"ok\": len(ok), \"shed\": sum(r[\"status\"] == 503 for r in records),\n            \"throughput_per_s\": round(len(ok) / secs), \"mean_wait_ms\": round(sum(r[\"start\"] - r[\"arrive\"] for r in ok) / max(1, len(ok)), 1),\n            \"p50_ms\": round(pct(lat, 50), 1), \"p99_ms\": round(pct(lat, 99), 1),\n            \"goodput\": sum(l <= TIMEOUT_MS for l in lat)}  # answered before the client gave up\n\n\ndef per_second(records):\n    \"\"\"Metrics a dashboard would scrape: one JSON line per second of arrival time.\"\"\"\n    lines = []\n    for sec in range(int(max(r[\"arrive\"] for r in records) // 1000) + 1):\n        rs = [r for r in records if sec * 1000 <= r[\"arrive\"] < (sec + 1) * 1000]\n        lat = [r[\"end\"] - r[\"arrive\"] for r in rs if r[\"status\"] == 200]\n        lines.append(json.dumps({\"t\": sec, \"offered\": len(rs), \"ok\": len(lat), \"shed\": sum(r[\"status\"] == 503 for r in rs),\n                                 \"p99_ms\": round(pct(lat, 99))}))\n    return lines\n\n\nBURST = [(5, 0.6 * CAPACITY), (10, 1.5 * CAPACITY), (15, 0.6 * CAPACITY)]\n\nif __name__ == \"__main__\":\n    print(f\"capacity {CAPACITY:.0f} requests/s ({WORKERS} workers x {SERVICE_MS:.0f} ms)\")\n    print(\"1) load sweep, 20 s each:  load  throughput/s  mean wait  p99\")\n    for load in (0.5, 0.8, 0.9, 0.95):\n        s = summary(simulate(Server(), [(20, load * CAPACITY)], SERVICE_MS))\n        print(f\"{load:>28.0%} {s['throughput_per_s']:>10} {s['mean_wait_ms']:>9} ms {s['p99_ms']:>6} ms\")\n    records = simulate(Server(), BURST, SERVICE_MS)\n    print(\"2) burst: 5 s at 60%, 10 s at 150%, 15 s at 60% - per-second metrics (JSON lines):\")\n    print(*per_second(records)[3:30:3], sep=\"\\n\")\n    print(\"summary:\", json.dumps(summary(records)))\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Capacity",
+        "detail": "`CAPACITY = WORKERS * 1000 / SERVICE_MS` = 400 requests/s; every number in the lab is read against it."
+      },
+      {
+        "title": "Admission control hook",
+        "detail": "`Server.admit(now)` returns None (queue it) or a Retry-After in seconds (shed with 503). The lesson version always returns None: an unbounded queue."
+      },
+      {
+        "title": "Open-model engine",
+        "detail": "`helpers.simulate` pre-generates Poisson arrivals per load segment and exponential service times from one seeded RNG; free workers take the oldest queued request."
+      },
+      {
+        "title": "p99 and goodput",
+        "detail": "`summary()` reports p50/p99 of successful requests and goodput (answered within TIMEOUT_MS = 1 s). An unbounded queue has 0 errors and terrible goodput."
+      },
+      {
+        "title": "Metrics as JSON lines",
+        "detail": "`per_second()` buckets requests by arrival second: offered, ok, shed, p99 — what you would scrape into a dashboard."
+      },
+      {
+        "title": "The burst profile",
+        "detail": "`BURST` = 5 s at 60%, 10 s at 150%, 15 s at 60%: the backlog grows by ~200 requests/s and drains at only 160/s afterwards."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L300/16-backpressure-load-shedding/backpressure.py",
+        "purpose": "Server (admission hook), summary, per-second metrics, sweep and burst demo"
+      },
+      {
+        "path": "labs/L300/16-backpressure-load-shedding/helpers.py",
+        "purpose": "Plumbing: seeded discrete-event engine (Poisson arrivals, exponential service)"
+      },
+      {
+        "path": "labs/L300/16-backpressure-load-shedding/aimd.py",
+        "purpose": "AIMD concurrency limit for callers (tryIt 2)"
+      },
+      {
+        "path": "labs/L300/16-backpressure-load-shedding/solution_backpressure.py",
+        "purpose": "Build-task reference: bounded queue, 503 + Retry-After"
+      },
+      {
+        "path": "labs/L300/16-backpressure-load-shedding/test_backpressure.py",
+        "purpose": "unittest: determinism, wait vs load, capacity cap, metrics, AIMD, failure-lab symptom"
+      },
+      {
+        "path": "labs/L300/16-backpressure-load-shedding/test_build_task.py",
+        "purpose": "Build-task check (BUILD_TARGET=mine tests your file)"
+      },
+      {
+        "path": "labs/L300/16-backpressure-load-shedding/try_it.py",
+        "purpose": "The two tryIt experiments"
+      },
+      {
+        "path": "labs/L300/16-backpressure-load-shedding/serve_realtime.py",
+        "purpose": "Tool target: real threads, 4 x 50 ms workers, queue bound 8, 127.0.0.1:8016; --check / --unbounded"
+      },
+      {
+        "path": "labs/L300/16-backpressure-load-shedding/http_helpers.py",
+        "purpose": "Plumbing for serve_realtime.py: JSON handler, call(), serve()"
+      },
+      {
+        "path": "labs/L300/16-backpressure-load-shedding/load_test.js",
+        "purpose": "k6 script: constant-arrival-rate 120 requests/s for 10 s (pending a manual run)"
+      },
+      {
+        "path": "labs/L300/16-backpressure-load-shedding/test_serve_realtime.py",
+        "purpose": "unittest: real-clock target sheds with Retry-After and bounds p99"
+      }
+    ],
+    "expectedResults": [
+      "Sweep: mean wait 0.8 / 5.9 / 14.1 / 30.4 ms at 50 / 80 / 90 / 95% load",
+      "Burst, unbounded queue: 0 shed, p99 4619.1 ms, goodput 3781 of 10686",
+      "Burst, bounded queue (40): 1907 shed with Retry-After 1, p99 154.5 ms, goodput 8779"
+    ],
+    "testCases": [
+      {
+        "action": "Same profile and seed twice",
+        "expected": "Identical records"
+      },
+      {
+        "action": "Load 0.8 -> 0.95 of capacity",
+        "expected": "Mean wait more than 3x larger"
+      },
+      {
+        "action": "Burst with the solution",
+        "expected": "p99 < 250 ms; every 503 has integer Retry-After >= 1; goodput == ok > 8000"
+      },
+      {
+        "action": "Real-clock target, 120 requests/s for 2 s",
+        "expected": "Some 503s, all with Retry-After; p99 < 1 s"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Run the burst with queue bounds 10, 40 and 400 (`python try_it.py`).",
+        "predict": "Which bound gives the most successful answers? The best goodput?",
+        "expected": "10: p99 65.1 ms, shed 1939, goodput 8747; 40: p99 154.5 ms, shed 1907, goodput 8779; 400: p99 1115.2 ms, shed 1547, ok 9139 but goodput 6710."
+      },
+      {
+        "task": "Same burst; callers also run an AIMD concurrency limit (+1/limit per success, x0.9 per 503) (`python try_it.py`).",
+        "predict": "How many 503s must the server send now?",
+        "expected": "no client limit: 1907 503s, 0 local rejections, ok 8779; AIMD: 23 503s, 1885 rejected locally, ok 8778, final limit 95.5."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "No errors, but users complain and timeouts spike",
+        "action": "An unbounded queue somewhere (request queue, thread pool, connection pool): find it via p99 and queue depth, bound it."
+      },
+      {
+        "symptom": "Shedding but CPU still at 100%",
+        "action": "You reject too late (after parsing/auth/DB work); move admission control to the front door."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Java: Netflix concurrency-limits — AIMD, Vegas and Gradient2 limits; servlet filter rejects with 429, gRPC with UNAVAILABLE.",
+      "Same idea in Google's SRE practice: client-side adaptive throttling rejects locally once requests exceed K x accepts; servers reject lower-criticality traffic first.",
+      "Same idea in TCP: the congestion window grows additively and shrinks multiplicatively on loss — AIMD."
+    ],
+    "learningTools": [
+      {
+        "name": "Grafana k6",
+        "role": "CHECK",
+        "exercise": "Start `python serve_realtime.py` (127.0.0.1:8016, 4 workers x 50 ms, queue bound 8), then `k6 run load_test.js` (constant-arrival-rate 120 requests/s for 10 s); repeat against `python serve_realtime.py --unbounded`. Then turn on k6's built-in web dashboard: `K6_WEB_DASHBOARD=true K6_WEB_DASHBOARD_PERIOD=2s K6_WEB_DASHBOARD_EXPORT=k6-report.html k6 run load_test.js` (PowerShell: `$env:K6_WEB_DASHBOARD=\"true\"; $env:K6_WEB_DASHBOARD_PERIOD=\"2s\"; $env:K6_WEB_DASHBOARD_EXPORT=\"k6-report.html\"; k6 run load_test.js`); watch http://127.0.0.1:5665 during the run and open k6-report.html afterwards (the report draws graphs only for runs longer than 3 x the period, hence 2s for this 10 s test).",
+        "expected": "Should match the local cross-check `python serve_realtime.py --check`, which printed `{'200': 780, '503': 420, 'p99_ms': 193, '503_without_retry_after': 0}` — so k6 http_req_failed ~35% and both checks at 100%; unbounded: 0 failures but p99 ~3.8 s (`--check --unbounded`: p99_ms 3787). On the dashboard: ~120 req/s offered, ~35% failed for the bounded server; 0% failed with request duration climbing towards seconds for --unbounded. Pending a manual k6 run.",
+        "mac": "brew install k6",
+        "windows": "winget install k6 --source winget, or official MSI",
+        "licence": "AGPL-3.0 (OSI: yes)",
+        "url": "https://grafana.com/docs/k6/latest/results-output/web-dashboard/"
+      },
+      {
+        "name": "Grafana OSS",
+        "role": "SEE",
+        "exercise": "Chart the per-second JSON-line metrics (offered, ok, shed, p99) of the burst for both servers, once exported to Prometheus or PostgreSQL (start with the TestData source).",
+        "expected": "Optional — the k6 web dashboard above shows the same shapes without an export step, so this is the first entry to drop. Should show the lab's shapes: unbounded p99 rising to ~4.7 s and staying high after the burst; bounded p99 flat near 140-170 ms with shed ~170-200 per second during the burst. Pending a manual run.",
+        "mac": "brew install grafana && brew services start grafana; open http://localhost:3000",
+        "windows": "Windows installer or zip (choose the Open Source edition, not Enterprise); open http://localhost:3000",
+        "licence": "AGPL-3.0-only (OSI: yes)",
+        "url": "https://grafana.com/docs/grafana/latest/datasources/"
+      }
+    ],
+    "seeAlso": [
+      "simulation L200 #8 Resources and queues: c desks, one line, Erlang C: this lab's 4 workers and one queue are the same M/M/c model, with formulas for the waiting time",
+      "distributed-systems L200 #11 Rate limiting: token bucket, per-client limits, 429 and Retry-After: per-client limits share capacity fairly; load shedding protects total capacity",
+      "application-architecture L300 #13 Resilience patterns: timeouts, circuit breaker, bulkhead, fallback: a bulkhead is a bounded queue per dependency, and an open circuit breaker sheds load the way this lesson's 503 does",
+      "application-architecture L300 #15 SLOs and error budgets: burn-rate alerts from request logs: shed requests and queueing p99 are what an availability or latency SLO and its burn-rate alert measure",
+      "microbit L300 #13 Non-blocking firmware structure: same problem seen from the microbit side (reverse link).",
+      "simulation L300 #16 Performance and scale: vectorise, parallelise, keep streams independent: same problem seen from the simulation side (reverse link).",
+      "distributed-systems L400 #22 An order pipeline that survives chaos and proves it: the capstone's gateway reuses this bounded admission (reverse link)"
+    ],
+    "inRealSystems": [
+      "Google's SRE book: a task should keep serving its provisioned rate under 2x-10x overload by rejecting the excess quickly; clients throttle themselves when many requests are rejected.",
+      "Netflix concurrency-limits estimates a service's concurrency limit from latency (Little's law, TCP-style algorithms) instead of a fixed requests-per-second number."
+    ],
+    "useWhen": "Use bounded queues and shedding on every service that can receive more than it can process (all public endpoints, shared backends); avoid shedding without Retry-After or without client backoff, or the rejected load returns immediately as retries.",
+    "simulatorVsReal": "Discrete-event simulation (simulated ms, seeded) for the lesson; serve_realtime.py repeats it on real threads and sleeps for the k6 exercise.",
+    "caution": "A 503 without Retry-After plus aggressive client retries can be worse than no shedding; honour Retry-After and keep retry budgets (lesson 4). Never shed health checks you rely on for routing without thinking it through.",
+    "checkpoint": "PASS if the demo matches the README, `python -m unittest` runs 11 tests OK and your bounded queue passes test_build_task with BUILD_TARGET=mine.",
+    "checkYourself": [
+      {
+        "q": "400 requests/s capacity, a queue bound of 40. Worst-case queueing delay?",
+        "a": "About 40 / 400 s = 100 ms (plus service time)."
+      },
+      {
+        "q": "Arrivals 600/s for 10 s into an unbounded queue at 400/s capacity, then 240/s. How long until the backlog is gone?",
+        "a": "2,000 queued / (400 - 240)/s = 12.5 s after the burst."
+      },
+      {
+        "q": "Why can 0% errors be the worst outcome under overload?",
+        "a": "Every request waited; most answers arrived after clients timed out, so the work was wasted (goodput collapses)."
+      }
+    ],
+    "buildTask": {
+      "task": "In Server.admit, refuse a request when the queue already holds MAX_QUEUE = 40 requests: return a Retry-After of max(1, ceil(queue_length / CAPACITY)) whole seconds (the engine turns it into a 503).",
+      "hints": [
+        "Choose the bound from the latency budget: 40 / 400 per s = 100 ms.",
+        "Retry-After delay-seconds is a whole number: round up, and never send 0.",
+        "Keep Server(max_queue=...) configurable for tryIt 1."
+      ],
+      "solution": "labs/L300/16-backpressure-load-shedding/solution_backpressure.py",
+      "check": "labs/L300/16-backpressure-load-shedding/test_build_task.py (BUILD_TARGET=mine python -m unittest test_build_task -v)"
+    },
+    "failureLab": {
+      "fault": "Seeded open-model burst: 10 s at 150% of capacity (600 requests/s into 400/s) between two 60% phases.",
+      "symptom": "Unbounded queue: 0 errors, p99 4,619 ms overall (4,689 ms in second 15, after the burst), goodput 3,781 of 10,686 — two thirds of the work answered after the client gave up.",
+      "fix": "Bounded queue (40) with shedding: 503 + Retry-After at the door.",
+      "proof": "labs/L300/16-backpressure-load-shedding/test_build_task.py: 3 failures against backpressure.py (BUILD_TARGET=mine), 4 passes against solution_backpressure.py (p99 < 250 ms, Retry-After >= 1, goodput > 8000)."
+    },
+    "tradeOffs": [
+      {
+        "option": "Unbounded queue",
+        "gains": "No request refused; simple",
+        "costs": "Latency grows without limit under overload; slow recovery; wasted work",
+        "chooseWhen": "Offline batch work with no deadline"
+      },
+      {
+        "option": "Bounded queue + shedding (503 + Retry-After)",
+        "gains": "Latency bounded; fast, honest failures; quick recovery",
+        "costs": "Some requests refused; clients must retry well",
+        "chooseWhen": "Any interactive or shared service"
+      },
+      {
+        "option": "Adaptive concurrency limit (AIMD/Gradient) on callers or servers",
+        "gains": "Finds the limit automatically as capacity changes",
+        "costs": "Tuning; oscillation; needs good latency/error signals",
+        "chooseWhen": "Capacity changes (autoscaling, noisy neighbours) and a fixed number goes stale"
+      }
+    ],
+    "sources": [
+      {
+        "title": "Google SRE book: Handling Overload",
+        "url": "https://sre.google/sre-book/handling-overload/"
+      },
+      {
+        "title": "Netflix concurrency-limits (README: Little's law, AIMD, Vegas, Gradient2)",
+        "url": "https://github.com/Netflix/concurrency-limits"
+      },
+      {
+        "title": "RFC 9110: HTTP Semantics (503, Retry-After)",
+        "url": "https://www.rfc-editor.org/rfc/rfc9110.html"
+      },
+      {
+        "title": "Grafana k6 docs: Constant arrival rate (open model)",
+        "url": "https://grafana.com/docs/k6/latest/using-k6/scenarios/executors/constant-arrival-rate/"
+      },
+      {
+        "title": "Grafana k6 docs: Web dashboard (K6_WEB_DASHBOARD, export)",
+        "url": "https://grafana.com/docs/k6/latest/results-output/web-dashboard/"
+      }
+    ],
+    "next": "L400 #17 Consistency models in practice: quorums (N, R, W), staleness and PACELC - the next step after hardening: choose consistency per use case from measured evidence",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran `python backpressure.py`, `python solution_backpressure.py`, `python try_it.py`, `python serve_realtime.py --check` (and `--check --unbounded`) and `python -m unittest -v` (11 tests OK) on Python 3.12.15 (Linux); simulated output identical on repeated runs; real-clock numbers are timing-based. BUILD_TARGET=mine against the unmodified backpressure.py: 3 failures, as intended. k6 itself not run.",
+      "pendingCi": [
+        "labs/L300/16-backpressure-load-shedding/load_test.js under k6 (manual; serve_realtime.py --check ran locally as the cross-check)",
+        "Grafana exercise (manual)",
+        "macOS and Windows runs (CI matrix)"
+      ]
+    },
+    "conceptNote": "content/concepts/L300/16-backpressure-load-shedding.md",
+    "conceptSummary": "Throughput is capped at capacity but queueing delay is not: near capacity waits grow sharply, and above it an unbounded queue turns a burst into seconds of latency and wasted work. Bound the queue by a latency budget, shed the rest fast with 503 + Retry-After, and let callers adapt their concurrency (AIMD).",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    }
+  }
+]

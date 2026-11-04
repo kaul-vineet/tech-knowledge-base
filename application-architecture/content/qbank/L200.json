@@ -1,0 +1,758 @@
+[
+  {
+    "id": "aa-L200-001",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In the hexagonal lab, who owns the port `ForStoringLoans`?",
+    "options": [
+      "app.py, because it is the composition root that wires adapters",
+      "Each adapter owns its own copy of the port definition",
+      "The domain (the hexagon); adapters depend on it",
+      "The SQLite adapter, because it implements the methods"
+    ],
+    "answer": 2,
+    "explanation": "Ports are interfaces owned by the application and named for a purpose; dependencies point into the hexagon. The composition root picks adapters but does not own the interfaces.",
+    "source": "Lesson 7 checkYourself"
+  },
+  {
+    "id": "aa-L200-002",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Borrowing a book that is already on loan returns HTTP 409 but exit code 2 from the CLI. Why?",
+    "options": [
+      "Each driving adapter translates the domain error into its own terms",
+      "The CLI uses a different rule set than the HTTP API does",
+      "The domain returns 409 and the CLI subtracts 407 to get an exit code",
+      "Exit code 2 means the CLI hit a bug, while 409 means the rule fired"
+    ],
+    "answer": 0,
+    "explanation": "The domain raises BookAlreadyOnLoan; HTTP maps it to 409 and the CLI to exit 2. The rules are shared, and the domain knows nothing about status codes.",
+    "source": "Lesson 7 checkYourself"
+  },
+  {
+    "id": "aa-L200-003",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which of these is a driven adapter in the hexagonal lab?",
+    "options": [
+      "The HTTP handler that receives POST /loans requests",
+      "JsonFileLoanStore, which implements ForStoringLoans",
+      "driving_cli.py, which parses arguments and calls the service",
+      "A unit test that calls LoanService.borrow directly"
+    ],
+    "answer": 1,
+    "explanation": "Driven adapters are called by the application (stores); driving adapters call it (HTTP, CLI, tests). A test drives the app just like a user interface.",
+    "source": "Lesson 7 glossary"
+  },
+  {
+    "id": "aa-L200-004",
+    "level": "L200",
+    "lesson": 7,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A dependency-rule test for domain.py. What does it print?",
+    "code": "import ast\n\nsource = \"from dataclasses import dataclass\\nimport sqlite3\\nfrom ports import ForStoringLoans\\n\"\nallowed, names = {\"dataclasses\", \"ports\"}, set()\nfor node in ast.walk(ast.parse(source)):\n    if isinstance(node, ast.Import):\n        names |= {a.name.split(\".\")[0] for a in node.names}\n    elif isinstance(node, ast.ImportFrom):\n        names.add(node.module.split(\".\")[0])\nprint(sorted(names - allowed))",
+    "options": [
+      "['ports', 'sqlite3']",
+      "[]",
+      "['dataclasses', 'sqlite3']",
+      "['sqlite3']"
+    ],
+    "answer": 3,
+    "explanation": "Imported top-level names are dataclasses, sqlite3 and ports; only sqlite3 is outside the allowed set. The domain may import its own port module.",
+    "source": "Lesson 7 tryIt"
+  },
+  {
+    "id": "aa-L200-005",
+    "level": "L200",
+    "lesson": 7,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A store without `mark_returned` is passed where a ForStoringLoans is expected. What does this print?",
+    "code": "from typing import Protocol, runtime_checkable\n\n@runtime_checkable\nclass ForStoringLoans(Protocol):\n    def add(self, book_id, member_id): ...\n    def active(self): ...\n    def mark_returned(self, loan_id): ...\n\nclass HalfStore:\n    def add(self, book_id, member_id): return 1\n    def active(self): return []\n\nstore = HalfStore()\nprint(isinstance(store, ForStoringLoans), store.add(\"b1\", \"m1\"))",
+    "options": [
+      "True 1",
+      "TypeError at HalfStore()",
+      "AttributeError at isinstance",
+      "False 1"
+    ],
+    "answer": 3,
+    "explanation": "A runtime-checkable Protocol only reports the mismatch when asked; nothing stops the object being created or used. In the lab, borrow works and give_back later fails with AttributeError.",
+    "source": "Lesson 7 tryIt"
+  },
+  {
+    "id": "aa-L200-006",
+    "level": "L200",
+    "lesson": 7,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "The StoreContract suite has 4 tests and runs against every adapter of the port. After you add JsonFileLoanStore next to the memory and SQLite stores, how many contract test runs are there?",
+    "options": [
+      "7",
+      "8",
+      "4",
+      "12"
+    ],
+    "answer": 3,
+    "explanation": "One suite, run once per adapter: 4 x 3 = 12. Writing separate, different tests per adapter (or counting only the new one) misses the point that every adapter must pass the same contract.",
+    "source": "Lesson 7 testCases"
+  },
+  {
+    "id": "aa-L200-007",
+    "level": "L200",
+    "lesson": 7,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "driving_cli.py uses exit codes 1, 2 and 3. A script calls `driving_cli.py return 99` for a loan that does not exist. Which exit code does it get?",
+    "options": [
+      "1, the bad-input code",
+      "2, the rule-violation code",
+      "0, because returning is idempotent",
+      "3, the not-found code"
+    ],
+    "answer": 3,
+    "explanation": "The CLI adapter maps LoanNotFound to 3; 1 is for bad input and 2 for rule violations. A well-formed loan id is not bad input even if no such loan exists.",
+    "source": "Lesson 7 steps (Use the CLI adapter alone)"
+  },
+  {
+    "id": "aa-L200-008",
+    "level": "L200",
+    "lesson": 7,
+    "type": "design",
+    "difficulty": 2,
+    "question": "Loans must now also be created from messages on a queue. Where does the new code go?",
+    "options": [
+      "Inside domain.py, next to the borrow rule that the message triggers",
+      "A new driven adapter implementing ForStoringLoans",
+      "A new driving adapter that calls LoanService, wired in app.py",
+      "In the SQLite adapter, which already stores loans"
+    ],
+    "answer": 2,
+    "explanation": "Anything that calls the application is a driving adapter; the domain stays unchanged. A driven adapter is called by the app, which is the opposite direction.",
+    "source": "Lesson 7 concepts"
+  },
+  {
+    "id": "aa-L200-009",
+    "level": "L200",
+    "lesson": 7,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A small internal CRUD app has one web UI and one database and is unlikely to grow. Should the team introduce ports and adapters?",
+    "options": [
+      "Yes: every app needs ports so that it can swap databases at runtime",
+      "No, because hexagonal architecture requires microservices",
+      "Probably not: it pays off with several entry points or stores",
+      "Yes, but only for the UI; the database adapter is optional"
+    ],
+    "answer": 2,
+    "explanation": "The lesson's useWhen suggests skipping it for a small CRUD app with one UI and one database. The pattern runs fine in one process, so microservices are not a prerequisite.",
+    "source": "Lesson 7 useWhen"
+  },
+  {
+    "id": "aa-L200-010",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is 'a book is on loan to at most one member' not checked inside the Member aggregate?",
+    "options": [
+      "Aggregates may only enforce rules about counts and numbers, never about identity",
+      "Member does not know which books exist in the catalogue",
+      "It spans several members (aggregates); a unique index enforces it",
+      "The rule is too slow to check in Python, so SQL does it"
+    ],
+    "answer": 2,
+    "explanation": "One Member sees only its own loans; a rule across aggregates needs a constraint or an event. Transactions do not cross aggregate boundaries.",
+    "source": "Lesson 8 checkYourself"
+  },
+  {
+    "id": "aa-L200-011",
+    "level": "L200",
+    "lesson": 8,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Two copies of member m1 were loaded at version 1. What does this print?",
+    "code": "import sqlite3\n\ndb = sqlite3.connect(\":memory:\")\ndb.execute(\"CREATE TABLE members (id TEXT PRIMARY KEY, version INTEGER)\")\ndb.execute(\"INSERT INTO members VALUES ('m1', 1)\")\n\ndef save(loaded_version):\n    cur = db.execute(\"UPDATE members SET version = version + 1 \"\n                     \"WHERE id = 'm1' AND version = ?\", (loaded_version,))\n    return cur.rowcount\n\ncopy_a = copy_b = 1\nprint(save(copy_a), save(copy_b))",
+    "options": [
+      "0 1",
+      "0 0",
+      "1 1",
+      "1 0"
+    ],
+    "answer": 3,
+    "explanation": "The first UPDATE matches version 1 and bumps it to 2; the second still asks for version 1 and matches 0 rows. Zero rows updated is the signal for ConcurrencyConflict.",
+    "source": "Lesson 8 codeWalkthrough"
+  },
+  {
+    "id": "aa-L200-012",
+    "level": "L200",
+    "lesson": 8,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "The overdue rule is `(today - borrowed_on).days > 14`. A loan was borrowed on 2026-10-01. On which date is it first overdue?",
+    "options": [
+      "2026-10-15",
+      "2026-10-14",
+      "2026-10-17",
+      "2026-10-16"
+    ],
+    "answer": 3,
+    "explanation": "The difference must exceed 14 days: 2026-10-15 is exactly 14 days (not overdue), 2026-10-16 is 15. Using >= instead of > would make 10-15 overdue.",
+    "source": "Lesson 8 buildTask"
+  },
+  {
+    "id": "aa-L200-013",
+    "level": "L200",
+    "lesson": 8,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "from dataclasses import dataclass\n@dataclass(frozen=True)\nclass Loan:\n    book_id: str\n\nclass Member:\n    def __init__(self):\n        self._loans = [Loan(\"b1\")]\n    loans = property(lambda self: tuple(self._loans))  # read-only view\n\nm = Member()\ntry:\n    m.loans.append(Loan(\"b2\"))\nexcept AttributeError as e:\n    print(type(e).__name__, len(m.loans))",
+    "options": [
+      "FrozenInstanceError 1",
+      "AttributeError 2",
+      "No error; it prints nothing",
+      "AttributeError 1"
+    ],
+    "answer": 3,
+    "explanation": "`loans` returns a tuple, which has no append, so outside code cannot add a loan around the root's rules. The list inside Member is untouched, so it still holds one loan.",
+    "source": "Lesson 8 codeWalkthrough"
+  },
+  {
+    "id": "aa-L200-014",
+    "level": "L200",
+    "lesson": 8,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Member m1 has loans b1 and b2. Copy A and copy B are loaded at the same time; A borrows b3, B borrows b4, and both are saved with the version check turned off. What is stored?",
+    "options": [
+      "Nothing: the second save raises ConcurrencyConflict",
+      "['b1', 'b2', 'b3']: the first save wins",
+      "['b1', 'b2', 'b4']: b3 is silently lost",
+      "['b1', 'b2', 'b3', 'b4']: both saves merge"
+    ],
+    "answer": 2,
+    "explanation": "The aggregate is saved whole, so B's save overwrites A's: a lost update. ConcurrencyConflict only appears when the version check is on.",
+    "source": "Lesson 8 tryIt"
+  },
+  {
+    "id": "aa-L200-015",
+    "level": "L200",
+    "lesson": 8,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Your command handler sometimes gets ConcurrencyConflict when two librarians update the same member. What does the lesson recommend?",
+    "options": [
+      "Lock the members table for the whole HTTP request",
+      "Catch the error and save the stale copy again",
+      "Turn off the version check for librarian requests",
+      "Reload the member and retry the command once"
+    ],
+    "answer": 3,
+    "explanation": "The conflict means someone saved first; reloading applies the command to fresh state. Saving the stale copy again would bring back the lost update the version check prevents.",
+    "source": "Lesson 8 troubleshooting"
+  },
+  {
+    "id": "aa-L200-016",
+    "level": "L200",
+    "lesson": 8,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In the aggregates lab, what happens to a save that lost the version race?",
+    "options": [
+      "It is saved with version 0 so that a nightly job can reconcile both copies",
+      "ConcurrencyConflict; its transaction rolls back, nothing is overwritten",
+      "It waits until the other save commits, then overwrites it",
+      "It merges its new loans into the stored member automatically"
+    ],
+    "answer": 1,
+    "explanation": "Optimistic concurrency turns a lost update into a visible conflict and rolls back. Nothing is merged or queued; the caller decides whether to retry.",
+    "source": "Lesson 8 checkYourself"
+  },
+  {
+    "id": "aa-L200-017",
+    "level": "L200",
+    "lesson": 8,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A proposal makes `Library` one aggregate that contains every member and every loan, so all rules live in one root. What is the main problem?",
+    "options": [
+      "Aggregates must not contain more than one entity type",
+      "Python objects cannot hold more than a few thousand child entities in memory",
+      "Rules across members would then need a unique index anyway",
+      "Every change locks the whole library, so unrelated borrows conflict"
+    ],
+    "answer": 3,
+    "explanation": "The lesson warns against huge aggregates that lock unrelated changes: with a version check, any two borrows conflict. Small aggregates plus constraints for cross-aggregate rules scale better.",
+    "source": "Lesson 8 useWhen"
+  },
+  {
+    "id": "aa-L200-018",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does LoansWithOutbox not send the event to the broker inside the database transaction?",
+    "options": [
+      "Events must always be sent before the database change is made",
+      "SQLite cannot open network connections while it holds a lock",
+      "Brokers reject messages that arrive while a database transaction is still open",
+      "A broker send cannot be rolled back if the commit fails"
+    ],
+    "answer": 3,
+    "explanation": "If the send happened and the commit then failed, consumers would see an event for a change that never happened. The outbox stores the event in the same transaction and a relay sends it later.",
+    "source": "Lesson 9 checkYourself"
+  },
+  {
+    "id": "aa-L200-019",
+    "level": "L200",
+    "lesson": 9,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The relay crashed after publishing e2 but before marking it, so e2 is delivered again. What does this print (mails sent by each consumer)?",
+    "code": "deliveries = [\"e1\", \"e2\", \"e2\"]\nseen, naive, idempotent = set(), 0, 0\nfor event_id in deliveries:\n    naive += 1\n    if event_id not in seen:\n        seen.add(event_id)\n        idempotent += 1\nprint(naive, idempotent)",
+    "options": [
+      "3 2",
+      "2 3",
+      "2 2",
+      "3 3"
+    ],
+    "answer": 0,
+    "explanation": "The naive consumer acts on every delivery (3 mails); the idempotent one remembers event ids and skips the duplicate (2 mails). Delivery is at least once, not exactly once.",
+    "source": "Lesson 9 tryIt"
+  },
+  {
+    "id": "aa-L200-020",
+    "level": "L200",
+    "lesson": 9,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "import sqlite3\n\ndb = sqlite3.connect(\":memory:\")\ndb.executescript(\"CREATE TABLE loans (id INTEGER PRIMARY KEY, book TEXT);\"\n                 \"CREATE TABLE outbox (seq INTEGER PRIMARY KEY, payload TEXT);\")\ntry:\n    with db:\n        db.execute(\"INSERT INTO loans (book) VALUES ('b1')\")\n        raise ValueError(\"event could not be built\")\nexcept ValueError:\n    pass\nprint(db.execute(\"SELECT COUNT(*) FROM loans\").fetchone()[0],\n      db.execute(\"SELECT COUNT(*) FROM outbox\").fetchone()[0])",
+    "options": [
+      "0 0",
+      "1 0",
+      "1 1",
+      "0 1"
+    ],
+    "answer": 0,
+    "explanation": "`with db:` commits on success and rolls back on an exception, so the loan INSERT disappears with the failed event. That is the atomicity the outbox relies on.",
+    "source": "Lesson 9 testCases"
+  },
+  {
+    "id": "aa-L200-021",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is outbox delivery 'at least once' rather than 'exactly once'?",
+    "options": [
+      "The broker always duplicates every message to protect against message loss",
+      "The relay marks a row after publishing; a crash in between re-sends it",
+      "Consumers request each event twice to confirm it",
+      "SQLite commits every outbox row twice for durability"
+    ],
+    "answer": 1,
+    "explanation": "Publishing and marking are two steps that cannot share one transaction; a crash between them re-sends the event. That is why consumers must be idempotent.",
+    "source": "Lesson 9 codeWalkthrough"
+  },
+  {
+    "id": "aa-L200-022",
+    "level": "L200",
+    "lesson": 9,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The local model proposed an AsyncAPI operation with `\"action\": \"publish\"`. Why did the check reject it?",
+    "options": [
+      "The action field was renamed to verb in AsyncAPI 3.1.0",
+      "Operations must be nested inside channels in AsyncAPI 3",
+      "AsyncAPI 3 uses send/receive; publish is an AsyncAPI 2 verb",
+      "publish is reserved for brokers and not allowed in documents"
+    ],
+    "answer": 2,
+    "explanation": "AsyncAPI 3 separates channels from operations and uses send/receive. Nesting operations in channels is the v2 layout that v3 removed.",
+    "source": "Lesson 9 agentAssist"
+  },
+  {
+    "id": "aa-L200-023",
+    "level": "L200",
+    "lesson": 9,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "The member portal must show 'available' or 'on loan' before the user clicks Borrow. Event or request?",
+    "options": [
+      "An event, with the portal polling the outbox table",
+      "Either, because both deliver exactly once",
+      "A request: the caller needs the answer now",
+      "An event: it decouples the portal from the loans service"
+    ],
+    "answer": 2,
+    "explanation": "Use events when others react to changes and may be slow or down; use a request when the caller needs the answer now. Reading another service's outbox couples it to its database.",
+    "source": "Lesson 9 useWhen"
+  },
+  {
+    "id": "aa-L200-024",
+    "level": "L200",
+    "lesson": 9,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "After the build task, the relay counts attempts and dead-letters a row after 3 failures. A consumer always fails on one row. How many publish attempts does that row get over 5 relay runs?",
+    "options": [
+      "15",
+      "5",
+      "3",
+      "1"
+    ],
+    "answer": 2,
+    "explanation": "Each run tries the row once until attempts reaches 3; then dead_at is set and later runs skip it. Five attempts assumes the relay keeps retrying a dead letter.",
+    "source": "Lesson 9 buildTask"
+  },
+  {
+    "id": "aa-L200-025",
+    "level": "L200",
+    "lesson": 9,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Before the build task, one consumer fails on event 7 and no later events are published at all. What is the fix?",
+    "options": [
+      "Publish events in random order so that one bad row can never block the others",
+      "Count attempts, keep going with the next row, dead-letter after 3 failures",
+      "Mark event 7 as published, since the consumer has already seen it anyway",
+      "Delete event 7 from the outbox so the relay can move on"
+    ],
+    "answer": 1,
+    "explanation": "The build task makes the relay survive failing consumers while keeping evidence (attempts, last_error, dead_at). Random order would break the commit order consumers rely on.",
+    "source": "Lesson 9 troubleshooting"
+  },
+  {
+    "id": "aa-L200-026",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Which attack does the `state` parameter stop in the code flow?",
+    "options": [
+      "A forged callback for a login the user never started",
+      "A stolen authorization code redeemed without the verifier",
+      "An ID token minted for another client being accepted",
+      "An ID token replayed into a different login"
+    ],
+    "answer": 0,
+    "explanation": "state ties the callback to this browser session, so the RP checks it first. The stolen-code attack is PKCE's job, aud stops tokens for other clients and nonce stops replay.",
+    "source": "Lesson 10 checkYourself"
+  },
+  {
+    "id": "aa-L200-027",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does the `nonce` claim protect against?",
+    "options": [
+      "A client secret leaking from the relying party's logs",
+      "A callback URL forged by a malicious website",
+      "An ID token from one login replayed into another",
+      "A token signed with the 'none' algorithm"
+    ],
+    "answer": 2,
+    "explanation": "nonce ties the ID token to this login attempt. alg 'none' is stopped by the RP's own algorithm list, not by the nonce.",
+    "source": "Lesson 10 glossary"
+  },
+  {
+    "id": "aa-L200-028",
+    "level": "L200",
+    "lesson": 10,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "PKCE S256 sends BASE64URL(SHA256(verifier)) without padding. For RFC 7636's verifier `dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk`, what is the code_challenge?",
+    "options": [
+      "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+      "ZEJqZnRKZVo0Q1ZQLW1COTJLMjd1aGJVSlUxcDFyX3dXMWdGV0ZPRWpYaw",
+      "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+      "13d31e961a1ad8ec2f16b10c4c982e0876a878ad6df"
+    ],
+    "answer": 0,
+    "explanation": "S256 hashes the ASCII verifier and base64url-encodes the digest without '='. Encoding the verifier without hashing skips SHA-256, the hex digest is a different encoding, and the verifier itself would be the 'plain' method.",
+    "source": "Lesson 10 testCases"
+  },
+  {
+    "id": "aa-L200-029",
+    "level": "L200",
+    "lesson": 10,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "The RP creates the verifier with `secrets.token_urlsafe(32)`. How many characters does it have?",
+    "options": [
+      "64",
+      "43",
+      "32",
+      "44"
+    ],
+    "answer": 1,
+    "explanation": "32 random bytes become ceil(32 x 4 / 3) = 43 base64url characters, without padding. 44 would include the '=' padding that token_urlsafe strips.",
+    "source": "Lesson 10 codeWalkthrough"
+  },
+  {
+    "id": "aa-L200-030",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "An attacker copies the callback URL containing the authorization code. Why can't they log in with it?",
+    "options": [
+      "The code is encrypted and only the browser can decrypt it",
+      "The IdP accepts codes only from the user's IP address",
+      "Redeeming it needs the code_verifier, which never left the RP",
+      "The code always expires before any attacker could possibly use it"
+    ],
+    "answer": 2,
+    "explanation": "Only the hash of the verifier travelled through the browser; the token endpoint demands the verifier (and here the client secret). Short code lifetimes help but are not what stops this attack.",
+    "source": "Lesson 10 checkYourself"
+  },
+  {
+    "id": "aa-L200-031",
+    "level": "L200",
+    "lesson": 10,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the RP check the `aud` claim even though the token signature is valid?",
+    "options": [
+      "The signature only covers the token header, and aud sits in the body",
+      "A token minted for another client must not log users into this one",
+      "aud tells the RP which algorithm verified the signature",
+      "aud carries the user's role, which decides what they may do"
+    ],
+    "answer": 1,
+    "explanation": "In the try-it, a token for aud=quiz-app is rejected despite a valid signature. The signature covers header and claims; it proves who issued the token, not for whom.",
+    "source": "Lesson 10 tryIt"
+  },
+  {
+    "id": "aa-L200-032",
+    "level": "L200",
+    "lesson": 10,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "The RP allows 60 s of clock leeway on `exp`. What does this print?",
+    "code": "LEEWAY = 60\n\ndef expired(exp, now):\n    return now > exp + LEEWAY\n\nprint(expired(1000, 1030), expired(1000, 1060), expired(1000, 1061))",
+    "options": [
+      "False False False",
+      "False False True",
+      "False True True",
+      "True True True"
+    ],
+    "answer": 1,
+    "explanation": "With leeway, a token counts as expired only when now > exp + 60: 1030 and 1060 are still accepted, 1061 is not. Forgetting the leeway would reject 1030 and 1060 too.",
+    "source": "Lesson 10 troubleshooting"
+  },
+  {
+    "id": "aa-L200-033",
+    "level": "L200",
+    "lesson": 10,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Users on one server get `token expired` right after logging in; other servers are fine. What is the likely cause?",
+    "options": [
+      "PKCE failed, so the token was minted expired",
+      "Clock skew on that server; sync it with NTP",
+      "The nonce was reused across two logins",
+      "The IdP issues shorter tokens to that server"
+    ],
+    "answer": 1,
+    "explanation": "exp and iat are absolute times, so a server clock running ahead sees fresh tokens as expired. A PKCE failure gives invalid_grant at the token endpoint, not an expired token.",
+    "source": "Lesson 10 troubleshooting"
+  },
+  {
+    "id": "aa-L200-034",
+    "level": "L200",
+    "lesson": 10,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A nightly batch job (no user present) must call the Loans API. Which OAuth flow fits?",
+    "options": [
+      "The implicit flow, because no browser is involved",
+      "Authorization code + PKCE with a stored user password",
+      "Client credentials, for service-to-service calls",
+      "Authorization code + PKCE with a headless browser"
+    ],
+    "answer": 2,
+    "explanation": "Code flow + PKCE is for user login; service-to-service calls use client credentials. The implicit flow is not used at all in this lesson.",
+    "source": "Lesson 10 useWhen"
+  },
+  {
+    "id": "aa-L200-035",
+    "level": "L200",
+    "lesson": 10,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "Someone tries to redeem a real authorization code with a guessed verifier ('a' x 43). Then the real client tries the same code. What happens?",
+    "options": [
+      "Both fail: the guess burns the single-use code",
+      "Both succeed, because codes stay valid until they expire",
+      "The guess fails, and the real client then succeeds normally",
+      "The guess succeeds, because the verifier is only checked for length"
+    ],
+    "answer": 0,
+    "explanation": "Codes are single-use and bound to client, redirect URI and verifier; the failed attempt consumed it (codes left: 0). The real client must start a new login.",
+    "source": "Lesson 10 tryIt"
+  },
+  {
+    "id": "aa-L200-036",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Where should the 'max 3 active loans' rule be tested?",
+    "options": [
+      "In unit tests; e2e needs only one journey",
+      "At every layer, so each layer re-tests the rule",
+      "In a SQLite integration test, because loans are stored",
+      "In an e2e test, since only HTTP proves the rule works"
+    ],
+    "answer": 0,
+    "explanation": "Test each rule once at the lowest layer that sees it; the limit is a domain rule. Re-testing it at every layer builds an ice-cream cone of slow tests.",
+    "source": "Lesson 11 checkYourself"
+  },
+  {
+    "id": "aa-L200-037",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the lab test the store against a real SQLite file and not only a fake?",
+    "options": [
+      "Fakes are not allowed in Python's unittest module",
+      "Type and SQL differences (1 vs True) only show up there",
+      "The pyramid requires as many integration tests as unit tests",
+      "Real databases make tests faster than in-memory fakes"
+    ],
+    "answer": 1,
+    "explanation": "The planted bug returning row[3] instead of bool(row[3]) is caught only by the integration layer. The pyramid asks for fewer integration tests than unit tests, not equal numbers.",
+    "source": "Lesson 11 checkYourself"
+  },
+  {
+    "id": "aa-L200-038",
+    "level": "L200",
+    "lesson": 11,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "In the README run, one unit test took 0.03 ms on average and one e2e test 613 ms. Roughly how many unit tests cost as much as one e2e test, as a power of ten?",
+    "options": [
+      "about 10^2 (204)",
+      "about 10^4 (20,433)",
+      "about 10^5 (204,333)",
+      "about 10^3 (2,043)"
+    ],
+    "answer": 1,
+    "explanation": "613 / 0.03 = 20,433, and log10 of that rounds to 4. Off-by-one powers come from mixing up seconds and milliseconds.",
+    "source": "Lesson 11 tryIt"
+  },
+  {
+    "id": "aa-L200-039",
+    "level": "L200",
+    "lesson": 11,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "pyramid.py's shape check. What does it print?",
+    "code": "def shape_problems(counts):\n    unit, integration, e2e = counts\n    if not unit >= integration >= e2e >= 1:\n        return [f\"not a pyramid: unit {unit}, integration {integration}, e2e {e2e}\"]\n    return []\n\nprint(shape_problems((3, 5, 2)))",
+    "options": [
+      "['not a pyramid: unit 3, integration 5, e2e 2']",
+      "['not a pyramid: unit 3, integration 5, e2e 1']",
+      "[]",
+      "['not a pyramid: e2e 2 > 1']"
+    ],
+    "answer": 0,
+    "explanation": "The rule is unit >= integration >= e2e >= 1; 3 >= 5 is false, so this 'ice-cream cone' fails. Two e2e tests alone would be fine.",
+    "source": "Lesson 11 code (shape_problems)"
+  },
+  {
+    "id": "aa-L200-040",
+    "level": "L200",
+    "lesson": 11,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A copy of the lab maps BookAlreadyOnLoan to 422 instead of 409 in the HTTP adapter. Which layer catches it?",
+    "options": [
+      "Only the unit layer, which checks the rule",
+      "Only the integration layer, which uses SQLite",
+      "All three layers fail at the same time",
+      "Only the e2e layer, which goes through HTTP"
+    ],
+    "answer": 3,
+    "explanation": "Unit tests call the domain and integration tests call the store, so neither sees status codes. Each layer catches bugs the others miss.",
+    "source": "Lesson 11 tryIt"
+  },
+  {
+    "id": "aa-L200-041",
+    "level": "L200",
+    "lesson": 11,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "The build task's budgets are unit 10 ms, integration 1,000 ms and e2e 10,000 ms (mean per test). Measured means: unit 42 ms, integration 830 ms, e2e 12,500 ms. Which layers fail `--budget`?",
+    "options": [
+      "unit, e2e",
+      "e2e only",
+      "unit only",
+      "unit, integration, e2e"
+    ],
+    "answer": 0,
+    "explanation": "Compare each mean with its own budget: 42 > 10 and 12,500 > 10,000, while 830 < 1,000. Comparing against the e2e budget for every layer would pass them all.",
+    "source": "Lesson 11 buildTask"
+  },
+  {
+    "id": "aa-L200-042",
+    "level": "L200",
+    "lesson": 11,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "The PostgreSQL test errors instead of being skipped on a laptop. What is wrong?",
+    "options": [
+      "LOANS_TESTCONTAINERS is set but no engine is running",
+      "unittest cannot skip tests that import the testcontainers package",
+      "SQLite and PostgreSQL tests cannot run in one suite",
+      "The PostgreSQL test needs Python 3.13 or newer"
+    ],
+    "answer": 0,
+    "explanation": "The test only runs when LOANS_TESTCONTAINERS is set; then it needs Podman or Docker. Unset the variable or start an engine.",
+    "source": "Lesson 11 troubleshooting"
+  },
+  {
+    "id": "aa-L200-043",
+    "level": "L200",
+    "lesson": 11,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does pyramid.py time tests with `time.perf_counter()` and not `time.time()`?",
+    "options": [
+      "It is monotonic with the highest available resolution",
+      "It counts only CPU time, ignoring sleeps and I/O",
+      "It is the only clock that works on Windows",
+      "It returns whole milliseconds, which are easier to compare"
+    ],
+    "answer": 0,
+    "explanation": "perf_counter is monotonic and high-resolution, so wall-clock adjustments cannot distort durations. It includes sleeps; process_time is the CPU-only clock.",
+    "source": "Lesson 11 codeWalkthrough"
+  },
+  {
+    "id": "aa-L200-044",
+    "level": "L200",
+    "lesson": 11,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "A service is mostly glue: it maps one API's JSON to another and stores it, with almost no rules. Where should most of its tests live?",
+    "options": [
+      "Manual tests before each release",
+      "Integration tests against real dependencies",
+      "End-to-end journeys through the whole system",
+      "Unit tests with fakes for every dependency"
+    ],
+    "answer": 1,
+    "explanation": "The useWhen says to lean on integration tests for glue-heavy code, because the bugs live in the mapping to real systems. Unit tests with fakes would mostly test the fakes.",
+    "source": "Lesson 11 useWhen"
+  }
+]

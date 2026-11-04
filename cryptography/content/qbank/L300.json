@@ -1,0 +1,797 @@
+[
+  {
+    "id": "cr-L300-001",
+    "level": "L300",
+    "lesson": 12,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "wrap() stores nonce || AESGCM(KEK).encrypt(nonce, DEK, kid) for a 32-byte DEK and a 12-byte nonce. How many bytes is the wrapped DEK?",
+    "options": [
+      "44 bytes",
+      "60 bytes",
+      "48 bytes",
+      "76 bytes"
+    ],
+    "answer": 1,
+    "explanation": "12-byte nonce + 32-byte encrypted DEK + 16-byte tag = 60 bytes; the kid is AAD, so it adds nothing. 44 forgets the tag.",
+    "source": "Lesson 12 concepts / code (wrap)"
+  },
+  {
+    "id": "cr-L300-002",
+    "level": "L300",
+    "lesson": 12,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A store holds 2,000,000 records of 1 MiB each, each with a 60-byte wrapped DEK. Roughly how much data does a rewrap move, compared with re-encrypting everything?",
+    "options": [
+      "about 114 MiB vs about 1.9 TiB",
+      "about 1.9 TiB vs about 114 MiB",
+      "about 114 MiB vs about 114 MiB",
+      "about 1.9 TiB vs about 1.9 TiB"
+    ],
+    "answer": 0,
+    "explanation": "Rewrap only touches the wrapped keys (2,000,000 x 60 B), while re-encryption reads and writes all data. That is why envelope rotation takes seconds, not hours.",
+    "source": "Lesson 12 concepts / tradeOffs"
+  },
+  {
+    "id": "cr-L300-003",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does rotate() add a new KEK version instead of replacing the key?",
+    "options": [
+      "Replacing keys in place is slower than adding",
+      "Existing records name the old version in their header and still need it",
+      "AES-GCM keys can only be used once",
+      "Old versions are needed to sign new records"
+    ],
+    "answer": 1,
+    "explanation": "Each record's header points to the KEK version that wrapped its DEK; replacing the key would make them undecryptable. Rotation adds a version and makes it primary.",
+    "source": "Lesson 12 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L300-004",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What tells you it is safe to retire orders-kek:v1?",
+    "options": [
+      "v2 has been the primary version for at least 24 hours now",
+      "records_by_kid shows zero records still wrapped by v1",
+      "The rewrap job was started successfully",
+      "No new records were written with v1 today"
+    ],
+    "answer": 1,
+    "explanation": "Retire only when the per-version record count is zero. A started or recently run job can crash part-way, as the failure lab shows.",
+    "source": "Lesson 12 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L300-005",
+    "level": "L300",
+    "lesson": 12,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why is the kid passed as AAD when wrapping a DEK?",
+    "options": [
+      "A header edited to another version fails authentication",
+      "It makes the wrapped DEK shorter",
+      "It lets the KMS find the key without a lookup",
+      "It encrypts the kid so attackers cannot read which version is used"
+    ],
+    "answer": 0,
+    "explanation": "AAD binds the label to the wrapped key, so relabelling gives InvalidTag instead of silently trying another key. AAD is authenticated, not encrypted.",
+    "source": "Lesson 12 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L300-006",
+    "level": "L300",
+    "lesson": 12,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A simplified rewrap job moves records from v2 to v3 and crashes. What does this print?",
+    "code": "from collections import Counter\nrecords = [\"v2\"] * 6\ncrash_after = 1\nfor i in range(len(records)):\n    if i == crash_after:\n        break\n    records[i] = \"v3\"\nprint(sorted(Counter(records).items()))",
+    "options": [
+      "[('v2', 6)]",
+      "[('v2', 5), ('v3', 1)]",
+      "[('v3', 6)]",
+      "[('v2', 4), ('v3', 2)]"
+    ],
+    "answer": 1,
+    "explanation": "The loop moves record 0, then breaks when i reaches crash_after=1, leaving one record on v3 and five on v2. Deleting v2 now would lose five records.",
+    "source": "Lesson 12 failureLab"
+  },
+  {
+    "id": "cr-L300-007",
+    "level": "L300",
+    "lesson": 12,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "After a crashed rewrap job, an operator calls this retire(). Five orders become unreadable. What is the fix?",
+    "code": "def retire(ring, version: int) -> None:\n    if version == ring.primary:\n        raise ValueError(\"cannot retire the primary\")\n    del ring.versions[version]",
+    "options": [
+      "Catch UnknownKey on read and fall back to the current primary KEK instead",
+      "Check the per-version record count and raise KeyInUse if it is not zero",
+      "Re-encrypt the data with v3 before deleting v2",
+      "Rotate again so a fresh version replaces v2"
+    ],
+    "answer": 1,
+    "explanation": "Retirement must ask the data first: count records per kid and refuse while any remain, then resume the rewrap. Falling back to another KEK cannot decrypt a DEK wrapped by v2.",
+    "source": "Lesson 12 failureLab"
+  },
+  {
+    "id": "cr-L300-008",
+    "level": "L300",
+    "lesson": 12,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Several production services share keys for encrypting customer records and need an audit trail. Which option fits?",
+    "options": [
+      "Encryption as a service (OpenBao transit or a cloud KMS)",
+      "A KEK file copied into each service's container image",
+      "Re-encrypting all data under one shared key each month",
+      "One environment variable holding the KEK in every service"
+    ],
+    "answer": 0,
+    "explanation": "A KMS keeps the KEK inside the service, offers rotate/rewrap and an audit log, at the cost of a network call. Copying the KEK into images spreads it everywhere.",
+    "source": "Lesson 12 tradeOffs / caution"
+  },
+  {
+    "id": "cr-L300-009",
+    "level": "L300",
+    "lesson": 12,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "An incident report says some DEKs themselves may have been copied. What does rotation need now?",
+    "options": [
+      "Re-encrypt the data under new DEKs; rewrapping is not enough",
+      "Rewrap all DEKs under a new KEK version",
+      "Delete the KEK version that wrapped them",
+      "Rotate the KEK and raise min_decryption_version above the old one"
+    ],
+    "answer": 0,
+    "explanation": "Rewrapping protects the DEKs with a new KEK but leaves the same DEKs, which the attacker already has. The trade-off table names this as the case for full re-encryption.",
+    "source": "Lesson 12 tradeOffs"
+  },
+  {
+    "id": "cr-L300-010",
+    "level": "L300",
+    "lesson": 13,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "The renewal loop schedules renewal at a jittered point between 60 % and 72 % of a 160-hour lifetime. Between which hours does renewal start?",
+    "options": [
+      "hour 106.7 to hour 152",
+      "hour 60 to hour 72",
+      "hour 144 to hour 152",
+      "hour 96 to hour 115.2"
+    ],
+    "answer": 3,
+    "explanation": "0.60 x 160 = 96 and 0.72 x 160 = 115.2, leaving many hours for retries. 60 to 72 confuses percentages with hours.",
+    "source": "Lesson 13 failureLab (fix)"
+  },
+  {
+    "id": "cr-L300-011",
+    "level": "L300",
+    "lesson": 13,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A static server's 160-hour certificate is checked every hour from hour 0 to hour 191. Handshakes fail from hour 160 on. How many hours fail?",
+    "options": [
+      "31 hours",
+      "33 hours",
+      "32 hours",
+      "160 hours"
+    ],
+    "answer": 2,
+    "explanation": "Hours 160 through 191 inclusive are 32 hours, matching the lab's '32 failed hours of 192'. 31 is the usual off-by-one.",
+    "source": "Lesson 13 expectedResults"
+  },
+  {
+    "id": "cr-L300-012",
+    "level": "L300",
+    "lesson": 13,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "The alert fires when time-to-expiry drops below 25 % of the lifetime. For a 160-hour certificate, when does it fire?",
+    "options": [
+      "120 hours left",
+      "25 hours left",
+      "40 hours left",
+      "16 hours left"
+    ],
+    "answer": 2,
+    "explanation": "25 % of 160 hours is 40 hours of remaining life, long before expiry. 120 hours is 75 % of the lifetime, which is when 25 % has been used.",
+    "source": "Lesson 13 failureLab (fix)"
+  },
+  {
+    "id": "cr-L300-013",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the renewal schedule add jitter?",
+    "options": [
+      "Jitter makes renewal times unpredictable, so certificates are harder to forge",
+      "Jitter keeps the private key from being reused",
+      "Without it the whole fleet renews at once and overloads the CA",
+      "Jitter is required for the CA to sign a certificate"
+    ],
+    "answer": 2,
+    "explanation": "Many servers with the same fixed schedule hit the CA together and get rate-limited. Jitter is about load, not about forgery or key reuse.",
+    "source": "Lesson 13 checkYourself / tradeOffs"
+  },
+  {
+    "id": "cr-L300-014",
+    "level": "L300",
+    "lesson": 13,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why renew at about 60-72 % of the lifetime instead of at 95 %?",
+    "options": [
+      "To leave time for retries if the CA or network is down",
+      "Certificates become cryptographically weaker after half their lifetime",
+      "CAs refuse renewals in the last 5 % of a lifetime",
+      "Clients reject certificates in their final 30 %"
+    ],
+    "answer": 0,
+    "explanation": "Early renewal turns a CA outage into retries instead of an expiry outage; in the lab the CA is down for hours 90-124. Certificates do not weaken with age.",
+    "source": "Lesson 13 checkYourself"
+  },
+  {
+    "id": "cr-L300-015",
+    "level": "L300",
+    "lesson": 13,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A CRL verifies with the CA key, but its nextUpdate time has passed. What should a client do?",
+    "options": [
+      "Treat it as stale, fetch a new one, and apply a pre-decided policy",
+      "Trust it, because the signature is valid",
+      "Ignore revocation and accept every certificate",
+      "Treat every certificate on it as expired"
+    ],
+    "answer": 0,
+    "explanation": "A CRL is only as good as its signature and freshness; a stale list may miss new revocations. Decide in advance whether stale means fail closed or alert.",
+    "source": "Lesson 13 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L300-016",
+    "level": "L300",
+    "lesson": 13,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "The renewal job wrote a new certificate to disk, but clients still receive the old one. What is wrong?",
+    "code": "ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)\nctx.load_cert_chain(\"server.pem\", \"server-key.pem\")  # once, at start-up\nwhile True:\n    renew_if_due(\"server.pem\", \"server-key.pem\")    # writes new files\n    serve_one_hour(ctx)",
+    "options": [
+      "The CA signed the new cert with the old key",
+      "The server process never reloaded the certificate",
+      "Clients cache certificates for the whole lifetime",
+      "The new cert needs a longer lifetime than the old"
+    ],
+    "answer": 1,
+    "explanation": "Writing the file does not change a running process; hot-swap the certificate or restart after writing. TLS clients do not cache server certificates between handshakes.",
+    "source": "Lesson 13 troubleshooting"
+  },
+  {
+    "id": "cr-L300-017",
+    "level": "L300",
+    "lesson": 13,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "A client clock is 5 minutes behind the CA. What does this print?",
+    "code": "from datetime import datetime, timedelta\nissued = datetime(2026, 10, 29, 12, 0)\nclient_now = issued - timedelta(minutes=5)\nresults = []\nfor backdate in (timedelta(0), timedelta(hours=1)):\n    results.append(client_now >= issued - backdate)\nprint(*results)",
+    "options": [
+      "True True",
+      "False False",
+      "True False",
+      "False True"
+    ],
+    "answer": 3,
+    "explanation": "With notBefore at issue time, the client's 'now' is 5 minutes earlier, so the cert is not yet valid; backdating notBefore by 1 hour fixes it.",
+    "source": "Lesson 13 expectedResults"
+  },
+  {
+    "id": "cr-L300-018",
+    "level": "L300",
+    "lesson": 13,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Field devices go online only a few times a year and cannot renew often. Which approach does the lesson's trade-off table suggest?",
+    "options": [
+      "One-hour certificates renewed through ACME",
+      "Certificates that never expire and no revocation",
+      "Longer-lived certificates plus distributed CRLs",
+      "Jittered renewal every 60 % of a 7-day lifetime"
+    ],
+    "answer": 2,
+    "explanation": "Short-lived certs need reliable renewal, which these devices cannot do, so longer lifetimes with CRLs fit. Certificates that never expire leave a leaked key valid forever.",
+    "source": "Lesson 13 tradeOffs"
+  },
+  {
+    "id": "cr-L300-019",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "The manifest signature is valid. Why can the installed release still be malicious?",
+    "options": [
+      "Files outside the manifest or with changed digests are not covered unless checked",
+      "Ed25519 signatures can be replayed on another release",
+      "The manifest covers names only, never the content",
+      "Signatures stop being valid after the files are copied"
+    ],
+    "answer": 0,
+    "explanation": "The signature covers the digests, so the installer must verify every file and reject extra or missing ones. In the lab a swapped README and an extra .pth slip through.",
+    "source": "Lesson 14 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L300-020",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why must the installer verify the raw manifest bytes before calling json.loads?",
+    "options": [
+      "json.loads is slower than signature verification",
+      "Parsed JSON cannot contain SHA-256 digests",
+      "Re-serializing can change bytes and break or bypass verification",
+      "Signatures only work over UTF-16 text"
+    ],
+    "answer": 2,
+    "explanation": "Verify the exact bytes that were signed, then parse; key order and whitespace may change when you re-serialize. Speed is not the reason.",
+    "source": "Lesson 14 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L300-021",
+    "level": "L300",
+    "lesson": 14,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "This installer checks every file listed in a verified manifest, yet the tampered release installs 5 files. What is the bug?",
+    "code": "def install(dist, manifest, dest):\n    for name, digest in manifest[\"files\"].items():\n        if sha256_file(dist / name) != digest:\n            raise ValueError(f\"digest mismatch: {name}\")\n    for path in dist.rglob(\"*\"):\n        if path.is_file():\n            copy(path, dest / path.relative_to(dist))",
+    "options": [
+      "It copies every file in dist, including ones not in the manifest",
+      "It should compare the digests with == instead of != before copying",
+      "It must verify the signature after copying",
+      "rglob skips files in subfolders such as app/"
+    ],
+    "answer": 0,
+    "explanation": "Strict install allow-lists the manifest: unknown or missing files are rejected before copying. Here the extra app/zz_extra.pth is copied without any check.",
+    "source": "Lesson 14 failureLab"
+  },
+  {
+    "id": "cr-L300-022",
+    "level": "L300",
+    "lesson": 14,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "signed = {\"app/__init__.py\", \"app/core.py\", \"README.txt\", \"LICENSE\"}\non_disk = signed | {\"app/zz_extra.pth\"}\nprint(sorted(on_disk - signed), sorted(signed - on_disk))",
+    "options": [
+      "['app/zz_extra.pth'] ['README.txt']",
+      "[] []",
+      "['app/zz_extra.pth'] []",
+      "['README.txt'] []"
+    ],
+    "answer": 2,
+    "explanation": "on_disk minus signed gives the unknown file; signed minus on_disk is empty, so nothing is missing. A swapped README is still in both sets and needs a digest check to catch.",
+    "source": "Lesson 14 failureLab"
+  },
+  {
+    "id": "cr-L300-023",
+    "level": "L300",
+    "lesson": 14,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "You must rotate the release signing key without breaking existing installers. What order works?",
+    "options": [
+      "Sign with the new key now, then update installers when users report errors",
+      "Ship the new kid to installers, sign with the new key, then remove the old kid",
+      "Remove the old kid first so no one can use the old key",
+      "Sign every release with both keys forever"
+    ],
+    "answer": 1,
+    "explanation": "Installers must trust the new key before it is used, and the old key is removed after an overlap window. Removing it first breaks every installer that has not updated yet.",
+    "source": "Lesson 14 checkYourself"
+  },
+  {
+    "id": "cr-L300-024",
+    "level": "L300",
+    "lesson": 14,
+    "type": "design",
+    "difficulty": 2,
+    "question": "A release has 40 artifacts. Which signing approach does the trade-off table favour?",
+    "options": [
+      "One signature per artifact, without checking which files are in the set",
+      "One signed manifest of digests, with the installer checking every file",
+      "A plain SHA256SUMS file without a signature",
+      "Signing only the largest artifact"
+    ],
+    "answer": 1,
+    "explanation": "One signature over all digests is cheap to verify for many files, as long as the installer checks each file and the file set. Per-artifact signatures miss unsigned extra files.",
+    "source": "Lesson 14 tradeOffs"
+  },
+  {
+    "id": "cr-L300-025",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "A CI pipeline uses keyless signing with a transparency log (Sigstore). What must the verifier check besides 'it is signed'?",
+    "options": [
+      "That the signature is shorter than 64 bytes and uses Ed25519",
+      "That the transparency log is offline",
+      "That the private key file is still in CI",
+      "The signer identity and the OIDC issuer it expects"
+    ],
+    "answer": 3,
+    "explanation": "Anyone can get a keyless signature, so verify who signed and which issuer vouched for them. There is no long-lived private key to look for.",
+    "source": "Lesson 14 tradeOffs"
+  },
+  {
+    "id": "cr-L300-026",
+    "level": "L300",
+    "lesson": 14,
+    "type": "debugging",
+    "difficulty": 2,
+    "question": "Why does this verification fail on a genuine release?",
+    "code": "import json\nfrom pathlib import Path\nraw = Path(\"manifest.json\").read_bytes()\nmanifest = json.loads(raw)\npub.verify(sig, json.dumps(manifest, indent=2).encode())",
+    "options": [
+      "json.loads cannot read a manifest written as bytes",
+      "It verifies re-serialized JSON, not the exact signed bytes",
+      "Ed25519 needs the digest of the manifest, not the manifest",
+      "The public key must sign the manifest again first"
+    ],
+    "answer": 1,
+    "explanation": "json.dumps(indent=2) produces different bytes from the signed file, so verification fails; verify raw then parse. Pretty-printing breaks the signature.",
+    "source": "Lesson 14 troubleshooting"
+  },
+  {
+    "id": "cr-L300-027",
+    "level": "L300",
+    "lesson": 14,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A release has 40 artifacts. How many signature bytes does Ed25519 signing produce per release with one signature per artifact vs one signed manifest?",
+    "options": [
+      "2,560 B vs 64 B",
+      "64 B vs 2,560 B",
+      "2,560 B vs 2,560 B",
+      "1,280 B vs 64 B"
+    ],
+    "answer": 0,
+    "explanation": "40 x 64-byte Ed25519 signatures = 2,560 B, against a single 64-byte signature over the manifest. 1,280 B assumes 32-byte signatures, which is the key size.",
+    "source": "Lesson 14 tradeOffs"
+  },
+  {
+    "id": "cr-L300-028",
+    "level": "L300",
+    "lesson": 14,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does a valid signature on a release tell you?",
+    "options": [
+      "That the code was reviewed for malware before it was signed",
+      "That it was built from the tagged source",
+      "That all its dependencies are signed too",
+      "Who published it, not that its contents are safe"
+    ],
+    "answer": 3,
+    "explanation": "A signature proves origin and integrity since signing. It says nothing about whether the publisher's build or dependencies were safe.",
+    "source": "Lesson 14 caution"
+  },
+  {
+    "id": "cr-L300-029",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "pyca/cryptography already passes Wycheproof. Why run Wycheproof vectors against your own code?",
+    "options": [
+      "The library might be replaced by a different one at runtime",
+      "Wycheproof vectors expire and must be re-run monthly",
+      "Running vectors speeds up the library through caching",
+      "Your wrapper adds parsing and size handling where bugs live"
+    ],
+    "answer": 3,
+    "explanation": "The derived vectors found truncated-tag and trailing-byte bugs in the wrappers, not in the library. Test your wrapper, not only the library.",
+    "source": "Lesson 15 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L300-030",
+    "level": "L300",
+    "lesson": 15,
+    "type": "calculation",
+    "difficulty": 2,
+    "question": "A lenient wrapper accepts a 4-byte truncated GCM tag. What is the chance that one random forgery attempt is accepted?",
+    "options": [
+      "1 in 2^128",
+      "1 in 2^16",
+      "1 in 2^32",
+      "1 in 2^4"
+    ],
+    "answer": 2,
+    "explanation": "A 4-byte tag has 32 bits, so a guess succeeds with probability 2^-32, against 2^-128 for the full 16-byte tag. 2^4 confuses bytes with bits.",
+    "source": "Lesson 15 failureLab"
+  },
+  {
+    "id": "cr-L300-031",
+    "level": "L300",
+    "lesson": 15,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Derived vectors 9001/9002 (TruncatedTag) pass through this wrapper as valid. What is the fix?",
+    "code": "from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes\n\ndef open_(key, iv, ct, tag):\n    mode = modes.GCM(iv, tag, min_tag_length=len(tag))\n    d = Cipher(algorithms.AES(key), mode).decryptor()\n    return d.update(ct) + d.finalize()",
+    "options": [
+      "Set min_tag_length=4 so tiny tags are refused",
+      "Check the tag after calling update() rather than before decrypting",
+      "Pad short tags with zero bytes to 16",
+      "Require exactly 16-byte tags (or use the high-level AESGCM API)"
+    ],
+    "answer": 3,
+    "explanation": "Letting min_tag_length follow the input accepts any tag length the library allows. Exact sizes reject everything else; min_tag_length=4 still allows truncated tags.",
+    "source": "Lesson 15 failureLab"
+  },
+  {
+    "id": "cr-L300-032",
+    "level": "L300",
+    "lesson": 15,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Derived vector 9101 (TrailingBytes) passes through this wrapper. What is the bug?",
+    "code": "def verify(pub, sig: bytes, msg: bytes) -> bool:\n    try:\n        pub.verify(sig[:64], msg)\n        return True\n    except Exception:\n        return False",
+    "options": [
+      "Ed25519 signatures are 32 bytes long, so the 64-byte slice is too long",
+      "It ignores extra bytes after the first 64 instead of rejecting them",
+      "verify() needs the message first and the signature second",
+      "It should hash the message before verifying"
+    ],
+    "answer": 1,
+    "explanation": "Exact sizes and canonical encodings: a 65-byte signature must be rejected, not trimmed. The slice hides malleable input that other verifiers would refuse.",
+    "source": "Lesson 15 failureLab"
+  },
+  {
+    "id": "cr-L300-033",
+    "level": "L300",
+    "lesson": 15,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "from cryptography.exceptions import InvalidSignature\nfrom cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey\nk = Ed25519PrivateKey.generate()\nsig = k.sign(b\"m\")\ntry:\n    k.public_key().verify(sig + b\"\\x00\", b\"m\")\n    print(\"accepted\")\nexcept InvalidSignature:\n    print(\"rejected\")",
+    "options": [
+      "rejected",
+      "accepted",
+      "ValueError",
+      "accepted (65-byte signature trimmed)"
+    ],
+    "answer": 0,
+    "explanation": "The library refuses a signature with a trailing byte; only a wrapper that trims input would accept it. That is why the strict wrapper passes the bytes through unchanged.",
+    "source": "Lesson 15 concepts"
+  },
+  {
+    "id": "cr-L300-034",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why do the lab's timing tests use medians over many interleaved rounds?",
+    "options": [
+      "Scheduler spikes and CPU frequency changes would otherwise dominate",
+      "Medians make the comparison constant-time",
+      "Interleaving hides the secret from the measurement",
+      "Averages are not allowed in security tests"
+    ],
+    "answer": 0,
+    "explanation": "Timing evidence is statistical: medians resist outliers and interleaving spreads noise across both guesses. None of this makes code constant-time.",
+    "source": "Lesson 15 checkYourself"
+  },
+  {
+    "id": "cr-L300-035",
+    "level": "L300",
+    "lesson": 15,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "A service checks for repeated nonces in memory while it runs. Why can it still miss nonce reuse?",
+    "options": [
+      "In-memory sets cannot hold 12-byte values",
+      "Nonce reuse only happens across different keys",
+      "A restart clears its memory while a seeded PRNG repeats the same nonces",
+      "The check runs after encryption, too late to log"
+    ],
+    "answer": 2,
+    "explanation": "Only an offline scan of stored ciphertexts sees nonces from both runs. In-process memory starts empty after each restart.",
+    "source": "Lesson 15 checkYourself"
+  },
+  {
+    "id": "cr-L300-036",
+    "level": "L300",
+    "lesson": 15,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Should a timing test in CI be your proof that a MAC comparison is safe?",
+    "options": [
+      "Yes, once the ratio stays near 1.0 for a week",
+      "Yes, if the test runs on a dedicated CI machine",
+      "No: timing leaks cannot exist in Python code",
+      "No: use it for gross leaks only; rely on compare_digest and review"
+    ],
+    "answer": 3,
+    "explanation": "Noise makes timing tests flaky and a missing signal proves nothing, so they catch only large effects. Python code can leak timing, as the early-exit compare shows.",
+    "source": "Lesson 15 tradeOffs / caution"
+  },
+  {
+    "id": "cr-L300-037",
+    "level": "L300",
+    "lesson": 15,
+    "type": "scenario",
+    "difficulty": 2,
+    "question": "The timing test for the naive early-exit compare shows a ratio of about 1. What should you conclude?",
+    "options": [
+      "The naive compare is constant-time on this machine",
+      "Nothing yet: raise repetitions or rounds; a small ratio is not proof of safety",
+      "The test is broken and should be deleted",
+      "Python's == is constant-time for bytes"
+    ],
+    "answer": 1,
+    "explanation": "Too few repetitions or a noisy machine hide the effect. Never treat a small ratio as proof that the code is safe.",
+    "source": "Lesson 15 troubleshooting"
+  },
+  {
+    "id": "cr-L300-038",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why does the lesson prefer a mounted secret file (NAME_FILE) over an environment variable?",
+    "options": [
+      "Files are encrypted by the operating system automatically",
+      "Environment variables cannot hold 40-character values",
+      "Env vars are inherited by child processes and appear in dumps and debug pages",
+      "Reading a file is faster than reading the environment"
+    ],
+    "answer": 2,
+    "explanation": "Environment variables spread to children, crash dumps and debug endpoints; OWASP advises against them unless nothing else works. Files are not encrypted automatically and need correct permissions.",
+    "source": "Lesson 16 concepts / tradeOffs"
+  },
+  {
+    "id": "cr-L300-039",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "Why is the redaction filter attached to the log handler rather than to the logger?",
+    "options": [
+      "Handlers run before loggers, so redaction happens earlier",
+      "Logger filters cannot change the message text",
+      "Handlers are created once per request",
+      "Logger filters skip records from child loggers; the handler sees all of them"
+    ],
+    "answer": 3,
+    "explanation": "Records from child loggers propagate to parent handlers without passing the parent logger's filters. Putting the filter on the handler covers every record written.",
+    "source": "Lesson 16 checkYourself / troubleshooting"
+  },
+  {
+    "id": "cr-L300-040",
+    "level": "L300",
+    "lesson": 16,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "What does this print?",
+    "code": "import io, logging\nbuf = io.StringIO()\napp = logging.getLogger(\"app\")\napp.addHandler(logging.StreamHandler(buf))\napp.propagate = False\napp.addFilter(lambda r: \"sk_demo\" not in r.getMessage())\nlogging.getLogger(\"app.http\").warning(\"auth sk_demo_123\")\nprint(\"leaked\" if \"sk_demo\" in buf.getvalue() else \"clean\")",
+    "options": [
+      "clean",
+      "AttributeError",
+      "nothing",
+      "leaked"
+    ],
+    "answer": 3,
+    "explanation": "The filter is on the 'app' logger, but the record is logged on 'app.http' and propagates to app's handler without passing app's logger filters. Moving the filter to the handler gives 'clean'.",
+    "source": "Lesson 16 troubleshooting"
+  },
+  {
+    "id": "cr-L300-041",
+    "level": "L300",
+    "lesson": 16,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "An API key is rotated with a dual-validity window. When can you stop accepting the previous key?",
+    "options": [
+      "As soon as the new key is deployed to all services",
+      "Exactly 24 hours after rotation, whatever the logs say",
+      "When the new key has been used at least once",
+      "When logs show no successful auth with it for a while and the window has passed"
+    ],
+    "answer": 3,
+    "explanation": "Measure use of the old key before removing it; a deploy can miss a client. A fixed timer without evidence can lock out callers still on the old key.",
+    "source": "Lesson 16 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L300-042",
+    "level": "L300",
+    "lesson": 16,
+    "type": "design",
+    "difficulty": 2,
+    "question": "At start-up the service finds neither ORDERS_API_KEY_FILE nor ORDERS_API_KEY. What should it do?",
+    "options": [
+      "Continue with an empty key and log a warning for the operators",
+      "Fall back to a default demo key in the code",
+      "Fail closed: stop with a clear 'secret not configured' error",
+      "Generate a random key and keep running"
+    ],
+    "answer": 2,
+    "explanation": "Failing closed avoids running half-configured or with a known key. A default or random key either weakens security or breaks callers silently.",
+    "source": "Lesson 16 concepts / troubleshooting"
+  },
+  {
+    "id": "cr-L300-043",
+    "level": "L300",
+    "lesson": 16,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "In the lab an agent reviews logs for leaks. Why does code, not the agent, decide what is a leak?",
+    "options": [
+      "The agent's answers vary and can be wrong; the scanner is reproducible and tested",
+      "Agents cannot read JSON logs",
+      "The scanner is faster than any model",
+      "Agents may only see encrypted logs"
+    ],
+    "answer": 0,
+    "explanation": "In the lab the agent gave one false positive and two misses; the deterministic scanner gives the same tested result every run.",
+    "source": "Lesson 16 concepts / checkYourself"
+  },
+  {
+    "id": "cr-L300-044",
+    "level": "L300",
+    "lesson": 16,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A containerised service runs on Kubernetes. Which secret delivery does the lesson's trade-off table suggest, and with what caveat?",
+    "options": [
+      "An environment variable, since it is the most portable option",
+      "A mounted secret file; Secrets are unencrypted in etcd by default",
+      "A secret baked into the image; it never changes",
+      "A command-line flag; it is visible only to root"
+    ],
+    "answer": 1,
+    "explanation": "Mounted files are not inherited like env vars and Kubernetes updates them, but etcd encryption must be enabled. Baked-in secrets end up in every image copy.",
+    "source": "Lesson 16 tradeOffs"
+  },
+  {
+    "id": "cr-L300-045",
+    "level": "L300",
+    "lesson": 16,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "class Secret:\n    def __init__(self, v):\n        self._v = v\n    def __repr__(self):\n        return \"Secret('***')\"\n    def reveal(self):\n        return self._v\n\ns = Secret(\"k\" * 40)\nprint(f\"{s} {len(s.reveal())}\")",
+    "options": [
+      "kkkkkkkkkk... 40",
+      "Secret('***') 3",
+      "<__main__.Secret object> 40",
+      "Secret('***') 40"
+    ],
+    "answer": 3,
+    "explanation": "f-strings call __str__, which falls back to __repr__, so the value is masked; reveal() still returns the 40-character secret. The wrapper reduces accidental exposure but is not encryption.",
+    "source": "Lesson 16 expectedResults"
+  },
+  {
+    "id": "cr-L300-046",
+    "level": "L300",
+    "lesson": 16,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "This redaction filter sits on the handler, but the scanner still finds the key in log.info('headers %s', headers). Why?",
+    "code": "import logging\n\nclass Redact(logging.Filter):\n    def filter(self, record):\n        if \"Bearer\" in str(record.msg):\n            record.msg = \"[REDACTED]\"\n        return True",
+    "options": [
+      "Handler filters run only after the record is already written",
+      "logging.Filter cannot return a bool",
+      "It only checks record.msg; the key is in record.args",
+      "Filters cannot see INFO records"
+    ],
+    "answer": 2,
+    "explanation": "With %-style logging the template is in msg and values are in args; redact getMessage() or the args (including nested dicts). The filter placement is already correct.",
+    "source": "Lesson 16 troubleshooting"
+  }
+]

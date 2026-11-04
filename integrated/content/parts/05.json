@@ -1,0 +1,674 @@
+{
+ "id": "l600-05-observatory-scheduler",
+ "number": 5,
+ "level": "L600",
+ "title": "A robotic-observatory night scheduler",
+ "phase": "Integrate it",
+ "category": "Integrated project",
+ "combines": [
+  "astronomy",
+  "simulation",
+  "ai-agents"
+ ],
+ "description": "Schedule one night for a small robotic telescope: astronomy constraints (airmass, twilight, Moon) through a typed UTC seam, a greedy baseline vs a seeded local search, 1000 Markov-cloud nights to price every promise, and a local model that proposes and explains while a deterministic validator decides.",
+ "outcome": "You can build a constrained night scheduler whose every boundary is guarded: typed UTC instants into sky maths, an independent validator for any plan (including an agent's), weather-aware promises checked by simulation, and fitness functions that keep the design true.",
+ "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; reuses astronomy L300 #12 (ephem.py, Kasten & Young airmass), astronomy L100 #3 (timescales.py), simulation L200 #10 (ci()), kb/shared/local_agent (fake model server); optional Ollama + qwen2.5:1.5b for --real (pendingCi); astropy/astroplan cross-check pendingCi",
+ "estimatedTime": "4-5 hours",
+ "overview": [
+  "Eleven requests compete for 64 ten-minute dark slots at Gurgaon on 2026-11-19. Astronomy decides what is observable, simulation decides what a plan is worth under clouds, and a local model may only propose and explain. The interesting failures live at the seams between them, so every seam has a test."
+ ],
+ "prerequisites": [
+  "astronomy L300 #12 Observation planning: airmass, twilight, Moon distance and a scheduler under constraints",
+  "astronomy L100 #3 Time systems: UTC, TAI, TT, Julian Date and sidereal time",
+  "simulation L200 #10 Warm-up, replications and confidence",
+  "ai-agents L400 #20 Deterministic core, LLM at the edge"
+ ],
+ "buildsOn": [
+  {
+   "topic": "astronomy",
+   "lesson": 12,
+   "title": "Observation planning: airmass, twilight, Moon distance and a scheduler under constraints",
+   "uses": "ephem.py (USNO Sun + GMST, Schlyter Moon, altaz, separation) and solution/plan.py airmass() (Kasten & Young 1989, infinite below the horizon); its greedy and urgency schedulers are the baseline idea"
+  },
+  {
+   "topic": "astronomy",
+   "lesson": 3,
+   "title": "Time systems: UTC, TAI, TT, Julian Date and sidereal time",
+   "uses": "timescales.py scales() and gast_hours() (checked against the Wallace & Capitaine 2006 worked example) as the validator's independent sidereal-time route"
+  },
+  {
+   "topic": "astronomy",
+   "lesson": 2,
+   "title": "Coordinates and the sky: RA/Dec to Alt/Az - is a star above the horizon now?",
+   "uses": "SIMBAD coordinates of Polaris, Canopus and Arcturus (the three never-feasible requests)"
+  },
+  {
+   "topic": "simulation",
+   "lesson": 10,
+   "title": "Warm-up, replications and confidence",
+   "uses": "warmup.ci(): t-interval over independent replications for every Monte Carlo mean and the paired difference"
+  },
+  {
+   "topic": "simulation",
+   "lesson": 11,
+   "title": "A supply-chain model: (s, S) inventory with common random numbers",
+   "uses": "common random numbers: both plans face the same 1000 simulated nights, so the comparison is paired"
+  },
+  {
+   "topic": "simulation",
+   "lesson": 16,
+   "title": "Performance and scale: vectorise, parallelise, keep streams independent",
+   "uses": "one SeedSequence child per weather run (adding runs never changes earlier runs) and numpy vectorisation over runs"
+  },
+  {
+   "topic": "ai-agents",
+   "lesson": 4,
+   "title": "Structured output",
+   "uses": "parse model output into typed rows and reject what does not parse (here: PLAN lines with zoned ISO 8601 times)"
+  },
+  {
+   "topic": "ai-agents",
+   "lesson": 20,
+   "title": "Deterministic core, LLM at the edge",
+   "uses": "the model proposes/explains, code decides; explanations gated so every number is a fact"
+  }
+ ],
+ "glossary": [
+  {
+   "term": "UtcInstant",
+   "meaning": "Frozen wrapper of an aware datetime with UTC offset 0; the only time type sky maths accepts."
+  },
+  {
+   "term": "relabel vs convert",
+   "meaning": "replace(tzinfo=...) attaches a zone without moving the clock; astimezone() moves the clock to the same instant in another zone."
+  },
+  {
+   "term": "airmass (Kasten & Young)",
+   "meaning": "Path length through the atmosphere relative to the zenith; 2.0 is reached near 30 deg altitude; infinite below the horizon here."
+  },
+  {
+   "term": "feasibility matrix",
+   "meaning": "ok[i, s]: request i may start at slot s because every boundary of its block is dark, at airmass <= 2 and >= 30 deg from the Moon."
+  },
+  {
+   "term": "p_complete",
+   "meaning": "Probability that all n slots of a block are clear: pi_clear (1 - a)^(n-1) for the two-state Markov cloud chain."
+  },
+  {
+   "term": "common random numbers (CRN)",
+   "meaning": "Evaluate competing plans on the same simulated nights so their difference has low variance."
+  },
+  {
+   "term": "seam",
+   "meaning": "A boundary where one topic's output becomes another's input; the place integrated systems fail."
+  }
+ ],
+ "concepts": [
+  "Type the time seam, then test it at the published instant.",
+  "Optimise the promise you can keep: expected value under weather.",
+  "Price every promise by simulation, paired by common random numbers.",
+  "Agents propose and explain; an independent validator decides."
+ ],
+ "designBrief": {
+  "context": "A 0.4 m robotic telescope at Gurgaon (28.46 N, 77.03 E, IST = UTC+05:30) has one night (2026-11-19, waxing gibbous Moon) and 11 observation requests with priorities 1-5 and uninterrupted exposures of 30-180 minutes. The site loses time to cloud spells. A local model is available to draft plans and explain them to observers.",
+  "constraints": [
+   "no scheduled observation above airmass 2.0, below the horizon, outside astronomical darkness (Sun <= -18 deg) or within 30 deg of the Moon, re-checked every 5 minutes by an independent route",
+   "expected completed priority-weighted value >= 1.15 x the greedy baseline over 1000 seeded weather runs, with the paired 95 % CI of the difference above 0",
+   "the same seed gives the same schedule (plan hash) and the same weather runs",
+   "every promise (p_complete per block) within 3 binomial standard errors of its simulated completion rate",
+   "no plan from the local model is executed unless it passes the validator and promises at least the optimiser's value"
+  ],
+  "question": "Which scheduler should run tonight, what may it promise each observer, and how do we stop a time-zone or agent mistake from pointing the telescope below the horizon?"
+ },
+ "architecture": {
+  "diagram": "labs/L600/05-observatory-scheduler/architecture.mmd",
+  "summary": "timeutil.UtcInstant is the only time that reaches sky.py, which turns astronomy L300 #12's ephemeris and Kasten & Young airmass into 64 ten-minute dark slots and a feasibility matrix. scheduler.py runs a greedy dispatcher and a seeded local search over request order (earliest-fit decoder) that maximises the expected value from weather.py's two-state Markov cloud model. validator.py re-derives altitude from astronomy L100 #3's apparent sidereal time every 5 minutes and judges every plan; weather.py replays 1000 nights with common random numbers to check the promises; agent_plan.py turns a local model's PLAN lines into typed rows for the same validator and gates its explanation. run_project.py prints one JSON line per milestone, seam and fitness function."
+ },
+ "seams": [
+  {
+   "between": "astronomy ↔ scheduler (time systems)",
+   "contract": "sky functions accept only UtcInstant (aware, offset 0, built by astimezone); local time exists only for display; sidereal time in hours, RA in degrees",
+   "risk": "a local wall clock read as UTC moves the sky 330 minutes: the scheduler's own airmass column still looks fine (1.982) while Betelgeuse is at -16.4 deg",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_seam_time.py"
+  },
+  {
+   "between": "ai-agents ↔ scheduler (agent plan ↔ constraint validator)",
+   "contract": "model text -> 'PLAN <target> <ISO 8601 with Z or offset>' -> UtcInstant rows -> validator.validate(); adopt only with 0 violations and expected value >= the optimiser's; explanation numbers must be facts",
+   "risk": "an unzoned time is guessed, a below-horizon block is executed, or an invented number reaches an observer",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_seam_agent.py"
+  },
+  {
+   "between": "simulation ↔ scheduler (stochastic weather ↔ priority promises)",
+   "contract": "the scheduler promises p_complete = pi (1 - a)^(n-1) per block and sum(priority x p) per plan; 1000 SeedSequence-child nights must reproduce both",
+   "risk": "nominal priority sums or independent-slot weather over-promise long blocks; an unpaired comparison hides a real difference in noise",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_seam_weather.py"
+  },
+  {
+   "between": "astronomy ↔ validator (units: degrees / hours / radians / minutes)",
+   "contract": "*_deg, *_h and *_min in names; LST hours x 15 -> degrees; radians only inside trig; exposures whole 10-min slots",
+   "risk": "a dropped x 15 or radians-as-degrees moves stars by tens of degrees without any exception",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_seam_units.py"
+  }
+ ],
+ "milestones": [
+  {
+   "title": "M1 Sky model + typed time",
+   "deliverable": "timeutil.UtcInstant, sky.night_slots(), sky.feasibility()",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_milestones.py::M1SkyAndTime (64 slots, first 13:20Z = 18:50 IST, 4 infeasible requests with reasons)"
+  },
+  {
+   "title": "M2 Greedy baseline + validator",
+   "deliverable": "scheduler.greedy(), validator.validate()",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_milestones.py::M2Greedy (Deneb, Aldebaran, Capella, Betelgeuse; 0 violations; 8.209)"
+  },
+  {
+   "title": "M3 Local search on expected value",
+   "deliverable": "scheduler.decode(), scheduler.local_search()",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_milestones.py::M3LocalSearch (0 violations; 10.534 >= greedy)"
+  },
+  {
+   "title": "M4 Monte Carlo weather",
+   "deliverable": "weather.clear_matrix(), realised(), expected(), summary()",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_milestones.py::M4MonteCarlo (analytic value inside the 95 % CI of 1000 runs, both plans)"
+  },
+  {
+   "title": "M5 Agent proposes, code decides",
+   "deliverable": "agent_plan.py: prompt, parse, decide, gated explanation",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_milestones.py::M5Agent (fake plan rejected for 4 reasons; explanation published)"
+  }
+ ],
+ "rubric": [
+  {
+   "criterion": "Constraints hold at the real instant",
+   "measure": "validator violations for greedy and optimised plans (5-min samples, independent sidereal route)",
+   "pass": "0 and 0 (max airmass 1.939)"
+  },
+  {
+   "criterion": "Optimiser earns its complexity",
+   "measure": "mean value over 1000 CRN nights, optimised / greedy; paired difference CI",
+   "pass": ">= 1.15 (observed 1.270; 2.233 +/- 0.190)"
+  },
+  {
+   "criterion": "Honest promises",
+   "measure": "worst |simulated - promised| completion, in binomial SE",
+   "pass": "<= 3 (observed 1.68)"
+  },
+  {
+   "criterion": "Agent cannot act",
+   "measure": "naive agent plan adopted? valid offset-time plan adopted?",
+   "pass": "rejected with 4 reasons; valid plan adopted"
+  },
+  {
+   "criterion": "Failure lab reproducible",
+   "measure": "run_project.py --inject local-as-utc exit code and failing lines",
+   "pass": "exit 1; M2, M3, M5, SEAM time, FF1 FAIL"
+  }
+ ],
+ "fitnessFunctions": [
+  {
+   "what": "No scheduled observation above the airmass limit (or below the horizon, in twilight, near the Moon)",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_fitness.py::Fitness::test_ff1_no_scheduled_observation_above_airmass_limit",
+   "threshold": "0 violations at 5-min sampling; every block's max airmass <= 2.0"
+  },
+  {
+   "what": "Expected completed priority-weighted value beats greedy",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_fitness.py::Fitness::test_ff2_expected_value_beats_greedy_by_margin",
+   "threshold": "mean >= 1.15 x greedy over 1000 weather runs (seed 7) and paired 95 % CI lower bound > 0"
+  },
+  {
+   "what": "Schedule deterministic for a seed",
+   "test": "labs/L600/05-observatory-scheduler/tests/test_obs_fitness.py::Fitness::test_ff3_schedule_deterministic_for_a_seed",
+   "threshold": "plan hash 4928d62de8143130 for seed 2026 on every build; identical weather matrix for seed 7"
+  }
+ ],
+ "decisionRecords": [
+  "labs/L600/05-observatory-scheduler/decisions/0001-typed-utc-at-every-seam.md",
+  "labs/L600/05-observatory-scheduler/decisions/0002-local-search-on-expected-value.md",
+  "labs/L600/05-observatory-scheduler/decisions/0003-markov-weather-and-completion-rule.md",
+  "labs/L600/05-observatory-scheduler/decisions/0004-agent-proposes-validator-decides.md"
+ ],
+ "failureLab": {
+  "inject": "python run_project.py --inject local-as-utc (or SCHED_FAULT=local-as-utc): the scheduler hands the sky maths UtcInstant(slot.local.replace(tzinfo=None).replace(tzinfo=UTC)) - the IST wall clock relabelled as UTC. A bug that exists only because an astronomy library (UTC, Julian Date) meets a scheduler that thinks in local evenings.",
+  "symptom": "The scheduler is happy: its own rows report max airmass 1.982. The independent validator is not: 'Betelgeuse: altitude -16.4 deg, airmass inf at 2026-11-19T13:20:00Z'. Scorecard 7/12, exit 1 (M2, M3, M5, SEAM time, FF1 fail).",
+  "diagnose": "Compare sky_instant(slot) with slot.utc: they differ by exactly 330 minutes, the IST offset. The scheduler computed the sky 5 h 30 min after the instant it published. Type checks passed because a relabelled clock has offset 0.",
+  "fix": "Sky maths accepts only UtcInstant; build it with UtcInstant.from_aware() (astimezone), never replace(tzinfo=UTC); a lint-style test forbids that pattern outside the marked fault line; the seam test re-validates every block at its published UTC time by an independent sidereal route.",
+  "test": "labs/L600/05-observatory-scheduler/tests/test_obs_failure_lab.py (reproduces the fault) + labs/L600/05-observatory-scheduler/tests/test_obs_seam_time.py (fails with SCHED_FAULT=local-as-utc: 2 subtest failures; passes without)"
+ },
+ "buildTask": {
+  "task": "Agents write times many ways. Fix plan_times.parse_plan_time() (shipped UNFIXED: it relabels every time as UTC, so '+05:30' is shifted 330 minutes and a naive local time is silently accepted) so zoned times are converted to UtcInstant and anything without a zone raises ValueError.",
+  "acceptance": "BUILD_TARGET=mine python -m unittest tests.test_obs_build_task -v: shipped file 'Ran 5 tests ... FAILED (failures=3)'; after your fix 'OK'. BUILD_TARGET=mine python run_project.py then also passes M5 and SEAM agent (they fail on the shipped file).",
+  "solution": "labs/L600/05-observatory-scheduler/solution/plan_times.py"
+ },
+ "scalingLimits": [
+  "More requests, nights or telescopes: order search over requests x slots x sites loses quality and time; signal: the plan changes with the seed or the search stops improving long before its move budget. Move to ILP/CP (as Las Cumbres did) and keep the validator as the judge.",
+  "Real weather is not one stationary chain: realised completion rates fall outside the promised 3-sigma band night after night. Fit a and b per season from site logs and re-plan on live cloud data.",
+  "Low-precision ephemeris (J2000 without precession, about 0.36 deg by 2026; low-precision Moon): fine at airmass 2, not at a tight limit; signal: blocks within 0.5 deg of a limit disagree with astropy/astroplan (pendingCi)."
+ ],
+ "steps": [
+  {
+   "title": "Set up and open the lab",
+   "detail": "Use the KB workstation venv (shared/WORKSTATION-SETUP.md); only numpy is needed. The lab imports the astronomy, simulation and shared helpers in place through _kb.py.",
+   "mac": "cd kb/integrated/labs/L600/05-observatory-scheduler\npython3.12 -m venv .venv && source .venv/bin/activate\npython -m pip install numpy==2.5.3",
+   "windows": "cd kb\\integrated\\labs\\L600\\05-observatory-scheduler\npy -3.12 -m venv .venv; .venv\\Scripts\\Activate.ps1\npython -m pip install numpy==2.5.3\n$env:PYTHONUTF8 = \"1\"",
+   "expected": "python -c \"import _kb\" prints nothing and exits 0.",
+   "ifNot": "ModuleNotFoundError: ephem/timescales -> you moved the lab; _kb.py finds the topics four folders up (kb/)."
+  },
+  {
+   "title": "M1-M3: build both plans",
+   "detail": "Greedy vs local search on the same feasibility matrix.",
+   "mac": "python scheduler.py",
+   "windows": "python scheduler.py",
+   "expected": "greedy: expected value 8.209 (Deneb, Aldebaran, Capella, Betelgeuse); local: expected value 10.534, hash 4928d62de8143130 (Vega, Deneb, Aldebaran, Betelgeuse, Sirius).",
+   "ifNot": "Different values: check sky.NIGHT_LOCAL (2026-11-19 17:00) and the weather constants a = 0.04, b = 0.20."
+  },
+  {
+   "title": "Run the whole project",
+   "detail": "Milestones, seams and fitness functions as JSON lines; exit code 0 only if all pass.",
+   "mac": "python run_project.py",
+   "windows": "python run_project.py",
+   "expected": "12 lines with \"pass\": true, then {\"scorecard\": \"PASS\", \"passed\": 12, \"total\": 12}.",
+   "ifNot": "Read the first failing line's detail; each check names the seam or milestone it guards."
+  },
+  {
+   "title": "Failure lab: local time as UTC",
+   "detail": "Reproduce the seam bug with the flag, then run the seam test with and without the fault.",
+   "mac": "python run_project.py --inject local-as-utc; echo $?\nSCHED_FAULT=local-as-utc python -m unittest tests.test_obs_seam_time\npython -m unittest tests.test_obs_seam_time",
+   "windows": "python run_project.py --inject local-as-utc; $LASTEXITCODE\n$env:SCHED_FAULT = \"local-as-utc\"; python -m unittest tests.test_obs_seam_time\nRemove-Item Env:SCHED_FAULT; python -m unittest tests.test_obs_seam_time",
+   "expected": "Scorecard FAIL 7/12, exit 1, validator: Betelgeuse at -16.4 deg; seam test FAILED (failures=2) with the fault, OK without.",
+   "ifNot": "If the seam test passes with the fault set, the variable did not reach Python (PowerShell: set it in the same session)."
+  },
+  {
+   "title": "Build task: parse agent times",
+   "detail": "Fix plan_times.py; the test switch checks your file instead of the solution.",
+   "mac": "BUILD_TARGET=mine python -m unittest tests.test_obs_build_task -v",
+   "windows": "$env:BUILD_TARGET = \"mine\"; python -m unittest tests.test_obs_build_task -v; Remove-Item Env:BUILD_TARGET",
+   "expected": "Shipped: Ran 5 tests ... FAILED (failures=3). Fixed: OK.",
+   "ifNot": "A '+05:30' time must be converted with astimezone, not relabelled; a naive time must raise ValueError."
+  },
+  {
+   "title": "Run every test",
+   "detail": "Milestones, four seams, fitness functions, failure lab, build task and both tryIts (about 42 tests).",
+   "mac": "python -m unittest discover -s tests -t .",
+   "windows": "python -m unittest discover -s tests -t .",
+   "expected": "Ran 42 tests ... OK",
+   "ifNot": "Run from the lab folder (tests import the lab through tests/_lab.py)."
+  },
+  {
+   "title": "Optional: a real local model",
+   "detail": "The same gate judges a real model; results vary by model, the decision path does not (pendingCi).",
+   "mac": "ollama pull qwen2.5:1.5b\nexport LOCAL_MODEL_URL=http://localhost:11434/v1 LOCAL_MODEL=qwen2.5:1.5b\npython run_project.py --real",
+   "windows": "ollama pull qwen2.5:1.5b\n$env:LOCAL_MODEL_URL = \"http://localhost:11434/v1\"; $env:LOCAL_MODEL = \"qwen2.5:1.5b\"\npython run_project.py --real",
+   "expected": "M5 passes whether the model's plan is rejected or adopted, as long as the decision follows the validator; explanation published only if its numbers are facts.",
+   "ifNot": "Connection refused: start Ollama first (brew services start ollama / the Windows app)."
+  }
+ ],
+ "code": "\"\"\"Night scheduler: a greedy dispatcher (baseline) and a seeded local search over request order.\n\nBoth use the same feasibility matrix from sky.py (airmass <= 2, Moon >= 30 deg, Sun <= -18 deg at every block\nboundary) and output slot-aligned blocks. The local search maximises the EXPECTED priority-weighted value under the\nweather model (weather.p_complete), so it knows a 3-hour block is a riskier promise than two 1-hour ones.\npython scheduler.py          (prints both plans for the night of 2026-11-19 at Gurgaon)\n\"\"\"\nimport hashlib\nimport json\n\nimport numpy as np\n\nimport sky\nimport weather\n\n\ndef greedy(reqs, ok, x):\n    \"\"\"Baseline: at each free slot start the highest-priority feasible request (ties: lower airmass, then name).\"\"\"\n    k, done, blocks = 0, set(), []\n    while k < ok.shape[1]:\n        ready = [i for i in range(len(reqs)) if i not in done and ok[i, k]]\n        if not ready:\n            k += 1\n            continue\n        i = min(ready, key=lambda j: (-reqs[j].priority, x[j, k], reqs[j].name))\n        n = reqs[i].exp_min // sky.STEP_MIN\n        blocks.append((k, n, i))\n        done.add(i)\n        k += n\n    return blocks\n\n\ndef decode(order, reqs, ok):\n    \"\"\"Order -> schedule: each request in turn takes its EARLIEST feasible start whose slots are still free.\"\"\"\n    free, blocks = np.ones(ok.shape[1], dtype=bool), []\n    for i in order:\n        n = reqs[i].exp_min // sky.STEP_MIN\n        for s in np.flatnonzero(ok[i]):\n            if free[s:s + n].all():\n                free[s:s + n] = False\n                blocks.append((int(s), n, i))\n                break\n    return sorted(blocks)\n\n\ndef value(blocks, reqs):\n    \"\"\"Expected priority-weighted value: the number the optimiser maximises and the scheduler promises.\"\"\"\n    return weather.expected([(s, n, reqs[i].priority) for s, n, i in blocks])\n\n\ndef local_search(reqs, ok, x, seed=2026, iters=3000):\n    \"\"\"First-improvement hill climbing on the request order (swap or move one), plateau moves allowed.\n\n    Starts from the greedy plan's order so it can never end below the baseline it is compared with.\"\"\"\n    rng = np.random.default_rng(seed)\n    start = [i for _, _, i in greedy(reqs, ok, x)]\n    order = start + sorted(set(range(len(reqs))) - set(start), key=lambda i: -reqs[i].priority)\n    best = value(decode(order, reqs, ok), reqs)\n    for _ in range(iters):\n        cand = list(order)\n        a, b = (int(v) for v in rng.choice(len(cand), 2, replace=False))\n        if rng.random() < 0.5:\n            cand[a], cand[b] = cand[b], cand[a]\n        else:\n            cand.insert(b, cand.pop(a))\n        v = value(decode(cand, reqs, ok), reqs)\n        if v >= best - 1e-12:\n            order, best = cand, max(best, v)\n    return decode(order, reqs, ok)\n\n\ndef as_rows(blocks, reqs, slots, x):\n    \"\"\"Typed output: UTC ISO start/end (machines), local HH:MM (people), worst airmass inside the block.\"\"\"\n    rows = []\n    for s, n, i in blocks:\n        rows.append({\"target\": reqs[i].name, \"priority\": reqs[i].priority, \"start_utc\": slots[s].utc.iso(),\n                     \"end_utc\": slots[s].utc.plus(n * sky.STEP_MIN).iso(), \"start_local\": slots[s].local.strftime(\"%H:%M\"),\n                     \"max_airmass\": round(float(x[i, s:s + n + 1].max()), 3),\n                     \"p_complete\": round(weather.p_complete(n), 4)})\n    return rows\n\n\ndef plan_hash(rows):\n    return hashlib.sha256(json.dumps(rows, sort_keys=True).encode(\"utf-8\")).hexdigest()[:16]\n\n\ndef build(seed=2026, fault=None, reqs=None):\n    \"\"\"Everything the scorecard needs: slots, feasibility, both plans (as rows), and their expected values.\"\"\"\n    reqs = reqs or sky.REQUESTS\n    slots = sky.night_slots()\n    ok, x = sky.feasibility(reqs, slots, fault)\n    g, ls = greedy(reqs, ok, x), local_search(reqs, ok, x, seed)\n    return {\"reqs\": reqs, \"slots\": slots, \"ok\": ok, \"x\": x, \"greedy\": g, \"local\": ls,\n            \"greedy_rows\": as_rows(g, reqs, slots, x), \"local_rows\": as_rows(ls, reqs, slots, x),\n            \"greedy_value\": value(g, reqs), \"local_value\": value(ls, reqs)}\n\n\nif __name__ == \"__main__\":\n    r = build()\n    for name in (\"greedy\", \"local\"):\n        print(f\"{name}: expected value {r[name + '_value']:.3f}  hash {plan_hash(r[name + '_rows'])}\")\n        for row in r[name + \"_rows\"]:\n            print(\"  \" + json.dumps(row))\n",
+ "codeLanguage": "python",
+ "codeWalkthrough": [
+  {
+   "title": "timeutil.UtcInstant",
+   "detail": "Frozen dataclass; __post_init__ refuses naive datetimes and non-zero offsets; from_aware() converts with astimezone(). lst_hours() reuses astronomy L100 #3's GAST."
+  },
+  {
+   "title": "sky.feasibility()",
+   "detail": "Kasten & Young airmass and Moon separation at every 10-min boundary; ok[i, s] only if the whole block (n + 1 boundaries) passes. sky_instant() holds the injectable fault."
+  },
+  {
+   "title": "scheduler.greedy()",
+   "detail": "At each free slot, the highest-priority feasible request (ties: airmass, name). Taking Deneb at dusk loses Vega - the myopia the local search fixes."
+  },
+  {
+   "title": "scheduler.decode() + local_search()",
+   "detail": "An order becomes a plan by earliest fit; 3000 seeded swap/move proposals, accept if not worse, starting from greedy's order so the result is never below the baseline."
+  },
+  {
+   "title": "weather.py",
+   "detail": "Two-state Markov clouds, one SeedSequence child per run, all-or-nothing blocks; expected() is the analytic promise, realised() the simulated payout, summary() the simulation topic's t-interval."
+  },
+  {
+   "title": "validator.validate()",
+   "detail": "Independent sidereal route, 5-min samples, Sun, Moon, grid, overlap, duplicates; returns reasons and never repairs."
+  },
+  {
+   "title": "agent_plan.py + run_project.py",
+   "detail": "Fake-model rules registered at runtime; PLAN lines parsed to UtcInstant; decide() adopts only a valid, at-least-as-good plan; explanations gated by numbers and names. run_project prints the scorecard and exits 1 on any FAIL."
+  }
+ ],
+ "projectFiles": [
+  {
+   "path": "labs/L600/05-observatory-scheduler/run_project.py",
+   "purpose": "scorecard: 5 milestones, 4 seams, 3 fitness functions; --inject local-as-utc; --real"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/scheduler.py",
+   "purpose": "greedy, decode, local search, plan rows and hash (main file)"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/sky.py",
+   "purpose": "site, night, requests, slots, feasibility; the injectable time fault"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/timeutil.py",
+   "purpose": "UtcInstant and local sidereal time"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/weather.py",
+   "purpose": "Markov cloud Monte Carlo, promises, CI"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/validator.py",
+   "purpose": "independent constraint judge"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/agent_plan.py",
+   "purpose": "prompts, fake-model rules, parse, decide, explanation gate"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/plan_times.py",
+   "purpose": "build task (shipped unfixed); solution/plan_times.py is the reference"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/_kb.py",
+   "purpose": "imports the reused astronomy, simulation and shared modules in place"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/tests/",
+   "purpose": "milestones, seams, fitness, failure lab, build task, tryIt"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/try_it/",
+   "purpose": "t1_cloudier_site.py, t2_tighter_airmass.py"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/decisions/",
+   "purpose": "ADRs 0001-0004 (Nygard)"
+  },
+  {
+   "path": "labs/L600/05-observatory-scheduler/architecture.mmd",
+   "purpose": "Mermaid architecture"
+  }
+ ],
+ "expectedResults": [
+  "Scorecard PASS 12/12 (python run_project.py):",
+  "{\"check\": \"M1 sky + typed time\", \"pass\": true, \"dark_local\": \"18:50-05:20\", \"slots\": 64, \"feasible\": 7}",
+  "{\"check\": \"M2 greedy baseline\", \"pass\": true, \"expected_value\": 8.209, \"plan\": [\"Deneb\", \"Aldebaran\", \"Capella\", \"Betelgeuse\"], \"violations\": []}",
+  "{\"check\": \"M3 local search\", \"pass\": true, \"expected_value\": 10.534, \"plan\": [\"Vega\", \"Deneb\", \"Aldebaran\", \"Betelgeuse\", \"Sirius\"], \"violations\": []}",
+  "{\"check\": \"M4 Monte Carlo weather\", \"pass\": true, \"runs\": 1000, \"greedy\": \"8.261+/-0.272\", \"local\": \"10.494+/-0.306\", \"greedy_better_nights\": 0.178}",
+  "{\"check\": \"M5 agent proposes, code decides\", \"pass\": true, \"agent_reasons\": [\"Sirius: '2026-11-20T02:20': need ISO 8601 with 'Z' or an explicit UTC offset\", \"Betelgeuse: altitude -16.4 deg, airmass inf at 2026-11-19T13:20:00Z (limit 2.0)\", \"Fomalhaut: altitude 22.3 deg, airmass 2.62 at 2026-11-19T16:20:00Z (limit 2.0)\"], \"valid_offset_plan\": \"agent\", \"explanation_published\": true}",
+  "{\"check\": \"SEAM time astronomy<->scheduler\", \"pass\": true, \"types_enforced\": true, \"max_route_diff_deg\": 0.0019}",
+  "{\"check\": \"SEAM agent<->validator\", \"pass\": true, \"rejected\": [\"Vega: '2026-11-19T18:50': need ISO 8601 with 'Z' or an explicit UTC offset\", \"Sirius: altitude -38.9 deg, airmass inf at 2026-11-19T13:20:00Z (limit 2.0)\"], \"invented_number_blocked\": true}",
+  "{\"check\": \"SEAM weather<->promises\", \"pass\": true, \"worst_z\": 1.68, \"promises\": {\"Vega\": 0.6795, \"Deneb\": 0.5319, \"Aldebaran\": 0.6012, \"Betelgeuse\": 0.4163, \"Sirius\": 0.4706}}",
+  "{\"check\": \"SEAM units deg/h/rad\", \"pass\": true, \"transit_identity_err\": 4.263256414560601e-14}",
+  "{\"check\": \"FF1 no observation above airmass 2.0\", \"pass\": true, \"max_airmass\": 1.939}",
+  "{\"check\": \"FF2 value >= greedy x 1.15 (1000 runs)\", \"pass\": true, \"ratio\": 1.27, \"paired_diff\": \"2.233+/-0.190\"}",
+  "{\"check\": \"FF3 deterministic for a seed\", \"pass\": true, \"plan_hash\": \"4928d62de8143130\"}",
+  "{\"scorecard\": \"PASS\", \"passed\": 12, \"total\": 12}",
+  "With --inject local-as-utc (exit 1):",
+  "{\"check\": \"M2 greedy baseline\", \"pass\": false, \"expected_value\": 5.254, \"plan\": [\"Betelgeuse\", \"Aldebaran\", \"Arcturus\"], \"violations\": [\"Betelgeuse: altitude -16.4 deg, airmass inf at 2026-11-19T13:20:00Z (limit 2.0)\", \"Arcturus: altitude -33.2 deg, airmass inf at 2026-11-19T19:20:00Z (limit 2.0)\"]}",
+  "{\"check\": \"M3 local search\", \"pass\": false, \"expected_value\": 6.65, \"plan\": [\"Aldebaran\", \"Sirius\", \"Capella\", \"Arcturus\"], \"violations\": [\"Aldebaran: altitude 4.9 deg, airmass 10.42 at 2026-11-19T13:20:00Z (limit 2.0)\", \"Sirius: altitude -19.1 deg, airmass inf at 2026-11-19T14:50:00Z (limit 2.0)\"]}",
+  "{\"check\": \"M5 agent proposes, code decides\", \"pass\": false, \"agent_reasons\": [\"Sirius: '2026-11-20T02:20': need ISO 8601 with 'Z' or an explicit UTC offset\", \"Betelgeuse: altitude -16.4 deg, airmass inf at 2026-11-19T13:20:00Z (limit 2.0)\", \"Fomalhaut: altitude 22.3 deg, airmass 2.62 at 2026-11-19T16:20:00Z (limit 2.0)\"], \"valid_offset_plan\": \"optimiser\", \"explanation_published\": true}",
+  "{\"check\": \"SEAM time astronomy<->scheduler\", \"pass\": false, \"types_enforced\": true, \"max_route_diff_deg\": 0.0019}",
+  "{\"check\": \"FF1 no observation above airmass 2.0\", \"pass\": false, \"max_airmass\": 1.982}",
+  "{\"scorecard\": \"FAIL\", \"passed\": 7, \"total\": 12}"
+ ],
+ "testCases": [
+  {
+   "action": "python run_project.py",
+   "expected": "{\"scorecard\": \"PASS\", \"passed\": 12, \"total\": 12}, exit 0"
+  },
+  {
+   "action": "python run_project.py --inject local-as-utc",
+   "expected": "{\"scorecard\": \"FAIL\", \"passed\": 7, \"total\": 12}, exit 1"
+  },
+  {
+   "action": "python -m unittest discover -s tests -t .",
+   "expected": "Ran 42 tests ... OK (3 runs)"
+  },
+  {
+   "action": "SCHED_FAULT=local-as-utc python -m unittest tests.test_obs_seam_time",
+   "expected": "FAILED (failures=2)"
+  },
+  {
+   "action": "BUILD_TARGET=mine python -m unittest tests.test_obs_build_task",
+   "expected": "FAILED (failures=3) on the shipped file"
+  }
+ ],
+ "tryIt": [
+  {
+   "task": "Double the clear->cloudy probability (a = 0.08) and re-evaluate both plans: python try_it/t1_cloudier_site.py",
+   "predict": "Does the optimised plan still beat greedy by >= 15 %? What happens to Betelgeuse's 180-min promise and to the share of nights greedy wins?",
+   "expected": "1. a=0.04 pi_clear=0.833 | greedy 8.261 local 10.494 ratio 1.270 | Betelgeuse 180 min p=0.416 | greedy wins 0.178\n1. a=0.08 pi_clear=0.714 | greedy 4.503 local 5.965 ratio 1.325 | Betelgeuse 180 min p=0.173 | greedy wins 0.230"
+  },
+  {
+   "task": "Tighten the airmass limit from 2.0 to 1.5: python try_it/t2_tighter_airmass.py",
+   "predict": "How many requests stay feasible, and does the optimiser's margin grow or vanish?",
+   "expected": "2. airmass <= 2.0: feasible 7 | greedy ['Deneb', 'Aldebaran', 'Capella', 'Betelgeuse'] 8.209 | local ['Vega', 'Deneb', 'Aldebaran', 'Betelgeuse', 'Sirius'] 10.534 | violations 0\n2. airmass <= 1.5: feasible 4 | greedy ['Deneb', 'Aldebaran', 'Capella', 'Betelgeuse'] 8.209 | local ['Deneb', 'Aldebaran', 'Capella', 'Betelgeuse'] 8.209 | violations 0"
+  }
+ ],
+ "troubleshooting": [
+  {
+   "symptom": "TypeError: sky maths needs a UtcInstant",
+   "action": "You passed a datetime or a JD; wrap it with UtcInstant.from_aware(dt) at the boundary, never inside sky.py."
+  },
+  {
+   "symptom": "FF2 fails after changing requests",
+   "action": "The margin belongs to a workload: with little contention (try it 2) greedy is already optimal. Re-state the threshold in ADR 0002 rather than tuning the search to pass."
+  },
+  {
+   "symptom": "M5 fails with --real",
+   "action": "Check the model reply format (PLAN lines); a rejected plan is fine - M5 fails only if the valid offset-time plan is not adopted."
+  },
+  {
+   "symptom": "Slow run (minutes) on a network drive",
+   "action": "Imports dominate; compute is about 2 s per build. Set PYTHONDONTWRITEBYTECODE=1 or copy kb/ to a local disk."
+  }
+ ],
+ "learningTools": [
+  {
+   "name": "JupyterLab (+ JupyterLab Desktop)",
+   "role": "CHECK",
+   "exercise": "From the lab folder: import scheduler, numpy as np; r = scheduler.build(); plot r['x'][0] (Vega's airmass per slot) with a line at 2.0, then shade the greedy and optimised blocks.",
+   "expected": "Vega's airmass stays <= 2.0 for slots 0-6 only; greedy's Deneb block covers them, the optimised plan puts Vega there and Deneb at slot 6."
+  },
+  {
+   "name": "marimo",
+   "role": "SEE",
+   "exercise": "Make a and b sliders, call weather.p_complete(n, a, b) for n = 6, 12, 18 and re-run weather.realised() on both plans.",
+   "expected": "At a = 0.04, b = 0.20: 0.679, 0.532, 0.416; raising a widens the optimiser's mean advantage while greedy wins more single nights (try it 1)."
+  },
+  {
+   "name": "Ollama (supporting runtime)",
+   "role": "CHECK",
+   "exercise": "Serve qwen2.5:1.5b and run python run_project.py --real; read the agent_reasons in the M5 line.",
+   "expected": "Whatever the model proposes, the adopted plan is the validator's call; pendingCi records real-model runs."
+  }
+ ],
+ "agentAssist": {
+  "task": "A local model drafts tonight's plan as PLAN lines and explains the chosen plan's trade-offs in three sentences; code parses, validates, compares expected value and gates the explanation.",
+  "prompt": "[[OBS-PLAN]] Propose tonight's observing plan, one line per block: PLAN <target> <start, ISO 8601 UTC>. <facts> site, dusk_utc, dawn_utc, requests (name priority exp_min), rules </facts>  |  [[OBS-EXPLAIN]] Explain the trade-offs of tonight's plan in 3 plain sentences. <facts> local_value, greedy_value, margin_pct, first_target, long_target, long_p </facts>",
+  "check": "parse_plan_time() rejects unzoned times; validator.validate() recomputes every block independently; decide() adopts only 0-violation plans promising >= the optimiser's value; checked_explanation() publishes only if every number is in the facts and every star named is a requested target.",
+  "expected": "Fake model plan rejected for 4 reasons (unzoned '2026-11-20T02:20'; Betelgeuse -16.4 deg; Fomalhaut airmass 2.62; Deneb airmass 6.50) -> optimiser plan kept; the optimiser's own plan written in +05:30 is adopted; explanation 'The optimised plan promises an expected value of 10.534 against 8.209 for greedy, 28.3 percent more. ...' published.",
+  "realModelNote": "Real models (Ollama qwen2.5:1.5b on Apple-silicon Metal or Windows CUDA/CPU) are pendingCi; expect format drift (missing zones, prose around PLAN lines) - the parser rejects rather than guesses. Never put credentials or site access details in prompts; the model has no tools and cannot command the telescope."
+ },
+ "inRealSystems": [
+  "Las Cumbres Observatory schedules its global telescope network from observation requests with an integer linear program (Lampoudi, Saunders & Eastman 2015) and re-schedules as conditions change.",
+  "astroplan (Astropy affiliated) expresses the same constraints (AtNightConstraint, AirmassConstraint, MoonSeparationConstraint) and offers sequential and priority schedulers - the library equivalent of sky.py + scheduler.py.",
+  "Weather generators in hydrology and agriculture use first-order two-state Markov chains for wet/dry occurrence since Gabriel & Neumann (1962)."
+ ],
+ "useWhen": "Use this shape whenever an optimiser plans against physical constraints and an uncertain environment and someone wants an AI to help: type the time and unit seams, judge every plan with an independent validator, price promises by simulation, and keep the model at the edge.",
+ "simulatorVsReal": "No telescope or weather station: the sky comes from low-precision ephemerides (about 1-2 arcmin Sun/Moon, J2000 targets), clouds from an assumed Markov chain, and the agent from a deterministic fake model. A real deployment adds slews, filter changes, calibration frames, live cloud sensors and re-planning during the night.",
+ "caution": "Planning and teaching only. Never let a model command hardware or bypass the validator; never put credentials, site network details or personal data in prompts. Weather parameters are assumptions - fit them to your site before promising anyone anything.",
+ "checkpoint": "PASS: python run_project.py prints PASS 12/12 and exits 0; --inject local-as-utc exits 1 with SEAM time FAIL; python -m unittest discover -s tests -t . reports 42 tests OK.",
+ "checkYourself": [
+  {
+   "q": "Why does a relabelled local time pass the UtcInstant type check?",
+   "a": "replace(tzinfo=UTC) produces an aware datetime with offset 0 - a valid UtcInstant for the wrong instant. Only the independent re-validation at the published time catches it."
+  },
+  {
+   "q": "Why can the optimiser's mean advantage grow at a cloudier site while greedy wins more nights?",
+   "a": "The optimiser avoids long risky blocks, which matters more when clouds are common (ratio 1.325), but the night-to-night spread also grows, so greedy's plan wins 23 % of single nights."
+  },
+  {
+   "q": "What stops an agent plan with a good-looking WHY line from being executed?",
+   "a": "decide() never reads the WHY line: it parses PLAN lines into UtcInstant rows, runs the validator and compares expected value."
+  }
+ ],
+ "sources": [
+  {
+   "title": "Kasten & Young 1989, Revised optical air mass tables and approximation formula (Applied Optics 28, 4735)",
+   "url": "https://archive.org/download/wikipedia-scholarly-sources-corpus/10.1364%252FAO.1.000024.zip/10.1364%252FAO.28.004735.pdf"
+  },
+  {
+   "title": "Wallace & Capitaine 2006, Precession-nutation procedures consistent with IAU 2006 resolutions (A&A 459, 981)",
+   "url": "https://syrte.obspm.fr/iau2006/aa06_459.IAU06prec.pdf"
+  },
+  {
+   "title": "USNO: Computing Greenwich Apparent Sidereal Time",
+   "url": "https://aa.usno.navy.mil/faq/GAST"
+  },
+  {
+   "title": "Python docs: datetime (aware vs naive; astimezone vs replace)",
+   "url": "https://docs.python.org/3/library/datetime.html"
+  },
+  {
+   "title": "NumPy: Parallel random number generation (SeedSequence spawning)",
+   "url": "https://numpy.org/doc/stable/reference/random/parallel.html"
+  },
+  {
+   "title": "Gabriel & Neumann 1962, A Markov chain model for daily rainfall occurrence at Tel Aviv (QJRMS 88, 90-95)",
+   "url": "https://doi.org/10.1002/qj.49708837511"
+  },
+  {
+   "title": "Lampoudi, Saunders & Eastman 2015, An ILP solution to the telescope network scheduling problem",
+   "url": "https://arxiv.org/abs/1503.07170"
+  },
+  {
+   "title": "astroplan: scheduling tutorial",
+   "url": "https://astroplan.readthedocs.io/en/stable/tutorials/scheduling.html"
+  }
+ ],
+ "next": "Back to the L600 project list; for further study: re-plan during the night from a live cloud sensor (simulation L400 #17 digital twins) and replace the local search with an ILP (astroplan / Lampoudi et al. 2015).",
+ "validation": {
+  "status": "validated-local",
+  "how": "Ran here on Python 3.12.15 + numpy 2.5.3 (Linux): run_project.py PASS 12/12 (exit 0); --inject local-as-utc FAIL 7/12 (exit 1); python -m unittest discover -s tests -t . -> Ran 42 tests OK, 3 consecutive runs; SCHED_FAULT=local-as-utc seam test FAILED (failures=2); BUILD_TARGET=mine build task FAILED (failures=3) on the shipped file; both tryIts; integrated/research/checks_05.py exit 0. Agent paths ran against kb/shared/local_agent's fake server only. Weather parameters are assumptions, not site data.",
+  "pendingCi": [
+   "python run_project.py --real with Ollama qwen2.5:1.5b on macos-latest (arm64, Metal) and windows-latest (CPU)",
+   "astropy/astroplan cross-check of slot altitudes, Sun and Moon (astronomy L300 #12 plan_astroplan.py approach) for every scheduled block, tolerance 0.6 deg",
+   "the full unittest suite on macos-latest and windows-latest (platforms 'expected' until then)"
+  ]
+ },
+ "conceptNote": "content/concepts/L600/05-observatory-scheduler.md",
+ "conceptSummary": "A night scheduler where astronomy, simulation and an AI agent meet: typed UTC instants into sky maths, a weather-aware local search that beats greedy by 27 % over 1000 paired cloudy nights, promises checked by simulation, and a local model that proposes and explains while an independent validator decides.",
+ "platforms": {
+  "mac": "expected",
+  "windows": "expected"
+ },
+ "macMini": {
+  "gains": "Real local models propose plans that only the validator can accept; astropy/astroplan and Stellarium check the sky maths independently; the INDI telescope and CCD simulators actually execute the night; and 100,000 Monte Carlo nights on every core test each completion promise far beyond the scorecard's 1,000.",
+  "needs": {
+   "minRamGB": 16,
+   "tools": [
+    {
+     "name": "Ollama + Qwen2.5 (sizes from mac_profile.py)",
+     "licence": "MIT (Ollama)",
+     "install": "brew install ollama && brew services start ollama; ollama pull qwen2.5:7b"
+    },
+    {
+     "name": "astropy 8.0.2 + astroplan 0.10.1",
+     "licence": "BSD-3-Clause",
+     "install": "python3 -m pip install astropy astroplan"
+    },
+    {
+     "name": "Stellarium",
+     "licence": "GPL-2.0",
+     "install": "brew install --cask stellarium (or the installer from https://stellarium.org)"
+    },
+    {
+     "name": "INDI core (indiserver, indi_simulator_telescope, indi_simulator_ccd, indi_setprop, indi_eval)",
+     "licence": "LGPL-2.1 (library; repo also ships GPL and BSD parts)",
+     "install": "build from source per https://github.com/indilib/indi (macOS: -DCMAKE_INSTALL_PREFIX=/usr/local), or Debian container: apt-get install indi-bin (1.9.9)"
+    },
+    {
+     "name": "KStars + Ekos (optional INDI client, visual)",
+     "licence": "GPL-2.0-or-later",
+     "install": "https://kstars.kde.org/download/ (macOS download)"
+    }
+   ]
+  },
+  "experiments": [
+   {
+    "title": "A real model proposes tonight's plan; the validator decides",
+    "why": "The fake makes one scripted mistake per class; a real model makes its own (zone-less times, overlaps, off-grid starts, invented targets, invented numbers). Each must be refused by code, and a plan is adopted only if it is valid and promises at least the optimiser's value.",
+    "steps": [
+     {
+      "title": "Fake baseline",
+      "detail": "agent_trials.py asks the plan and explanation prompts, then runs agent_plan.decide and checked_explanation.",
+      "mac": "cd integrated/labs/L600/05-observatory-scheduler/mac_mini\npython3 agent_trials.py --here",
+      "expected": "adopted optimiser, violation_kinds {zone: 1, airmass: 3}, explanation_published true, no invented numbers."
+     },
+     {
+      "title": "Real models",
+      "detail": "Models sized by mac_profile.py; one JSON line per model in ~/kb-runs/05-agent-trials.jsonl.",
+      "mac": "LOCAL_MODEL_URL=http://localhost:11434/v1 python3 agent_trials.py --auto\nLOCAL_MODEL=qwen2.5:7b python3 ../run_project.py --real",
+      "expected": "Most real plans refused; read which violation kind dominates (zone = prompt rule ignored, airmass/darkness = sky maths the model cannot do, unknown = invented targets). adopted agent only with agent_ok true and agent_value >= optimiser_value (exit 1 otherwise)."
+     }
+    ],
+    "measure": "Per model: violations by kind, adopted, explanation_published, invented_numbers.",
+    "decides": "ADR-0004: if no model produces a valid plan, the agent's role narrows to explaining (proposals kept only as red-team input); if explanations fail the number gate, the deterministic fallback stays the default text."
+   },
+   {
+    "title": "Independent astronomy: astropy/astroplan and Stellarium",
+    "why": "Both lab routes use J2000 coordinates without precession (up to ~0.36 deg per KNOWN-GAPS) and Vega's block reaches airmass 1.93 against the 2.0 limit; independent implementations measure how much that matters.",
+    "steps": [
+     {
+      "title": "astropy and astroplan numbers",
+      "detail": "Same samples (every 10 min of every block), same Kasten & Young airmass on both sides, no refraction (pressure 0).",
+      "mac": "python3 -m pip install astropy astroplan\npython3 astropy_check.py",
+      "expected": "max_dalt_deg of a few tenths of a degree (mostly precession), the largest airmass difference on the lowest block (Vega); ff1_violations_by_reference should be empty. The --here LST route gives 0.0019 deg."
+     },
+     {
+      "title": "Stellarium numbers and picture",
+      "detail": "The .ssc script sets the site, freezes time and writes name,utc,altitude-geometric,altitude per sample with core.output.",
+      "mac": "brew install --cask stellarium\npython3 stellarium_export.py --out ~/kb-runs/05-plan.ssc\n# Stellarium: F12 -> load -> run, then:\npython3 stellarium_export.py --compare \"$HOME/Library/Application Support/Stellarium/output.txt\"",
+      "expected": "Each target centred and above the horizon at every sample; max_abs_dalt_deg comparable to astropy's; max_refraction_deg positive (refraction lowers airmass, so ignoring it is the safe side)."
+     }
+    ],
+    "measure": "Max |delta altitude| and |delta airmass| vs astropy and vs Stellarium; blocks whose reference airmass exceeds 2.0.",
+    "decides": "FF1 margin and ADR-0001: a non-empty ff1_violations_by_reference means precess in sky.py or tighten the limit by the measured delta-airmass; otherwise KNOWN-GAPS records the measured bound instead of the 0.36 deg estimate."
+   },
+   {
+    "title": "INDI telescope + CCD simulators execute the plan",
+    "why": "A plan is useful only if hardware can run it. The exporter drives INDI's simulators with INDI's own tools and standard properties, and exposes a new seam: J2000 in the scheduler, epoch of date (EQUATORIAL_EOD_COORD) at the mount.",
+    "steps": [
+     {
+      "title": "Dry run (works anywhere)",
+      "detail": "indi_export.py precesses each target (IAU 1976, tested on Meeus example 21.b) and writes CONNECTION, GEOGRAPHIC_COORD, ON_COORD_SET.TRACK, EQUATORIAL_EOD_COORD.RA;DEC (hours; degrees; atomic), CCD_EXPOSURE and TELESCOPE_PARK commands with busy-then-Ok waits (indi_eval -w).",
+      "mac": "python3 indi_export.py --here | head -30\npython3 indi_export.py --out ~/kb-runs/05-night-indi.sh",
+      "expected": "39 commands for the 5-block plan; RA in hours in [0, 24); J2000-to-JNow shifts of 0.09-0.37 deg for these targets (--no-precess shows the unprecessed pointing)."
+     },
+     {
+      "title": "Execute against the simulators",
+      "detail": "Start indiserver with both simulators (native build, or a Debian container with indi-bin), then run the script; KStars/Ekos can watch the same server.",
+      "mac": "indiserver -v indi_simulator_telescope indi_simulator_ccd &\nbash ~/kb-runs/05-night-indi.sh\nindi_getprop \"Telescope Simulator.EQUATORIAL_EOD_COORD.*\"",
+      "expected": "Per block: TRACK on, goto, slew reaches Ok, one exposure reaches Ok; finally PARK and 'plan executed'. An indi_eval timeout stops the script (set -e) - the behaviour a robotic observatory needs."
+     }
+    ],
+    "measure": "Blocks executed / planned; slew seconds per block; pointing error between commanded JNow and the mount's EQUATORIAL_EOD_COORD.",
+    "decides": "ADR-0001 gains a coordinate-epoch rule (J2000 inside, epoch of date only at the INDI boundary, precession test as its seam test); measured slew times replace the implicit zero-slew assumption (a transition time per block if they exceed one 10-minute slot)."
+   }
+  ],
+  "overnight": "caffeinate -i python3 weather_overnight.py --nights 100000: both plans over 100,000 Markov-weather nights (P_CLEAR_TO_CLOUD 0.02 / 0.04 / 0.08) on every performance core. It reveals each block's observed completion against its promise (z scores that 1,000 nights cannot resolve), the tail risk P(value = 0), and whether FF2 (optimised >= 1.15 x greedy) survives a site cloudier or clearer than assumed (ADR-0003).",
+  "validation": {
+   "here": "Linux sandbox, Python 3.12.15, numpy 2.5.3: mac_mini/tests (16 tests OK) - precession vs Meeus example 21.b, INDI command set/atomic RA;DEC/bash -n, J2000-as-JNow seam, realtime block filling, execute-without-INDI skip, LST reference route (max 0.0019 deg), forced FF1 violation, astropy-missing skip, Stellarium script and compare on synthetic output, Monte Carlo chunks equal one matrix and 1 vs 2 workers identical, fake-model trial; weather_overnight --here (2,000 nights: ratio 1.25 / 1.26 / 1.31), agent_trials --here, indi_export --here ran; checks_05_mac.py OK.",
+   "pendingMac": [
+    "agent_trials --auto with Ollama models",
+    "run_project.py --real with a real model",
+    "astropy/astroplan numbers (astropy not installed here)",
+    "Stellarium output.txt comparison",
+    "INDI simulators executing the exported script (indiserver not installed here)",
+    "KStars/Ekos visual check",
+    "100,000-night Monte Carlo"
+   ]
+  }
+ }
+}

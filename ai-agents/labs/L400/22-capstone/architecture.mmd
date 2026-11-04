@@ -1,0 +1,18 @@
+%% Incident-triage agent (capstone). Render with any Mermaid viewer (mermaid.live, VS Code, GitHub).
+flowchart LR
+    A["Alert: incident id + service"] --> W[("Durable workflow<br/>SQLite history - lesson 18")]
+    W --> F["facts step"]
+    F -->|"MCP stdio, read-only tools - lesson 10"| M["ops_mcp_server.py<br/>get_metrics / get_recent_logs / get_last_deploy"]
+    W --> R["retrieve step"]
+    R -->|"embeddings + cosine top-2 - lesson 7"| RB[("runbooks/*.md")]
+    W --> P["propose step"]
+    P -->|"retry, fallback model, no proposal - lesson 14"| LLM[["local model<br/>Ollama or fake server"]]
+    P --> V{"validate<br/>schema, cited runbook retrieved, known actions<br/>lessons 8 and 20"}
+    W --> D["decide step"]
+    D --> POL["policy.py<br/>severity + actions from metrics ONLY"]
+    V -. "proposal is advice" .-> D
+    W --> AP["approval step<br/>rollback needs the incident lead<br/>4 h deadline"]
+    W --> E["effects step"]
+    E -->|"Idempotency-Key incident:action - lesson 15"| FX["effects_service.py<br/>pager / tickets / deploys"]
+    W -.->|"every step is a span - lesson 13"| T[("capstone-trace.jsonl")]
+    G["eval_capstone.py + golden_incidents.jsonl<br/>lesson 12 gate in CI"] -.-> POL

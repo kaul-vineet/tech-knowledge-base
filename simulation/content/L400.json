@@ -1,0 +1,2346 @@
+[
+  {
+    "id": "digital-twin-live-data",
+    "number": 17,
+    "level": "L400",
+    "title": "Digital twins with live data: state estimation, drift detection and recalibration",
+    "phase": "Design",
+    "category": "digital twin",
+    "description": "Design a zone-temperature twin fed by a JSON-lines sensor replay: compare open-loop, Kalman-filter-only and filter + CUSUM + recalibration against the plant's true temperature, then gate the innovation so a sensor glitch cannot fake a drift.",
+    "outcome": "You can keep a simulation model synchronised with live data, detect when the real system has changed, recalibrate safely, and prove the design with a fitness test.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3 (stdlib json/pathlib only besides numpy)",
+    "estimatedTime": "90 minutes",
+    "overview": [
+      "A twin is a model plus three loops: assimilate every reading, watch the surprises, recalibrate rarely - and each loop needs a guard."
+    ],
+    "prerequisites": [
+      "Lesson 13 (calibration on a holdout)",
+      "Lesson 15 (a room model stepped in time)",
+      "Lesson 16 (seeded, reproducible runs)"
+    ],
+    "glossary": [
+      {
+        "term": "innovation",
+        "meaning": "Measurement minus the twin's prediction of it; standardised by its predicted spread S it should look like N(0, 1)."
+      },
+      {
+        "term": "Kalman filter",
+        "meaning": "Predict (x- = Ax + Bu, P- = APA' + Q) then update (K = P-H'(HP-H' + R)^-1) - the recursive least-squares estimate of the state."
+      },
+      {
+        "term": "tabular CUSUM",
+        "meaning": "S_hi = max(0, S_hi + z - k), S_lo likewise; alarm when either exceeds h (NIST e-Handbook 6.3.2.3)."
+      },
+      {
+        "term": "innovation gate",
+        "meaning": "Reject a reading whose standardised innovation is implausibly large instead of assimilating it."
+      }
+    ],
+    "concepts": [
+      "State estimation (Kalman filter) keeps the twin on the measured trajectory.",
+      "Drift detection (CUSUM on standardised innovations) says when the model, not the state, is wrong.",
+      "Recalibration on post-alarm data only.",
+      "Guards: replay ordering, innovation gate, fresh CUSUM after a refit."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "`python twin.py` replays `sensor_feed.jsonl` (3 days, 5-minute readings) and prints the options table, the feed summary, the first events and the final model.",
+        "mac": "cd labs/L400/17-digital-twin\npython twin.py",
+        "windows": "cd labs\\L400\\17-digital-twin\npython twin.py",
+        "expected": "A 3-row OPTIONS table, 'skipped {late_or_duplicate: 2, null_reading: 1}', 12 events, 'alarms before the drift (t < 2500 min): 5'.",
+        "ifNot": "FileNotFoundError: run from the lab folder; `python make_feed.py` rewrites the feed (same bytes)."
+      },
+      {
+        "title": "Read the feed like a twin must",
+        "detail": "read_feed() keeps arrival order, drops duplicates and late messages (a twin never moves backwards in time) and keeps null readings so the filter predicts through the gap.",
+        "expected": "850 scored forecasts; 2 late/duplicate messages dropped; 1 null kept.",
+        "ifNot": "If the counts differ, check that t_min comparisons use <= (a duplicate has the same t_min)."
+      },
+      {
+        "title": "Compare the options",
+        "detail": "Option A runs the model open-loop on the inputs; B adds a Kalman filter with state [T, g]; C adds CUSUM (k 0.5, h 8) and a refit of (a, b) on 48 post-alarm readings. Forecasts are scored against the plant's TRUE temperature from make_feed.plant().",
+        "expected": "Shipped: A 0.167 | 6.316, B 1.480 | 0.194, C 1.789 | 0.151 C (before drift | last day).",
+        "ifNot": "Scoring against the sensor instead of the truth hides the glitch damage - keep make_feed.plant()."
+      },
+      {
+        "title": "Failure lab: read twin_log.jsonl",
+        "detail": "The first event is a drift alarm at t_min 1250 with s_hi 405.13 - that is the 85.0 C glitch, assimilated; the refit that follows hits the clip limits (a 0.2, b 1.0).",
+        "expected": "5 false alarms before t = 2500 min; before-drift RMSE 1.789 C.",
+        "ifNot": "If you see 'rejected' events you are running the solution."
+      },
+      {
+        "title": "Build: gate the innovation",
+        "detail": "In update(), reject readings with |nu|/sqrt(S) > GATE = 5 before they move the state, the history or the CUSUM; log them as 'rejected'.",
+        "mac": "cd labs/L400/17-digital-twin\nBUILD_TARGET=mine python -m unittest test_build_task test_fitness -v",
+        "windows": "cd labs\\L400\\17-digital-twin\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task test_fitness -v\nRemove-Item Env:BUILD_TARGET",
+        "expected": "Shipped file: FAILED (failures=5); after your change: Ran 6 tests ... OK.",
+        "ifNot": "Still alarming at 1250: the gate must return before drift_check()."
+      },
+      {
+        "title": "Prove the decision (fitness function)",
+        "detail": "test_fitness.py replays the feed and requires 0 false alarms, detection within 60 min, refitted a within 15% of 0.035 and last-day RMSE <= 0.15 C AND below option B.",
+        "mac": "cd labs/L400/17-digital-twin\npython -m unittest test_fitness -v",
+        "windows": "cd labs\\L400\\17-digital-twin\npython -m unittest test_fitness -v",
+        "expected": "Ran 4 tests ... OK (solution: alarm 25 min after the drift, a 0.0331, RMSE 0.127 vs B 0.194).",
+        "ifNot": "A refit with a far from 0.035 usually means the window straddled the change - refit only on post-alarm rows."
+      },
+      {
+        "title": "Run all tests",
+        "detail": "`python -m unittest -v`",
+        "mac": "cd labs/L400/17-digital-twin\npython -m unittest -v",
+        "windows": "cd labs\\L400\\17-digital-twin\npython -m unittest -v",
+        "expected": "Ran 12 tests ... OK",
+        "ifNot": "test_committed_feed_is_the_seeded_generator_output fails after editing make_feed.py: regenerate the feed and commit both."
+      }
+    ],
+    "code": "\"\"\"L400 digital twin: a zone-temperature twin kept in step with a live feed (JSON lines replay).\n\nModel: T[k+1] = T[k] + a(T_out - T[k]) + b*heater + g[k]; the Kalman filter estimates state x = [T, g]\n(g = heat gain the model does not explain). A two-sided CUSUM on standardised innovations detects drift;\nan alarm triggers recalibration of (a, b) by least squares on the last WINDOW accepted readings.\npython twin.py            (replays sensor_feed.jsonl; writes twin_log.jsonl)\n\"\"\"\nimport json\nfrom pathlib import Path\n\nimport numpy as np\n\nimport make_feed  # the \"real building\": also gives the true temperature, so forecasts are scored honestly\n\nHERE = Path(__file__).resolve().parent\nLOG = HERE / \"twin_log.jsonl\"\nA0, B0 = 0.020, 0.30  # design-time calibration (commissioning data)\nR_MEAS, Q = 0.15 ** 2, np.diag([0.03 ** 2, 0.002 ** 2])  # sensor noise; process noise for T and for g\nCUSUM_K, CUSUM_H = 0.5, 8.0  # k = half the shift to detect (in sigmas), h = alarm threshold (NIST 6.3.2.3)\nWINDOW, HORIZON = 48, 12  # recalibrate on 4 h of data; forecast 1 h ahead\n\n\ndef read_feed(path=HERE / \"sensor_feed.jsonl\"):\n    \"\"\"Replay a JSON-lines feed in arrival order; drop duplicates and late messages, count null readings.\"\"\"\n    msgs, skipped = [], {\"late_or_duplicate\": 0, \"null_reading\": 0}\n    with Path(path).open(encoding=\"utf-8\") as f:\n        for line in f:\n            msg = json.loads(line)\n            if msgs and msg[\"t_min\"] <= msgs[-1][\"t_min\"]:  # a twin must never move backwards in time\n                skipped[\"late_or_duplicate\"] += 1\n                continue\n            skipped[\"null_reading\"] += msg[\"zone_C\"] is None  # kept: the twin predicts through the gap\n            msgs.append(msg)\n    return msgs, skipped\n\n\nclass Twin:\n    def __init__(self, a=A0, b=B0, recalibrate=True):\n        self.a, self.b, self.recalibrate = a, b, recalibrate\n        self.x, self.P = np.array([20.0, 0.0]), np.diag([1.0, 0.01])\n        self.s_hi = self.s_lo = 0.0\n        self.refit_pending = False  # set by a drift alarm; the refit waits for WINDOW post-alarm readings\n        self.history, self.events = [], []  # accepted (T_prev, outdoor, heater, T_meas) rows; JSON-lines events\n\n    def step_matrices(self, outdoor, heater):\n        A = np.array([[1 - self.a, 1.0], [0.0, 1.0]])\n        u = np.array([self.a * outdoor + self.b * heater, 0.0])  # known inputs enter like B*u\n        return A, u\n\n    def predict(self, outdoor, heater):\n        A, u = self.step_matrices(outdoor, heater)\n        self.x, self.P = A @ self.x + u, A @ self.P @ A.T + Q  # x- = Ax + Bu ; P- = A P A' + Q\n\n    def innovation(self, z):\n        S = self.P[0, 0] + R_MEAS  # H = [1, 0]: we measure temperature only\n        return z - self.x[0], S\n\n    def update(self, t, z, prev_meas, outdoor, heater):\n        nu, S = self.innovation(z)\n        zscore = nu / np.sqrt(S)\n        K = self.P[:, 0] / S  # K = P- H' (H P- H' + R)^-1\n        self.x = self.x + K * nu\n        self.P = self.P - np.outer(K, self.P[0, :])  # P = (I - K H) P-\n        if prev_meas is not None:\n            self.history = (self.history + [(prev_meas, outdoor, heater, z)])[-WINDOW:]\n        self.drift_check(t, zscore)\n        if self.refit_pending and len(self.history) == WINDOW:\n            self.refit(t)\n\n    def drift_check(self, t, zscore):\n        self.s_hi = max(0.0, self.s_hi + zscore - CUSUM_K)  # tabular CUSUM on standardised innovations\n        self.s_lo = max(0.0, self.s_lo - zscore - CUSUM_K)\n        if max(self.s_hi, self.s_lo) > CUSUM_H and not self.refit_pending:\n            self.events.append({\"t_min\": t, \"event\": \"drift_alarm\", \"s_hi\": round(self.s_hi, 2),\n                                \"s_lo\": round(self.s_lo, 2)})\n            self.s_hi = self.s_lo = 0.0\n            if self.recalibrate:  # recalibration trigger: refit on data from AFTER the change only\n                self.refit_pending, self.history = True, []\n\n    def refit(self, t):\n        \"\"\"Recalibration trigger fired: least squares on dT = a(T_out - T) + b*heater over the window.\"\"\"\n        h = np.array(self.history)\n        X = np.column_stack([h[:, 1] - h[:, 0], h[:, 2]])\n        (a, b), *_ = np.linalg.lstsq(X, h[:, 3] - h[:, 0], rcond=None)\n        self.a, self.b = float(np.clip(a, 0.001, 0.2)), float(np.clip(b, 0.0, 1.0))\n        self.x[1], self.P[1, 1] = 0.0, 0.01  # the refit model now explains the gain the filter was carrying\n        self.refit_pending, self.s_hi, self.s_lo = False, 0.0, 0.0  # a fresh model starts a fresh CUSUM\n        self.events.append({\"t_min\": t, \"event\": \"recalibrated\", \"a\": round(self.a, 4), \"b\": round(self.b, 3)})\n\n    def forecast(self, inputs):\n        \"\"\"What-if / look-ahead: run the model forward from the current state without new measurements.\"\"\"\n        x = self.x.copy()\n        for outdoor, heater in inputs:\n            A, u = self.step_matrices(outdoor, heater)\n            x = A @ x + u\n        return float(x[0])\n\n\ndef run(twin=None, path=HERE / \"sensor_feed.jsonl\", log_path=None, assimilate=True):\n    \"\"\"Replay the feed through the twin; score 1-hour-ahead forecasts against the plant's TRUE temperature.\n    assimilate=False is the open-loop option: the model runs on the inputs and never sees a measurement.\"\"\"\n    twin = twin or Twin()\n    msgs, twin.skipped = read_feed(path)\n    forecasts = {}  # target t_min -> temperature forecast made HORIZON steps earlier\n    for i, m in enumerate(msgs[1:], start=1):\n        last = msgs[i - 1]\n        twin.predict(last[\"outdoor_C\"], last[\"heater_on\"])\n        if assimilate and m[\"zone_C\"] is not None:\n            twin.update(m[\"t_min\"], m[\"zone_C\"], last[\"zone_C\"], last[\"outdoor_C\"], last[\"heater_on\"])\n        if i + HORIZON < len(msgs):\n            forecasts[msgs[i + HORIZON][\"t_min\"]] = twin.forecast(\n                [(f[\"outdoor_C\"], f[\"heater_on\"]) for f in msgs[i:i + HORIZON]])\n    actual = {row[0]: row[3] for row in make_feed.plant()}\n    errors = [(t, forecasts[t] - actual[t]) for t in sorted(k for k in forecasts if k in actual)]\n    if log_path:\n        Path(log_path).write_text(\"\".join(json.dumps(e) + \"\\n\" for e in twin.events), encoding=\"utf-8\")\n    return twin, errors\n\n\ndef rmse(errors, t_from=0, t_to=10 ** 9):\n    e = np.array([err for t, err in errors if t_from <= t < t_to])\n    return float(np.sqrt(np.mean(e ** 2)))\n\n\ndef main():\n    print(\"OPTIONS (1-h forecast RMSE vs true zone temperature, C): before drift | last day\")\n    for name, kw in ((\"A open-loop model\", {\"twin\": Twin(recalibrate=False), \"assimilate\": False}),\n                     (\"B Kalman filter only\", {\"twin\": Twin(recalibrate=False)})):\n        _, err = run(**kw)\n        print(f\"  {name:22s} {rmse(err, 0, 2500):6.3f} | {rmse(err, 2880):6.3f}\")\n    twin, errors = run(log_path=LOG)\n    print(f\"  {'C KF + CUSUM + refit':22s} {rmse(errors, 0, 2500):6.3f} | {rmse(errors, 2880):6.3f}\")\n    print(f\"feed: {len(errors)} scored forecasts; skipped {twin.skipped}\")\n    print(f\"events: {len(twin.events)} (twin_log.jsonl); first 3:\")\n    for e in twin.events[:3]:\n        print(\"  \", json.dumps(e))\n    alarms = [e[\"t_min\"] for e in twin.events if e[\"event\"] == \"drift_alarm\"]\n    print(f\"alarms before the drift (t < 2500 min): {sum(t < 2500 for t in alarms)}; first alarm after it: \"\n          f\"{next((t for t in alarms if t >= 2500), None)} min\")\n    print(f\"final model: a={twin.a:.4f} b={twin.b:.3f} (plant after drift: a=0.035 b=0.30)\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "read_feed()",
+        "detail": "Replay discipline: arrival order, drop t_min <= last (duplicates, late messages), keep nulls (the filter predicts through them), count everything for the log."
+      },
+      {
+        "title": "step_matrices() / predict()",
+        "detail": "The model T' = (1 - a)T + g + a*T_out + b*heater as A x + u with state [T, g]; P- = A P A' + Q (Welch & Bishop eq. 1.9-1.10)."
+      },
+      {
+        "title": "innovation() / update()",
+        "detail": "H = [1, 0], S = P[0,0] + R; K = P[:,0]/S; x += K*nu; P -= K P[0,:]. The shipped update() assimilates everything - your gate goes before the Kalman update."
+      },
+      {
+        "title": "drift_check()",
+        "detail": "Tabular CUSUM on z = nu/sqrt(S) with k = 0.5 and h = 8; while a refit is pending no new alarm is raised; an alarm clears the history so the refit window holds only post-change data."
+      },
+      {
+        "title": "refit()",
+        "detail": "Least squares dT = a(T_out - T) + b*heater over 48 accepted rows (numpy lstsq), clipped to physical ranges; resets g, its variance and the CUSUM - a fresh model starts a fresh test."
+      },
+      {
+        "title": "forecast()",
+        "detail": "The what-if: roll the current state forward 12 steps (1 h) on known inputs without measurements - exactly what a pre-heating controller would ask."
+      },
+      {
+        "title": "run() / main()",
+        "detail": "Replays the feed, scores every 1-h forecast against make_feed.plant()'s true temperature, writes twin_log.jsonl and prints options A, B, C side by side."
+      }
+    ],
+    "failureLab": {
+      "fault": "Shipped Twin.update() assimilates every reading, including the seeded 85.0 C sensor glitch at t = 1250 min.",
+      "symptom": "twin_log.jsonl starts with drift_alarm s_hi 405.13 at t 1250; 5 false alarms before the real drift; a refit to a = 0.2, b = 1.0 (clip limits); before-drift 1-h RMSE 1.789 C (solution 0.189).",
+      "fix": "Innovation gate in update(): if |nu|/sqrt(S) > 5 log 'rejected' and return before the state, refit history or CUSUM move (solution/twin.py).",
+      "proof": "BUILD_TARGET=mine python -m unittest test_build_task: shipped FAILED (failures=2), solution OK; TestFailureLab in test_twin.py keeps the fault reproducible; research/failure_proofs_L400.py: shipped FAIL / solution PASS."
+    },
+    "tradeOffs": [
+      {
+        "option": "Open-loop model (A)",
+        "gains": "Immune to sensor faults; cheapest; best while nothing changes (0.167 C)",
+        "costs": "Blind to plant changes (6.316 C on the last day)",
+        "chooseWhen": "Sensors are untrustworthy and the plant is known not to change"
+      },
+      {
+        "option": "Kalman filter only (B)",
+        "gains": "Tracks reality (0.194 C last day); one tuning knob per noise",
+        "costs": "Model error hides in g; parameters stay wrong; no diagnosis",
+        "chooseWhen": "You need the state, not the physics"
+      },
+      {
+        "option": "KF + CUSUM + recalibration (C)",
+        "gains": "Best last-day forecast (0.127 C); names the change (a 0.020 -> 0.033)",
+        "costs": "Two more knobs (h, gate); 4 h refit delay; gate lockout risk",
+        "chooseWhen": "Forecasts drive actions and changes must be explained"
+      }
+    ],
+    "buildTask": {
+      "task": "Add an innovation gate to Twin.update() in twin.py: readings with |nu|/sqrt(S) > GATE (5.0) are logged as 'rejected' and change nothing.",
+      "hints": [
+        "zscore = nu / sqrt(S) is already computed - test it before computing K.",
+        "Log {'t_min': t, 'event': 'rejected', 'zone_C': z, 'z': ...} so the JSON log shows what was dropped.",
+        "Return before self.history and drift_check() - a rejected reading must not reach the CUSUM."
+      ],
+      "solution": "labs/L400/17-digital-twin/solution/twin.py",
+      "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped file: FAILED (failures=5); after your fix: Ran 6 tests ... OK. Without the variable the tests check the solution."
+    },
+    "observability": {
+      "emits": "twin_log.jsonl: one JSON line per event - drift_alarm {t_min, s_hi, s_lo}, recalibrated {t_min, a, b}, rejected {t_min, zone_C, z}.",
+      "read": "An alarm with s_hi in the hundreds is a glitch, not drift; bursts of 'rejected' mean the gate has locked the twin out (tryIt 2)."
+    },
+    "designBrief": {
+      "context": "A facilities team wants 1-hour-ahead zone temperatures to pre-heat an office; the only live data is a gateway that forwards 5-minute readings as JSON lines - with duplicates, late messages, gaps and the odd glitch - and the building changes (a window left ajar from t = 2500 min).",
+      "constraints": [
+        "0 false drift alarms on the healthy plant (t < 2500 min)",
+        "drift detected within 60 minutes",
+        "last-day 1-h forecast RMSE <= 0.15 C and better than the filter-only twin",
+        "recalibrated heat-loss coefficient within 15% of the true 0.035",
+        "numpy + stdlib only; replayable offline"
+      ],
+      "question": "How should the twin assimilate data, detect that the plant has changed, and recalibrate - without being fooled by sensor faults?"
+    },
+    "options": [
+      {
+        "name": "A. Open-loop model",
+        "description": "Commissioned model (a 0.020, b 0.30) driven by outdoor temperature and heater state; ignores the zone sensor.",
+        "evidence": "1-h RMSE 0.167 C before the drift, 6.316 C on the last day.",
+        "verdict": "Rejected: correct only while nothing changes."
+      },
+      {
+        "name": "B. Kalman filter only",
+        "description": "State [T, g]; g a random-walk heat gain absorbs model error; gated innovations (solution).",
+        "evidence": "0.189 C before, 0.194 C last day; a stays 0.020 - the twin cannot say what changed.",
+        "verdict": "Rejected as the final design; kept as the baseline in the fitness test."
+      },
+      {
+        "name": "C. KF + CUSUM + post-alarm recalibration + gate",
+        "description": "Tabular CUSUM (k 0.5, h 8) on standardised innovations; on alarm, refit (a, b) on 48 new readings; 5-sigma innovation gate.",
+        "evidence": "0 false alarms, alarm 25 min after the change, a refitted to 0.0331, last-day RMSE 0.127 C.",
+        "verdict": "Chosen (ADR 0001)."
+      }
+    ],
+    "decisionRecord": "labs/L400/17-digital-twin/decisions/0001-twin-state-estimation.md",
+    "fitnessFunction": {
+      "what": "Replays the committed feed through the twin and checks the four brief constraints.",
+      "test": "labs/L400/17-digital-twin/test_fitness.py",
+      "threshold": "0 false alarms; delay <= 60 min; |a - 0.035|/0.035 < 0.15; last-day RMSE <= 0.15 C and < option B"
+    },
+    "scalingLimits": [
+      "Many coupled zones: a 2-state scalar filter per zone ignores heat flow between zones - innovations become correlated across zones (signal: simultaneous alarms in neighbours); move to a multi-state filter.",
+      "Nonlinear plant (variable-speed fans, humidity): the linear filter's innovations stop being white even without drift (signal: CUSUM creeping on healthy days); use an EKF/UKF or a better model.",
+      "Fast or repeated changes: a 48-reading refit window is slower than the plant (signal: alarms during refit_pending); shorten the window or estimate a and b online as extra states."
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/17-digital-twin/twin.py",
+        "purpose": "main lab code (ships the unfixed update())"
+      },
+      {
+        "path": "labs/L400/17-digital-twin/make_feed.py",
+        "purpose": "seeded 'real building' + faulty JSON-lines feed generator"
+      },
+      {
+        "path": "labs/L400/17-digital-twin/sensor_feed.jsonl",
+        "purpose": "the committed replay feed (865 lines)"
+      },
+      {
+        "path": "labs/L400/17-digital-twin/solution/twin.py",
+        "purpose": "buildTask solution (innovation gate)"
+      },
+      {
+        "path": "labs/L400/17-digital-twin/try_it.py",
+        "purpose": "tryIt experiments (CUSUM threshold, gate width)"
+      },
+      {
+        "path": "labs/L400/17-digital-twin/test_twin.py",
+        "purpose": "unit tests (feed bytes, KF, CUSUM, refit) + fault reproduction"
+      },
+      {
+        "path": "labs/L400/17-digital-twin/test_build_task.py",
+        "purpose": "buildTask check (BUILD_TARGET=mine checks your file)"
+      },
+      {
+        "path": "labs/L400/17-digital-twin/test_fitness.py",
+        "purpose": "fitness function for ADR 0001"
+      },
+      {
+        "path": "labs/L400/17-digital-twin/decisions/0001-twin-state-estimation.md",
+        "purpose": "architecture decision record (Nygard)"
+      }
+    ],
+    "expectedResults": [
+      "Shipped: 5 false alarms, before-drift RMSE 1.789 C",
+      "Fixed: 0 false alarms, alarm 25 min after the drift, a 0.0331, last-day RMSE 0.127 C",
+      "Options: A 0.167 | 6.316, B 0.189 | 0.194, C 0.189 | 0.127 C"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "Ran 12 tests ... OK"
+      },
+      {
+        "action": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness (shipped file)",
+        "expected": "FAILED (failures=5)"
+      },
+      {
+        "action": "CUSUM by hand: z = 1.5 three times, k = 0.5",
+        "expected": "S_hi = 3.0, S_lo = 0"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Alarm storms after every refit",
+        "action": "Reset s_hi/s_lo in refit() - sums accumulated during the pending window fire immediately otherwise."
+      },
+      {
+        "symptom": "Twin stops following the sensor after a change (many 'rejected')",
+        "action": "Gate lockout: widen the gate or treat a burst of rejections as a drift alarm."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Lower the CUSUM threshold h from 8 to 4 (NIST's rule-of-thumb range for k = 0.5).",
+        "predict": "Faster detection - at what cost?",
+        "expected": "h=8.0: false alarms 0, detection delay 25 min, rejected 1, last-day RMSE 0.127 C | h=4.0: false alarms 2, detection delay 760 min, rejected 490, last-day RMSE 2.407 C"
+      },
+      {
+        "task": "Tighten the innovation gate from 5 to 2.5 sigma.",
+        "predict": "Safer twin, or a blind one?",
+        "expected": "gate=5.0: false alarms 0, detection delay 25 min, rejected 1, last-day RMSE 0.127 C | gate=2.5: false alarms 0, detection delay None min, rejected 366, last-day RMSE 6.051 C"
+      }
+    ],
+    "equivalents": [
+      "filterpy / pykalman (Python) or a Modelica model with an FMI co-simulation master for the plant side.",
+      "Statistical process control libraries (CUSUM, EWMA) in R qcc; Page-Hinkley in streaming-ML libraries.",
+      "Azure Digital Twins / AWS IoT TwinMaker: managed twin graphs (vendor, one line only)."
+    ],
+    "learningTools": [
+      {
+        "name": "OpenModelica (OMEdit)",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Model the zone as der(T) = a/dt*(T_out - T) + b/dt*heater with a = 0.020 and a = 0.035 (dt = 5 min); drive it with the feed's outdoor_C/heater_on columns exported to CSV and plot both runs.",
+        "expected": "The a = 0.035 run should cool visibly faster at night - the change the lab's CUSUM detected 25 min after t = 2500. Pending a manual run in OMEdit (best on the Windows PC).",
+        "mac": "No native Mac build since 1.16: official Linux Docker image + XQuartz (catalog version 1.27.1; https://openmodelica.org/download/download-mac/); easier on the Windows PC",
+        "windows": "Official installer (catalog version 1.27.1) from https://openmodelica.org/download/download-windows/, then open OMEdit",
+        "licence": "OSMC-PL 1.8, public use under AGPL-3.0 (OSI: yes)",
+        "url": "https://github.com/OpenModelica/OpenModelica/releases"
+      },
+      {
+        "name": "marimo",
+        "role": "SEE",
+        "exercise": "In a marimo notebook in this lab folder import solution/twin.py with importlib, add sliders for CUSUM_H (2-12) and GATE (2-8), and show alarms, rejected count and last-day RMSE reactively.",
+        "expected": "At h 8 / gate 5 the cells must show 0 false alarms, delay 25 min, RMSE 0.127 C (lab output); h 4 and gate 2.5 should reproduce tryIt 1 and 2. Pending a manual run in marimo.",
+        "mac": "pip install marimo (catalog version 0.25.2), then marimo edit",
+        "windows": "pip install marimo (catalog version 0.25.2), then marimo edit",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://pypi.org/project/marimo/"
+      }
+    ],
+    "inRealSystems": [
+      "Building-management twins run state estimators on BACnet/MQTT telemetry and flag faults when residuals drift.",
+      "Process and grid operators use CUSUM/EWMA on model residuals as model-health alarms before re-tuning."
+    ],
+    "useWhen": "Use a twin when decisions need the current state and the plant changes; keep the open-loop model as a fallback for sensor outages.",
+    "caution": "A twin that can trigger actions (heating, ventilation) must keep its alarms advisory until a person or a safety interlock confirms; never let a refit push parameters outside physical limits (the lab clips a and b).",
+    "checkpoint": "PASS: shipped twin raises 5 false alarms; with your gate test_build_task and test_fitness pass (0 false alarms, delay <= 60 min, a within 15%, RMSE <= 0.15 C).",
+    "checkYourself": [
+      {
+        "q": "Why score forecasts against make_feed.plant() and not the sensor?",
+        "a": "The sensor includes the glitch and noise; scoring against it rewards a twin that copies faults. A seeded plant gives the truth for honest evaluation."
+      },
+      {
+        "q": "Why refit only on post-alarm readings?",
+        "a": "A window straddling the change mixes old and new physics; the first refit then lands between them (shipped run: a 0.2 at the clip)."
+      },
+      {
+        "q": "What does a burst of 'rejected' events mean?",
+        "a": "Either a sensor fault or a model that no longer matches reality - the gate cannot tell; treat bursts as an alarm."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Welch & Bishop, An Introduction to the Kalman Filter, UNC-Chapel Hill TR 95-041 (updated 2004): predict/update equations, innovation",
+        "url": "https://techreports.cs.unc.edu/papers/95-041.pdf"
+      },
+      {
+        "title": "NIST/SEMATECH e-Handbook of Statistical Methods 6.3.2.3: CUSUM control charts (tabular form, k and h)",
+        "url": "https://www.itl.nist.gov/div898/handbook/pmc/section3/pmc323.htm"
+      },
+      {
+        "title": "Voas, Mell, Laplante, Piroumian, NIST IR 8356 (Feb 2025), Security and Trust Considerations for Digital Twin Technology",
+        "url": "https://nvlpubs.nist.gov/nistpubs/ir/2025/NIST.IR.8356.pdf"
+      },
+      {
+        "title": "JSON Lines format (UTF-8, one JSON value per line)",
+        "url": "https://jsonlines.org/"
+      }
+    ],
+    "next": "L400 #18 Simulation-based optimisation: search, ranking & selection and fair budgets (from keeping one model honest to choosing the best policy it can evaluate)",
+    "validation": {
+      "status": "validated-local",
+      "how": "make_feed.py, twin.py, solution/twin.py, try_it.py and unittests (Ran 12 tests ... OK) ran locally on Python 3.12.15 + numpy 2.5.3; BUILD_TARGET=mine on the shipped file fails 5 of 6 build/fitness tests; failure proof shipped FAIL / solution PASS; L400 cross_platform fingerprints match golden.json on Linux.",
+      "pendingCi": [
+        "macOS and Windows runs of the whole lab",
+        "OpenModelica and marimo exercises (manual)",
+        "a real micro:bit or MQTT feed instead of the replay (microbit L400 #20)"
+      ]
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "conceptNote": "content/concepts/L400/17-digital-twin.md",
+    "conceptSummary": "A twin = model + Kalman filter (assimilate every reading) + CUSUM on standardised innovations (detect that the plant changed) + recalibration on post-alarm data, with guards: replay ordering, an innovation gate and a fresh CUSUM after each refit. Option C beat open-loop (6.316 C) and filter-only (0.194 C) with 0.127 C and named the change (a 0.020 -> 0.033).",
+    "seeAlso": [
+      "microbit L400 #20 A digital twin of the sensor network: the same assimilate-watch-recalibrate loop on live micro:bit telemetry - this lab's replay feed is where such a stream would plug in.",
+      "simulation Capstone #22 Capstone: a digital twin of a service centre: reuses this lesson's CUSUM (Twin.drift_check) for a live demand twin."
+    ]
+  },
+  {
+    "id": "simulation-optimisation",
+    "number": 18,
+    "level": "L400",
+    "title": "Simulation-based optimisation: search, ranking & selection and fair budgets",
+    "phase": "Design",
+    "category": "optimisation",
+    "description": "Pick the cheapest (s, Q) inventory policy of 81 with a fixed budget of 324 runs: grid search vs a GP-lite surrogate with expected improvement vs a (mu + lambda) evolution strategy, all on common random numbers - then fix the winner's curse with an OCBA selection stage on fresh streams.",
+    "outcome": "You can split a simulation budget between search and selection, compare optimisers fairly, report an honest cost for the chosen design, and guard the comparison with a fitness test.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; reuses labs/L200/11-supply-chain-inventory/inventory.py",
+    "estimatedTime": "90-120 minutes",
+    "overview": [
+      "Search finds candidates; selection on fresh, common random numbers decides - and every optimiser pays from the same budget."
+    ],
+    "prerequisites": [
+      "Lesson 11 ((s, S) inventory with common random numbers)",
+      "Lesson 12 (variance reduction)",
+      "Lesson 16 (independent streams)"
+    ],
+    "glossary": [
+      {
+        "term": "winner's curse (optimiser's curse)",
+        "meaning": "The design with the best noisy estimate is usually worse than its estimate says."
+      },
+      {
+        "term": "OCBA",
+        "meaning": "Optimal computing budget allocation: non-best designs get runs proportional to s_i^2/(J_b - J_i)^2, the best N_b = s_b sqrt(sum (N_i/s_i)^2) (Chen et al. 2000; Fu, Chen & Shi 2008)."
+      },
+      {
+        "term": "indifference zone (delta)",
+        "meaning": "The smallest difference worth detecting; differences below it do not matter to the decision (Kim & Nelson 2001)."
+      },
+      {
+        "term": "expected improvement",
+        "meaning": "E[max(f_min - Y, 0)] under the surrogate's prediction (Jones, Schonlau & Welch 1998)."
+      }
+    ],
+    "concepts": [
+      "Budget = search + selection; count every run.",
+      "Common random numbers make design differences visible.",
+      "Report the chosen design's cost from data the choice did not see.",
+      "Judge optimisers with a referee (truth.json), not with their own estimates."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "`python optimise.py` runs three optimisers x 5 macro-replications with 324 runs each and scores the picks against truth.json.",
+        "mac": "cd labs/L400/18-sim-optimisation\npython optimise.py",
+        "windows": "cd labs\\L400\\18-sim-optimisation\npython optimise.py",
+        "expected": "true best (25, 70) at 8.479/day; a 3-row table of mean gap, worst gap, reported - true, runs 324.",
+        "ifNot": "ModuleNotFoundError inventory: keep the folder layout - optimise.py imports labs/L200/11-supply-chain-inventory."
+      },
+      {
+        "title": "The referee",
+        "detail": "truth.json = 100 replications of every design on streams 50,000+ that no optimiser uses (make_truth.py, about 1 minute). It is not part of any budget.",
+        "expected": "81 designs; best (25, 70) 8.4792 +/- 0.0851.",
+        "ifNot": "test_truth_table_reproduces fails: inventory.py changed - rerun make_truth.py."
+      },
+      {
+        "title": "Budget fairness",
+        "detail": "Budget.run() counts every simulation and raises RuntimeError past the total; macro-replication m uses stream offset 1000*m for every optimiser (CRN).",
+        "expected": "runs column = 324 for all methods.",
+        "ifNot": "A method with more runs is not 'better' - see tryIt 2."
+      },
+      {
+        "title": "Failure lab: the winner's curse",
+        "detail": "Shipped pick() reports the winner's search-phase mean.",
+        "expected": "reported - true: grid -0.472, surrogate -0.412, evolution -0.299/day; grid worst gap 0.117 > delta 0.10.",
+        "ifNot": "If 'reported - true' is near 0 you are running the solution."
+      },
+      {
+        "title": "Build: selection stage",
+        "detail": "Keep RESERVE = 60 runs; re-run the top 5 on fresh streams (index 500+) with OCBA in steps of 5; report the fresh mean.",
+        "mac": "cd labs/L400/18-sim-optimisation\nBUILD_TARGET=mine python -m unittest test_build_task test_fitness -v",
+        "windows": "cd labs\\L400\\18-sim-optimisation\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task test_fitness -v\nRemove-Item Env:BUILD_TARGET",
+        "expected": "Shipped: FAILED (failures=4); after your fix: Ran 5 tests ... OK.",
+        "ifNot": "Budget exhausted error: pick() must stop at budget.total."
+      },
+      {
+        "title": "Compare and decide",
+        "detail": "`python solution/optimise.py`: with the selection stage the grid's mean/worst gap is 0.042/0.088, surrogate 0.090/0.186, evolution 0.088/0.241.",
+        "mac": "cd labs/L400/18-sim-optimisation\npython solution/optimise.py",
+        "windows": "cd labs\\L400\\18-sim-optimisation\npython solution/optimise.py",
+        "expected": "grid + OCBA meets delta = 0.10 in every macro-replication (ADR 0001).",
+        "ifNot": "Different numbers: check numpy 2.5.x (seeded streams)."
+      },
+      {
+        "title": "Run all tests",
+        "detail": "`python -m unittest -v` (about 1 minute here)",
+        "mac": "cd labs/L400/18-sim-optimisation\npython -m unittest -v",
+        "windows": "cd labs\\L400\\18-sim-optimisation\npython -m unittest -v",
+        "expected": "Ran 12 tests ... OK",
+        "ifNot": "Slow on battery/1 CPU: each optimisation is 324 x 180-day runs."
+      }
+    ],
+    "code": "\"\"\"L400 simulation-based optimisation: choose a bike shop's (s, S) policy under uncertain demand.\n\nReuses the L200 lesson 11 inventory model. 81 designs: s = 10..50 (step 5), Q = S - s = 20..100 (step 10).\nThree optimisers get the SAME budget of simulation runs and the SAME common random numbers:\ngrid search, a GP-lite surrogate with expected improvement, and a (mu + lambda) evolution strategy.\npython optimise.py\n\"\"\"\nimport json\nimport math\nimport sys\nfrom pathlib import Path\nfrom statistics import NormalDist\n\nimport numpy as np\n\nHERE = Path(__file__).resolve().parent\nsys.path.append(str(HERE.parents[1] / \"L200\" / \"11-supply-chain-inventory\"))\nimport inventory  # noqa: E402  (L200 lesson 11: simulate(s, S, demand, lead), streams(rep, days))\n\nS_GRID, Q_GRID = np.arange(10, 55, 5), np.arange(20, 110, 10)\nDESIGNS = [(int(s), int(q)) for s in S_GRID for q in Q_GRID]\nDAYS, BUDGET, REPS_PER_LOOK = 180, 324, 4  # 324 runs = grid search with 4 replications per design\nRESERVE = 0  # runs kept back from the search for the final selection\nTRUTH = {tuple(json.loads(k)): v for k, v in json.loads((HERE / \"truth.json\").read_text(encoding=\"utf-8\")).items()}\nN = NormalDist()\n\n\nclass Budget:\n    \"\"\"Counts every simulation run; an optimiser that asks for more than its share gets an error, not a result.\"\"\"\n\n    def __init__(self, total, crn_offset):\n        self.total, self.used, self.offset = total, 0, crn_offset\n\n    def run(self, design, rep):\n        if self.used >= self.total:\n            raise RuntimeError(\"simulation budget exhausted\")\n        self.used += 1\n        s, q = design\n        demand, lead = inventory.streams(self.offset + rep, DAYS)  # CRN: replication r = the same days for all designs\n        return inventory.simulate(s, s + q, demand, lead)[\"cost_per_day\"]\n\n\ndef look(budget, design, data, reps=REPS_PER_LOOK):\n    \"\"\"Add `reps` replications of `design` (continuing its stream index) to data[design].\"\"\"\n    reps = min(reps, budget.total - budget.used)\n    if reps > 0:\n        have = data.setdefault(design, [])\n        have += [budget.run(design, len(have) + r) for r in range(reps)]\n\n\ndef grid_search(budget, rng):\n    data, reps = {}, (budget.total - budget.used) // len(DESIGNS)  # equal allocation over all 81 designs\n    for d in DESIGNS:\n        look(budget, d, data, reps)\n    return data\n\n\ndef gp_posterior(X, y, Xs, length=1.5, noise=0.05):\n    \"\"\"GP-lite: RBF kernel on grid-index coordinates, outputs standardised (GPML Algorithm 2.1, Cholesky form).\"\"\"\n    mu, sd = y.mean(), y.std() + 1e-9\n    k = lambda A, B: np.exp(-0.5 * ((A[:, None, :] - B[None, :, :]) ** 2).sum(-1) / length ** 2)\n    L = np.linalg.cholesky(k(X, X) + noise * np.eye(len(X)))\n    alpha = np.linalg.solve(L.T, np.linalg.solve(L, (y - mu) / sd))\n    Ks, v = k(X, Xs), np.linalg.solve(L, k(X, Xs))\n    return mu + sd * Ks.T @ alpha, sd * np.sqrt(np.maximum(1e-12, 1 - (v ** 2).sum(0)))\n\n\ndef surrogate_search(budget, rng, n_init=12):\n    data, coords = {}, {d: (list(S_GRID).index(d[0]), list(Q_GRID).index(d[1])) for d in DESIGNS}\n    for i in rng.choice(len(DESIGNS), n_init, replace=False):\n        look(budget, DESIGNS[i], data)\n    while budget.used + REPS_PER_LOOK <= budget.total:\n        seen = list(data)\n        X, y = np.array([coords[d] for d in seen], float), np.array([np.mean(data[d]) for d in seen])\n        m, s = gp_posterior(X, y, np.array([coords[d] for d in DESIGNS], float))\n        z = (y.min() - m) / s\n        ei = (y.min() - m) * np.array([N.cdf(v) for v in z]) + s * np.array([N.pdf(v) for v in z])  # EGO's EI\n        look(budget, DESIGNS[int(np.argmax(ei))], data)  # a revisit adds replications: noise matters\n    return data\n\n\ndef evolution(budget, rng, mu=4, lam=8):\n    data = {}\n    parents = [DESIGNS[i] for i in rng.choice(len(DESIGNS), mu, replace=False)]\n    for p in parents:\n        look(budget, p, data)\n    while budget.used + REPS_PER_LOOK <= budget.total:\n        for _ in range(lam):\n            s, q = rng.choice(parents)\n            child = (int(np.clip(s + 5 * rng.integers(-2, 3), 10, 50)), int(np.clip(q + 10 * rng.integers(-2, 3), 20, 100)))\n            look(budget, child, data)\n        parents = sorted(data, key=lambda d: np.mean(data[d]))[:mu]  # (mu + lambda): parents compete too\n    return data\n\n\ndef ocba(means, sds, total):\n    \"\"\"OCBA (Chen et al. 2000), minimising: N_i ~ (sd_i / d_i)^2 for non-best i, d_i = mean_i - mean_best;\n    N_best = sd_best * sqrt(sum N_i^2 / sd_i^2). Returns the ideal number of runs per design for `total` runs.\"\"\"\n    means, sds = np.asarray(means, float), np.maximum(np.asarray(sds, float), 1e-9)\n    b = int(np.argmin(means))\n    ratio = (sds / np.maximum(means - means[b], 1e-9)) ** 2\n    ratio[b] = 0.0\n    ratio[b] = sds[b] * math.sqrt(float(np.sum(ratio ** 2 / sds ** 2)))\n    return ratio / ratio.sum() * total\n\n\ndef pick(budget, data):\n    \"\"\"Choose the winner and the cost we report for it.\"\"\"\n    best = min(data, key=lambda d: np.mean(data[d]))\n    return best, float(np.mean(data[best]))  # the search-phase sample mean of the winner\n\n\ndef optimise(method, macro_rep, budget_total=BUDGET):\n    rng = np.random.default_rng([18, macro_rep])  # optimiser's own randomness, separate from the model's streams\n    budget = Budget(budget_total, crn_offset=1000 * macro_rep)\n    budget.total = budget_total - RESERVE\n    data = method(budget, rng)\n    budget.total = budget_total\n    best, reported = pick(budget, data)\n    return {\"method\": method.__name__, \"macro_rep\": macro_rep, \"design\": best, \"reported\": reported,\n            \"true\": TRUTH[best][\"mean\"], \"gap\": TRUTH[best][\"mean\"] - min(v[\"mean\"] for v in TRUTH.values()),\n            \"runs\": budget.used, \"designs_seen\": len(data)}\n\n\ndef main(macro_reps=5):\n    best = min(TRUTH, key=lambda d: TRUTH[d][\"mean\"])\n    print(f\"81 (s, Q) designs; true best {best} at {TRUTH[best]['mean']:.3f}/day (truth.json: 100 reps per design)\")\n    print(f\"budget {BUDGET} runs per optimiser ({RESERVE} reserved for selection), {macro_reps} macro-replications\")\n    print(f\"{'method':17s} {'mean gap':>9s} {'worst gap':>9s} {'reported - true':>16s} {'runs':>5s}\")\n    for method in (grid_search, surrogate_search, evolution):\n        rows = [optimise(method, m) for m in range(macro_reps)]\n        gaps, bias = [r[\"gap\"] for r in rows], [r[\"reported\"] - r[\"true\"] for r in rows]\n        print(f\"{method.__name__:17s} {np.mean(gaps):9.3f} {max(gaps):9.3f} {np.mean(bias):+16.3f} \"\n              f\"{max(r['runs'] for r in rows):5d}   picks {[r['design'] for r in rows]}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Budget",
+        "detail": "The fairness device: one counter per optimiser, a hard stop, and run(design, rep) that maps replication r to the same demand and lead-time streams for every design (CRN)."
+      },
+      {
+        "title": "look()",
+        "detail": "Adds replications to a design, continuing its stream index, so a revisit adds new days instead of repeating old ones."
+      },
+      {
+        "title": "grid_search()",
+        "detail": "Equal allocation: (budget - used) // 81 replications for every design."
+      },
+      {
+        "title": "gp_posterior() + surrogate_search()",
+        "detail": "GP-lite on grid coordinates (Cholesky, GPML Algorithm 2.1) and expected improvement; noisy means make the incumbent optimistic - its 1.085 worst gap shows it."
+      },
+      {
+        "title": "evolution()",
+        "detail": "(mu + lambda): 8 children mutate +/-2 grid steps from 4 parents; parents compete with children; no model, no guarantee."
+      },
+      {
+        "title": "ocba()",
+        "detail": "The allocation rule from Fu, Chen & Shi (2008, Figure 3): ratios (s_i/delta_i)^2 for non-best designs and s_b sqrt(sum N_i^2/s_i^2) for the best."
+      },
+      {
+        "title": "pick() / optimise()",
+        "detail": "optimise() hides RESERVE runs from the search, restores them for pick(); shipped pick() reports the search mean - the fault; the fix runs a fresh-stream OCBA stage."
+      }
+    ],
+    "failureLab": {
+      "fault": "Shipped pick() returns the design with the lowest search-phase mean and reports that mean as its expected cost (RESERVE = 0).",
+      "symptom": "reported - true = -0.472 (grid), -0.412 (surrogate), -0.299 (evolution) per day over 5 macro-reps; grid worst gap 0.117 > delta 0.10; over 12 macro-reps the grid's bias is -0.394.",
+      "fix": "RESERVE = 60; pick() re-runs the top 5 finalists on fresh common random numbers (stream index 500+) with OCBA steps of 5 and reports the fresh mean (solution/optimise.py): grid gap 0.042/0.088, 12-rep bias -0.143 (truth.json's own SE is 0.085).",
+      "proof": "BUILD_TARGET=mine python -m unittest test_build_task: shipped FAILED (failures=2), solution OK; TestFailureLab keeps the winner's curse reproducible (mean bias < -0.3); research/failure_proofs_L400.py: shipped FAIL / solution PASS."
+    },
+    "tradeOffs": [
+      {
+        "option": "Grid search + OCBA",
+        "gains": "Exhaustive, parallel, simplest to audit; best here (0.042 mean gap)",
+        "costs": "(levels)^dimensions designs - impossible beyond 2-3 inputs",
+        "chooseWhen": "Designs <= about budget/3"
+      },
+      {
+        "option": "GP-lite surrogate + EI",
+        "gains": "Few runs when the response is smooth and runs are expensive",
+        "costs": "Noisy incumbent misleads EI (1.085 worst gap without selection); kernel tuning",
+        "chooseWhen": "Continuous inputs, expensive runs, smooth response"
+      },
+      {
+        "option": "(mu + lambda) evolution",
+        "gains": "No model; robust to ugly landscapes; scales in dimension",
+        "costs": "No guarantee; many evaluations; 0.241 worst gap here",
+        "chooseWhen": "Large discrete spaces or rugged responses"
+      }
+    ],
+    "buildTask": {
+      "task": "Rewrite pick(budget, data) in optimise.py as a selection stage: RESERVE = 60, top FINALISTS = 5, fresh streams from FRESH = 500, a first look of 5 runs each, then OCBA in steps of 5 until the budget is spent; return the best finalist and its fresh mean.",
+      "hints": [
+        "optimise() already hides RESERVE runs from the search and restores budget.total before pick().",
+        "ocba(means, sds, total) gives the ideal runs per finalist - give the next 5 runs to the finalist furthest below its share.",
+        "Never mix search-phase data into the reported mean."
+      ],
+      "solution": "labs/L400/18-sim-optimisation/solution/optimise.py",
+      "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped file: FAILED (failures=4); after your fix: Ran 5 tests ... OK."
+    },
+    "designBrief": {
+      "context": "A bike shop restocks inner tubes with an (s, Q) policy (L200 lesson 11 model: weather-driven Poisson demand, 1-4 day lead times, lost sales). The owner wants the cheapest policy and an honest cost to budget with; each simulated half-year is one run.",
+      "constraints": [
+        "at most 324 simulation runs per optimiser, counted by code",
+        "the same common random numbers for every optimiser and design",
+        "chosen design within delta = 0.10/day of the true best in every macro-replication",
+        "reported cost unbiased within 0.15/day over 12 macro-replications"
+      ],
+      "question": "Which search method and which selection procedure should the shop use, and how is the comparison kept fair?"
+    },
+    "options": [
+      {
+        "name": "A. Grid search (+ OCBA selection)",
+        "description": "Equal replications over all 81 designs, 60 runs reserved for OCBA on fresh streams.",
+        "evidence": "Mean/worst gap 0.042/0.088; without selection 0.049/0.117 and bias -0.472.",
+        "verdict": "Chosen (ADR 0001)."
+      },
+      {
+        "name": "B. GP-lite surrogate + expected improvement (+ OCBA)",
+        "description": "12 random designs, then EI on a GP fitted to noisy means.",
+        "evidence": "0.090/0.186 with selection; 0.277/1.085 without.",
+        "verdict": "Rejected here; revisit when inputs are continuous or designs >> budget."
+      },
+      {
+        "name": "C. (mu + lambda) evolution strategy (+ OCBA)",
+        "description": "4 parents, 8 children, +/-2-step mutations.",
+        "evidence": "0.088/0.241 with selection; 0.008 only when given twice the budget (unfair).",
+        "verdict": "Rejected for this problem size."
+      }
+    ],
+    "decisionRecord": "labs/L400/18-sim-optimisation/decisions/0001-grid-plus-ocba.md",
+    "fitnessFunction": {
+      "what": "Budget fairness plus selection quality and honesty of the reported cost.",
+      "test": "labs/L400/18-sim-optimisation/test_fitness.py",
+      "threshold": "every optimiser <= 324 runs; grid mean gap <= 0.06 and worst gap <= 0.10 over 5 macro-reps; |reported - true| <= 0.15 over 12"
+    },
+    "scalingLimits": [
+      "Dimensions: 5 parameters x 9 levels = 59,049 designs - grid search is out (signal: designs > budget/3); move to surrogate or ES search with the same OCBA stage.",
+      "Unequal run times (e.g. bigger S simulates more orders): equal runs is no longer equal budget (signal: wall-clock per method differs); count seconds in Budget.",
+      "Correlated outputs under CRN: OCBA assumes independent normal outputs, so its P(correct selection) is approximate (signal: selection repeatedly flips between near-ties); use an indifference-zone procedure with a guarantee (Kim & Nelson)."
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/18-sim-optimisation/optimise.py",
+        "purpose": "main lab code (ships the unfixed pick())"
+      },
+      {
+        "path": "labs/L400/18-sim-optimisation/make_truth.py",
+        "purpose": "referee generator (100 reps per design on unused streams)"
+      },
+      {
+        "path": "labs/L400/18-sim-optimisation/truth.json",
+        "purpose": "the referee table"
+      },
+      {
+        "path": "labs/L400/18-sim-optimisation/solution/optimise.py",
+        "purpose": "buildTask solution (OCBA selection stage)"
+      },
+      {
+        "path": "labs/L400/18-sim-optimisation/try_it.py",
+        "purpose": "tryIt experiments (CRN off, unfair budget)"
+      },
+      {
+        "path": "labs/L400/18-sim-optimisation/test_optimise.py",
+        "purpose": "unit tests (budget, CRN, OCBA by hand, GP, truth) + fault reproduction"
+      },
+      {
+        "path": "labs/L400/18-sim-optimisation/test_build_task.py",
+        "purpose": "buildTask check (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/18-sim-optimisation/test_fitness.py",
+        "purpose": "fitness function for ADR 0001 (budget fairness, gap, bias)"
+      },
+      {
+        "path": "labs/L400/18-sim-optimisation/decisions/0001-grid-plus-ocba.md",
+        "purpose": "architecture decision record"
+      }
+    ],
+    "expectedResults": [
+      "Shipped: grid gap 0.049/0.117, reported - true -0.472",
+      "Fixed: grid gap 0.042/0.088; 12-rep bias -0.394 -> -0.143",
+      "CRN off: grid gap 0.200/0.372"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "Ran 12 tests ... OK"
+      },
+      {
+        "action": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness (shipped file)",
+        "expected": "FAILED (failures=4)"
+      },
+      {
+        "action": "ocba([1, 2, 3], [1, 1, 1], 2.2808)",
+        "expected": "[1.0308, 1.0, 0.25]"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "RuntimeError: simulation budget exhausted",
+        "action": "Your optimiser asked for more than its share - check loop conditions against budget.total - budget.used."
+      },
+      {
+        "symptom": "Surrogate keeps sampling one design",
+        "action": "EI exploits a lucky noisy mean; more replications per look or a noise-aware incumbent (posterior mean) helps."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Switch off common random numbers: give each design its own streams (try_it.py patches Budget.run).",
+        "predict": "Same picks, or worse?",
+        "expected": "grid + OCBA, CRN on : mean gap 0.042, worst 0.088, runs 324 | CRN off: mean gap 0.200, worst 0.372, runs 324"
+      },
+      {
+        "task": "Give the evolution strategy twice the budget (648 runs).",
+        "predict": "Does it now 'win'?",
+        "expected": "evolution, fair budget 324: mean gap 0.088, worst 0.241 | budget 648: mean gap 0.008, worst 0.021, runs 648 - an unfair comparison, not a better method"
+      }
+    ],
+    "equivalents": [
+      "CMA-ES (Hansen's tutorial, arXiv:1604.00772) and Bayesian-optimisation libraries (scikit-optimize style) for the search step.",
+      "Kim-Nelson KN / Rinott two-stage procedures for indifference-zone selection with a P(correct selection) guarantee.",
+      "OptQuest / AnyLogic optimisation experiments (vendor, one line only)."
+    ],
+    "learningTools": [
+      {
+        "name": "SimPy",
+        "role": "CHECK",
+        "exercise": "Re-run the L200 lesson 11 simpy_inventory.py for the two finalists (30, 60) and (25, 70) (S = s + Q) with 30 seeds each and compare the mean cost difference with the lab's CRN difference.",
+        "expected": "Both designs should cost about 8.5/day and differ by less than delta = 0.10 (truth.json: (25, 70) 8.479, (30, 60) the grid's macro-0 pick, gap 0.028). SimPy is not installed here: pending a manual run / CI.",
+        "mac": "pip install simpy (catalog version 4.1.2; pinned in labs/L100/01-setup-workbench/requirements.txt)",
+        "windows": "pip install simpy (catalog version 4.1.2; pinned in labs\\L100\\01-setup-workbench\\requirements.txt)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://pypi.org/project/simpy/"
+      },
+      {
+        "name": "JupyterLab (+ JupyterLab Desktop)",
+        "role": "SEE",
+        "exercise": "In a notebook import solution/optimise.py, run optimise(grid_search, 0) and plot truth.json as a heatmap over (s, Q) with the 5 finalists and the pick marked.",
+        "expected": "A flat valley around s 20-35, Q 60-90 within 0.1/day of 8.479 - why the indifference zone matters. Pending a manual run in JupyterLab.",
+        "mac": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or the JupyterLab Desktop arm64 installer",
+        "windows": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or winget install jupyterlab",
+        "licence": "BSD-3-Clause (OSI: yes)",
+        "url": "https://pypi.org/project/jupyterlab/"
+      }
+    ],
+    "inRealSystems": [
+      "Inventory, staffing and scheduling teams run simulation optimisation with a final ranking-and-selection stage before committing to a policy.",
+      "Benchmarks of optimisers are only credible with equal budgets and shared random numbers."
+    ],
+    "useWhen": "Use simulation optimisation when the objective is an expectation you can only estimate; always reserve budget for selection and report costs from fresh runs.",
+    "caution": "A reported optimum without a fresh estimate overstates savings; never compare optimisers that consumed different budgets or random numbers.",
+    "checkpoint": "PASS: the shipped pick() reports costs 0.30-0.47/day too low; with your selection stage test_build_task and test_fitness pass (budget fair, worst gap <= 0.10, |bias| <= 0.15).",
+    "checkYourself": [
+      {
+        "q": "Why is the winner's search-phase mean biased low?",
+        "a": "Among many noisy means, the minimum is likely one whose noise happened to be negative; selection picks the noise as well as the design."
+      },
+      {
+        "q": "Why do the fresh selection runs still use common random numbers?",
+        "a": "CRN between finalists sharpens their differences (the selection decision); freshness relative to the search removes the winner's curse."
+      },
+      {
+        "q": "Why can't truth.json prove a bias of exactly 0?",
+        "a": "It is itself an estimate (SE 0.085, shared across designs under CRN); differences below about 2 SE are not evidence."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Fu, Chen & Shi (2008), Some topics for simulation optimization, Proc. Winter Simulation Conference (OCBA procedure, Figure 3; (s, S) example)",
+        "url": "https://informs-sim.org/wsc08papers/006.pdf"
+      },
+      {
+        "title": "Kim & Nelson (2001), A fully sequential procedure for indifference-zone selection in simulation, ACM TOMACS 11(3)",
+        "url": "https://users.iems.northwestern.edu/~nelsonb/Publications/KimNelsonKN.pdf"
+      },
+      {
+        "title": "Jones, Schonlau & Welch (1998), Efficient global optimization of expensive black-box functions, J. Global Optimization 13 (expected improvement)",
+        "url": "https://link.springer.com/article/10.1023/A:1008306431147"
+      },
+      {
+        "title": "Hansen, The CMA Evolution Strategy: A Tutorial, arXiv:1604.00772",
+        "url": "https://arxiv.org/abs/1604.00772"
+      }
+    ],
+    "next": "L400 #19 Surrogate models and emulation: fast what-ifs that know where they stop (the GP used here to search becomes the product)",
+    "validation": {
+      "status": "validated-local",
+      "how": "optimise.py, make_truth.py, solution/optimise.py, try_it.py and unittests (Ran 12 tests ... OK) ran locally on Python 3.12.15 + numpy 2.5.3; BUILD_TARGET=mine on the shipped file fails 4 of 5 build/fitness tests; failure proof shipped FAIL / solution PASS.",
+      "pendingCi": [
+        "macOS and Windows runs",
+        "SimPy and JupyterLab exercises (manual)",
+        "multi-core timing (sandbox has 1 CPU)"
+      ]
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "conceptNote": "content/concepts/L400/18-sim-optimisation.md",
+    "conceptSummary": "Split one budget between search and selection; give every optimiser the same runs and common random numbers; report the chosen design's cost from fresh runs. Grid + OCBA had mean/worst gap 0.042/0.088 (delta 0.10) vs surrogate 0.090/0.186 and evolution 0.088/0.241; reporting the search mean was 0.30-0.47/day too optimistic.",
+    "seeAlso": [
+      "simulation L400 #19 Surrogate models and emulation: fast what-ifs that know where they stop: the GP-lite used here as a search guide, validated and guarded as a product.",
+      "simulation Capstone #22 Capstone: a digital twin of a service centre: staffing optimisation under an SLA with the same CRN discipline and 95% bounds.",
+      "quantum-computing L400 #18 Benchmarking honestly against classical solvers: the same fairness rule - equal budgets, same instances - for comparing solvers."
+    ]
+  },
+  {
+    "id": "surrogate-models",
+    "number": 19,
+    "level": "L400",
+    "title": "Surrogate models and emulation: fast what-ifs that know where they stop",
+    "phase": "Design",
+    "category": "surrogates",
+    "description": "Fit a quadratic polynomial, a GP-lite and random Fourier features to 30 Latin-hypercube runs of the L200 clinic queue, validate them on 20 fresh runs against the simulation's own noise floor, use them for what-ifs - and guard the validity envelope after watching all three extrapolate wrongly by 3-11x.",
+    "outcome": "You can design a training set, choose and validate a surrogate against the noise floor, and serve what-ifs only where the surrogate is valid, falling back to the simulation elsewhere.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; reuses labs/L200/08-multi-server-queue/mmc_queue.py",
+    "estimatedTime": "75-90 minutes",
+    "overview": [
+      "A surrogate is interpolation dressed as a model: validate it inside its box and refuse to use it outside."
+    ],
+    "prerequisites": [
+      "Lesson 8 (M/M/c queue and Erlang C)",
+      "Lesson 13 (holdout validation)",
+      "Lesson 18 (GP-lite as a search guide)"
+    ],
+    "glossary": [
+      {
+        "term": "surrogate / emulator / metamodel",
+        "meaning": "A cheap function fitted to input-output pairs of an expensive model."
+      },
+      {
+        "term": "Latin hypercube",
+        "meaning": "n points with exactly one in each 1/n slice of every input (McKay, Beckman & Conover 1979)."
+      },
+      {
+        "term": "noise floor",
+        "meaning": "The error of the simulation itself against the exact answer - no surrogate trained on it can be validated below it."
+      },
+      {
+        "term": "validity envelope",
+        "meaning": "The input region where the surrogate was trained and validated; outside it the surrogate must not answer."
+      }
+    ],
+    "concepts": [
+      "Design the training runs (LHS), validate on fresh runs.",
+      "Compare surrogate error with the noise floor, not with zero.",
+      "Uncertainty estimates help but do not detect extrapolation.",
+      "Guard the envelope; fall back to the simulation."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "`python surrogate.py` runs 30 LHS + 20 holdout simulations (20,000 patients each), fits three surrogates and asks three what-ifs.",
+        "mac": "cd labs/L400/19-surrogates\npython surrogate.py",
+        "windows": "cd labs\\L400\\19-surrogates\npython surrogate.py",
+        "expected": "Holdout RMSE polynomial 0.037, GP-lite 0.042, random features 0.049; noise floor 0.033; three what-if rows.",
+        "ifNot": "ModuleNotFoundError mmc_queue: keep the labs/ folder layout."
+      },
+      {
+        "title": "Design the experiment",
+        "detail": "latin_hypercube() stratifies both inputs (lam 1.5-2.4/min, mu 0.95-1.10/min); holdout points are uniform random with different seeds.",
+        "expected": "test_latin_hypercube_has_one_point_per_stratum passes.",
+        "ifNot": "Points cluster: the permutation must be per input column."
+      },
+      {
+        "title": "Validate against the noise floor",
+        "detail": "Holdout RMSE vs the RMSE of the holdout runs themselves against Erlang C (0.033): all three surrogates are within 0.016 of it.",
+        "expected": "GP-lite 95% intervals cover 85% of holdout runs; length-scales 0.4, 0.4; noise 0.01.",
+        "ifNot": "Coverage far below 95%: the noise nugget is too small - widen its grid."
+      },
+      {
+        "title": "Failure lab: extrapolation",
+        "detail": "Ask lam 2.42 (just outside the box) and lam 2.70 / mu 0.95 (rho 0.95).",
+        "expected": "Exact 1.135 vs GP 0.876; exact 6.015 vs 1.930 / 0.877 / 0.552; GP sd only 0.178.",
+        "ifNot": "Starred values mean you are running the solution."
+      },
+      {
+        "title": "Build: the envelope guard",
+        "detail": "what_if() answers from the surrogate only inside [LO, HI] and when the model's sd <= 0.10; otherwise it runs the simulation 4 times and says so.",
+        "mac": "cd labs/L400/19-surrogates\nBUILD_TARGET=mine python -m unittest test_build_task test_fitness -v",
+        "windows": "cd labs\\L400\\19-surrogates\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task test_fitness -v\nRemove-Item Env:BUILD_TARGET",
+        "expected": "Shipped: FAILED (failures=3); after your fix: Ran 6 tests ... OK.",
+        "ifNot": "A poly model has no sd (None) - the box check must work without it."
+      },
+      {
+        "title": "Prove the decision",
+        "detail": "test_fitness.py: GP holdout RMSE <= 0.06, coverage >= 80%, in-box what-ifs within 10% of Erlang C, no out-of-box answer from the surrogate.",
+        "mac": "cd labs/L400/19-surrogates\npython -m unittest test_fitness -v",
+        "windows": "cd labs\\L400\\19-surrogates\npython -m unittest test_fitness -v",
+        "expected": "Ran 3 tests ... OK",
+        "ifNot": "The fallback at rho 0.95 needs replications: one 20,000-patient run is +/-20% there."
+      },
+      {
+        "title": "Run all tests",
+        "detail": "`python -m unittest -v` (about 45 s here)",
+        "mac": "cd labs/L400/19-surrogates\npython -m unittest -v",
+        "windows": "cd labs\\L400\\19-surrogates\npython -m unittest -v",
+        "expected": "Ran 10 tests ... OK",
+        "ifNot": "Slow: every test class re-runs the 50-simulation design once."
+      }
+    ],
+    "code": "\"\"\"L400 surrogate models: emulate an \"expensive\" queue simulation, validate on holdout, use it for what-ifs.\n\nExpensive model: the L200 lesson 8 clinic queue (3 desks, 20,000 patients per run). Inputs: arrival rate lam\nin [1.5, 2.4]/min and service rate mu in [0.95, 1.10]/min per desk. Output: mean wait Wq (min).\nThree surrogates fitted on the same 30-run Latin hypercube: quadratic polynomial, GP-lite, random features.\npython surrogate.py\n\"\"\"\nimport sys\nfrom pathlib import Path\n\nimport numpy as np\n\nHERE = Path(__file__).resolve().parent\nsys.path.append(str(HERE.parents[1] / \"L200\" / \"08-multi-server-queue\"))\nimport mmc_queue  # noqa: E402  (simulate(n_customers, c, lam, mu, seed), erlang_c(c, lam, mu))\n\nLO, HI = np.array([1.5, 0.95]), np.array([2.4, 1.10])  # the training box = the validity envelope\nN_TRAIN, N_HOLD, CUSTOMERS = 30, 20, 20_000\n\n\ndef expensive(lam, mu, seed):\n    return mmc_queue.simulate(CUSTOMERS, 3, lam, mu, seed=seed)[\"Wq\"]\n\n\ndef latin_hypercube(n, rng):\n    \"\"\"One point per 1/n stratum in every input (McKay et al. 1979), strata paired at random.\"\"\"\n    u = (np.array([rng.permutation(n) for _ in LO]).T + rng.random((n, len(LO)))) / n\n    return LO + u * (HI - LO)\n\n\ndef scale(X):\n    return (np.asarray(X, float) - LO) / (HI - LO)\n\n\ndef fit_poly(X, y):\n    feats = lambda Z: np.column_stack([np.ones(len(Z)), Z, Z ** 2, Z[:, :1] * Z[:, 1:]])  # quadratic + interaction\n    coef, *_ = np.linalg.lstsq(feats(scale(X)), y, rcond=None)\n    return lambda Xs: (feats(scale(Xs)) @ coef, None)\n\n\ndef fit_gp(X, y):\n    \"\"\"GP-lite: RBF kernel, length-scales and noise picked by log marginal likelihood (GPML Algorithm 2.1).\"\"\"\n    Z, mu_y, sd_y = scale(X), y.mean(), y.std()\n    t = (y - mu_y) / sd_y\n    k = lambda A, B, ell: np.exp(-0.5 * (((A[:, None, :] - B[None, :, :]) / ell) ** 2).sum(-1))\n    best = None\n    for l1 in (0.2, 0.4, 0.8, 1.6):\n        for l2 in (0.2, 0.4, 0.8, 1.6):\n            for noise in (1e-4, 1e-3, 1e-2, 1e-1):\n                L = np.linalg.cholesky(k(Z, Z, np.array([l1, l2])) + noise * np.eye(len(Z)))\n                alpha = np.linalg.solve(L.T, np.linalg.solve(L, t))\n                lml = -0.5 * t @ alpha - np.log(np.diag(L)).sum()  # log p(y|X) up to a constant\n                if best is None or lml > best[0]:\n                    best = (lml, np.array([l1, l2]), noise, L, alpha)\n    _, ell, noise, L, alpha = best\n\n    def predict(Xs):\n        Ks = k(Z, scale(Xs), ell)\n        v = np.linalg.solve(L, Ks)\n        var = np.maximum(1e-12, 1 + noise - (v ** 2).sum(0))  # predictive variance incl. simulation noise\n        return mu_y + sd_y * Ks.T @ alpha, sd_y * np.sqrt(var)\n    predict.params = {\"length_scales\": ell.tolist(), \"noise\": noise}\n    return predict\n\n\ndef fit_random_features(X, y, n_feat=300, ell=0.4, ridge=1e-3, seed=19):\n    \"\"\"Random Fourier features (Rahimi & Recht 2007): z(x) = sqrt(2/D) cos(Wx + b), then ridge regression.\"\"\"\n    rng = np.random.default_rng(seed)\n    W, b = rng.normal(0, 1 / ell, (len(LO), n_feat)), rng.uniform(0, 2 * np.pi, n_feat)\n    feats = lambda Xs: np.sqrt(2 / n_feat) * np.cos(scale(Xs) @ W + b)\n    F = feats(X)\n    coef = np.linalg.solve(F.T @ F + ridge * np.eye(n_feat), F.T @ (y - y.mean()))\n    return lambda Xs: (y.mean() + feats(Xs) @ coef, None)\n\n\ndef design(seed=19):\n    rng = np.random.default_rng(seed)\n    X = latin_hypercube(N_TRAIN, rng)\n    Xh = LO + rng.random((N_HOLD, 2)) * (HI - LO)  # holdout: fresh random points, fresh seeds\n    y = np.array([expensive(l, m, 1000 + i) for i, (l, m) in enumerate(X)])\n    yh = np.array([expensive(l, m, 2000 + i) for i, (l, m) in enumerate(Xh)])\n    return X, y, Xh, yh\n\n\ndef fit_all(X, y):\n    return {\"polynomial\": fit_poly(X, y), \"gp-lite\": fit_gp(X, y), \"random features\": fit_random_features(X, y)}\n\n\ndef what_if(model, lam, mu):\n    \"\"\"Answer a what-if question with the surrogate.\"\"\"\n    value, _ = model(np.array([[lam, mu]]))\n    return {\"lam\": lam, \"mu\": mu, \"Wq\": float(value[0]), \"source\": \"surrogate\"}\n\n\ndef main():\n    X, y, Xh, yh = design()\n    models = fit_all(X, y)\n    print(f\"expensive model: M/M/3 DES, {CUSTOMERS:,} patients/run; {N_TRAIN} LHS training runs, {N_HOLD} holdout runs\")\n    print(f\"{'surrogate':16s} {'holdout RMSE':>12s} {'max error':>9s}   (min of wait)\")\n    for name, model in models.items():\n        err = model(Xh)[0] - yh\n        print(f\"{name:16s} {np.sqrt(np.mean(err ** 2)):12.3f} {np.max(np.abs(err)):9.3f}\")\n    exact_h = np.array([mmc_queue.erlang_c(3, l, m)[\"Wq\"] for l, m in Xh])\n    print(f\"{'(noise floor)':16s} {np.sqrt(np.mean((yh - exact_h) ** 2)):12.3f}   = holdout runs vs Erlang C\")\n    mean, sd = models[\"gp-lite\"](Xh)\n    print(f\"gp-lite 95% intervals cover {np.mean(np.abs(mean - yh) <= 1.96 * sd):.0%} of holdout runs; \"\n          f\"params {models['gp-lite'].params}\")\n    print(\"WHAT-IF (Erlang C = exact answer for this M/M/3; * = answered by the simulation, not the surrogate):\")\n    for lam, mu in ((2.0, 1.0), (2.2 * 1.1, 1.0), (2.7, 0.95)):\n        exact = mmc_queue.erlang_c(3, lam, mu)[\"Wq\"]\n        answers = \"  \".join(f\"{n} {r['Wq']:6.3f}{' ' if r['source'] == 'surrogate' else '*'}\"\n                            for n, r in ((n, what_if(m, lam, mu)) for n, m in models.items()))\n        gp_sd = models[\"gp-lite\"](np.array([[lam, mu]]))[1][0]\n        print(f\"  lam={lam:.2f} mu={mu:.2f} (rho {lam / (3 * mu):.2f}): exact {exact:6.3f} | {answers} | gp sd {gp_sd:.3f}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "expensive() and the box LO/HI",
+        "detail": "The L200 DES at 20,000 patients is the 'expensive' model; the box is both the design region and the validity envelope."
+      },
+      {
+        "title": "latin_hypercube()",
+        "detail": "One random permutation of strata per input plus a uniform jitter inside each stratum - 30 runs cover both inputs evenly."
+      },
+      {
+        "title": "fit_poly()",
+        "detail": "Six features (1, x1, x2, x1^2, x2^2, x1*x2) on scaled inputs, least squares; returns (mean, None) - no uncertainty."
+      },
+      {
+        "title": "fit_gp()",
+        "detail": "RBF kernel with two length-scales and a noise nugget chosen by log marginal likelihood on a 4x4x4 grid; prediction by Cholesky (GPML Algorithm 2.1); variance includes the simulation noise."
+      },
+      {
+        "title": "fit_random_features()",
+        "detail": "300 random Fourier features sqrt(2/D) cos(Wx + b) (Rahimi & Recht 2007) + ridge regression: kernel-like flexibility, linear cost."
+      },
+      {
+        "title": "what_if()",
+        "detail": "Shipped: always the surrogate - the fault. Fixed: box + sd guard, simulation fallback, and the answer says where it came from."
+      }
+    ],
+    "failureLab": {
+      "fault": "Shipped what_if() answers every question from the surrogate, inside or outside the training box.",
+      "symptom": "lam 2.42 (+10% from 2.2, outside lam <= 2.4): GP 0.876 vs exact 1.135 (-23%); rho 0.95: 1.930 / 0.877 / 0.552 vs exact 6.015; GP sd only 0.178 - nothing flags it.",
+      "fix": "Envelope guard (solution/surrogate.py): surrogate only inside [LO, HI] and sd <= 0.10; otherwise 4 simulation replications labelled 'simulation (outside envelope)': 1.109 and 6.240.",
+      "proof": "BUILD_TARGET=mine python -m unittest test_build_task: shipped FAILED (failures=2), solution OK; TestFailureLab keeps the extrapolation reproducible; research/failure_proofs_L400.py shipped FAIL / solution PASS."
+    },
+    "tradeOffs": [
+      {
+        "option": "Quadratic polynomial",
+        "gains": "Transparent, 6 coefficients, best holdout here (0.037), robust with 10 runs (0.043)",
+        "costs": "Fixed shape; no uncertainty",
+        "chooseWhen": "Smooth, gently curved responses; explanation matters"
+      },
+      {
+        "option": "GP-lite",
+        "gains": "Any smooth shape; predictive sd (85% coverage)",
+        "costs": "n^3 fitting; kernel assumptions; sd misleads far away",
+        "chooseWhen": "Few expensive runs; you need an error bar"
+      },
+      {
+        "option": "Random Fourier features",
+        "gains": "Linear cost in n; scales to thousands of runs",
+        "costs": "Needs more data (0.181 with 10 runs); no sd",
+        "chooseWhen": "Many runs, flexible response"
+      }
+    ],
+    "buildTask": {
+      "task": "Make what_if(model, lam, mu) refuse to extrapolate: inside [LO, HI] and with sd <= SD_MAX (0.10, or no sd) answer from the surrogate; otherwise average FALLBACK_REPS = 4 simulation runs (seeds 3000+) and set source to 'simulation (outside envelope)'.",
+      "hints": [
+        "np.all((x >= LO) & (x <= HI)) is the box check.",
+        "Models return (mean, sd) with sd None when they have no uncertainty.",
+        "Keep the return keys the same so callers can show where each answer came from."
+      ],
+      "solution": "labs/L400/19-surrogates/solution/surrogate.py",
+      "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped file: FAILED (failures=3); after your fix: Ran 6 tests ... OK."
+    },
+    "designBrief": {
+      "context": "Clinic planners want instant what-ifs (arrival growth, faster service) during meetings; one run of the L200 clinic queue at useful precision takes too long to run live.",
+      "constraints": [
+        "at most 30 expensive training runs",
+        "holdout RMSE <= 0.06 min (about 2x the simulation's own noise, 0.033)",
+        "95% intervals cover >= 80% of holdout runs",
+        "in-envelope what-ifs within 10% of the exact Erlang C answer",
+        "0 out-of-envelope answers from the surrogate"
+      ],
+      "question": "Which surrogate should answer what-ifs, and where must it refuse?"
+    },
+    "options": [
+      {
+        "name": "A. Quadratic polynomial",
+        "description": "6-term response surface, least squares.",
+        "evidence": "Holdout RMSE 0.037 (max 0.079); 0.043 with 10 runs; at rho 0.95 says 1.930 vs 6.015; no sd.",
+        "verdict": "Accurate in-box but cannot flag its own doubt; kept as a cross-check."
+      },
+      {
+        "name": "B. GP-lite behind an envelope guard",
+        "description": "RBF GP (length-scales 0.4, 0.4; nugget 0.01) + box and sd guard + simulation fallback.",
+        "evidence": "Holdout 0.042, coverage 85%; guarded answers 1.109 (exact 1.135) and 6.240 (exact 6.015).",
+        "verdict": "Chosen (ADR 0001)."
+      },
+      {
+        "name": "C. Random Fourier features",
+        "description": "300 features + ridge.",
+        "evidence": "Holdout 0.049; 0.181 with 10 runs; 0.552 at rho 0.95.",
+        "verdict": "Rejected for 30 runs; revisit with thousands."
+      }
+    ],
+    "decisionRecord": "labs/L400/19-surrogates/decisions/0001-gp-behind-envelope-guard.md",
+    "fitnessFunction": {
+      "what": "Holdout accuracy and calibration of the GP, accuracy of in-box what-ifs, and refusal outside the envelope.",
+      "test": "labs/L400/19-surrogates/test_fitness.py",
+      "threshold": "RMSE <= 0.06; coverage >= 0.80; in-box error < 10% vs Erlang C; 0 out-of-box surrogate answers"
+    },
+    "scalingLimits": [
+      "More inputs: the convex hull of the runs is much smaller than the box (signal: in-box what-ifs with large holdout error far from any run); add a nearest-run distance check.",
+      "More runs: GP fitting is O(n^3) (signal: seconds per refit at a few thousand runs); switch to random features or sparse GPs.",
+      "Non-smooth responses (capacity cliffs, thresholds): stationary kernels blur the cliff (signal: holdout errors concentrated near rho -> 1); model log(Wq) or split the region."
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/19-surrogates/surrogate.py",
+        "purpose": "main lab code (ships the unguarded what_if())"
+      },
+      {
+        "path": "labs/L400/19-surrogates/solution/surrogate.py",
+        "purpose": "buildTask solution (envelope guard + simulation fallback)"
+      },
+      {
+        "path": "labs/L400/19-surrogates/try_it.py",
+        "purpose": "tryIt experiments (10 runs; log-output extrapolation)"
+      },
+      {
+        "path": "labs/L400/19-surrogates/test_surrogate.py",
+        "purpose": "unit tests (LHS strata, exact quadratic, GP sd growth) + fault reproduction"
+      },
+      {
+        "path": "labs/L400/19-surrogates/test_build_task.py",
+        "purpose": "buildTask check (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/19-surrogates/test_fitness.py",
+        "purpose": "fitness function for ADR 0001"
+      },
+      {
+        "path": "labs/L400/19-surrogates/decisions/0001-gp-behind-envelope-guard.md",
+        "purpose": "architecture decision record"
+      }
+    ],
+    "expectedResults": [
+      "Holdout RMSE 0.037 / 0.042 / 0.049 vs noise floor 0.033",
+      "Shipped what-if at rho 0.95: 1.930 / 0.877 / 0.552 vs exact 6.015",
+      "Guarded what-if: 1.109* and 6.240* (simulation)"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "Ran 10 tests ... OK"
+      },
+      {
+        "action": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness (shipped file)",
+        "expected": "FAILED (failures=3)"
+      },
+      {
+        "action": "fit_poly on an exact quadratic",
+        "expected": "predictions equal the function to 1e-9"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "GP coverage far below 95%",
+        "action": "The noise nugget is too small or length-scales too long - widen the likelihood grid; check that the predictive variance includes the noise."
+      },
+      {
+        "symptom": "Fallback answers vary a lot",
+        "action": "Near rho -> 1 one 20,000-patient run is +/-20%: increase FALLBACK_REPS or CUSTOMERS."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Train on the first 10 of the 30 LHS runs.",
+        "predict": "Which surrogate degrades most?",
+        "expected": "n=30: polynomial 0.037  gp-lite 0.042  random features 0.049 | n=10: polynomial 0.043  gp-lite 0.066  random features 0.181"
+      },
+      {
+        "task": "Fit log(Wq) instead of Wq and extrapolate to rho 0.95.",
+        "predict": "Does a better-shaped output fix extrapolation?",
+        "expected": "polynomial: raw 1.930, log-fit 2.583, exact 6.015 | gp-lite: raw 0.877, log-fit 0.929, exact 6.015 - better shape, still wrong"
+      }
+    ],
+    "equivalents": [
+      "scikit-learn GaussianProcessRegressor and RBFSampler; SciPy scipy.stats.qmc.LatinHypercube (SciPy 1.18).",
+      "Kriging/DACE toolboxes; polynomial chaos (e.g. chaospy) for smooth physics models.",
+      "Commercial response-surface modules in simulation suites (vendor, one line only)."
+    ],
+    "learningTools": [
+      {
+        "name": "Orange Data Mining",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Save the 30 training and 20 holdout rows (lam, mu, Wq) to two CSV files from a notebook (numpy.savetxt), load them in Orange, train a linear model on polynomial features and a non-linear learner, and score them on the holdout file.",
+        "expected": "Holdout RMSE should be close to the lab's 0.037 (polynomial) and above the noise floor 0.033; widget names and options were not verified here. Pending a manual run in Orange.",
+        "mac": "Orange3-3.40.0-Python3.12.10-arm64.dmg, conda, or pip install PyQt6 PyQt6-WebEngine orange3",
+        "windows": "Orange3-3.40.0-x86_64.exe; winget install --id UniversityofLjubljana.Orange",
+        "licence": "GPL-3.0-or-later (OSI: yes)",
+        "url": "https://github.com/biolab/orange3"
+      },
+      {
+        "name": "marimo",
+        "role": "SEE",
+        "exercise": "In a marimo notebook import surrogate.py, fit the three models once, and add a lam slider (1.4-2.8) that shows each surrogate's what-if next to Erlang C and shades the training box.",
+        "expected": "Inside the box all three track Erlang C within about 0.05; past lam 2.4 they flatten while Erlang C climbs to 6.015 at lam 2.7/mu 0.95 (lab output). Pending a manual run in marimo.",
+        "mac": "pip install marimo (catalog version 0.25.2), then marimo edit",
+        "windows": "pip install marimo (catalog version 0.25.2), then marimo edit",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://pypi.org/project/marimo/"
+      }
+    ],
+    "inRealSystems": [
+      "Engineering teams emulate expensive CFD/FEM or DES runs with GPs or polynomial chaos, and validate on held-out runs before using them in optimisation loops.",
+      "Planning tools that answer from emulators label the source of each number and fall back to full runs outside the trained range."
+    ],
+    "useWhen": "Use a surrogate when many what-ifs must be answered faster than the model runs and the questions stay inside a region you can afford to sample.",
+    "caution": "Never present a surrogate's answer outside its training region as a model result; the GP's small sd far from data is not evidence of accuracy.",
+    "checkpoint": "PASS: shipped what_if() extrapolates (1.930/0.877/0.552 vs 6.015); with your guard test_build_task and test_fitness pass and out-of-box answers come from the simulation.",
+    "checkYourself": [
+      {
+        "q": "Why is 0.037 not 'better' than 0.042 here?",
+        "a": "Both sit at the simulation's noise floor (0.033); 20 holdout runs cannot separate them."
+      },
+      {
+        "q": "Why didn't the GP's sd flag rho 0.95?",
+        "a": "A stationary kernel reverts to the prior far from data; its sd grows only to the prior scale (about 0.18 here), not to the size of the true error."
+      },
+      {
+        "q": "What should the what-if return outside the envelope?",
+        "a": "A simulation result (or a refusal), labelled with its source - never the surrogate's guess."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Rasmussen & Williams (2006), Gaussian Processes for Machine Learning, ch. 2 (Algorithm 2.1), MIT Press - free online edition",
+        "url": "http://gaussianprocess.org/gpml/chapters/RW2.pdf"
+      },
+      {
+        "title": "Rahimi & Recht (2007), Random Features for Large-Scale Kernel Machines, NIPS 20",
+        "url": "https://people.eecs.berkeley.edu/~brecht/papers/07.rah.rec.nips.pdf"
+      },
+      {
+        "title": "McKay, Beckman & Conover (1979), A comparison of three methods for selecting values of input variables..., Technometrics 21(2) (Latin hypercube)",
+        "url": "https://www.jstor.org/stable/1268522"
+      },
+      {
+        "title": "SciPy 1.18: scipy.stats.qmc.LatinHypercube (equivalent; stratification, rng reproducibility)",
+        "url": "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.qmc.LatinHypercube.html"
+      }
+    ],
+    "next": "L400 #20 Large-scale and parallel simulation: reproducible streams, checkpoints and result storage (when you must run the expensive model thousands of times anyway)",
+    "validation": {
+      "status": "validated-local",
+      "how": "surrogate.py, solution/surrogate.py, try_it.py and unittests (Ran 10 tests ... OK) ran locally on Python 3.12.15 + numpy 2.5.3; BUILD_TARGET=mine on the shipped file fails 3 of 6 build/fitness tests; failure proof shipped FAIL / solution PASS.",
+      "pendingCi": [
+        "macOS and Windows runs",
+        "Orange and marimo exercises (manual)",
+        "scikit-learn / SciPy equivalents (not used, listed only)"
+      ]
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "conceptNote": "content/concepts/L400/19-surrogates.md",
+    "conceptSummary": "Fit surrogates to a Latin-hypercube design, validate on fresh runs against the simulation's own noise floor (0.033): polynomial 0.037, GP-lite 0.042, random features 0.049. All extrapolate wrongly (1.930/0.877/0.552 vs 6.015 at rho 0.95) and the GP's sd does not flag it - so what-ifs go through an envelope guard with a simulation fallback.",
+    "seeAlso": [
+      "simulation L400 #18 Simulation-based optimisation: search, ranking & selection and fair budgets: the same GP-lite used to choose where to simulate next.",
+      "application-architecture L400 #21 Cost and capacity planning: Little's law, benchmarks, headroom, cost per request: capacity what-ifs where an emulator answers inside measured load ranges only."
+    ]
+  },
+  {
+    "id": "parallel-large-scale",
+    "number": 20,
+    "level": "L400",
+    "title": "Large-scale and parallel simulation: reproducible streams, checkpoints and result storage",
+    "phase": "Design",
+    "category": "scale",
+    "description": "Run a 12-scenario x 10-replication sweep on a spawn-safe process pool with SQLite checkpoints, crash it, resume it - and discover that L300's 'one spawned child per task' gives different results after a resume until streams are keyed on (scenario, rep). Measure CSV vs SQLite vs Parquet and workers x chunk size.",
+    "outcome": "You can design a sweep that survives crashes with identical results on any worker count, choose a result store with evidence, and measure (not assume) parallel speed-up.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3 (stdlib multiprocessing, sqlite3, csv); pyarrow 26.0.0 for the Parquet export in CI",
+    "estimatedTime": "90 minutes",
+    "overview": [
+      "Identity, not order: a task's stream, key and result depend on what it computes - never on when, where or in which batch it ran."
+    ],
+    "prerequisites": [
+      "Lesson 16 (spawn-safe pools, SeedSequence)",
+      "Lesson 8 (the clinic queue)",
+      "Lesson 10 (replications and CIs)"
+    ],
+    "glossary": [
+      {
+        "term": "checkpoint",
+        "meaning": "Durable record of finished work so a restart does only what is missing."
+      },
+      {
+        "term": "spawn_key",
+        "meaning": "The address of a SeedSequence in its spawn tree; SeedSequence(root, spawn_key=(s, r)) rebuilds the child for task (s, r) directly."
+      },
+      {
+        "term": "atomic commit",
+        "meaning": "All changes in a transaction happen or none do, even after a crash (SQLite)."
+      },
+      {
+        "term": "Amdahl's law",
+        "meaning": "Speed-up S(n) = 1 / (f + (1 - f)/n) for serial fraction f - capped at 1/f."
+      }
+    ],
+    "concepts": [
+      "Key streams and rows on task identity.",
+      "Commit in batches inside transactions; INSERT OR IGNORE makes resume idempotent.",
+      "Measure storage and scaling on the target machine.",
+      "Exports (CSV, Parquet) are not checkpoints."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "`python sweep.py` runs a clean sweep (2 spawn workers), a sweep that crashes after 48 committed results and resumes, compares checksums and exports sweep.csv.",
+        "mac": "cd labs/L400/20-parallel-scale\npython sweep.py",
+        "windows": "cd labs\\L400\\20-parallel-scale\npython sweep.py",
+        "expected": "clean checksum 5a2bd148609737c0; resumed 8a6983e0e764e5cb -> DIFFERENT; a 12-row summary table.",
+        "ifNot": "RuntimeError about bootstrapping: keep the if __name__ == '__main__' guard (spawn re-imports the file)."
+      },
+      {
+        "title": "Failure lab: read the seed column",
+        "detail": "Each row stores entropy/[spawn_key]. After a resume, task (7, 2) in the shipped version reads 20/[14] - its position in the pending list.",
+        "expected": "Resumed rows reuse spawn keys that the first part of the run already used.",
+        "ifNot": "sqlite3 sweep_resumed.db \"select * from results where scenario=7 and rep=2\" (or Python sqlite3)."
+      },
+      {
+        "title": "Build: key streams on identity",
+        "detail": "seeded() returns (s, r, SeedSequence(ROOT, spawn_key=(s, r))) for every pending task.",
+        "mac": "cd labs/L400/20-parallel-scale\nBUILD_TARGET=mine python -m unittest test_build_task test_fitness -v",
+        "windows": "cd labs\\L400\\20-parallel-scale\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task test_fitness -v\nRemove-Item Env:BUILD_TARGET",
+        "expected": "Shipped: FAILED (failures=4); after your fix: Ran 3 tests ... OK and sweep.py prints IDENTICAL (38975a17ffb143cd).",
+        "ifNot": "Still different: the stream must not depend on len(pending) or list position."
+      },
+      {
+        "title": "Storage options",
+        "detail": "`python storage_options.py` writes 5,000 rows as CSV (flush per row), SQLite per-row commits, batches of 8 and one commit, then simulates a torn CSV write and an interrupted SQLite batch.",
+        "mac": "cd labs/L400/20-parallel-scale\npython storage_options.py",
+        "windows": "cd labs\\L400\\20-parallel-scale\npython storage_options.py",
+        "expected": "Here: CSV 0.176 s, SQLite per row 22.841 s, per 8 rows 3.980 s, one commit 0.058 s; CSV 1 malformed of 2 lines; SQLite 16 rows, 16 distinct.",
+        "ifNot": "Timings differ by machine and disk; the crash lines must not."
+      },
+      {
+        "title": "Scaling measurement",
+        "detail": "`python scaling.py` measures tasks/s for 1, 2, 4 workers x chunk sizes 1 and 8 and fits Amdahl's serial fraction.",
+        "mac": "cd labs/L400/20-parallel-scale\npython scaling.py",
+        "windows": "cd labs\\L400\\20-parallel-scale\npython scaling.py",
+        "expected": "This 1-CPU sandbox: 15.7 tasks/s on 1 worker, 6.1 on 4 (f = 1.00). On the Mac mini / Windows PC expect speed-ups > 1 until cores run out.",
+        "ifNot": "Slower with more workers on a multi-core machine: tasks too small - raise chunksize."
+      },
+      {
+        "title": "Prove the decision",
+        "detail": "test_fitness.py crashes the sweep at 0, 17 and 40 results on 1 and 2 workers and resumes; every resumed database must hold 48 rows with the clean checksum.",
+        "mac": "cd labs/L400/20-parallel-scale\npython -m unittest test_fitness -v",
+        "windows": "cd labs\\L400\\20-parallel-scale\npython -m unittest test_fitness -v",
+        "expected": "Ran 1 test ... OK (3 subtests)",
+        "ifNot": "Duplicate rows: the PRIMARY KEY or INSERT OR IGNORE is missing."
+      },
+      {
+        "title": "Run all tests",
+        "detail": "`python -m unittest -v` (about 6 minutes on 1 CPU: every pool starts fresh interpreters)",
+        "mac": "cd labs/L400/20-parallel-scale\npython -m unittest -v",
+        "windows": "cd labs\\L400\\20-parallel-scale\npython -m unittest -v",
+        "expected": "Ran 9 tests ... OK (skipped=1) - the Parquet round trip needs pyarrow (CI).",
+        "ifNot": "On Windows a locked .db file: close connections (the code does) and avoid OneDrive-synced folders."
+      }
+    ],
+    "code": "\"\"\"L400 large-scale simulation: a checkpointed, parallel parameter sweep that survives a crash.\n\n12 scenarios (arrival rate x desks) x 10 replications of the L200 lesson 8 clinic queue = 120 tasks.\nWorkers: a spawn-safe process pool. Storage: SQLite (stdlib), one transaction per batch, primary key\n(scenario, rep) so a resumed run can never duplicate a row. Export: CSV (stdlib); Parquet in CI.\npython sweep.py            (writes sweep.db and sweep.csv next to this file)\n\"\"\"\nimport csv\nimport hashlib\nimport multiprocessing as mp\nimport sqlite3\nimport sys\nimport time\nfrom pathlib import Path\n\nimport numpy as np\n\nHERE = Path(__file__).resolve().parent\nsys.path.append(str(HERE.parents[1] / \"L200\" / \"08-multi-server-queue\"))\nimport mmc_queue  # noqa: E402  (simulate(n_customers, c, lam, mu, seed))\n\nROOT, REPS, CUSTOMERS, BATCH = 20, 10, 5_000, 8\nSCENARIOS = [(lam, c) for lam in (1.6, 2.0, 2.4, 2.8) for c in (3, 4, 5)]\nSCHEMA = (\"CREATE TABLE IF NOT EXISTS results (scenario INTEGER, rep INTEGER, lam REAL, desks INTEGER, \"\n          \"wq REAL, util REAL, seed TEXT, PRIMARY KEY (scenario, rep))\")\n\n\nclass Crash(Exception):\n    \"\"\"Stands in for a killed process, a reboot or a laptop lid closing.\"\"\"\n\n\ndef all_tasks():\n    return [(s, r) for s in range(len(SCENARIOS)) for r in range(REPS)]\n\n\ndef seeded(pending):\n    \"\"\"Attach a random stream to each pending task.\"\"\"\n    children = np.random.SeedSequence(ROOT).spawn(len(pending))  # one child per task still to run\n    return [(s, r, child) for (s, r), child in zip(pending, children)]\n\n\ndef run_task(task):\n    \"\"\"Worker (top level, picklable for spawn): one replication of one scenario.\"\"\"\n    s, r, seed_seq = task\n    lam, desks = SCENARIOS[s]\n    seed = int(seed_seq.generate_state(1)[0])  # mmc_queue uses random.Random(int)\n    out = mmc_queue.simulate(CUSTOMERS, desks, lam, 1.0, seed=seed)\n    return s, r, lam, desks, out[\"Wq\"], out[\"util\"], f\"{seed_seq.entropy}/{list(seed_seq.spawn_key)}\"\n\n\ndef connect(db):\n    con = sqlite3.connect(db)\n    con.execute(\"PRAGMA journal_mode=WAL\")  # readers do not block the writer; a commit is one appended record\n    con.execute(SCHEMA)\n    return con\n\n\ndef pending_tasks(con):\n    done = set(con.execute(\"SELECT scenario, rep FROM results\"))\n    return [t for t in all_tasks() if t not in done]\n\n\ndef run_sweep(db, workers=2, crash_after=None, chunksize=4):\n    \"\"\"Run every task not yet in the database; commit every BATCH results. Returns the number of new rows.\"\"\"\n    con, new, batch = connect(db), 0, []\n    tasks = seeded(pending_tasks(con))\n    try:\n        with mp.get_context(\"spawn\").Pool(workers) as pool:\n            for row in pool.imap_unordered(run_task, tasks, chunksize=chunksize):\n                batch.append(row)\n                if crash_after is not None and new + len(batch) > crash_after:\n                    raise Crash(f\"crashed after {new} committed results\")\n                if len(batch) == BATCH:\n                    with con:  # one transaction: the whole batch is stored, or none of it\n                        con.executemany(\"INSERT OR IGNORE INTO results VALUES (?,?,?,?,?,?,?)\", batch)\n                    new, batch = new + len(batch), []\n            with con:\n                con.executemany(\"INSERT OR IGNORE INTO results VALUES (?,?,?,?,?,?,?)\", batch)\n            new += len(batch)\n    finally:\n        con.close()\n    return new\n\n\ndef checksum(db):\n    \"\"\"Order-independent fingerprint of the stored results (same rows, same values -> same hash).\"\"\"\n    con = sqlite3.connect(db)\n    rows = con.execute(\"SELECT scenario, rep, round(wq, 12), round(util, 12) FROM results ORDER BY scenario, rep\")\n    digest = hashlib.sha256(repr(rows.fetchall()).encode(\"utf-8\")).hexdigest()[:16]\n    con.close()\n    return digest\n\n\ndef export_csv(db, path):\n    con = sqlite3.connect(db)\n    with Path(path).open(\"w\", encoding=\"utf-8\", newline=\"\") as f:  # newline=\"\": csv writes its own line ends\n        w = csv.writer(f)\n        w.writerow([\"scenario\", \"rep\", \"lam\", \"desks\", \"wq\", \"util\", \"seed\"])\n        w.writerows(con.execute(\"SELECT * FROM results ORDER BY scenario, rep\"))\n    con.close()\n\n\ndef summary(db):\n    con = sqlite3.connect(db)\n    rows = con.execute(\"SELECT lam, desks, avg(wq), count(*) FROM results GROUP BY scenario ORDER BY scenario\").fetchall()\n    con.close()\n    return rows\n\n\ndef fresh(db):\n    for suffix in (\"\", \"-wal\", \"-shm\"):\n        Path(str(db) + suffix).unlink(missing_ok=True)\n\n\ndef main(workers=2):\n    clean, resumed = HERE / \"sweep.db\", HERE / \"sweep_resumed.db\"\n    fresh(clean), fresh(resumed)\n    start = time.perf_counter()\n    run_sweep(clean, workers)\n    print(f\"clean run: {len(all_tasks())} tasks on {workers} spawn workers in {time.perf_counter() - start:.1f} s \"\n          f\"(machine-dependent); checksum {checksum(clean)}\")\n    try:\n        run_sweep(resumed, workers, crash_after=50)\n    except Crash as exc:\n        print(f\"interrupted run: {exc}; resuming...\")\n    print(f\"resumed run: +{run_sweep(resumed, workers)} rows; checksum {checksum(resumed)} -> \"\n          f\"{'IDENTICAL' if checksum(resumed) == checksum(clean) else 'DIFFERENT'} to the clean run\")\n    export_csv(clean, HERE / \"sweep.csv\")\n    print(\"lam desks  mean Wq (min)  reps\")\n    for lam, desks, wq, n in summary(clean):\n        print(f\"{lam:3.1f} {desks:5d} {wq:13.3f} {n:5d}\")\n\n\nif __name__ == \"__main__\":  # required with 'spawn': children re-import this file\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "SCENARIOS, all_tasks()",
+        "detail": "The sweep is a list of identities (scenario, rep); everything else is derived from them."
+      },
+      {
+        "title": "seeded()",
+        "detail": "Where the fault lives: the shipped version spawns len(pending) children and pairs them by position; the fix builds SeedSequence(ROOT, spawn_key=(s, r))."
+      },
+      {
+        "title": "run_task()",
+        "detail": "Top-level worker (picklable under spawn): one replication; converts the SeedSequence to an int for random.Random and returns the row including 'entropy/[spawn_key]'."
+      },
+      {
+        "title": "connect() / SCHEMA",
+        "detail": "WAL journal (a commit is one appended record), PRIMARY KEY (scenario, rep): the database itself refuses duplicates."
+      },
+      {
+        "title": "run_sweep()",
+        "detail": "pending = all - done; imap_unordered with chunksize; every BATCH rows one `with con:` transaction + INSERT OR IGNORE; crash_after simulates a kill before the next commit."
+      },
+      {
+        "title": "checksum() / export_csv()",
+        "detail": "Order-independent fingerprint of the stored results; CSV export with newline='' (csv module rule) for no-code tools."
+      }
+    ],
+    "failureLab": {
+      "fault": "Shipped seeded() gives the pending tasks SeedSequence(20).spawn(len(pending)) by position - correct for one uninterrupted run, wrong after a resume.",
+      "symptom": "Crash after 48 committed results + resume: checksum 8a6983e0e764e5cb vs clean 5a2bd148609737c0 (DIFFERENT); task (7, 2) used stream 20/[14]; no error anywhere.",
+      "fix": "seeded() keys every stream on identity: SeedSequence(ROOT, spawn_key=(s, r)) (solution/sweep.py) - clean and resumed both 38975a17ffb143cd; task (7, 2) uses 20/[7, 2].",
+      "proof": "BUILD_TARGET=mine python -m unittest test_build_task: shipped FAILED (failures=2), solution OK; TestFailureLab keeps the fault reproducible; research/failure_proofs_L400.py shipped FAIL / solution PASS."
+    },
+    "tradeOffs": [
+      {
+        "option": "CSV append",
+        "gains": "Human-readable, fastest writes here (0.176 s / 5,000 rows)",
+        "costs": "No transactions: a torn line swallowed the resumed row; duplicates by hand",
+        "chooseWhen": "Export or append-only logs you can rebuild"
+      },
+      {
+        "option": "SQLite, batched transactions",
+        "gains": "Stdlib, atomic, keys prevent duplicates; 3.98 s with batches of 8",
+        "costs": "One writer; per-row commits 390x slower than one commit here; local disk only for WAL",
+        "chooseWhen": "Checkpointing one machine's sweep"
+      },
+      {
+        "option": "Parquet",
+        "gains": "Columnar, typed, compressed; best for analysis",
+        "costs": "Written whole: not a checkpoint; extra dependency (pyarrow)",
+        "chooseWhen": "Final results for analysis/sharing"
+      }
+    ],
+    "buildTask": {
+      "task": "Change seeded(pending) in sweep.py so each task's stream depends only on (scenario, rep), not on its position in the pending list.",
+      "hints": [
+        "np.random.SeedSequence(ROOT, spawn_key=(s, r)) rebuilds the same child a spawn tree would give at that address.",
+        "Re-run python sweep.py: the resumed checksum must print IDENTICAL."
+      ],
+      "solution": "labs/L400/20-parallel-scale/solution/sweep.py",
+      "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped file: FAILED (failures=4); after your fix: Ran 3 tests ... OK."
+    },
+    "observability": {
+      "emits": "sweep.db: one row per task with a seed column 'entropy/[spawn_key]'; sweep.csv export; checksums printed per run.",
+      "read": "Spawn keys that are list positions (20/[14]) instead of identities (20/[7, 2]) reveal order-dependent streams; a changed checksum after a resume is the alarm."
+    },
+    "designBrief": {
+      "context": "A planning team runs staffing sweeps overnight on the Mac mini and over weekends on the Windows PC; runs get interrupted (reboots, updates) and results are re-analysed weeks later.",
+      "constraints": [
+        "a resumed sweep stores exactly the rows of an uninterrupted one, for any crash point and 1 or 2 workers",
+        "no duplicate or missing rows",
+        "stdlib only for the checkpoint store; Parquet allowed as an export",
+        "at most one batch (8 tasks) of work lost per crash"
+      ],
+      "question": "How should tasks get their random streams, and where and how often should results be committed?"
+    },
+    "options": [
+      {
+        "name": "A. Streams by position + CSV append",
+        "description": "L300-style spawn per run; append one CSV line per result.",
+        "evidence": "Resumed checksum differs (8a6983e0e764e5cb vs 5a2bd148609737c0); torn CSV line swallowed the resumed row.",
+        "verdict": "Rejected."
+      },
+      {
+        "name": "B. Identity-keyed streams + SQLite batched commits",
+        "description": "SeedSequence(ROOT, spawn_key=(s, r)); WAL; PRIMARY KEY; INSERT OR IGNORE; batches of 8.",
+        "evidence": "Identical checksum 38975a17ffb143cd for clean and resumed runs; interrupted batch rolled back (16 rows, 16 distinct); 3.98 s per 5,000 rows here.",
+        "verdict": "Chosen (ADR 0001)."
+      },
+      {
+        "name": "C. Identity-keyed streams + Parquet only",
+        "description": "Write all results to Parquet at the end.",
+        "evidence": "A crash before the end loses everything; round trip verified only in CI (pyarrow 26.0.0).",
+        "verdict": "Export format, not a checkpoint."
+      }
+    ],
+    "decisionRecord": "labs/L400/20-parallel-scale/decisions/0001-sqlite-checkpoints-identity-streams.md",
+    "fitnessFunction": {
+      "what": "Crash-and-resume invariance across crash points and worker counts.",
+      "test": "labs/L400/20-parallel-scale/test_fitness.py",
+      "threshold": "for crash_after in {0, 17, 40} x workers {1, 2}: 48 rows and the clean checksum"
+    },
+    "scalingLimits": [
+      "Commit cost dominates (per-row commits 390x slower than one here; worse on network drives) - signal: CPU idle while the disk is busy; batch larger, accept more redo.",
+      "One writer: SQLite serialises writes - signal: workers waiting on the parent; give each machine its own database and merge by primary key.",
+      "Amdahl's ceiling: speed-up capped at 1/f - signal: tasks/s flat as workers grow (here f = 1.00 on 1 CPU); measure f before buying cores, chunk small tasks."
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/20-parallel-scale/sweep.py",
+        "purpose": "main lab code (ships the position-keyed seeded())"
+      },
+      {
+        "path": "labs/L400/20-parallel-scale/storage_options.py",
+        "purpose": "CSV vs SQLite write cost and crash behaviour"
+      },
+      {
+        "path": "labs/L400/20-parallel-scale/scaling.py",
+        "purpose": "tasks/s vs workers x chunk size; Amdahl fit"
+      },
+      {
+        "path": "labs/L400/20-parallel-scale/to_parquet.py",
+        "purpose": "Parquet export + read-back (pending-ci: pyarrow 26.0.0)"
+      },
+      {
+        "path": "labs/L400/20-parallel-scale/solution/sweep.py",
+        "purpose": "buildTask solution (identity-keyed streams)"
+      },
+      {
+        "path": "labs/L400/20-parallel-scale/try_it.py",
+        "purpose": "tryIt experiments (crash points; seed column)"
+      },
+      {
+        "path": "labs/L400/20-parallel-scale/test_sweep.py",
+        "purpose": "unit tests (resume, CSV, crash evidence, Amdahl fit, Parquet) + fault reproduction"
+      },
+      {
+        "path": "labs/L400/20-parallel-scale/test_build_task.py",
+        "purpose": "buildTask check (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/20-parallel-scale/test_fitness.py",
+        "purpose": "fitness function for ADR 0001"
+      },
+      {
+        "path": "labs/L400/20-parallel-scale/decisions/0001-sqlite-checkpoints-identity-streams.md",
+        "purpose": "architecture decision record"
+      }
+    ],
+    "expectedResults": [
+      "Shipped: resumed checksum DIFFERENT (8a6983e0e764e5cb vs 5a2bd148609737c0)",
+      "Fixed: IDENTICAL 38975a17ffb143cd",
+      "Storage: SQLite per-row 22.841 s, batches of 8 3.980 s, one commit 0.058 s (this machine)"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "Ran 9 tests ... OK (skipped=1)"
+      },
+      {
+        "action": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness (shipped file)",
+        "expected": "FAILED (failures=4)"
+      },
+      {
+        "action": "Amdahl fit on S(n) = 1/(0.2 + 0.8/n)",
+        "expected": "f = 0.2"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "UserWarning: ResourceTracker called reentrantly after a simulated crash (Linux)",
+        "action": "Harmless here: the exception terminates the pool; results are unaffected."
+      },
+      {
+        "symptom": "database is locked",
+        "action": "Only the parent writes; keep the .db on a local disk (WAL does not work over network file systems) and outside synced folders."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "With the fixed seeded(), crash after 9 and after 33 results (2 workers), resume on 1 worker.",
+        "predict": "Does the crash point or worker count change the results?",
+        "expected": "fixed, crash after 9, resume on 1 worker: identical = True | fixed, crash after 33, resume on 1 worker: identical = True"
+      },
+      {
+        "task": "Resume both versions after a crash at 20 and read the seed column of task (7, 2).",
+        "predict": "Which stream did that task use?",
+        "expected": "shipped: task (7, 2) seed column = 20/[14] | fixed: task (7, 2) seed column = 20/[7, 2]"
+      }
+    ],
+    "equivalents": [
+      "concurrent.futures.ProcessPoolExecutor with the spawn context; joblib for local pools.",
+      "Dask, Ray or HPC job arrays (Slurm) for many machines - one result file per worker merged by key.",
+      "DuckDB or PostgreSQL as result stores; Apache Parquet via pyarrow for analysis."
+    ],
+    "learningTools": [
+      {
+        "name": "JupyterLab (+ JupyterLab Desktop)",
+        "role": "INSPECT",
+        "exercise": "Open sweep.db from a notebook with the stdlib sqlite3 module, group by scenario and plot mean Wq vs lam for 3, 4 and 5 desks; then run scaling.py's measure() on your machine for 1-4 workers.",
+        "expected": "The 12 means must match the lab table (e.g. lam 2.8, 3 desks: 3.909 shipped / 3.847 fixed); speed-ups above 1 on the Mac mini or Windows PC (the sandbox's 1 CPU gave 0.43 at 4 workers). Pending a manual run.",
+        "mac": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or the JupyterLab Desktop arm64 installer",
+        "windows": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or winget install jupyterlab",
+        "licence": "BSD-3-Clause (OSI: yes)",
+        "url": "https://pypi.org/project/jupyterlab/"
+      },
+      {
+        "name": "KNIME Analytics Platform",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Read sweep.csv with a CSV reader node, group by lam and desks, and compute mean and count of wq.",
+        "expected": "12 groups x 10 reps with the same means as `python sweep.py` prints; node names were not verified here. Pending a manual run in KNIME.",
+        "mac": "brew install --cask knime (Apple Silicon) or .dmg (catalog version 5.12)",
+        "windows": "Installer / self-extracting archive / zip (catalog version 5.12)",
+        "licence": "GPL-3.0 + KNIME additional permissions (OSI: yes)",
+        "url": "https://www.knime.com/downloads"
+      }
+    ],
+    "inRealSystems": [
+      "Simulation studies on clusters keep per-task seeds and results in a keyed store so failed jobs can be re-run without changing published numbers.",
+      "Workflow engines (Snakemake, Nextflow, Airflow) rely on the same idea: a task is identified by its inputs, and finished outputs are skipped on restart."
+    ],
+    "useWhen": "Use checkpointed, identity-keyed parallel runs whenever a study takes longer than you are willing to redo, or its numbers must be reproduced later.",
+    "caution": "Worker processes unpickle what the parent sends - never feed them untrusted input; keep result databases on local disks and back them up separately from the code.",
+    "checkpoint": "PASS: the shipped sweep resumes with a different checksum; after your fix test_build_task and test_fitness pass (48 rows, clean checksum for every crash point and worker count).",
+    "checkYourself": [
+      {
+        "q": "Why was L300's spawn-per-replication fix not enough?",
+        "a": "It tied streams to positions in a list; a resume builds a new, shorter list, so remaining tasks inherit the streams of the first tasks."
+      },
+      {
+        "q": "Why INSERT OR IGNORE plus a primary key?",
+        "a": "A resume may re-run tasks whose results were computed but not committed; the key makes the second insert a no-op instead of a duplicate."
+      },
+      {
+        "q": "What does f = 1.00 from scaling.py mean on this sandbox?",
+        "a": "With 1 CPU nothing runs in parallel - all work is serial plus pool overhead; the fit must be repeated on the target machine."
+      }
+    ],
+    "sources": [
+      {
+        "title": "SQLite: Atomic Commit in SQLite (transactions survive crashes and power failure)",
+        "url": "https://www.sqlite.org/atomiccommit.html"
+      },
+      {
+        "title": "SQLite: Write-Ahead Logging (commit = appended record; not over network file systems)",
+        "url": "https://sqlite.org/wal.html"
+      },
+      {
+        "title": "NumPy v2.5: SeedSequence (spawn_key)",
+        "url": "https://numpy.org/doc/stable/reference/random/bit_generators/generated/numpy.random.SeedSequence.html"
+      },
+      {
+        "title": "L'Ecuyer, Munger, Oreshkin & Simard (2017), Random numbers for parallel computers: requirements and methods, Math. Comput. Simul. 135 (author preprint)",
+        "url": "https://www.iro.umontreal.ca/~lecuyer/myftp/papers/parallel-rng-imacs.pdf"
+      },
+      {
+        "title": "PyPI: pyarrow 26.0.0 (Apache-2.0; wheels for macOS arm64 and Windows x64)",
+        "url": "https://pypi.org/project/pyarrow/"
+      },
+      {
+        "title": "Amdahl (1967), Validity of the single processor approach to achieving large scale computing capabilities, AFIPS (reprint)",
+        "url": "https://users.cs.duke.edu/~lkw34/papers/amdahl-afips1967.pdf"
+      }
+    ],
+    "next": "L400 #21 Model governance and V&V: model cards checked against evidence (results you can reproduce are the raw material of governance)",
+    "validation": {
+      "status": "validated-local",
+      "how": "sweep.py, solution/sweep.py, storage_options.py, scaling.py, try_it.py and unittests (Ran 9 tests ... OK (skipped=1)) ran locally on Python 3.12.15 + numpy 2.5.3 with the spawn start method on Linux (1 CPU); BUILD_TARGET=mine on the shipped file fails both build-task tests and 2 of 3 fitness subtests (FAILED (failures=4)); failure proof shipped FAIL / solution PASS. Timings are this machine's only.",
+      "pendingCi": [
+        "to_parquet.py and TestParquetExport (pyarrow 26.0.0)",
+        "macOS and Windows runs (spawn is their default)",
+        "multi-core scaling (sandbox has 1 CPU)",
+        "JupyterLab and KNIME exercises (manual)"
+      ]
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "conceptNote": "content/concepts/L400/20-parallel-scale.md",
+    "conceptSummary": "Key every task's stream and row on its identity (scenario, rep), commit results in batched SQLite transactions with a primary key, and treat CSV/Parquet as exports. Position-keyed streams changed the results after a crash + resume (8a6983e0... vs 5a2bd148...); identity keys gave 38975a17ffb143cd every time. Measure storage and Amdahl's f on the target machine.",
+    "seeAlso": [
+      "simulation L300 #16 Performance and scale: vectorise, parallelise, keep streams independent: its spawn-per-replication fix is the starting point this lesson breaks with a resume.",
+      "simulation Capstone #22 Capstone: a digital twin of a service centre: the capstone's runner.py reuses this checkpoint pattern for full-day replications.",
+      "ai-agents L400 #18 Durable agent workflows: checkpoints, resume and exactly-once effects: the same checkpoint-and-resume discipline for agent steps."
+    ]
+  },
+  {
+    "id": "model-governance-vv",
+    "number": 21,
+    "level": "L400",
+    "title": "Model governance and V&V: model cards checked against evidence",
+    "phase": "Design",
+    "category": "governance",
+    "description": "Build the governance pack for a staffing model - verification suite, validation against Erlang C with an accuracy requirement fixed in advance (envelope: utilisation <= 0.85), sensitivity, SHA-256 versions of code and data, review checklist - and make the review gate check the model card's claims, not just its headings. A local model may draft card text; code checks every claim.",
+    "outcome": "You can document a simulation model so that its purpose, validity envelope, evidence and versions are machine-checkable, and block publication when a claim outruns the evidence.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; optional Ollama (or llama.cpp server) for agent assist",
+    "estimatedTime": "90 minutes",
+    "overview": [
+      "A model card is a list of claims; evidence is what code measured; governance is the diff - run in CI."
+    ],
+    "prerequisites": [
+      "Lesson 6 (verification vs validation)",
+      "Lesson 8 (Erlang C)",
+      "Lesson 14 (sensitivity analysis)"
+    ],
+    "glossary": [
+      {
+        "term": "verification",
+        "meaning": "Is the code a correct implementation of the model? (Sargent: degenerate, extreme-condition, internal-validity tests)"
+      },
+      {
+        "term": "validation (operational validity)",
+        "meaning": "Is the model's output accurate enough for its purpose within its domain of applicability?"
+      },
+      {
+        "term": "validity envelope",
+        "meaning": "The input range over which validation evidence meets the accuracy requirement - here utilisation <= 0.85."
+      },
+      {
+        "term": "model card",
+        "meaning": "Structured documentation of purpose, intended use, assumptions, evidence, limits and versions (after Mitchell et al. 2019)."
+      }
+    ],
+    "concepts": [
+      "Fix the accuracy requirement before the runs.",
+      "The envelope is computed, not declared.",
+      "Pin code and data by hash; a change stales the card.",
+      "Review gates check numbers, not headings; agents draft, code checks."
+    ],
+    "steps": [
+      {
+        "title": "Run it",
+        "detail": "`python governance.py` runs the verification suite, validates against Erlang C at 7 utilisations (10 reps x 20,000 patients), computes elasticities and hashes, writes evidence.json and checks two cards.",
+        "mac": "cd labs/L400/21-governance-vv\npython governance.py",
+        "windows": "cd labs\\L400\\21-governance-vv\npython governance.py",
+        "expected": "verification: 7 tests, 0 failures; envelope utilisation <= 0.85; most influential: mu; BOTH cards PUBLISHABLE (the fault).",
+        "ifNot": "ModuleNotFoundError mmc_queue: keep the labs/ layout (the model lives in L200 lesson 8)."
+      },
+      {
+        "title": "Verification suite",
+        "detail": "verification.py groups Sargent's techniques: degenerate (1 desk = M/M/1, more desks than patients), extreme condition (overload refused, light load), internal validity (seeds, Little's law, pooling).",
+        "mac": "cd labs/L400/21-governance-vv\npython -m unittest verification -v",
+        "windows": "cd labs\\L400\\21-governance-vv\npython -m unittest verification -v",
+        "expected": "Ran 7 tests ... OK",
+        "ifNot": "A failing degenerate test means the code, not the data, is wrong."
+      },
+      {
+        "title": "Validation sets the envelope",
+        "detail": "Requirement fixed in advance: relative error AND relative 95% CI half-width <= 10%. rho 0.90 fails on the CI (11.9%), so the envelope ends at 0.85; the busiest hour in arrivals.csv needs 0.80.",
+        "expected": "rho 0.85: error 3.1%, CI 6.7% True; rho 0.90: 5.5%, 11.9% False.",
+        "ifNot": "Tighter requirement -> smaller envelope (tryIt 1: 5% gives 0.5)."
+      },
+      {
+        "title": "Failure lab: a draft that overclaims",
+        "detail": "cards/draft_overclaiming.json claims utilisation <= 0.95, error 2.0%, key input lam and an old code hash; the shipped check_card() only checks headings.",
+        "expected": "draft_overclaiming.json: PUBLISHABLE; findings [] - false assurance.",
+        "ifNot": "BLOCKED here means you are running the solution."
+      },
+      {
+        "title": "Build: check the claims",
+        "detail": "check_card() compares envelope, accuracy, key input, verification count and both hashes with the evidence; a claim may be more conservative, never wider or better.",
+        "mac": "cd labs/L400/21-governance-vv\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+        "windows": "cd labs\\L400\\21-governance-vv\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task -v\nRemove-Item Env:BUILD_TARGET",
+        "expected": "Shipped: FAILED (failures=4) (subtests); after your fix: Ran 2 tests ... OK.",
+        "ifNot": "The honest card must stay publishable - compare 'claimed error >= measured', not equality."
+      },
+      {
+        "title": "Agent assist (optional)",
+        "detail": "`python agent_assist.py --fake` (drop --fake for local Ollama): the model drafts 'Validity and evidence' lines from evidence.json; code extracts each claim and marks OK / OVERCLAIM; other numbers are UNVERIFIED.",
+        "mac": "cd labs/L400/21-governance-vv\npython agent_assist.py --fake",
+        "windows": "cd labs\\L400\\21-governance-vv\npython agent_assist.py --fake",
+        "expected": "OVERCLAIM envelope 0.95, OVERCLAIM accuracy 2.0%, OK key input, OK verification; UNVERIFIED 3, 2.0; draft REJECTED.",
+        "ifNot": "'Run python governance.py first': the agent only sees evidence.json."
+      },
+      {
+        "title": "Prove the decision and run all tests",
+        "detail": "test_fitness.py re-runs the evidence and requires a green verification suite, no findings on the committed card, envelope >= busiest hour and a fully ticked checklist.",
+        "mac": "cd labs/L400/21-governance-vv\npython -m unittest -v",
+        "windows": "cd labs\\L400\\21-governance-vv\npython -m unittest -v",
+        "expected": "Ran 14 tests ... OK",
+        "ifNot": "test_committed_card_matches_fresh_evidence fails after editing mmc_queue.py or arrivals.csv: re-run the evidence, update the card's hashes and bump model_version."
+      }
+    ],
+    "code": "\"\"\"L400 model governance: build the V&V evidence pack for a staffing model and check the model card against it.\n\nModel under governance: the L200 lesson 8 clinic queue (M/M/3 DES), used to staff a reception desk.\nEvidence = verification suite + validation against Erlang C over a utilisation grid + sensitivity + hashes.\npython governance.py       (writes evidence.json; checks model_card.json and cards/draft_overclaiming.json)\n\"\"\"\nimport hashlib\nimport io\nimport json\nimport sys\nimport unittest\nfrom pathlib import Path\n\nimport numpy as np\n\nHERE = Path(__file__).resolve().parent\nMODEL_FILE = HERE.parents[1] / \"L200\" / \"08-multi-server-queue\" / \"mmc_queue.py\"\nsys.path.append(str(MODEL_FILE.parent))\nimport mmc_queue as mq  # noqa: E402\n\nDATA_FILE, CARD = HERE / \"arrivals.csv\", HERE / \"model_card.json\"\nRHO_GRID, REPS, CUSTOMERS, TOL = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95), 10, 20_000, 0.10  # TOL set BEFORE the runs\nREQUIRED = (\"purpose\", \"intended_use\", \"assumptions\", \"validity_envelope\", \"verification\", \"validation\",\n            \"sensitivity\", \"versions\", \"limitations\", \"review\")\n\n\ndef sha256(path):\n    return hashlib.sha256(Path(path).read_bytes().replace(b\"\\r\\n\", b\"\\n\")).hexdigest()  # CRLF-safe: same on Windows\n\n\ndef verify():\n    \"\"\"Verification: run the suite in verification.py and keep the counts (the code is right?).\"\"\"\n    suite = unittest.defaultTestLoader.loadTestsFromName(\"verification\")\n    result = unittest.TextTestRunner(stream=io.StringIO(), verbosity=0).run(suite)\n    return {\"tests_run\": result.testsRun, \"failures\": len(result.failures) + len(result.errors)}\n\n\ndef validate():\n    \"\"\"Operational validity: simulated mean wait vs the exact Erlang C value at each utilisation.\"\"\"\n    rows = []\n    for i, rho in enumerate(RHO_GRID):\n        lam = 3 * rho\n        runs = np.array([mq.simulate(CUSTOMERS, 3, lam, 1.0, seed=100 * i + r)[\"Wq\"] for r in range(REPS)])\n        exact = mq.erlang_c(3, lam, 1.0)[\"Wq\"]\n        half = 2.262 * runs.std(ddof=1) / np.sqrt(REPS)  # t(0.975, 9 df) = 2.262\n        rel = abs(runs.mean() - exact) / exact\n        rows.append({\"rho\": rho, \"sim_Wq\": round(float(runs.mean()), 4), \"exact_Wq\": round(exact, 4),\n                     \"rel_error\": round(float(rel), 4), \"rel_half_width\": round(float(half / runs.mean()), 4),\n                     \"ok\": bool(rel <= TOL and half / runs.mean() <= TOL)})\n    envelope = 0.0\n    for row in rows:  # the envelope ends at the first utilisation that fails the accuracy requirement\n        if not row[\"ok\"]:\n            break\n        envelope = row[\"rho\"]\n    return rows, envelope\n\n\ndef sensitivity(lam=2.4, mu=1.0, c=3, h=0.01):\n    \"\"\"Elasticities d ln Wq / d ln x at the nominal point (central differences on Erlang C).\"\"\"\n    wq = lambda lam_, mu_: np.log(mq.erlang_c(c, lam_, mu_)[\"Wq\"])\n    return {\"lam\": round(float((wq(lam * (1 + h), mu) - wq(lam * (1 - h), mu)) / (2 * h)), 2),\n            \"mu\": round(float((wq(lam, mu * (1 + h)) - wq(lam, mu * (1 - h))) / (2 * h)), 2)}\n\n\ndef peak_utilisation():\n    \"\"\"The busiest hour in the arrival data, as utilisation of 3 desks serving 1 patient/min each.\"\"\"\n    counts = [int(line.split(\",\")[1]) for line in DATA_FILE.read_text(encoding=\"utf-8\").splitlines()[1:]]\n    return round(max(counts) / 60 / 3, 3)\n\n\ndef evidence():\n    rows, envelope = validate()\n    elastic = sensitivity()\n    return {\"verification\": verify(), \"validation\": rows, \"envelope_rho_max\": envelope,\n            \"max_rel_error_in_envelope\": max(r[\"rel_error\"] for r in rows if r[\"rho\"] <= envelope),\n            \"sensitivity\": elastic, \"most_influential\": max(elastic, key=lambda k: abs(elastic[k])),\n            \"peak_utilisation\": peak_utilisation(), \"code_sha256\": sha256(MODEL_FILE), \"data_sha256\": sha256(DATA_FILE)}\n\n\ndef check_card(card, ev):\n    \"\"\"Review gate: returns a list of findings; an empty list means the card may be published.\"\"\"\n    return [f\"missing section: {key}\" for key in REQUIRED if key not in card]\n\n\ndef checklist(card, ev, findings):\n    return [(\"verification suite passes\", ev[\"verification\"][\"failures\"] == 0),\n            (\"validated envelope covers the busiest hour in the data\", ev[\"envelope_rho_max\"] >= ev[\"peak_utilisation\"]),\n            (\"sensitivity results recorded\", \"sensitivity\" in card),\n            (\"model and data versions pinned by hash\", \"versions\" in card),\n            (\"card claims match the evidence\", not findings)]\n\n\ndef main():\n    ev = evidence()\n    (HERE / \"evidence.json\").write_text(json.dumps(ev, indent=1) + \"\\n\", encoding=\"utf-8\")\n    v = ev[\"verification\"]\n    print(f\"verification: {v['tests_run']} tests, {v['failures']} failures\")\n    print(\"validation vs Erlang C (10 reps x 20,000 patients):  rho  sim_Wq  exact  rel_err  rel_CI  ok\")\n    for r in ev[\"validation\"]:\n        print(f\"  {r['rho']:4.2f} {r['sim_Wq']:7.3f} {r['exact_Wq']:6.3f} {r['rel_error']:7.1%} {r['rel_half_width']:6.1%}  {r['ok']}\")\n    print(f\"validity envelope: utilisation <= {ev['envelope_rho_max']}; max error inside {ev['max_rel_error_in_envelope']:.1%}; \"\n          f\"busiest hour in arrivals.csv needs {ev['peak_utilisation']}\")\n    print(f\"sensitivity (elasticity of Wq): {ev['sensitivity']} -> most influential: {ev['most_influential']}\")\n    for path in (CARD, HERE / \"cards\" / \"draft_overclaiming.json\"):\n        card = json.loads(path.read_text(encoding=\"utf-8\"))\n        findings = check_card(card, ev)\n        print(f\"{path.name}: {'PUBLISHABLE' if not findings else 'BLOCKED'}; findings {findings}\")\n        for item, ok in checklist(card, ev, findings):\n            print(f\"   [{'x' if ok else ' '}] {item}\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "sha256()",
+        "detail": "Hashes code and data with CRLF normalised, so a Windows checkout gives the same version as macOS."
+      },
+      {
+        "title": "verify()",
+        "detail": "Runs verification.py through the unittest API and keeps only counts - evidence, not console output."
+      },
+      {
+        "title": "validate()",
+        "detail": "10 reps x 20,000 patients per utilisation; the envelope ends at the first utilisation failing the pre-set 10% requirement on error or CI."
+      },
+      {
+        "title": "sensitivity() / peak_utilisation()",
+        "detail": "Elasticities d ln Wq / d ln x from Erlang C by central differences (lam 6.01, mu -7.02); the busiest data hour needs utilisation 0.80."
+      },
+      {
+        "title": "check_card()",
+        "detail": "The review gate. Shipped: section headings only (the fault). Fixed: each claim vs evidence, plus stale hashes."
+      },
+      {
+        "title": "checklist() / main()",
+        "detail": "Human-readable review items derived from evidence and findings; main() writes evidence.json and prints a verdict per card."
+      }
+    ],
+    "failureLab": {
+      "fault": "Shipped check_card() returns findings only for missing sections, so any card with the right headings is publishable.",
+      "symptom": "cards/draft_overclaiming.json (utilisation <= 0.95, error 2.0%, key input lam, code hash 000...) prints PUBLISHABLE; findings [].",
+      "fix": "check_card() compares claims with evidence (solution/governance.py): 4 findings - envelope 0.95 vs 0.85, error 2.0% vs 5.5%, key input lam vs mu, stale code_sha256; the honest model_card.json still has none.",
+      "proof": "BUILD_TARGET=mine python -m unittest test_build_task: shipped FAILED (failures=4, all subtests of one test), solution OK; TestFailureLab keeps the fault reproducible; research/failure_proofs_L400.py shipped FAIL / solution PASS."
+    },
+    "tradeOffs": [
+      {
+        "option": "Prose documentation",
+        "gains": "Fast, readable, flexible",
+        "costs": "Unchecked: caught 0 of 4 overclaims",
+        "chooseWhen": "Throw-away analyses"
+      },
+      {
+        "option": "Structured card + CI claim checks",
+        "gains": "Caught 4 of 4; stale data detected; cheap per release",
+        "costs": "Every code/data change needs a re-run and version bump",
+        "chooseWhen": "Advisory models used repeatedly (medium consequence)"
+      },
+      {
+        "option": "Risk-informed credibility assessment (NASA-STD-7009B, FDA 2023 / ASME V&V 40)",
+        "gains": "Rigour scaled to decision consequence; regulator-recognised",
+        "costs": "Mostly human-scored; heavy",
+        "chooseWhen": "Safety-relevant or regulated decisions"
+      }
+    ],
+    "buildTask": {
+      "task": "Extend check_card(card, ev) in governance.py: after the section check, add findings when the claimed utilisation_max exceeds the evidence envelope, the claimed max_rel_error is smaller than measured, the claimed most influential input differs, the verification count differs from a clean run, or code_sha256/data_sha256 differ.",
+      "hints": [
+        "A claim may be more conservative than the evidence, never wider or better.",
+        "Return a list of strings; [] means publishable.",
+        "The honest model_card.json must still pass (claimed error 0.06 >= measured 0.055)."
+      ],
+      "solution": "labs/L400/21-governance-vv/solution/governance.py",
+      "check": "BUILD_TARGET=mine python -m unittest test_build_task -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped file: FAILED (failures=4); after your fix: Ran 2 tests ... OK."
+    },
+    "agentAssist": {
+      "task": "A local model drafts the model card's 'Validity and evidence' lines from evidence.json; code extracts every claim (envelope, accuracy, key input, test count) and decides OK/OVERCLAIM; numbers not in the evidence are UNVERIFIED; any overclaim rejects the draft.",
+      "prompt": "[[SIM-CARD]] Draft the 'Validity and evidence' section of a model card in at most 5 short lines, using ONLY these facts. Use the phrases 'utilisation up to', 'within X% of Erlang C', 'most sensitive to' and 'N of M tests pass'. <evidence>{facts}</evidence>",
+      "check": "check_claims(): utilisation claim <= evidence envelope; accuracy claim >= measured max error; named input == most influential by elasticity; 'N of M tests pass' == clean suite run. unverified_numbers(): every other number must match the evidence to 0.05.",
+      "expected": "OVERCLAIM envelope 'utilisation up to 0.95' | OVERCLAIM accuracy 'within 2.0% of Erlang C' | OK key input | OK verification | UNVERIFIED: 3, 2.0 | code verdict: draft REJECTED",
+      "realModelNote": "`python agent_assist.py` uses LOCAL_MODEL_URL (default http://localhost:11434/v1) and LOCAL_MODEL (default qwen2.5:1.5b). Real drafts vary; unrecognised phrasing yields fewer than 4 claims and the draft is rejected. The fake rule is registered via the shared server's EXTRA_RULES hook (labs/_shared unchanged). Not run here against a real model."
+    },
+    "designBrief": {
+      "context": "The clinic queue model (L200 lesson 8) informs how many reception desks to open; it will be edited, re-fed with new arrival data and quoted in reports for months. The decision consequence is medium (advisory, signed off by the clinic manager).",
+      "constraints": [
+        "accuracy requirement fixed before validation: relative error and relative CI half-width <= 10%",
+        "validity envelope computed from evidence and covering the busiest data hour",
+        "code and data versions pinned by SHA-256 (CRLF-safe)",
+        "publication blocked automatically on any unsupported claim",
+        "an agent may draft text but never publishes or decides"
+      ],
+      "question": "What governance artefacts does this model need, and how are they kept true as code and data change?"
+    },
+    "options": [
+      {
+        "name": "A. Prose README",
+        "description": "Purpose, assumptions and limits as free text; checked by eye.",
+        "evidence": "The shipped heading check passed the overclaiming draft: 0 of 4 overclaims caught.",
+        "verdict": "Rejected."
+      },
+      {
+        "name": "B. Structured model card + machine-checked claims",
+        "description": "JSON card; evidence regenerated in CI; check_card() blocks on any finding.",
+        "evidence": "4 of 4 overclaims caught; one appended data row stales the card (tryIt 2); honest card publishable.",
+        "verdict": "Chosen (ADR 0001)."
+      },
+      {
+        "name": "C. Full risk-informed credibility assessment",
+        "description": "NASA-STD-7009B / FDA 2023 (ASME V&V 40: model influence x decision consequence) credibility factors scored by reviewers.",
+        "evidence": "Not automated here; its factors are mapped into the review checklist.",
+        "verdict": "Kept for safety-relevant decisions."
+      }
+    ],
+    "decisionRecord": "labs/L400/21-governance-vv/decisions/0001-machine-checked-model-card.md",
+    "fitnessFunction": {
+      "what": "Re-runs the full evidence pack and checks the committed card against it.",
+      "test": "labs/L400/21-governance-vv/test_fitness.py",
+      "threshold": "verification failures 0; card findings []; envelope >= busiest hour (0.85 >= 0.80); all checklist items ticked"
+    },
+    "scalingLimits": [
+      "Many models: hand-written checks drift from the claims they guard - signal: claims with no check; generate the card's numeric fields from evidence.",
+      "Stochastic evidence near a threshold: a re-run can flip a claim (rho 0.80 CI 9.9% vs 10%) - signal: flaky governance builds; fix seeds and report CIs, increase replications near the edge.",
+      "Hash pinning on fast-moving code: every refactor stales the card - signal: version bumps without behaviour change; pin the model module and data, not the whole repository."
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/21-governance-vv/governance.py",
+        "purpose": "main lab code (ships the heading-only check_card())"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/verification.py",
+        "purpose": "verification suite (Sargent's techniques)"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/arrivals.csv",
+        "purpose": "versioned input data (busiest hour 144 patients)"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/model_card.json",
+        "purpose": "the honest model card"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/cards/draft_overclaiming.json",
+        "purpose": "failure-lab fixture"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/agent_assist.py",
+        "purpose": "optional local-model drafting, checked by code"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/solution/governance.py",
+        "purpose": "buildTask solution (claim checks)"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/try_it.py",
+        "purpose": "tryIt experiments (accuracy requirement, data change)"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/test_governance.py",
+        "purpose": "evidence tests + fault reproduction"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/test_build_task.py",
+        "purpose": "buildTask check (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/test_fitness.py",
+        "purpose": "fitness function for ADR 0001"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/test_agent_assist.py",
+        "purpose": "agent assist tests (fake server)"
+      },
+      {
+        "path": "labs/L400/21-governance-vv/decisions/0001-machine-checked-model-card.md",
+        "purpose": "architecture decision record"
+      }
+    ],
+    "expectedResults": [
+      "verification 7/7; envelope utilisation <= 0.85 (max error 5.5%); busiest hour 0.80",
+      "Shipped: overclaiming draft PUBLISHABLE",
+      "Fixed: 4 findings; honest card PUBLISHABLE"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "Ran 14 tests ... OK"
+      },
+      {
+        "action": "BUILD_TARGET=mine python -m unittest test_build_task (shipped file)",
+        "expected": "FAILED (failures=4)"
+      },
+      {
+        "action": "python agent_assist.py --fake",
+        "expected": "2 OVERCLAIM, 2 OK, UNVERIFIED 3, 2.0, draft REJECTED"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Card stale right after a git checkout on Windows",
+        "action": "Hashes normalise CRLF; if it still differs the file content really changed - check .gitattributes."
+      },
+      {
+        "symptom": "Envelope shrinks between runs",
+        "action": "Seeds changed or replications were cut; evidence must be seeded and the requirement fixed."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Tighten the accuracy requirement from 10% to 5%.",
+        "predict": "How far does the validated envelope reach?",
+        "expected": "accuracy requirement 10%: validated envelope utilisation <= 0.85 | accuracy requirement 5%: validated envelope utilisation <= 0.5"
+      },
+      {
+        "task": "Append one corrected hour (20,31) to a copy of arrivals.csv and re-check the committed card.",
+        "predict": "Still publishable?",
+        "expected": "committed data: no findings | one new row: ['data_sha256 is stale: re-run the evidence and bump model_version']"
+      }
+    ],
+    "equivalents": [
+      "Model cards (Mitchell et al.) and datasheets; MLflow / DVC model and data versioning.",
+      "ASME V&V 40 and NASA-STD-7009B credibility assessments for regulated or safety-relevant use.",
+      "Simulation vendors' validation report templates (vendor, one line only)."
+    ],
+    "learningTools": [
+      {
+        "name": "SALib",
+        "role": "CHECK",
+        "exercise": "Run Morris (and Sobol') on log Wq from mmc_queue.erlang_c over lam 2.0-2.55 and mu 0.95-1.10 (3 desks) and compare the ranking with the lab's elasticities.",
+        "expected": "mu should rank first (lab elasticities mu -7.02, lam 6.01) - the card's 'most influential: mu' claim must survive a global method too. SALib is not installed here: pending CI / a manual run.",
+        "mac": "pip install SALib (catalog version 1.6.0, Python >=3.10; pinned in labs/L300/requirements.txt)",
+        "windows": "pip install SALib (catalog version 1.6.0; pinned in labs\\L300\\requirements.txt)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://pypi.org/project/SALib/"
+      },
+      {
+        "name": "marimo",
+        "role": "SEE",
+        "exercise": "In a marimo notebook import solution/governance.py, make TOL and REPS sliders, and show the validation table, the computed envelope and check_card() findings for both cards reactively.",
+        "expected": "At TOL 0.10 / REPS 10 the envelope must read 0.85 and the draft 4 findings (lab output); TOL 0.05 shows 0.5 (tryIt 1). Pending a manual run in marimo.",
+        "mac": "pip install marimo (catalog version 0.25.2), then marimo edit",
+        "windows": "pip install marimo (catalog version 0.25.2), then marimo edit",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://pypi.org/project/marimo/"
+      }
+    ],
+    "inRealSystems": [
+      "Regulated industries (medical devices, space) require credibility evidence scaled to model risk before simulation results support decisions.",
+      "Teams publishing analytics models keep model cards and data versions under CI so a changed input forces a re-validation."
+    ],
+    "useWhen": "Govern any model whose numbers outlive the analysis that produced them: staffing, capacity, risk and policy models.",
+    "caution": "Never let an agent publish or sign off a model card; send it only aggregated evidence (no data rows, no secrets); a 'validated' label without an envelope is a liability.",
+    "checkpoint": "PASS: the shipped gate publishes the overclaiming draft; with your check_card() test_build_task passes and test_fitness keeps the committed card honest.",
+    "checkYourself": [
+      {
+        "q": "Why did rho 0.90 fail validation although its error was only 5.5%?",
+        "a": "The requirement also bounds the CI half-width (11.9% > 10%): with 10 replications we cannot claim accuracy there."
+      },
+      {
+        "q": "Why hash data as well as code?",
+        "a": "A model validated on one arrival file is not validated on another; the hash makes the card stale the moment data changes."
+      },
+      {
+        "q": "What does the agent never see or do?",
+        "a": "No code, no raw data, no keys; it cannot publish - code checks every claim and rejects the draft on any overclaim."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Sargent (2010), Verification and validation of simulation models, Proc. Winter Simulation Conference",
+        "url": "https://www.informs-sim.org/wsc10papers/016.pdf"
+      },
+      {
+        "title": "NASA-STD-7009B (2024), Standard for Models and Simulations (catalogue page)",
+        "url": "https://standards.nasa.gov/standard/nasa/nasa-std-7009"
+      },
+      {
+        "title": "US FDA (2023), Assessing the Credibility of Computational Modeling and Simulation in Medical Device Submissions (guidance)",
+        "url": "https://www.fda.gov/regulatory-information/search-fda-guidance-documents/assessing-credibility-computational-modeling-and-simulation-medical-device-submissions"
+      },
+      {
+        "title": "Mitchell et al. (2019), Model Cards for Model Reporting, FAT* '19 (arXiv:1810.03993)",
+        "url": "https://arxiv.org/abs/1810.03993"
+      },
+      {
+        "title": "Semantic Versioning 2.0.0",
+        "url": "https://semver.org/"
+      }
+    ],
+    "next": "Capstone #22 Capstone: a digital twin of a service centre (all five L400 designs in one governed decision)",
+    "validation": {
+      "status": "validated-local",
+      "how": "governance.py, solution/governance.py, verification.py, try_it.py, agent_assist.py --fake and unittests (Ran 14 tests ... OK) ran locally on Python 3.12.15 + numpy 2.5.3; BUILD_TARGET=mine on the shipped file fails the claim test (4 subtests); failure proof shipped FAIL / solution PASS. Agent assist tested against the fake server only.",
+      "pendingCi": [
+        "agent_assist.py against a real local model (fake server only)",
+        "SALib and marimo exercises",
+        "macOS and Windows runs (CRLF hashing is normalised but untested on Windows)"
+      ]
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "conceptNote": "content/concepts/L400/21-governance-vv.md",
+    "conceptSummary": "A model card is claims; evidence is what code measured (verification 7/7, Erlang C validation with a pre-set 10% requirement -> envelope utilisation <= 0.85, elasticities, SHA-256 of code and data); governance is the diff, run in CI. A heading-only gate published a draft with 4 overclaims; the claim-checking gate blocked it, and one appended data row stales the card.",
+    "seeAlso": [
+      "simulation Capstone #22 Capstone: a digital twin of a service centre: its governance_pack reuses this lesson's sha256() and claim-checking pattern.",
+      "ai-agents L400 #21 Governance and evaluation in production: the same evidence-before-release gate for agents.",
+      "application-architecture L100 #6 Documenting architecture: C4 diagrams as text and an ADR: the Nygard ADR format used for every decision record in this level."
+    ]
+  },
+  {
+    "id": "capstone-service-centre-twin",
+    "number": 22,
+    "level": "Capstone",
+    "title": "Capstone: a digital twin of a service centre",
+    "phase": "Design",
+    "category": "capstone",
+    "description": "End to end on seeded data: fit inputs from call logs, verify a DES with abandonment, calibrate patience and validate on holdout days, staff every hour under an SLA with simulation and 95% bounds, run checkpointed parallel replications, re-plan from a live demand twin, and publish only through a governance pack - with a JSON-lines scorecard. Code decides; a local model only explains.",
+    "outcome": "You can integrate input modelling, DES, calibration, sensitivity, optimisation, parallel replications, a live twin and governance into one reproducible decision pipeline whose every step is tested.",
+    "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; reuses L200 #7 fit_inputs, L200 #8 mmc_queue, L400 #17 Twin, L400 #20 runner pattern, L400 #21 sha256; optional Ollama for the explanation",
+    "estimatedTime": "4-6 hours",
+    "overview": [
+      "Six milestones, one scorecard: every number that drives the staffing decision comes from tested code; the agent's words are checked before anyone reads them."
+    ],
+    "prerequisites": [
+      "L200 #7 (input modelling)",
+      "L200 #8 (Erlang C)",
+      "L300 #13 (calibration + holdout)",
+      "L400 #17-21"
+    ],
+    "glossary": [
+      {
+        "term": "service level (SL)",
+        "meaning": "Share of calls answered within 1 minute; the SLA asks >= 80% and <= 5% abandoned in every hour."
+      },
+      {
+        "term": "abandonment / patience",
+        "meaning": "A caller hangs up after an exponential patience time; patience is not observed directly and must be calibrated."
+      },
+      {
+        "term": "thinning",
+        "meaning": "Simulating time-varying Poisson arrivals by accepting candidates from a faster process with probability rate(t)/rate_max (Lewis & Shedler 1979)."
+      },
+      {
+        "term": "scorecard",
+        "meaning": "JSON lines, one per milestone with its measures and pass flag, plus a final PASS/FAIL line."
+      }
+    ],
+    "concepts": [
+      "Reuse, do not duplicate: earlier labs are imported.",
+      "Every decision has an ADR and a fitness function.",
+      "Weakly identified inputs are fine if the decision is insensitive to them - and you must show it.",
+      "Live data triggers re-planning; out-of-envelope plans carry review flags."
+    ],
+    "steps": [
+      {
+        "title": "Run the capstone",
+        "detail": "`python run_capstone.py` generates data/history.csv on first run (seeded), runs M1-M6 and prints the scorecard (about 3 minutes on a 1-CPU sandbox).",
+        "mac": "cd labs/L400/22-capstone\npython run_capstone.py",
+        "windows": "cd labs\\L400\\22-capstone\npython run_capstone.py",
+        "expected": "6 milestone lines, all pass true, then {\"scorecard\": \"PASS\", \"passed\": 6, \"total\": 6}.",
+        "ifNot": "RuntimeError about bootstrapping: keep the main guard; ModuleNotFoundError: keep the labs/ layout (the capstone imports L200 and L400 labs)."
+      },
+      {
+        "title": "M1-M3: inputs, DES, calibration",
+        "detail": "Read the first three lines: lognormal wins by KS (0.0059), the degenerate DES matches Erlang C (0.8376 vs 0.8365), patience 4.5 min with a plausible set 3.0-5.5 and holdout errors 1.09/0.73 pp.",
+        "expected": "M3 shows weak identifiability honestly (the hidden truth is 3.0).",
+        "ifNot": "Holdout errors > 3/2 pp: check that calibration used days 1-3 only."
+      },
+      {
+        "title": "M4: staffing under the SLA",
+        "detail": "Erlang C seed -> hour_check with 95% bounds (10 CRN reps) -> full-day repair. Compare with try_it.py.",
+        "mac": "cd labs/L400/22-capstone\npython try_it.py",
+        "windows": "cd labs\\L400\\22-capstone\npython try_it.py",
+        "expected": "point estimates 208 agent-hours (worst-hour abandonment 0.064, fails); 95% bounds 221 (0.036); Erlang C 219 (0.036, 2 hours fail the bound).",
+        "ifNot": "If your plan is cheaper than 221, check it with test_fitness - point estimates break the SLA."
+      },
+      {
+        "title": "M5: parallel replications and the live twin",
+        "detail": "runner.py runs 24 full days on a spawn pool into SQLite (crash + resume identical); demand_twin.py replays data/today.jsonl through a Kalman filter + the lesson 17 CUSUM.",
+        "expected": "alarm at 14:15 (75 min after the surge), m 1.201; re-plan from 15:00 +14 agent-hours; worst SL after 15:00 0.719 static vs 0.896 re-planned.",
+        "ifNot": "No alarm: check that DemandTwin inherits drift_check from lesson 17's Twin."
+      },
+      {
+        "title": "M6: governance and the agent",
+        "detail": "governance_pack.check() compares model_card.json with this run's evidence and file hashes; review_flags lists planned rates above the validated 5.6 calls/min; agent_explain checks every number the model writes.",
+        "expected": "card_findings []; review_flags ['hour 15:00 plans for 6.16 calls/min > validated 5.6']; agent_unverified ['9'] -> agent_publish false.",
+        "ifNot": "card_findings mention a changed file: you edited centre.py/pipeline.py - re-run evidence, regenerate the card hashes, bump model_version."
+      },
+      {
+        "title": "Milestone tests and fitness functions",
+        "detail": "`python -m unittest -v` runs one test class per milestone plus the fitness functions.",
+        "mac": "cd labs/L400/22-capstone\npython -m unittest -v",
+        "windows": "cd labs\\L400\\22-capstone\npython -m unittest -v",
+        "expected": "Ran 16 tests ... OK",
+        "ifNot": "The Scorecard test skips until scorecard.jsonl exists."
+      },
+      {
+        "title": "Agent with a real local model (optional)",
+        "detail": "`python run_capstone.py --real-model` sends only the facts table (no data, no keys) to LOCAL_MODEL_URL; the plan is already decided.",
+        "mac": "cd labs/L400/22-capstone\npython run_capstone.py --real-model",
+        "windows": "cd labs\\L400\\22-capstone\npython run_capstone.py --real-model",
+        "expected": "Same decision; agent_unverified lists any number the model invented; agent_publish true only if none.",
+        "ifNot": "Connection refused: start Ollama (see shared/WORKSTATION-SETUP.md) or run without --real-model."
+      }
+    ],
+    "code": "\"\"\"L400 capstone: a digital twin of a service centre - from call logs to a governed staffing decision.\n\nM1 input modelling -> M2 DES core verified -> M3 calibration + holdout validation -> M4 sensitivity + staffing\noptimisation under the SLA -> M5 parallel replications + live-demand twin -> M6 governance pack + agent explanation.\nDeterministic code decides every step; the optional local model only explains. Prints a JSON-lines scorecard.\npython run_capstone.py            (agent assist with the fake model; add --real-model to use LOCAL_MODEL_URL)\n\"\"\"\nimport argparse\nimport json\nimport math\nimport tempfile\nfrom pathlib import Path\n\nimport numpy as np\n\nimport agent_explain\nimport centre\nimport demand_twin\nimport governance_pack\nimport make_data\nimport pipeline\nimport runner\n\nHERE = Path(__file__).resolve().parent\nREPS_DAY = 24  # full-day replications for plan validation (parallel, checkpointed)\n\n\ndef score(milestone, passed, **measures):\n    line = {\"milestone\": milestone, \"pass\": bool(passed), **measures}\n    print(json.dumps(line))\n    return line\n\n\ndef verify_des():\n    \"\"\"M2: degenerate case = M/M/3 with no abandonment, where Erlang C is exact.\"\"\"\n    runs = [centre.simulate([2.0] * 100, [3] * 100, 1.0, None, 1e9, seed=s) for s in range(4)]\n    sim_sl = np.mean([h[\"sl\"] for run in runs for h in run[1:]])  # 100-hour runs: queue waits are autocorrelated\n    r = pipeline.mmc_queue.erlang_c(3, 2.0, 1.0)\n    exact_sl = 1 - r[\"P_wait\"] * math.exp(-(3 - 2.0) * centre.SL_MIN)\n    same = centre.simulate([3.0], [10], 4.0, 0.8, 3.0, seed=7) == centre.simulate([3.0], [10], 4.0, 0.8, 3.0, seed=7)\n    return round(float(sim_sl), 4), round(exact_sl, 4), same\n\n\ndef validate_day(rates, staff, inp, patience, workers, tmp):\n    \"\"\"M5a: the hour-by-hour plan simulated as ONE day with carry-over, 24 reps, parallel; then crash + resume.\"\"\"\n    tasks = [((rep,), rates, staff, inp[\"mean_service\"], inp[\"cv\"], patience) for rep in range(REPS_DAY)]\n    clean, resumed = tmp / \"clean.db\", tmp / \"resumed.db\"\n    runner.run(clean, tasks, workers=workers)\n    try:\n        runner.run(resumed, tasks, workers=1, crash_after=10)\n    except runner.Crash:\n        runner.run(resumed, tasks, workers=1)\n    return runner.hourly_summary(clean), runner.checksum(clean) == runner.checksum(resumed)\n\n\ndef main():\n    ap = argparse.ArgumentParser()\n    ap.add_argument(\"--workers\", type=int, default=2)\n    ap.add_argument(\"--real-model\", action=\"store_true\")\n    args, card = ap.parse_args(), governance_pack.load_card()\n    lines = []\n    inp = pipeline.model_inputs(pipeline.history())\n    rate_err = max(abs(a - b) / b for a, b in zip(inp[\"rates\"], make_data.TRUE_RATES))\n    lines.append(score(\"M1 input modelling\", inp[\"service_dist\"] == \"lognormal\" and rate_err < 0.10,\n                       service=inp[\"service_dist\"], ks=inp[\"ks_all\"], max_rate_error=round(rate_err, 3)))\n    sim_sl, exact_sl, same = verify_des()\n    lines.append(score(\"M2 DES core verified\", abs(sim_sl - exact_sl) < 0.01 and same,\n                       sl_sim=sim_sl, sl_erlang_c=exact_sl, reproducible=same))\n    patience, sse = pipeline.calibrate(inp)\n    val = pipeline.validate(inp, patience)\n    flat = [p for p, v in sse.items() if v <= 1.2 * min(sse.values())]\n    lines.append(score(\"M3 calibration + holdout validation\", val[\"sl_mae_pp\"] <= 3 and val[\"abandon_mae_pp\"] <= 2,\n                       patience_min=patience, patience_plausible=[min(flat), max(flat)], **val))\n    staff = pipeline.plan(inp[\"rates\"], inp, patience)\n    erlang = [pipeline.erlang_c_agents(r, inp[\"mean_service\"]) for r in inp[\"rates\"]]\n    elastic = pipeline.sensitivity(inp, patience, staff)\n    erlang_day = pipeline.day_kpis(inp, patience, erlang, seed0=700)  # option B judged by the same simulation\n    with tempfile.TemporaryDirectory() as tmp:\n        (sl, low, ab), resumable = validate_day(inp[\"rates\"], staff, inp, patience, args.workers, Path(tmp))\n    lines.append(score(\"M4 sensitivity + staffing under SLA\", min(low) >= pipeline.SL_TARGET\n                       and max(ab) <= pipeline.ABANDON_MAX,\n                       plan=staff, agent_hours=sum(staff), erlang_c_hours=sum(erlang), flat_hours=12 * max(erlang),\n                       erlang_c_day_abandon_max=round(float(max(erlang_day[\"abandon\"])), 3),\n                       elasticity_peak_sl=elastic, day_sl_min_low=round(float(min(low)), 3),\n                       day_abandon_max=round(float(max(ab)), 3)))\n    tw, alarms = demand_twin.replay(inp[\"rates\"])\n    alarm = alarms[0] if alarms else None\n    from_h = math.ceil((alarm[\"t_min\"] + 1) / 60) if alarm else 12\n    surged = [r * alarm[\"m\"] if h >= from_h else r for h, r in enumerate(inp[\"rates\"])] if alarm else inp[\"rates\"]\n    replan = staff[:from_h] + pipeline.plan(surged[from_h:], inp, patience)\n    truth = [r * (make_data.SURGE if h >= make_data.SURGE_FROM_H else 1) for h, r in enumerate(make_data.TRUE_RATES)]\n    static_sl = pipeline.day_kpis(dict(inp, rates=truth), patience, staff)[\"sl\"]\n    twin_sl = pipeline.day_kpis(dict(inp, rates=truth), patience, replan)[\"sl\"]\n    delay = alarm[\"t_min\"] - 60 * make_data.SURGE_FROM_H if alarm else None\n    lines.append(score(\"M5 parallel replications + live twin\", resumable and delay is not None and delay <= 90\n                       and min(twin_sl[from_h:]) >= 0.75,\n                       resume_identical=resumable, alarm_delay_min=delay, m_at_alarm=alarm and alarm[\"m\"],\n                       replan_from=f\"{8 + from_h}:00\", extra_agent_hours=sum(replan) - sum(staff),\n                       static_sl_after=round(float(min(static_sl[from_h:])), 3),\n                       twin_sl_after=round(float(min(twin_sl[from_h:])), 3)))\n    ev = {\"inputs\": inp, \"validation\": val}\n    findings, flags = governance_pack.check(card, ev), governance_pack.review_flags(card, surged)\n    facts = {\"plan_agent_hours\": sum(staff), \"erlang_c_agent_hours\": sum(erlang), \"peak_agents\": max(staff),\n             \"peak_hour\": \"11:00\", \"alarm_clock\": f\"{8 + alarm['t_min'] // 60}:{alarm['t_min'] % 60:02d}\" if alarm else \"none\",\n             \"extra_agent_hours\": sum(replan) - sum(staff), \"saving_percent\": round(100 * (1 - sum(staff) / sum(erlang)), 1)}\n    server, url = (None, None)\n    if not args.real_model:\n        import fake_model_server\n        agent_explain.use_fake_rule(fake_model_server)\n        server, url = fake_model_server.start_in_thread()\n    try:\n        exp = agent_explain.explain(facts, base_url=url)\n    finally:\n        if server:\n            server.shutdown()\n            server.server_close()\n    lines.append(score(\"M6 governance pack + agent explanation\", not findings, card_findings=findings,\n                       review_flags=flags, agent_unverified=exp[\"unverified\"], agent_publish=exp[\"publish\"],\n                       decision=f\"{sum(replan)} agent-hours: plan {replan}\"))\n    passed = sum(line[\"pass\"] for line in lines)\n    final = {\"scorecard\": \"PASS\" if passed == len(lines) else \"FAIL\", \"passed\": passed, \"total\": len(lines)}\n    print(json.dumps(final))\n    (HERE / \"scorecard.jsonl\").write_text(\"\".join(json.dumps(x) + \"\\n\" for x in lines + [final]), encoding=\"utf-8\")\n\n\nif __name__ == \"__main__\":  # required with 'spawn' (runner uses a process pool)\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "centre.simulate()",
+        "detail": "Thinning for hourly rates, lognormal handle times, exponential patience with lazy deletion from the line; one stream per purpose, call i always gets draw i - CRN survives staffing changes."
+      },
+      {
+        "title": "pipeline.model_inputs() / calibrate() / validate()",
+        "detail": "Rates and the KS-selected handle-time distribution from days 1-3 (L200 #7 fit_inputs); patience by CRN grid search on the abandonment profile; holdout errors on days 4-5."
+      },
+      {
+        "title": "pipeline.plan()",
+        "detail": "Erlang C (L200 #8) seed per hour, then simulation with 95% bounds on SL and abandonment, then repair against full-day runs where queues carry over."
+      },
+      {
+        "title": "runner.run()",
+        "detail": "The L400 #20 pattern generalised: SeedSequence(22, spawn_key=(rep,)), spawn pool, SQLite with WAL, batches of 8, INSERT OR IGNORE; checksum proves crash/resume invariance."
+      },
+      {
+        "title": "demand_twin.DemandTwin",
+        "detail": "Subclasses the L400 #17 Twin: a scalar Kalman filter on the demand multiplier m with Poisson observation noise; drift_check() (CUSUM) is inherited unchanged."
+      },
+      {
+        "title": "governance_pack / agent_explain",
+        "detail": "Card claims vs evidence and hashes (L400 #21 sha256); review flags for out-of-envelope plans; the agent explains a facts table and code rejects any unverified number."
+      },
+      {
+        "title": "run_capstone.main()",
+        "detail": "Orchestrates M1-M6, prints one JSON line per milestone and a final PASS/FAIL, writes scorecard.jsonl."
+      }
+    ],
+    "designBrief": {
+      "context": "A service centre (08:00-20:00) staffs agents by the hour. History: 5 days of call logs and hourly SL/abandonment reports (22 agents all day). Today: a live feed of 15-minute call counts; demand runs +30% from 13:00.",
+      "constraints": [
+        "SLA every hour: SL lower 95% bound >= 0.80 and abandonment <= 5%",
+        "minimise agent-hours subject to the SLA",
+        "results identical across worker counts and after crash + resume",
+        "re-plan within 90 minutes of a demand shift, no false alarm before it",
+        "publish only with a current, evidence-checked model card; out-of-envelope plans flagged for review",
+        "the local model never decides and never sees raw data or secrets"
+      ],
+      "question": "How many agents per hour, and how does the plan change when today's demand departs from the forecast?"
+    },
+    "architecture": {
+      "diagram": "labs/L400/22-capstone/architecture.mmd",
+      "summary": "Seeded data (history.csv, history_kpis.jsonl, today.jsonl) feed M1 input modelling (L200 #7) and a DES core (centre.py) verified against Erlang C (M2). M3 calibrates patience on days 1-3 and validates on days 4-5. M4 plans each hour from an Erlang C seed with simulation and 95% bounds, repaired on full days, and measures sensitivity. M5 validates the plan with 24 checkpointed parallel days (runner.py, L400 #20 pattern) and replays today's feed through a demand twin (L400 #17 CUSUM) that triggers a re-plan. M6 checks model_card.json against the evidence and file hashes (L400 #21), flags out-of-envelope rates, and asks a local model for an explanation that code checks number by number. Everything ends in scorecard.jsonl."
+    },
+    "milestones": [
+      {
+        "title": "M1 Input modelling",
+        "deliverable": "pipeline.model_inputs(): hourly rates + KS-selected handle-time distribution from days 1-3",
+        "test": "labs/L400/22-capstone/test_capstone.py::M1InputModelling (lognormal, KS < 0.02, rates within 10% of the hidden truth, seeded history)"
+      },
+      {
+        "title": "M2 DES core verified",
+        "deliverable": "centre.py with thinning, abandonment, per-purpose CRN streams",
+        "test": "labs/L400/22-capstone/test_capstone.py::M2DesCore (Erlang C within 0.01; monotone in agents; no abandonment with endless patience)"
+      },
+      {
+        "title": "M3 Calibration + holdout validation",
+        "deliverable": "pipeline.calibrate() / validate()",
+        "test": "labs/L400/22-capstone/test_capstone.py::M3CalibrationValidation (patience 4.5; truth 3.0 in the plausible set; holdout MAE <= 3/2 pp)"
+      },
+      {
+        "title": "M4 Sensitivity + staffing under the SLA",
+        "deliverable": "pipeline.sensitivity() / plan() (Erlang C seed, 95% bounds, full-day repair)",
+        "test": "labs/L400/22-capstone/test_capstone.py::M4SensitivityOptimisation and test_fitness.py::test_sla_holds_for_the_recommended_plan"
+      },
+      {
+        "title": "M5 Parallel replications + live twin",
+        "deliverable": "runner.py (checkpointed spawn pool) and demand_twin.py (Kalman + lesson 17 CUSUM)",
+        "test": "labs/L400/22-capstone/test_capstone.py::M5ParallelAndTwin and test_fitness.py::test_twin_alarm_timing"
+      },
+      {
+        "title": "M6 Governance pack + agent explanation",
+        "deliverable": "governance_pack.py, model_card.json, agent_explain.py, scorecard.jsonl",
+        "test": "labs/L400/22-capstone/test_capstone.py::M6GovernanceAndAgent and test_fitness.py::test_governance_card_is_current"
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Inputs are justified",
+        "measure": "KS distance of the chosen fit; max hourly rate error",
+        "pass": "lognormal with D < 0.02; rates within 10%"
+      },
+      {
+        "criterion": "The DES is verified",
+        "measure": "SL vs Erlang C in the degenerate case",
+        "pass": "within 0.01"
+      },
+      {
+        "criterion": "The model is validated on unseen data",
+        "measure": "holdout MAE on days 4-5",
+        "pass": "SL <= 3 pp and abandonment <= 2 pp"
+      },
+      {
+        "criterion": "The plan meets the SLA",
+        "measure": "full-day SL lower bound and abandonment per hour (24 reps)",
+        "pass": ">= 0.80 and <= 5% in every hour"
+      },
+      {
+        "criterion": "Results are reproducible at scale",
+        "measure": "checksum after crash + resume and on 1 vs 2 workers",
+        "pass": "identical"
+      },
+      {
+        "criterion": "The twin reacts to live data",
+        "measure": "alarm delay after the surge; alarms before it",
+        "pass": "<= 90 min; 0"
+      },
+      {
+        "criterion": "The decision is governed",
+        "measure": "model-card findings; review flags shown",
+        "pass": "0 findings; out-of-envelope rates flagged"
+      },
+      {
+        "criterion": "The agent never decides",
+        "measure": "unverified numbers block publication of the explanation",
+        "pass": "agent_publish false whenever agent_unverified is non-empty"
+      }
+    ],
+    "fitnessFunctions": [
+      {
+        "what": "SLA holds for the recommended plan (and 1 vs 2 workers give identical stored results)",
+        "test": "labs/L400/22-capstone/test_fitness.py::test_sla_holds_for_the_recommended_plan",
+        "threshold": "min hourly SL lower bound >= 0.80; max abandonment <= 0.05; checksums equal"
+      },
+      {
+        "what": "Governance card describes the current code and data",
+        "test": "labs/L400/22-capstone/test_fitness.py::test_governance_card_is_current",
+        "threshold": "check() returns []"
+      },
+      {
+        "what": "Twin alarm timing",
+        "test": "labs/L400/22-capstone/test_fitness.py::test_twin_alarm_timing",
+        "threshold": "no alarm before 13:00; first alarm <= 90 min after"
+      }
+    ],
+    "decisionRecords": [
+      "labs/L400/22-capstone/decisions/0001-staffing-optimiser.md",
+      "labs/L400/22-capstone/decisions/0002-live-replan-trigger.md",
+      "labs/L400/22-capstone/decisions/0003-replications-and-governance.md"
+    ],
+    "agentAssist": {
+      "task": "After code has chosen the plan, a local model explains it to the centre manager in at most 4 sentences from a facts table; code checks every number and publishes the explanation only if all are verified.",
+      "prompt": "[[SIM-STAFF]] Explain this staffing recommendation in at most 4 sentences for the centre manager. Quote only numbers from the facts. <facts>plan_agent_hours: 221 ... extra_agent_hours: 14 ...</facts>",
+      "check": "agent_explain.check_numbers(): every number token must appear in the facts table; any other number is UNVERIFIED and sets publish = false. The plan, flags and verdict are computed before the agent is called.",
+      "expected": "agent_unverified ['9'] (the fake model's invented '9% saving'); agent_publish false; decision unchanged: 235 agent-hours.",
+      "realModelNote": "`python run_capstone.py --real-model` uses LOCAL_MODEL_URL / LOCAL_MODEL (default qwen2.5:1.5b). Only the facts table is sent - no call logs, no keys. Real replies vary; the publish rule does not. Not run here against a real model."
+    },
+    "learningTools": [
+      {
+        "name": "JaamSim",
+        "role": "BUILD WITHOUT CODE",
+        "exercise": "Build the 11:00 peak hour without code: Generator (exponential inter-arrivals, mean 60/5.556 s) -> Queue -> Server pool of 25 with lognormal service (mean 3.943 min, cv 0.797); run 10 replications and read the share of waits under 1 minute (JaamSim has no abandonment block in this exercise, so expect a higher SL than the lab).",
+        "expected": "SL around or above the lab's peak-hour value (lab plan: 25 agents, day SL lower bound >= 0.872); differences come from no abandonment. Pending a manual run (Windows exe; Mac via the JAR).",
+        "mac": "Partial: Universal JAR: java -jar JaamSim2026-07.jar (Java 17+, OpenGL 2.1+); no native Mac build",
+        "windows": "Self-contained JaamSim2026-07.exe",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://github.com/jaamsim/jaamsim"
+      },
+      {
+        "name": "SimPy",
+        "role": "CHECK",
+        "exercise": "Rebuild centre.period() with simpy.Resource(capacity=agents) and a patience race (yield request | env.timeout(patience)) for rate 5.556, 25 agents, lognormal service and patience 4.5; compare SL and abandonment over 10 seeds.",
+        "expected": "Within about 0.02 of the lab's hour_check for 25 agents at the peak (SL ~0.9, abandonment ~0.03). SimPy is not installed here: pending CI / a manual run.",
+        "mac": "pip install simpy (catalog version 4.1.2; pinned in labs/L100/01-setup-workbench/requirements.txt)",
+        "windows": "pip install simpy (catalog version 4.1.2; pinned in labs\\L100\\01-setup-workbench\\requirements.txt)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://pypi.org/project/simpy/"
+      },
+      {
+        "name": "SALib",
+        "role": "CHECK",
+        "exercise": "Run Sobol' indices for the peak-hour SL over rate +/-10%, mean service +/-10% and patience 3-6 min (centre.period, 25 agents) and compare with the lab's elasticities.",
+        "expected": "Patience should get the smallest index (lab elasticity -0.01 vs rate -0.64 and service -0.68) - the evidence that its weak identifiability does not matter. Pending CI / a manual run.",
+        "mac": "pip install SALib (catalog version 1.6.0, Python >=3.10; pinned in labs/L300/requirements.txt)",
+        "windows": "pip install SALib (catalog version 1.6.0; pinned in labs\\L300\\requirements.txt)",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://pypi.org/project/SALib/"
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/22-capstone/run_capstone.py",
+        "purpose": "main file: milestones M1-M6 and the JSON-lines scorecard"
+      },
+      {
+        "path": "labs/L400/22-capstone/centre.py",
+        "purpose": "DES core (thinning, abandonment, CRN streams)"
+      },
+      {
+        "path": "labs/L400/22-capstone/pipeline.py",
+        "purpose": "M1-M4: inputs, calibration, validation, sensitivity, staffing plan"
+      },
+      {
+        "path": "labs/L400/22-capstone/runner.py",
+        "purpose": "M5a: checkpointed parallel replications"
+      },
+      {
+        "path": "labs/L400/22-capstone/demand_twin.py",
+        "purpose": "M5b: live demand twin (subclasses L400 #17 Twin)"
+      },
+      {
+        "path": "labs/L400/22-capstone/governance_pack.py",
+        "purpose": "M6: card claims vs evidence, review flags"
+      },
+      {
+        "path": "labs/L400/22-capstone/agent_explain.py",
+        "purpose": "M6: optional local-model explanation, number-checked"
+      },
+      {
+        "path": "labs/L400/22-capstone/make_data.py",
+        "purpose": "seeded 'real' centre: history.csv (on demand), history_kpis.jsonl, today.jsonl"
+      },
+      {
+        "path": "labs/L400/22-capstone/model_card.json",
+        "purpose": "the capstone's model card (hashes of centre.py, pipeline.py, KPI data)"
+      },
+      {
+        "path": "labs/L400/22-capstone/architecture.mmd",
+        "purpose": "Mermaid architecture diagram"
+      },
+      {
+        "path": "labs/L400/22-capstone/try_it.py",
+        "purpose": "point estimates vs 95% bounds vs Erlang C"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_capstone.py",
+        "purpose": "one test class per milestone"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_fitness.py",
+        "purpose": "capstone fitness functions"
+      },
+      {
+        "path": "labs/L400/22-capstone/decisions/0001-staffing-optimiser.md",
+        "purpose": "ADR 1"
+      },
+      {
+        "path": "labs/L400/22-capstone/decisions/0002-live-replan-trigger.md",
+        "purpose": "ADR 2"
+      },
+      {
+        "path": "labs/L400/22-capstone/decisions/0003-replications-and-governance.md",
+        "purpose": "ADR 3"
+      }
+    ],
+    "expectedResults": [
+      "Scorecard PASS 6/6",
+      "Plan 221 agent-hours (Erlang C 219, flat 300); worst-hour abandonment 0.036",
+      "Surge: alarm 14:15, +14 agent-hours, SL after 15:00 0.719 -> 0.896; review flag at 15:00"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "Ran 16 tests ... OK"
+      },
+      {
+        "action": "python run_capstone.py",
+        "expected": "{\"scorecard\": \"PASS\", \"passed\": 6, \"total\": 6}"
+      },
+      {
+        "action": "python try_it.py",
+        "expected": "point estimates 208 (0.064) | 95% bounds 221 (0.036) | Erlang C 219 (0.036)"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "M6 card_findings: 'pipeline.py changed since the card was written'",
+        "action": "Intended friction: re-run the evidence, regenerate model_card.json versions and bump model_version."
+      },
+      {
+        "symptom": "M5 fails on alarm delay after changing the feed",
+        "action": "The CUSUM thresholds come from lesson 17 (k 0.5, h 8); a smaller surge needs a lower h - check false alarms before 13:00."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Decide each hour on point estimates instead of 95% bounds.",
+        "predict": "Cheaper - but does the SLA still hold?",
+        "expected": "point estimates : 208 agent-hours, worst-hour mean abandonment 0.064 | 95% bounds : 221 agent-hours, worst-hour mean abandonment 0.036"
+      },
+      {
+        "task": "Use Erlang C alone (no abandonment, exponential service) and judge it with the same simulation.",
+        "predict": "Over- or under-staffed?",
+        "expected": "Erlang C only : 219 agent-hours, worst-hour mean abandonment 0.036 - meets the means here, but 2 hours fail the 95% bound and it cannot measure abandonment"
+      }
+    ],
+    "equivalents": [
+      "SimPy or Ciw for the DES; JaamSim for a no-code version of one hour.",
+      "Erlang A / square-root staffing (Halfin & Whitt) as analytic baselines for call-centre staffing.",
+      "Workforce-management suites with simulation modules (vendor, one line only)."
+    ],
+    "inRealSystems": [
+      "Contact centres plan staffing from forecasts with Erlang-type models, then check and tune with simulation and intraday re-forecasting.",
+      "Operations teams increasingly require that any model-driven plan carries its validation evidence and version."
+    ],
+    "useWhen": "Use this pipeline shape whenever a model's output drives a recurring operational decision and the input data keeps arriving.",
+    "caution": "The plan is advisory: a duty manager signs off, especially when review flags show rates outside the validated envelope; the local model receives only the facts table - never call logs, personal data or credentials.",
+    "checkpoint": "PASS: run_capstone.py prints 6/6 passing milestones; python -m unittest -v passes (16 tests); every decision has an ADR and a fitness function.",
+    "checkYourself": [
+      {
+        "q": "Patience is only known to be between 3.0 and 5.5 min. Why is the plan still trustworthy?",
+        "a": "The peak SL's elasticity to patience is -0.01 (vs -0.64 to demand): the decision does not depend on the unidentified input - shown, not assumed."
+      },
+      {
+        "q": "Why does the sim-based plan use 2 more agent-hours than Erlang C?",
+        "a": "It requires 95% confidence on both SLA constraints every hour; Erlang C's plan fails that bound in 2 hours and cannot see abandonment."
+      },
+      {
+        "q": "What happens to a plan that needs 6.16 calls/min?",
+        "a": "Code still decides it, but it carries a review flag because the model was validated only up to 5.6 calls/min."
+      }
+    ],
+    "sources": [
+      {
+        "title": "Gans, Koole & Mandelbaum (2003), Telephone Call Centers: Tutorial, Review, and Research Prospects, M&SOM 5(2)",
+        "url": "https://faculty.wharton.upenn.edu/wp-content/uploads/2012/04/Gans-Koole-Mandelbaum-CCReview.pdf"
+      },
+      {
+        "title": "Halfin & Whitt (1981), Heavy-traffic limits for queues with many exponential servers, Operations Research 29(3)",
+        "url": "https://www.columbia.edu/~ww2040/Halfin81.pdf"
+      },
+      {
+        "title": "Lewis & Shedler (1979), Simulation of nonhomogeneous Poisson processes by thinning, Naval Research Logistics Quarterly 26(3) (NPS Calhoun copy; U.S. Government work)",
+        "url": "https://calhoun.nps.edu/server/api/core/bitstreams/45ac1cd2-5bd3-41df-82b4-9902c1dda86e/content"
+      },
+      {
+        "title": "Fu, Chen & Shi (2008), Some topics for simulation optimization, Proc. WSC (queueing models to staff, simulation to test and tune)",
+        "url": "https://informs-sim.org/wsc08papers/006.pdf"
+      }
+    ],
+    "next": "Done: see the L400 candidates in KNOWN-GAPS for further study",
+    "validation": {
+      "status": "validated-local",
+      "how": "run_capstone.py (scorecard PASS 6/6), try_it.py and python -m unittest -v (Ran 16 tests ... OK) ran locally on Python 3.12.15 + numpy 2.5.3 on Linux (1 CPU, spawn start method); agent explanation tested against the fake server only.",
+      "pendingCi": [
+        "agent explanation against a real local model (--real-model)",
+        "macOS and Windows runs (spawn pool, SQLite on local disk)",
+        "JaamSim, SimPy and SALib exercises (manual / CI)"
+      ]
+    },
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "conceptNote": "content/concepts/L400/22-capstone.md",
+    "conceptSummary": "A service-centre twin from call logs to a governed staffing decision: lognormal inputs (KS 0.0059), a DES verified against Erlang C, patience calibrated (weakly identified, but SL elasticity only -0.01), 221 agent-hours meeting the SLA with 95% bounds, checkpointed parallel replications, a live demand twin re-planning +14 agent-hours after a +30% surge, and a model card checked against evidence; the local model only explains, and its invented number blocks publication.",
+    "seeAlso": [
+      "simulation L400 #17 Digital twins with live data: state estimation, drift detection and recalibration: the CUSUM the demand twin inherits.",
+      "simulation L400 #18 Simulation-based optimisation: search, ranking & selection and fair budgets: CRN and confidence-bound decisions behind the staffing plan.",
+      "simulation L400 #20 Large-scale and parallel simulation: reproducible streams, checkpoints and result storage: the runner pattern.",
+      "simulation L400 #21 Model governance and V&V: model cards checked against evidence: the governance pack.",
+      "ai-agents L400 #20 Deterministic core, LLM at the edge: the same boundary - code decides, the model explains.",
+      "application-architecture L400 #21 Cost and capacity planning: Little's law, benchmarks, headroom, cost per request: capacity planning for software services with the same queueing logic."
+    ]
+  }
+]

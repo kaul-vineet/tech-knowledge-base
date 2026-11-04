@@ -1,0 +1,2393 @@
+[
+  {
+    "id": "crypto-agility",
+    "number": 17,
+    "level": "L400",
+    "title": "Crypto agility: versioned envelopes, negotiation and dual signing",
+    "phase": "Design",
+    "category": "Crypto agility",
+    "description": "Design a self-describing, versioned envelope with algorithm identifiers, one registry and a policy (active / deprecated / disallowed, signature phases) so AES-GCM can become ChaCha20-Poly1305 and Ed25519 can become ML-DSA without a flag day; prove it with a static fitness check.",
+    "outcome": "You can compare three agility designs with measured evidence, choose one and record it in an ADR, swap an algorithm with a policy change while old data stays readable, negotiate without fallback, dual-sign safely (the verifier's policy decides which signatures are required), and keep the design true with a static check that fails the build on any hard-coded algorithm.",
+    "environment": "Python 3.12 (3.9+), cryptography==50.0.2 (wheels built with OpenSSL 4.0.3: ML-KEM, ML-DSA, HPKE available), stdlib otherwise",
+    "estimatedTime": "75-100 minutes",
+    "overview": [
+      "Measure three ways to make a format swappable, decide, then break the chosen design with a seeded signature-stripping attack: the verifier trusted the envelope's own list of signatures. Fix it so policy decides, and add a fitness function that keeps algorithms inside the registry."
+    ],
+    "prerequisites": [
+      "L100 lesson 4 (AEAD: AES-GCM and ChaCha20-Poly1305)",
+      "L200 lesson 7 (Ed25519 signatures, key IDs)",
+      "L300 lesson 12 (versioned KEKs and rewrap)"
+    ],
+    "glossary": [
+      {
+        "term": "Algorithm identifier",
+        "meaning": "A short registered name (A256GCM, ML-DSA-65) carried with the data so readers can dispatch to the right code."
+      },
+      {
+        "term": "Registry",
+        "meaning": "The one module that maps identifiers to implementations and a status: active, deprecated (read/verify only) or disallowed."
+      },
+      {
+        "term": "Policy phase",
+        "meaning": "Which signatures a verifier requires: classic (Ed25519), transition (Ed25519 + ML-DSA-65), pq-only (ML-DSA-65)."
+      },
+      {
+        "term": "Signature stripping",
+        "meaning": "Removing one signature of a dual-signed object so a verifier that accepts 'any valid signature' checks only the weaker one."
+      },
+      {
+        "term": "Fitness function",
+        "meaning": "An automated test that keeps an architectural decision true (here: no algorithm named outside the registry)."
+      }
+    ],
+    "concepts": [
+      "The label names the algorithm; the policy decides if it is acceptable.",
+      "Swapping the default is a policy change; old data stays readable until its algorithm is disallowed.",
+      "Negotiation fails closed: no common active algorithm = error, never fallback.",
+      "Dual signing only helps if the verifier requires both signatures."
+    ],
+    "designBrief": {
+      "context": "Encrypted, signed invoices are stored for 10 years and read by several services. Ed25519 must give way to ML-DSA (FIPS 204) before quantum attackers arrive, and the AEAD may need replacing after an incident. Today the cipher is implied by the code.",
+      "constraints": [
+        "0 records rewritten before an algorithm switch (no flag day)",
+        "old records stay readable until their algorithm is explicitly disallowed",
+        "header overhead <= 64 bytes per envelope",
+        "a verifier in the transition phase rejects any envelope missing a required signature",
+        "0 hard-coded algorithms outside registry.py (static check in CI)"
+      ],
+      "question": "How should the envelope name its algorithms, and who decides which algorithms and signatures are acceptable?"
+    },
+    "options": [
+      {
+        "name": "A: one algorithm, no identifier (v1)",
+        "description": "The format version implies AES-256-GCM; no signatures listed.",
+        "evidence": "1000 rewrites before a switch, or 2.0 trial decryptions per read after it; header 43 B.",
+        "verdict": "Rejected: every change is a flag day and readers must guess."
+      },
+      {
+        "name": "B: per-algorithm identifiers + registry + policy (v2)",
+        "description": "Header carries v, aead, kid, nonce, ctx (all AAD); signatures carry their algorithm id; the registry and policy decide.",
+        "evidence": "+31 header bytes (74 B), 0 rewrites, 1000/1000 old documents readable after the switch; dual signature 3373 B.",
+        "verdict": "Chosen (ADR-0017), with the verifier fix from the failure lab."
+      },
+      {
+        "name": "C: one suite identifier per combination",
+        "description": "TLS-1.2-style suite ids covering AEAD + signature phase together.",
+        "evidence": "6 suite ids today vs 4 per-algorithm ids; 9 after adding one AEAD.",
+        "verdict": "Rejected for this format: combinatorial growth (RFC 7696 2.1); fine for protocols that negotiate whole suites."
+      }
+    ],
+    "decisionRecord": "labs/L400/17-crypto-agility/ADR-0017-versioned-envelope-registry.md",
+    "fitnessFunction": {
+      "what": "No module outside the registry imports a primitive, names an algorithm class or hard-codes an algorithm id (AST check, also run over the capstone).",
+      "test": "labs/L400/17-crypto-agility/test_fitness_agility.py",
+      "threshold": "0 violations (agility_lint exit code 0)"
+    },
+    "scalingLimits": [
+      "Many algorithms in the registry: every entry is a code path to test; signal = registry entries with zero reads in the envelopes_by_aead metric for months (prune them) or entries without a round-trip test.",
+      "Very long-lived data: lazy migration on read never touches cold records; signal = deprecated-algorithm counts that stop falling - schedule a background re-seal job like lesson 12's rewrap.",
+      "Signature size: dual signing adds 3,373 B per envelope; for millions of small records the signatures dominate storage - signal = signature bytes / payload bytes > 1; sign batches or manifests instead of each record."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "python agile_envelope.py - seals 3 invoices under the policy default (A256GCM), dual-signed (Ed25519 + ML-DSA-65).",
+        "expected": "1) sealed 3 docs | header: {'v': 2, 'aead': 'A256GCM', 'kid': 'dk-1'} | ct bytes: 37 | sigs: [('Ed25519', 64), ('ML-DSA-65', 3309)]",
+        "ifNot": "ModuleNotFoundError: activate the venv and install requirements.txt (cryptography==50.0.2). UnsupportedAlgorithm for ML-DSA: your cryptography wheel is older than 48 or built against an OpenSSL older than 3.5."
+      },
+      {
+        "title": "Measure the three options",
+        "detail": "python measure_options.py - 1,000 documents of 1 KiB: rewrites needed, trial decryptions, header bytes, identifier counts, per-algorithm costs (timings vary by machine).",
+        "expected": "{\"option\": \"A one algorithm, no id\", \"header_bytes\": 43, \"swap_rewrites_before_switch\": 1000, \"trial_decryptions_per_read\": 2.0, \"rewrite_all_seconds_ / {\"option\": \"B per-algorithm ids + registry\", \"header_bytes\": 74, \"extra_header_bytes_vs_A\": 31, \"swap_rewrites_before_switch\": 0, \"old_docs_readable_a / {\"option\": \"C suite ids\", \"ids_needed_for_suites\": 6, \"ids_needed_per_algorithm\": 4, \"after_adding_one_aead\": 9}",
+        "ifNot": "Timings differ on your machine; sizes and counts must match exactly."
+      },
+      {
+        "title": "Swap the AEAD by policy",
+        "detail": "Step 2 of the run sets POLICY['aead_default'] to the next preference; new data uses ChaCha20-Poly1305, old data still opens. Read the envelopes_by_aead JSON line.",
+        "expected": "2) default -> C20P1305 | opened: 4 of 4 then {\"metric\": \"envelopes_by_aead\", \"A256GCM\": 3, \"C20P1305\": 1}",
+        "ifNot": "If an old envelope fails, a key was reused with another algorithm or the header is not the AAD."
+      },
+      {
+        "title": "Negotiate and migrate",
+        "detail": "Negotiation picks the first local preference the peer offers; with only an unknown id it fails. A legacy v1 envelope opens via LEGACY_V1_AEAD and migrates lazily.",
+        "expected": "3) negotiate: A256GCM | only A128CBC offered -> no common active algorithm in ['A128CBC'] / 4) legacy v1 opens: invoice 0: amount=0 | migrate -> {'v': 2, 'aead': 'C20P1305', 'kid': 'dk-2'}",
+        "ifNot": "If negotiation returns something with only A128CBC offered, you added a fallback - remove it."
+      },
+      {
+        "title": "Watch the seeded fault",
+        "detail": "The Ed25519 key leaked; a co-tenant (holds the shared data key) re-signs an edited document with Ed25519 only (victim chosen by random.Random(17)).",
+        "expected": "--- fault: the Ed25519 key leaked; a co-tenant re-signs an edited document with Ed25519 only / legit verify: True | forged doc-4 verify: True | sigs on forged: ['Ed25519']",
+        "ifNot": "Different victim? SEED must stay 17."
+      },
+      {
+        "title": "Run the tests and the fitness function",
+        "detail": "python -m unittest -v (lab tests, build task against the solution, fitness check over this lab and the capstone).",
+        "expected": "Ran 15 tests in 2.373s | OK",
+        "ifNot": "test_fitness_agility fails: a module outside registry.py names an algorithm - move it into the registry."
+      },
+      {
+        "title": "Build task (the design fix) - test your own file",
+        "detail": "Fix the fault in agile_envelope.py, then run the failure-lab proof against it. The shipped file is the unfixed one, so it fails until you finish.",
+        "expected": "Reference solution: Ran 4 tests in 0.267s | OK. Shipped/unfixed file: FAILED (the 'fails before'); your fixed file: OK.",
+        "ifNot": "Read the failing assertion: it names the case your code still accepts.",
+        "mac": "BUILD_TARGET=mine python -m unittest -v test_build_task",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_TARGET"
+      },
+      {
+        "title": "Check the static fitness function by hand",
+        "detail": "python agility_lint.py (this folder) and python agility_lint.py ../22-capstone",
+        "expected": "agility_lint: 0 violation(s)",
+        "ifNot": "Each violation prints file:line: reason."
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"Crypto agility: a versioned, self-describing envelope. Each envelope names its AEAD and its signature\nalgorithms by identifier; the registry maps identifiers to code and the policy decides what is acceptable.\nSwapping AES-GCM -> ChaCha20-Poly1305 or Ed25519 -> ML-DSA is a policy change, not a flag day.\"\"\"\nimport base64\nimport json\nimport os\nimport random\n\nimport registry as reg\n\nSEED = 17  # seeds the injected fault (which document the attacker forges)\n\n\nclass EnvelopeError(Exception):\n    \"\"\"Unknown format version, or a key used with an algorithm it is not bound to.\"\"\"\n\n\nclass NoCommonAlgorithm(Exception):\n    \"\"\"Negotiation found no algorithm both sides support and policy allows: fail, never fall back.\"\"\"\n\n\ndef b64e(b: bytes) -> str:\n    return base64.b64encode(b).decode()\n\n\ndef b64d(s: str) -> bytes:\n    return base64.b64decode(s)\n\n\ndef canon(obj) -> bytes:\n    return json.dumps(obj, sort_keys=True, separators=(\",\", \":\")).encode()  # one byte form for AAD and signatures\n\n\nclass Keyring:\n    \"\"\"Data keys by key id; every key is bound to exactly one algorithm (key + algorithm id, RFC 7696 2.1).\"\"\"\n\n    def __init__(self):\n        self.entries = {}\n\n    def add(self, alg_id: str) -> str:\n        kid = f\"dk-{len(self.entries) + 1}\"\n        self.entries[kid] = (alg_id, reg.new_aead_key(alg_id))\n        return kid\n\n    def primary(self) -> str:\n        default = reg.POLICY[\"aead_default\"]\n        return [k for k, (a, _) in self.entries.items() if a == default][-1]  # newest key for the policy default\n\n\ndef signed_bytes(env: dict) -> bytes:\n    return canon(env[\"h\"]) + b\".\" + env[\"ct\"].encode()\n\n\ndef seal(ring: Keyring, kid: str, plaintext: bytes, ctx: str, signers: dict, sig_algs=None) -> dict:\n    alg, key = ring.entries[kid]\n    n = os.urandom(12)\n    h = {\"v\": 2, \"aead\": alg, \"kid\": kid, \"n\": b64e(n), \"ctx\": ctx}  # algorithm identifier travels with the data\n    ct = reg.aead(alg, key, for_new_data=True).encrypt(n, plaintext, canon(h))  # whole header is AAD\n    env = {\"h\": h, \"ct\": b64e(ct), \"sigs\": []}\n    for sig_alg in sig_algs or reg.signing_algorithms():  # dual-signing while the policy phase is \"transition\"\n        env[\"sigs\"].append({\"alg\": sig_alg, \"sig\": b64e(reg.sign(sig_alg, signers[sig_alg], signed_bytes(env)))})\n    return env\n\n\ndef legacy_v1(ring: Keyring, kid: str, plaintext: bytes) -> dict:\n    \"\"\"What the old code wrote: no algorithm identifier, the format version implied AES-256-GCM.\"\"\"\n    n = os.urandom(12)\n    return {\"h\": {\"v\": 1, \"kid\": kid, \"n\": b64e(n)}, \"ct\": b64e(reg.aead(reg.LEGACY_V1_AEAD, ring.entries[kid][1]).encrypt(n, plaintext, b\"\")), \"sigs\": []}\n\n\ndef open_(ring: Keyring, env: dict) -> bytes:\n    h = env[\"h\"]\n    if h.get(\"v\") == 1:\n        alg, aad = reg.LEGACY_V1_AEAD, b\"\"\n    elif h.get(\"v\") == 2:\n        alg, aad = h[\"aead\"], canon(h)\n    else:\n        raise EnvelopeError(f\"unknown envelope version {h.get('v')!r}\")\n    key_alg, key = ring.entries[h[\"kid\"]]\n    if key_alg != alg:  # a header cannot make a key be used with a different algorithm\n        raise EnvelopeError(f\"key {h['kid']} is bound to {key_alg}, header says {alg}\")\n    return reg.aead(alg, key).decrypt(b64d(h[\"n\"]), b64d(env[\"ct\"]), aad)  # registry refuses disallowed algorithms\n\n\ndef verify(env: dict, pubkeys: dict) -> bool:\n    data = signed_bytes(env)\n    # BUG on purpose: any ONE valid signature is enough - the envelope, not the verifier's policy, decides what counts\n    return any(reg.verify(s[\"alg\"], pubkeys[s[\"alg\"]], b64d(s[\"sig\"]), data) for s in env[\"sigs\"] if s[\"alg\"] in pubkeys)\n\n\ndef negotiate(local_prefs: list, peer_offer: list) -> str:\n    for alg in local_prefs:  # our preference order wins; only active algorithms qualify\n        if alg in peer_offer and reg.REGISTRY.get(alg) and reg.REGISTRY[alg].status == \"active\":\n            return alg\n    raise NoCommonAlgorithm(f\"no common active algorithm in {peer_offer}\")\n\n\ndef migrate(ring: Keyring, env: dict, signers: dict) -> dict:\n    \"\"\"Lazy migration: re-seal only envelopes that are legacy or not on the policy default.\"\"\"\n    if env[\"h\"].get(\"v\") == 2 and env[\"h\"][\"aead\"] == reg.POLICY[\"aead_default\"]:\n        return env\n    return seal(ring, ring.primary(), open_(ring, env), env[\"h\"].get(\"ctx\", env[\"h\"][\"kid\"]), signers)\n\n\ndef count_by_aead(store: dict) -> dict:\n    algs = [e[\"h\"].get(\"aead\", f\"v1:{reg.LEGACY_V1_AEAD}\") for e in store.values()]\n    return {\"metric\": \"envelopes_by_aead\", **{a: algs.count(a) for a in sorted(set(algs))}}  # observability\n\n\nif __name__ == \"__main__\":\n    rng = random.Random(SEED)\n    ring = Keyring()\n    ring.add(reg.POLICY[\"aead_default\"])\n    signers = {a: reg.new_signer(a) for a in reg.signing_algorithms()}\n    pubs = {a: k.public_key() for a, k in signers.items()}\n    store = {f\"doc-{i}\": seal(ring, ring.primary(), f\"invoice {i}: amount={100 * i}\".encode(), f\"doc-{i}\", signers) for i in range(1, 4)}\n    e = store[\"doc-1\"]\n    print(\"1) sealed 3 docs | header:\", {k: e[\"h\"][k] for k in (\"v\", \"aead\", \"kid\")},\n          \"| ct bytes:\", len(b64d(e[\"ct\"])), \"| sigs:\", [(s[\"alg\"], len(b64d(s[\"sig\"]))) for s in e[\"sigs\"]])\n    reg.POLICY[\"aead_default\"] = reg.POLICY[\"aead_prefs\"][1]  # policy change only: new data uses the next preference\n    ring.add(reg.POLICY[\"aead_default\"])\n    store[\"doc-4\"] = seal(ring, ring.primary(), b\"invoice 4: amount=400\", \"doc-4\", signers)\n    print(\"2) default ->\", reg.POLICY[\"aead_default\"], \"| opened:\", sum(1 for x in store.values() if open_(ring, x)), \"of\", len(store))\n    print(json.dumps(count_by_aead(store)))\n    prefs = reg.POLICY[\"aead_prefs\"]\n    try:\n        negotiate(prefs, [\"A128CBC\"])  # an identifier the registry does not know\n    except NoCommonAlgorithm as err:\n        print(\"3) negotiate:\", negotiate(prefs[::-1], [prefs[0], \"A128CBC\"]), \"| only A128CBC offered ->\", err)\n    old = legacy_v1(ring, \"dk-1\", b\"invoice 0: amount=0\")\n    new = migrate(ring, old, signers)\n    print(\"4) legacy v1 opens:\", open_(ring, old).decode(), \"| migrate ->\", {k: new[\"h\"][k] for k in (\"v\", \"aead\", \"kid\")})\n    print(\"--- fault: the Ed25519 key leaked; a co-tenant re-signs an edited document with Ed25519 only\")\n    victim = rng.choice(sorted(store))\n    classic = reg.PHASES[\"classic\"]\n    forged = seal(ring, store[victim][\"h\"][\"kid\"], f\"{victim}: amount={rng.randrange(1, 9)}\".encode(), victim,\n                  {a: signers[a] for a in classic}, sig_algs=classic)  # the ML-DSA signature is simply left out\n    print(\"legit verify:\", verify(store[\"doc-1\"], pubs), \"| forged\", victim, \"verify:\", verify(forged, pubs),\n          \"| sigs on forged:\", [s[\"alg\"] for s in forged[\"sigs\"]])\n",
+    "codeWalkthrough": [
+      {
+        "title": "registry.py",
+        "detail": "The only module that imports primitives. REGISTRY maps ids to Alg(id, kind, status, impl); PHASES maps a policy phase to required signature ids; get() raises UnknownAlgorithm / DisallowedAlgorithm (for_new_data refuses deprecated)."
+      },
+      {
+        "title": "Keyring",
+        "detail": "Data keys by kid, each bound to exactly one algorithm id; primary() picks the newest key for the policy default."
+      },
+      {
+        "title": "seal",
+        "detail": "The header {v, aead, kid, n, ctx} is the AEAD's AAD (canonical JSON); signatures are computed over header + ciphertext for every algorithm the policy phase requires (sig_algs lets an attacker choose fewer - the fault)."
+      },
+      {
+        "title": "open_",
+        "detail": "Dispatches on the version: v1 implies LEGACY_V1_AEAD with empty AAD, v2 reads the header; refuses a key/algorithm mismatch; the registry refuses disallowed algorithms."
+      },
+      {
+        "title": "verify (the bug)",
+        "detail": "any() over listed signatures: an envelope carrying only the classical signature passes. The fix iterates registry.required_signatures() instead."
+      },
+      {
+        "title": "negotiate / migrate",
+        "detail": "Local preference order, active only, NoCommonAlgorithm instead of fallback; migrate re-seals only envelopes that are legacy or off the default."
+      },
+      {
+        "title": "count_by_aead + agility_lint",
+        "detail": "The envelopes_by_aead metric tells you when an algorithm can be disallowed; agility_lint (AST) keeps algorithm choices inside the registry."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/17-crypto-agility/ADR-0017-versioned-envelope-registry.md",
+        "purpose": "decision record (Nygard)"
+      },
+      {
+        "path": "labs/L400/17-crypto-agility/agile_envelope.py",
+        "purpose": "main lab (shipped with the verifier fault)"
+      },
+      {
+        "path": "labs/L400/17-crypto-agility/agility_lint.py",
+        "purpose": "static fitness check (CLI + library)"
+      },
+      {
+        "path": "labs/L400/17-crypto-agility/measure_options.py",
+        "purpose": "evidence for options A/B/C"
+      },
+      {
+        "path": "labs/L400/17-crypto-agility/registry.py",
+        "purpose": "the only module naming algorithms"
+      },
+      {
+        "path": "labs/L400/17-crypto-agility/solution_agile.py",
+        "purpose": "build solution (policy-required signatures)"
+      },
+      {
+        "path": "labs/L400/17-crypto-agility/test_agile_envelope.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/17-crypto-agility/test_build_task.py",
+        "purpose": "failure-lab proof (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/17-crypto-agility/test_fitness_agility.py",
+        "purpose": "fitness function (lab + capstone)"
+      },
+      {
+        "path": "labs/L400/17-crypto-agility/tool_check.py",
+        "purpose": "fixed demo values for CyberChef"
+      },
+      {
+        "path": "labs/L400/17-crypto-agility/try_it.py",
+        "purpose": "tryIt"
+      }
+    ],
+    "expectedResults": [
+      "1) sealed 3 docs | header: {'v': 2, 'aead': 'A256GCM', 'kid': 'dk-1'} | ct bytes: 37 | sigs: [('Ed25519', 64), ('ML-DSA-65', 3309)]",
+      "2) default -> C20P1305 | opened: 4 of 4",
+      "{\"metric\": \"envelopes_by_aead\", \"A256GCM\": 3, \"C20P1305\": 1}",
+      "legit verify: True | forged doc-4 verify: True | sigs on forged: ['Ed25519']",
+      "agility_lint: 0 violation(s)"
+    ],
+    "testCases": [
+      {
+        "action": "Seal under A256GCM, switch the default to C20P1305, seal again, open both",
+        "expected": "Both plaintexts; headers name A256GCM and C20P1305"
+      },
+      {
+        "action": "Edit the header ctx of an envelope",
+        "expected": "InvalidTag (header is AAD)"
+      },
+      {
+        "action": "Mark A256GCM deprecated, then disallowed",
+        "expected": "deprecated: reads OK, new seals refused; disallowed: reads refused"
+      },
+      {
+        "action": "Verify an Ed25519-only envelope in phase transition",
+        "expected": "False with the fix (True with the shipped verifier)"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "DisallowedAlgorithm on seal",
+        "action": "The policy default points at a deprecated algorithm; pick an active one."
+      },
+      {
+        "symptom": "EnvelopeError: key dk-1 is bound to A256GCM, header says C20P1305",
+        "action": "Someone relabelled the header or reused a key across algorithms; keys are bound to one algorithm on purpose."
+      },
+      {
+        "symptom": "agility_lint reports a violation in a new module",
+        "action": "Ask the registry (reg.aead(id, key), reg.sign(id, key, data)) instead of importing the primitive."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Deprecate A256GCM (default ChaCha20-Poly1305), lazily migrate 5 of 10 documents, then disallow A256GCM. How many remain readable?",
+        "predict": "5 of 10 - only the migrated ones.",
+        "expected": "1) migrated 5/10, then disallowed A256GCM: 5/10 readable; {'metric': 'envelopes_by_aead', 'A256GCM': 5, 'C20P1305': 5}"
+      },
+      {
+        "task": "Paste a module that imports AESGCM and calls it directly into the static check.",
+        "predict": "Two violations: the import and the class name.",
+        "expected": "2) orders/storage.py:1: imports cryptography.hazmat.primitives.ciphers.aead | 2) orders/storage.py:3: names algorithm AESGCM"
+      }
+    ],
+    "buildTask": {
+      "task": "Make verify() policy-driven: require a valid signature for every algorithm in registry.required_signatures() (ignore extra ones), so a stripped envelope fails in the transition phase and an ML-DSA-only envelope passes only in pq-only.",
+      "hints": [
+        "Build a dict alg -> signature entry from env['sigs'], then loop over the policy's list, not the envelope's.",
+        "Keep using reg.verify(): it already refuses unknown and disallowed algorithms."
+      ],
+      "solution": "labs/L400/17-crypto-agility/solution_agile.py",
+      "check": "test_build_task.py (4 tests: stripped envelope rejected, dual-signed accepted, pq-only needs the pq-only phase, tampered ciphertext rejected)"
+    },
+    "failureLab": {
+      "fault": "The Ed25519 signing key leaked; a co-tenant that holds the shared data key edits a document (victim from random.Random(17)) and re-signs it with Ed25519 only, leaving out the ML-DSA-65 signature.",
+      "symptom": "legit verify: True | forged doc-4 verify: True | sigs on forged: ['Ed25519']",
+      "fix": "The verifier's policy phase decides which signatures are required (registry.required_signatures()); a missing required signature fails verification.",
+      "proof": "test_build_task.py: against the shipped file (BUILD_TARGET=mine) Ran 4 tests in 0.110s | FAILED (failures=2); against the reference solution Ran 4 tests in 0.267s | OK"
+    },
+    "tradeOffs": [
+      {
+        "option": "Per-algorithm ids + registry (v2)",
+        "gains": "No flag day; lazy migration; one dispatch point; metrics per algorithm",
+        "costs": "31 B per envelope; registry is security-critical; more code paths",
+        "chooseWhen": "Stored data or long-lived messages that outlive algorithms"
+      },
+      {
+        "option": "One algorithm, version bump to change",
+        "gains": "Smallest, simplest format",
+        "costs": "Rewrite everything or guess; flag days",
+        "chooseWhen": "Short-lived data you can re-create (caches, sessions)"
+      },
+      {
+        "option": "Suite ids / negotiated suites",
+        "gains": "Consistent combinations, compact on the wire",
+        "costs": "Combinatorial id growth",
+        "chooseWhen": "Interactive protocols that negotiate whole suites (TLS 1.3 itself)"
+      }
+    ],
+    "equivalents": [
+      "Same idea in JOSE/COSE: 'alg' and 'enc' header parameters with IANA registries",
+      "Same idea in TLS 1.3: supported_groups / signature_algorithms negotiation, downgrade-protected by the handshake transcript",
+      "Same idea in Google Tink: keysets with key IDs and a primary key; a keyset can mix algorithms",
+      "Composite signatures (draft-ietf-lamps-pq-composite-sigs) bind ML-DSA + Ed25519 into ONE signature value - the alternative to separate dual signatures"
+    ],
+    "learningTools": [
+      {
+        "name": "CyberChef",
+        "role": "CHECK",
+        "licence": "Apache-2.0 (OSI)",
+        "url": "https://github.com/gchq/CyberChef",
+        "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+        "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+        "exercise": "Run `python tool_check.py`. In CyberChef use AES Decrypt: Key = printed hex, IV = printed hex, Mode GCM, Input = printed ciphertext (hex), GCM Tag = printed tag, Additional Authenticated Data = the printed AAD JSON. Then change \"A256GCM\" to \"C20P1305\" inside the AAD.",
+        "expected": "Should match the lab's printed value: output 'invoice 1: amount=100' with the exact AAD; with aead=C20P1305 in the AAD decryption must fail (lab: 'AAD with aead=C20P1305 must fail: yes, InvalidTag'). The AAD must be byte-identical (no spaces, sorted keys). Demo key only. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's printed output."
+      }
+    ],
+    "caution": "Learning code: the envelope format is a teaching model, not a standard - use JOSE/COSE or a library format in production. Never let a message's own algorithm field decide what is acceptable; demo keys only.",
+    "checkpoint": "PASS if the measured evidence supports option B, the AEAD swap keeps 4/4 documents readable, your verify() makes test_build_task pass (and the shipped one fails it), and agility_lint reports 0 violations for this lab and the capstone.",
+    "checkYourself": [
+      {
+        "q": "Why must the verifier, not the envelope, decide which signatures are required?",
+        "a": "The envelope is attacker-controlled: removing the ML-DSA entry changes what an envelope-driven verifier checks (signature stripping)."
+      },
+      {
+        "q": "When may A256GCM move from deprecated to disallowed?",
+        "a": "When the envelopes_by_aead metric shows 0 records still using it (after migration), otherwise those records become unreadable."
+      },
+      {
+        "q": "Why bind each data key to one algorithm id?",
+        "a": "So a relabelled header cannot make the same key be used with another algorithm (cross-algorithm attacks); open_ refuses the mismatch."
+      }
+    ],
+    "sources": [
+      {
+        "title": "RFC 7696 - Guidelines for Cryptographic Algorithm Agility (BCP 201)",
+        "url": "https://www.rfc-editor.org/rfc/rfc7696.html"
+      },
+      {
+        "title": "NIST CSWP 39 - Considerations for Achieving Cryptographic Agility",
+        "url": "https://csrc.nist.gov/pubs/cswp/39/considerations-for-achieving-cryptographic-agility/final"
+      },
+      {
+        "title": "pyca/cryptography - ML-DSA signing",
+        "url": "https://cryptography.io/en/latest/hazmat/primitives/asymmetric/mldsa/"
+      },
+      {
+        "title": "IETF draft-ietf-lamps-pq-composite-sigs (Composite ML-DSA) - background",
+        "url": "https://datatracker.ietf.org/doc/draft-ietf-lamps-pq-composite-sigs/"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran agile_envelope.py, measure_options.py, solution_agile.py, agility_lint.py, try_it.py, tool_check.py and the unittests (Ran 15 tests in 2.373s | OK) locally with cryptography 50.0.2. test_build_task observed FAILED (failures=2) with BUILD_TARGET=mine and OK against solution_agile.py. tryIt expected = observed output. The fitness test also scanned labs/L400/22-capstone (0 violations).",
+      "pendingCi": [
+        "macOS/Windows runs (matrix)",
+        "CyberChef learning-tool exercise (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/17-crypto-agility.md",
+    "conceptSummary": "Name algorithms in the data, map names to code in one registry, and let a policy (statuses + signature phases) decide what is acceptable. Swaps become policy changes with lazy migration; verifiers require what policy says, so stripped dual signatures fail; a static check keeps algorithms out of application code.",
+    "inRealSystems": [
+      "JOSE/COSE carry alg/enc identifiers with IANA registries; TLS 1.3 negotiates groups and signature algorithms inside a transcript-protected handshake.",
+      "Signal, Chrome and Cloudflare rolled out hybrid PQ key exchange as a negotiated option first, then a default - agility in practice."
+    ],
+    "useWhen": "Use identifiers + registry + policy for anything stored or signed that outlives an algorithm; avoid trusting the message's algorithm field, silent fallback, and algorithm imports scattered through application code.",
+    "next": "L400 #18 Post-quantum cryptography in practice: ML-KEM, ML-DSA and hybrids: what the PQ algorithms you just made swappable cost, and how hybrid key exchange works.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "cryptography L200 #7 Digital signatures with Ed25519: the keyring/key-ID idea this registry generalises to algorithms.",
+      "cryptography L300 #12 Envelope encryption and key rotation: key versions in the header - this lesson adds algorithm versions.",
+      "cryptography Capstone #22 Capstone: an encrypted document service: reuses this envelope, registry and fitness check."
+    ]
+  },
+  {
+    "id": "post-quantum-in-practice",
+    "number": 18,
+    "level": "L400",
+    "title": "Post-quantum cryptography in practice: ML-KEM, ML-DSA and hybrids",
+    "phase": "Design",
+    "category": "Post-quantum",
+    "description": "Measure X25519, ML-KEM-768 (FIPS 203) and the hybrid X25519MLKEM768 (RFC 10024, TLS group 0x11EC), plus ML-DSA (FIPS 204) signature sizes, using cryptography 50.0.2's built-in PQ support; decide on a strict hybrid key exchange and prove it refuses a downgrade.",
+    "outcome": "You can state the exact sizes of ML-KEM / ML-DSA / hybrid key shares, explain 'harvest now, decrypt later', implement the RFC 10024 share layout and combiner, choose hybrid over classical-only or PQ-only with measured evidence, and make a client abort (illegal_parameter) instead of silently falling back to X25519.",
+    "environment": "Python 3.12 (3.9+), cryptography==50.0.2 (wheels built with OpenSSL 4.0.3: ML-KEM, ML-DSA, HPKE available), stdlib otherwise; optional (pending CI): liboqs-python 0.16.0.1, Python 3.15 + OpenSSL 3.5+ for the TLS group probe",
+    "estimatedTime": "75-100 minutes",
+    "overview": [
+      "cryptography 50.0.2 exposes ML-KEM, ML-DSA and HPKE MLKEM768_X25519 (verified in its docs and by running them), so liboqs is only an interop check. Measure the options, build a TLS-shaped hybrid exchange, then watch a seeded downgrade succeed against a 'liberal' client and harden it."
+    ],
+    "prerequisites": [
+      "L200 lesson 8 (X25519 + HKDF + AEAD)",
+      "L200 lesson 10 (TLS on localhost)",
+      "L400 lesson 17 (algorithm identifiers and policy phases)"
+    ],
+    "glossary": [
+      {
+        "term": "ML-KEM (FIPS 203)",
+        "meaning": "Module-lattice key-encapsulation mechanism: encapsulate(public key) -> (shared secret, ciphertext). ML-KEM-768: 1,184 B public key, 1,088 B ciphertext, 32 B secret."
+      },
+      {
+        "term": "ML-DSA (FIPS 204)",
+        "meaning": "Module-lattice signature scheme. ML-DSA-65: 1,952 B public key, 3,309 B signature; signing is randomised (hedged) by default."
+      },
+      {
+        "term": "Hybrid (PQ/T) key exchange",
+        "meaning": "A post-quantum and a traditional exchange run together; the secrets are concatenated and fed to the KDF, so both must break."
+      },
+      {
+        "term": "X25519MLKEM768",
+        "meaning": "TLS 1.3 group 0x11EC (RFC 10024): client share = ML-KEM pk || X25519 (1,216 B), server share = ML-KEM ct || X25519 (1,120 B)."
+      },
+      {
+        "term": "Harvest now, decrypt later",
+        "meaning": "Record encrypted traffic today; decrypt it once a cryptographically relevant quantum computer exists."
+      }
+    ],
+    "concepts": [
+      "Key exchange migrates first: recorded traffic is the urgent risk.",
+      "Hybrid = secure if either component holds.",
+      "Check the share length; abort, never fall back.",
+      "PQ signatures cost far more bytes than PQ key exchange."
+    ],
+    "designBrief": {
+      "context": "Two internal services exchange documents that must stay confidential for 10 years; traffic may be recorded. pyca/cryptography 50.0.2 (OpenSSL 4.0.3 wheels) is the only crypto dependency allowed.",
+      "constraints": [
+        "confidential against a future quantum attacker (data lifetime 10 years)",
+        "still secure if the new lattice scheme turns out to be broken",
+        "key-share bytes per handshake <= 2,400 B",
+        "no silent classical fallback (0 classical-only sessions for this data)",
+        "no prototype-only libraries in production"
+      ],
+      "question": "Which key exchange should the services use, and how must the client behave when the peer's share is not what the group defines?"
+    },
+    "options": [
+      {
+        "name": "A: X25519 only",
+        "description": "Today's default ECDH.",
+        "evidence": "64 B on the wire, handshake ≈140.7 µs; quantum attacker recovers recorded keys.",
+        "verdict": "Rejected: fails the 10-year confidentiality constraint."
+      },
+      {
+        "name": "B: ML-KEM-768 only",
+        "description": "Pure post-quantum KEM.",
+        "evidence": "2272 B, ≈180.3 µs; insecure if ML-KEM or its implementation breaks.",
+        "verdict": "Rejected for now: single point of failure in a young scheme."
+      },
+      {
+        "name": "C: hybrid X25519MLKEM768, strict",
+        "description": "RFC 10024 layout and combiner; client aborts on any share that is not exactly 1,120 B.",
+        "evidence": "2336 B, ≈390.5 µs; secure if either component holds (lab tests both directions).",
+        "verdict": "Chosen (ADR-0018)."
+      }
+    ],
+    "decisionRecord": "labs/L400/18-post-quantum/ADR-0018-hybrid-key-exchange.md",
+    "fitnessFunction": {
+      "what": "pq_policy.json names a PQ-safe group with no classical fallback, its key shares fit the byte budget, and the deployed client refuses a downgraded share.",
+      "test": "labs/L400/18-post-quantum/test_fitness_pq_policy.py",
+      "threshold": "0 classical-only groups; key shares <= 2,400 B; downgrade -> HandshakeError"
+    },
+    "scalingLimits": [
+      "Packet size: a 1,216 B key share pushes ClientHellos past one packet; signal = handshake failures/timeouts rising for clients that enable PQ (middleboxes) - roll out gradually.",
+      "CPU at high handshake rates: hybrid ≈2.8x the X25519 time in this Python lab; signal = handshake CPU share on TLS terminators - use session resumption and native stacks.",
+      "Certificates: ML-DSA chains are ~30x larger (14,106 B vs 478 B in tryIt 2); signal = handshake bytes and latency on constrained links - keep classical certificates until signature migration is planned."
+    ],
+    "steps": [
+      {
+        "title": "Check what your library offers",
+        "detail": "python -c \"from cryptography.hazmat.primitives.asymmetric import mlkem, mldsa; print('ok')\" - cryptography >= 48 wheels (OpenSSL 3.5+) expose ML-KEM and ML-DSA; 50.0.2 wheels use OpenSSL 4.0.3.",
+        "expected": "ok",
+        "ifNot": "UnsupportedAlgorithm or ImportError: upgrade to cryptography==50.0.2 from the official wheels; a distro build against older OpenSSL lacks PQ."
+      },
+      {
+        "title": "Run the lab: sizes",
+        "detail": "python pq_hybrid.py prints one JSON line per KEM with client/server share bytes.",
+        "expected": "{\"kem\": \"X25519\", \"client_share\": 32, \"server_share\": 32, \"secret\": 32, \"on_wire\": 64} / {\"kem\": \"ML-KEM-768\", \"client_share\": 1184, \"server_share\": 1088, \"secret\": 32, \"on_wire\": 2272} / {\"kem\": \"ML-KEM-1024\", \"client_share\": 1568, \"server_share\": 1568, \"secret\": 32, \"on_wire\": 3136} / {\"kem\": \"X25519MLKEM768\", \"client_share\": 1216, \"server_share\": 1120, \"secret\": 64, \"on_wire\": 2336}",
+        "ifNot": "Sizes are fixed by FIPS 203 / RFC 10024; a mismatch means a different parameter set."
+      },
+      {
+        "title": "Hybrid handshake and the quantum attacker",
+        "detail": "Client share = ML-KEM pk || X25519; server share = ML-KEM ct || X25519; secret = ss_mlkem || ss_x25519 -> HKDF over the transcript. A future attacker who breaks X25519 still lacks the ML-KEM secret.",
+        "expected": "1) hybrid handshake: client share 1216 B, server share 1120 B, keys match: True, mode: X25519MLKEM768 / 2) quantum attacker with X25519 broken recovers the key: False",
+        "ifNot": "keys match: False means the share order differs between client and server."
+      },
+      {
+        "title": "Measure the options",
+        "detail": "python pq_measure.py - bytes, handshake time (median, machine-dependent), ML-DSA sizes/costs, HPKE MLKEM768_X25519 (X-Wing) encapsulation.",
+        "expected": "{\"option\": \"X25519\", \"on_wire_bytes\": 64, \"handshake_us\": 140.7, \"safe_if_CRQC_exists\": false, \"safe_if_lattice_break\":  / {\"option\": \"ML-KEM-768\", \"on_wire_bytes\": 2272, \"handshake_us\": 180.3, \"safe_if_CRQC_exists\": true, \"safe_if_lattice_bre / {\"option\": \"X25519MLKEM768\", \"on_wire_bytes\": 2336, \"handshake_us\": 390.5, \"safe_if_CRQC_exists\": true, \"safe_if_lattice",
+        "ifNot": "Timings vary; sizes must match."
+      },
+      {
+        "title": "Watch the seeded downgrade",
+        "detail": "An on-path attacker cuts the server share to its X25519 part (length chosen by random.Random(18)); the naive client falls back.",
+        "expected": "client accepted a 32-byte server share | mode: X25519 (fallback) | quantum attacker recovers key: True",
+        "ifNot": "SEED must stay 18."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v (lab tests, build task against the solution, fitness, pending-CI checks that skip here).",
+        "expected": "Ran 15 tests in 0.018s | OK (skipped=2)",
+        "ifNot": "The two skips are liboqs and the TLS group probe (pending CI)."
+      },
+      {
+        "title": "Build task (the design fix) - test your own file",
+        "detail": "Fix the fault in pq_hybrid.py, then run the failure-lab proof against it. The shipped file is the unfixed one, so it fails until you finish.",
+        "expected": "Reference solution: Ran 3 tests in 0.057s | OK. Shipped/unfixed file: FAILED (the 'fails before'); your fixed file: OK.",
+        "ifNot": "Read the failing assertion: it names the case your code still accepts.",
+        "mac": "BUILD_TARGET=mine python -m unittest -v test_build_task",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_TARGET"
+      },
+      {
+        "title": "Equivalents (optional, pending CI)",
+        "detail": "liboqs interop: pip install liboqs-python==0.16.0.1 (needs git, CMake and a C compiler; builds liboqs 0.16.0 on first import), then python oqs_crosscheck.py. TLS group: Python 3.15 linked to OpenSSL 3.5+, then python pq_tls_probe.py.",
+        "expected": "liboqs-python not installed: skipped (CI ubuntu job installs liboqs-python==0.16.0.1) / skipped: needs Python 3.15+ with OpenSSL 3.5+ (have Python 3.12.15, OpenSSL 3.3.7 7 Apr 2026)",
+        "ifNot": "liboqs build errors: install CMake + compiler (Windows: Build Tools for Visual Studio, Developer Command Prompt).",
+        "mac": "brew install cmake\npython -m pip install liboqs-python==0.16.0.1\npython oqs_crosscheck.py",
+        "windows": "winget install -e --id Kitware.CMake  # plus Build Tools for Visual Studio (C++ workload)\npython -m pip install liboqs-python==0.16.0.1\npython oqs_crosscheck.py"
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"Post-quantum key exchange in practice: X25519, ML-KEM-768 (FIPS 203) and the hybrid X25519MLKEM768 (RFC 10024).\nA toy TLS-1.3-shaped exchange: the client sends a key share, the server answers with a share, both derive one key.\nShares and secret order follow RFC 10024: ML-KEM part first, then X25519 (1216 B client share, 1120 B server share).\"\"\"\nimport hashlib\nimport json\nimport random\n\nfrom cryptography.hazmat.primitives import hashes\nfrom cryptography.hazmat.primitives.asymmetric import mlkem, x25519\nfrom cryptography.hazmat.primitives.kdf.hkdf import HKDF\n\nSEED = 18  # seeds the injected fault (how the attacker rewrites the server share)\nGROUP = \"X25519MLKEM768\"  # IANA TLS group 0x11EC (RFC 10024 section 7.1)\nMLKEM_PK, MLKEM_CT, X_LEN = 1184, 1088, 32\n\n\nclass HandshakeError(Exception):\n    \"\"\"Abort the handshake (TLS: illegal_parameter alert) instead of continuing with weaker keys.\"\"\"\n\n\ndef x_pub(k) -> bytes:\n    return k.public_key().public_bytes_raw()\n\n\ndef derive(secret: bytes, client_share: bytes, server_share: bytes) -> bytes:\n    transcript = hashlib.sha256(client_share + server_share).digest()  # bind the key to both shares\n    return HKDF(hashes.SHA256(), 32, salt=None, info=b\"kb-l18 hybrid\" + transcript).derive(secret)\n\n\ndef client_hello():\n    st = {\"mlkem\": mlkem.MLKEM768PrivateKey.generate(), \"x\": x25519.X25519PrivateKey.generate()}\n    st[\"share\"] = st[\"mlkem\"].public_key().public_bytes_raw() + x_pub(st[\"x\"])  # 1184 + 32 = 1216 bytes\n    return st, st[\"share\"]\n\n\ndef server_respond(client_share: bytes):\n    if len(client_share) != MLKEM_PK + X_LEN:\n        raise HandshakeError(\"illegal_parameter: client share length\")\n    ss_pq, ct = mlkem.MLKEM768PublicKey.from_public_bytes(client_share[:MLKEM_PK]).encapsulate()\n    xk = x25519.X25519PrivateKey.generate()\n    ss_x = xk.exchange(x25519.X25519PublicKey.from_public_bytes(client_share[MLKEM_PK:]))\n    server_share = ct + x_pub(xk)  # 1088 + 32 = 1120 bytes\n    return server_share, derive(ss_pq + ss_x, client_share, server_share)  # 64-byte hybrid secret, ML-KEM first\n\n\ndef client_finish(st: dict, server_share: bytes):\n    \"\"\"Returns (key, mode). mode tells which secrets protect the session.\"\"\"\n    if len(server_share) == MLKEM_CT + X_LEN:\n        ss_pq = st[\"mlkem\"].decapsulate(server_share[:MLKEM_CT])\n        ss_x = st[\"x\"].exchange(x25519.X25519PublicKey.from_public_bytes(server_share[MLKEM_CT:]))\n        return derive(ss_pq + ss_x, st[\"share\"], server_share), GROUP\n    # BUG on purpose: \"be liberal in what you accept\" - silently fall back to classical X25519 only\n    ss_x = st[\"x\"].exchange(x25519.X25519PublicKey.from_public_bytes(server_share[-X_LEN:]))\n    return derive(ss_x, st[\"share\"], server_share), \"X25519 (fallback)\"\n\n\ndef harvest_then_break(st: dict, server_share: bytes, x_server=None) -> bytes:\n    \"\"\"A future quantum attacker recovers X25519 private keys from recorded traffic (Shor). Can it get the key?\"\"\"\n    ss_x = st[\"x\"].exchange(x25519.X25519PublicKey.from_public_bytes(server_share[-X_LEN:]))  # X25519 is broken\n    return derive(ss_x, st[\"share\"], server_share)  # but it has no ML-KEM shared secret\n\n\ndef sizes() -> dict:\n    k = mlkem.MLKEM768PrivateKey.generate()\n    k1024 = mlkem.MLKEM1024PrivateKey.generate()\n    return {\"X25519\": {\"client_share\": 32, \"server_share\": 32, \"secret\": 32},\n            \"ML-KEM-768\": {\"client_share\": len(k.public_key().public_bytes_raw()),\n                           \"server_share\": len(k.public_key().encapsulate()[1]), \"secret\": 32},\n            \"ML-KEM-1024\": {\"client_share\": len(k1024.public_key().public_bytes_raw()),\n                            \"server_share\": len(k1024.public_key().encapsulate()[1]), \"secret\": 32},\n            GROUP: {\"client_share\": MLKEM_PK + X_LEN, \"server_share\": MLKEM_CT + X_LEN, \"secret\": 64}}\n\n\nif __name__ == \"__main__\":\n    rng = random.Random(SEED)\n    for name, s in sizes().items():\n        print(json.dumps({\"kem\": name, **s, \"on_wire\": s[\"client_share\"] + s[\"server_share\"]}))\n    st, ch = client_hello()\n    sh, k_server = server_respond(ch)\n    k_client, mode = client_finish(st, sh)\n    print(f\"1) hybrid handshake: client share {len(ch)} B, server share {len(sh)} B, keys match: {k_client == k_server}, mode: {mode}\")\n    print(\"2) quantum attacker with X25519 broken recovers the key:\", harvest_then_break(st, sh) == k_client)\n    print(\"--- fault: an on-path attacker rewrites the server share to its X25519 part only (downgrade)\")\n    st, ch = client_hello()\n    sh, _ = server_respond(ch)\n    cut = rng.choice([X_LEN, X_LEN + 1])  # seeded: keep only the classical share (or one stray byte)\n    k_client, mode = client_finish(st, sh[-cut:])\n    print(f\"client accepted a {cut}-byte server share | mode: {mode} | quantum attacker recovers key:\",\n          harvest_then_break(st, sh[-cut:]) == k_client)\n",
+    "codeWalkthrough": [
+      {
+        "title": "Constants",
+        "detail": "GROUP = X25519MLKEM768 (0x11EC); MLKEM_PK 1,184, MLKEM_CT 1,088, X_LEN 32 - the layout of RFC 10024 4.1-4.2."
+      },
+      {
+        "title": "derive",
+        "detail": "HKDF-SHA256 over the concatenated secret with info = label + SHA-256(client_share || server_share): the key is bound to both shares (transcript binding)."
+      },
+      {
+        "title": "client_hello",
+        "detail": "Generates an ML-KEM-768 key and an X25519 key; share = ML-KEM pk || X25519 pk (1,216 B)."
+      },
+      {
+        "title": "server_respond",
+        "detail": "Checks the client share length (illegal_parameter), encapsulates to the ML-KEM key, does X25519, returns ct || X25519 (1,120 B) and the key from ss_mlkem || ss_x25519."
+      },
+      {
+        "title": "client_finish (the bug)",
+        "detail": "Correct path for 1,120 B; for any other length it silently derives a key from the last 32 bytes (X25519 only). The fix raises HandshakeError and logs a handshake_abort event."
+      },
+      {
+        "title": "harvest_then_break",
+        "detail": "Simulates a future attacker who recovers X25519 secrets: it only reproduces keys that did not include an ML-KEM secret."
+      },
+      {
+        "title": "sizes + pq_measure.py",
+        "detail": "Sizes come from real keys and ciphertexts; pq_measure times all three options, ML-DSA-44/65/87 and HPKE MLKEM768_X25519."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/18-post-quantum/ADR-0018-hybrid-key-exchange.md",
+        "purpose": "decision record (Nygard)"
+      },
+      {
+        "path": "labs/L400/18-post-quantum/oqs_crosscheck.py",
+        "purpose": "equivalent: liboqs-python interop (pending CI)"
+      },
+      {
+        "path": "labs/L400/18-post-quantum/pq_hybrid.py",
+        "purpose": "main lab (shipped with the silent fallback)"
+      },
+      {
+        "path": "labs/L400/18-post-quantum/pq_measure.py",
+        "purpose": "evidence for the options"
+      },
+      {
+        "path": "labs/L400/18-post-quantum/pq_policy.json",
+        "purpose": "deployment policy checked by the fitness function"
+      },
+      {
+        "path": "labs/L400/18-post-quantum/pq_tls_probe.py",
+        "purpose": "equivalent: real TLS group on 127.0.0.1 (pending CI)"
+      },
+      {
+        "path": "labs/L400/18-post-quantum/solution_strict.py",
+        "purpose": "build solution (strict length check, abort event)"
+      },
+      {
+        "path": "labs/L400/18-post-quantum/test_build_task.py",
+        "purpose": "failure-lab proof (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/18-post-quantum/test_fitness_pq_policy.py",
+        "purpose": "fitness function"
+      },
+      {
+        "path": "labs/L400/18-post-quantum/test_pending_ci.py",
+        "purpose": "pending-CI checks (skip locally)"
+      },
+      {
+        "path": "labs/L400/18-post-quantum/test_pq_hybrid.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/18-post-quantum/try_it.py",
+        "purpose": "tryIt"
+      }
+    ],
+    "expectedResults": [
+      "{\"kem\": \"X25519MLKEM768\", \"client_share\": 1216, \"server_share\": 1120, \"secret\": 64, \"on_wire\": 2336}",
+      "1) hybrid handshake: client share 1216 B, server share 1120 B, keys match: True, mode: X25519MLKEM768",
+      "2) quantum attacker with X25519 broken recovers the key: False",
+      "client accepted a 32-byte server share | mode: X25519 (fallback) | quantum attacker recovers key: True"
+    ],
+    "testCases": [
+      {
+        "action": "Compare sizes with FIPS 203 / RFC 10024",
+        "expected": "ML-KEM-768 1184/1088, ML-KEM-1024 1568/1568, hybrid 1216/1120, 64 B secret"
+      },
+      {
+        "action": "Give the attacker the X25519 secret (or only the ML-KEM secret)",
+        "expected": "Hybrid key still differs in both cases"
+      },
+      {
+        "action": "Change one byte of the server share before deriving",
+        "expected": "Different key (transcript binding)"
+      },
+      {
+        "action": "Truncate the server share to 32 or 33 bytes",
+        "expected": "HandshakeError with the fix (silent fallback in the shipped file)"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "UnsupportedAlgorithm: ML-KEM-768 is not supported by the backend",
+        "action": "Use the official cryptography>=48 wheels (OpenSSL 3.5+); 50.0.2 is pinned in requirements.txt."
+      },
+      {
+        "symptom": "pq_tls_probe.py says skipped",
+        "action": "Expected on Python < 3.15 or OpenSSL < 3.5 (the sandbox has 3.12 + OpenSSL 3.3.7); CI tries it."
+      },
+      {
+        "symptom": "liboqs-python import tries to download and build",
+        "action": "That is documented behaviour (it builds liboqs on first import); install git, CMake and a compiler, or set OQS_INSTALL_PATH."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Compute the key-share sizes of the higher-security hybrid SecP384r1MLKEM1024 with real keys.",
+        "predict": "About 1.4x the X25519MLKEM768 bytes.",
+        "expected": "1) SecP384r1MLKEM1024: client share 1665 B, server share 1665 B, on wire 3330 B (X25519MLKEM768: 2336 B)"
+      },
+      {
+        "task": "Build a root + leaf certificate chain with Ed25519 and with ML-DSA-65 (cryptography signs X.509 with ML-DSA since 49.0) and add a CertificateVerify-sized signature.",
+        "predict": "ML-DSA much larger - maybe 10x?",
+        "expected": "2) root+leaf certificates + CertificateVerify: Ed25519 478 B, ML-DSA-65 14106 B (30x)"
+      }
+    ],
+    "buildTask": {
+      "task": "Strict client_finish: accept only a server share of exactly MLKEM_CT + X_LEN bytes for the negotiated group, otherwise emit a handshake_abort JSON event and raise HandshakeError('illegal_parameter ...'). No fallback branch.",
+      "hints": [
+        "RFC 10024 4.2: the client MUST check the ciphertext length and abort with illegal_parameter.",
+        "Classical-only is a separate, explicitly configured group, never a reaction to a malformed share."
+      ],
+      "solution": "labs/L400/18-post-quantum/solution_strict.py",
+      "check": "test_build_task.py (3 tests: seeded downgraded shares refused, one extra byte refused, normal handshake still works)"
+    },
+    "failureLab": {
+      "fault": "An on-path attacker rewrites the server share to its 32-byte X25519 part (or 33 bytes; choice from random.Random(18)).",
+      "symptom": "client accepted a 32-byte server share | mode: X25519 (fallback) | quantum attacker recovers key: True",
+      "fix": "Strict length check per RFC 10024 4.2 (abort with illegal_parameter, log handshake_abort); classical-only only as a separately configured group, forbidden by pq_policy.json for this data.",
+      "proof": "test_build_task.py: against the shipped file (BUILD_TARGET=mine) Ran 3 tests in 0.346s | FAILED (failures=2); against the reference solution Ran 3 tests in 0.057s | OK"
+    },
+    "tradeOffs": [
+      {
+        "option": "Hybrid X25519MLKEM768",
+        "gains": "Safe against CRQC and against an early lattice break; IETF Recommended",
+        "costs": "2,336 B per handshake; ≈2.8x CPU in this lab; two implementations",
+        "chooseWhen": "Default for new TLS and key exchange today"
+      },
+      {
+        "option": "ML-KEM only",
+        "gains": "Smaller than hybrid by 64 B, one algorithm",
+        "costs": "No safety net if ML-KEM or its code breaks",
+        "chooseWhen": "Later, once ML-KEM implementations are mature and policy requires pure PQ"
+      },
+      {
+        "option": "X25519 only",
+        "gains": "64 B, fastest",
+        "costs": "Recorded traffic is decryptable by a future quantum attacker",
+        "chooseWhen": "Short-lived secrets only (nothing that matters in a few years)"
+      }
+    ],
+    "equivalents": [
+      "Same group in OpenSSL 3.5+: openssl s_server/s_client -groups X25519MLKEM768 (native; oqs-provider disables its copy there)",
+      "Same KEM in HPKE: cryptography's hpke.KEM.MLKEM768_X25519 (X-Wing) for encrypting to a recipient's public key",
+      "Prototyping: liboqs / liboqs-python 0.16.0.1 and oqs-provider (MIT; 'not recommended for production')",
+      "Signatures: ML-DSA via cryptography's mldsa module; composite ML-DSA+Ed25519 is an IETF draft (RFC Editor queue)"
+    ],
+    "learningTools": [
+      {
+        "name": "Wireshark",
+        "role": "INSPECT",
+        "licence": "GPL-2.0 (OSI)",
+        "url": "https://www.wireshark.org/download.html",
+        "mac": "brew install --cask wireshark-app (or the official universal .dmg)",
+        "windows": "Official x64/Arm64 installer from wireshark.org (bundles Npcap)",
+        "exercise": "With an OpenSSL 3.5+ build (catalog: brew openssl@3; Windows: not covered) run openssl s_server -accept 127.0.0.1:8443 -cert/-key from lab 9's PKI and openssl s_client -connect 127.0.0.1:8443 -groups X25519MLKEM768; capture loopback and open the ClientHello/ServerHello key_share.",
+        "expected": "Should match the lab's printed value: key_share group X25519MLKEM768 (0x11ec) with a 1216-byte client key_exchange and a 1120-byte server key_exchange (lab: 'client share 1216 B, server share 1120 B'); the classical X25519 share is 32 B. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's printed output."
+      }
+    ],
+    "caution": "Toy handshake: no authentication, no real transcript - never use it for traffic. Use the TLS stack's hybrid groups (OpenSSL 3.5+) or HPKE from a maintained library. liboqs/oqs-provider are for prototyping only.",
+    "checkpoint": "PASS if your sizes match FIPS 203 / RFC 10024, the hybrid key survives a broken X25519 and a broken ML-KEM in the tests, your strict client makes test_build_task pass, and the fitness test confirms the policy (PQ-safe group, no fallback, <= 2,400 B).",
+    "checkYourself": [
+      {
+        "q": "Why does key exchange migrate before signatures?",
+        "a": "Recorded key exchanges can be decrypted later (harvest now, decrypt later); a signature only needs to be unforgeable while it is being verified."
+      },
+      {
+        "q": "Why concatenate and KDF the two secrets with the transcript instead of XOR?",
+        "a": "Concatenation + KDF keeps security if either secret is strong and binds the key to the exact shares exchanged; that is the RFC 10024 / RFC 9954 construction."
+      },
+      {
+        "q": "The server sent 32 bytes instead of 1,120. What does a correct client do?",
+        "a": "Abort with illegal_parameter and log it; it must not derive a classical-only key."
+      }
+    ],
+    "sources": [
+      {
+        "title": "RFC 10024 - Post-Quantum Traditional (PQ/T) Hybrid Key Agreement Mechanisms for TLS 1.3 (was draft-ietf-tls-ecdhe-mlkem)",
+        "url": "https://datatracker.ietf.org/doc/draft-ietf-tls-ecdhe-mlkem/"
+      },
+      {
+        "title": "NIST FIPS 204 - Module-Lattice-Based Digital Signature Standard",
+        "url": "https://csrc.nist.gov/pubs/fips/204/final"
+      },
+      {
+        "title": "pyca/cryptography - ML-KEM key encapsulation",
+        "url": "https://cryptography.io/en/latest/hazmat/primitives/asymmetric/mlkem/"
+      },
+      {
+        "title": "pyca/cryptography - HPKE (MLKEM768_X25519)",
+        "url": "https://cryptography.io/en/latest/hazmat/primitives/hpke/"
+      },
+      {
+        "title": "pyca/cryptography - Changelog (48.0.0 PQ in wheels, 50.0.2 OpenSSL 4.0.3)",
+        "url": "https://cryptography.io/en/latest/changelog/"
+      },
+      {
+        "title": "NIST IR 8547 - Transition to Post-Quantum Cryptography Standards",
+        "url": "https://csrc.nist.gov/pubs/ir/8547/final"
+      },
+      {
+        "title": "liboqs-python (Open Quantum Safe)",
+        "url": "https://github.com/open-quantum-safe/liboqs-python"
+      },
+      {
+        "title": "oqs-provider (Open Quantum Safe)",
+        "url": "https://github.com/open-quantum-safe/oqs-provider"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran pq_hybrid.py, pq_measure.py, solution_strict.py, try_it.py and the unittests (Ran 15 tests in 0.018s | OK (skipped=2)) locally with cryptography 50.0.2 (ML-KEM/ML-DSA/HPKE run for real). test_build_task observed FAILED (failures=2) with BUILD_TARGET=mine and OK against solution_strict.py. oqs_crosscheck.py and pq_tls_probe.py ran their skip branches (no liboqs; Python 3.12 + OpenSSL 3.3.7).",
+      "pendingCi": [
+        "test_pending_ci.py::test_liboqs_interop (liboqs-python 0.16.0.1, CI ubuntu job)",
+        "test_pending_ci.py::test_tls_negotiates_hybrid_group (Python 3.15 + OpenSSL 3.5+, CI job; runner OpenSSL version unverified)",
+        "macOS/Windows runs (matrix)",
+        "Wireshark learning-tool exercise (manual, OpenSSL 3.5+ CLI)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/18-post-quantum-in-practice.md",
+    "conceptSummary": "ML-KEM (FIPS 203) and ML-DSA (FIPS 204) are in cryptography 50.0.2. Use the hybrid X25519MLKEM768 (RFC 10024: 1,216/1,120 B shares, 64 B secret, ML-KEM first) so either component can fail, abort on malformed shares instead of falling back, and migrate key exchange before signatures because recorded traffic is the urgent risk.",
+    "inRealSystems": [
+      "Chrome, Firefox, Cloudflare and OpenSSL 3.5+ negotiate X25519MLKEM768 by default or as an option; Signal (PQXDH) and Apple iMessage (PQ3) added PQ KEMs to messaging.",
+      "OpenBao 2.7 transit offers mldsa-44/65/87 signing keys; cryptography 49+ signs X.509 with ML-DSA."
+    ],
+    "useWhen": "Use strict hybrid key exchange now for anything confidential beyond a few years; avoid pure-PQ-only without a fallback-free hybrid period, silent classical fallback, and prototype libraries (liboqs) in production.",
+    "next": "L400 #19 Keys in hardware-style storage: PKCS#11, non-exportable keys and key ceremonies: where the long-term signing keys of these protocols should live.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "cryptography L200 #8 Key exchange and hybrid encryption (X25519 + HKDF + AEAD): the classical exchange this lesson makes hybrid.",
+      "cryptography L200 #10 TLS on localhost: where the X25519MLKEM768 group is negotiated (pq_tls_probe.py reuses lab 9's CA).",
+      "cryptography Capstone #22 Capstone: an encrypted document service: PQ-hybrid sharing via HPKE MLKEM768_X25519.",
+      "quantum-computing L400 #21 Quantum and post-quantum: crypto inventory and migration plan: inventories RSA/ECDH use and plans the move to hybrid X25519 + ML-KEM that this lesson implements."
+    ]
+  },
+  {
+    "id": "keys-in-hardware",
+    "number": 19,
+    "level": "L400",
+    "title": "Keys in hardware-style storage: PKCS#11, non-exportable keys and key ceremonies",
+    "phase": "Design",
+    "category": "Key storage",
+    "description": "Design where a long-term signing key lives: a file, a KMS-style service, or a PKCS#11 token that signs through object handles. A PKCS#11-shaped software token shows sessions, PINs, handles and the CKA_SENSITIVE / CKA_EXTRACTABLE one-way attributes; SoftHSM2 runs the same design for real in CI.",
+    "outcome": "You can explain PKCS#11 slots, sessions, object handles and attributes, sign through a handle, make keys non-exportable by token policy (not application goodwill), compare file / KMS / HSM storage with measured evidence, run a small key ceremony with a verifiable transcript, and audit a token inventory with a fitness test.",
+    "environment": "Python 3.12 (3.9+), cryptography==50.0.2 (wheels built with OpenSSL 4.0.3: ML-KEM, ML-DSA, HPKE available), stdlib otherwise; pending CI: SoftHSM2 (Ubuntu softhsm2 / Homebrew softhsm 2.7.0) + python-pkcs11 0.10.1",
+    "estimatedTime": "75-100 minutes",
+    "overview": [
+      "Measure three storage options under a simulated host compromise, decide, then let a compromised application read a key from a token whose defaults are 'extractable'. Move the decision into the token, prove it with tests, and run a key ceremony."
+    ],
+    "prerequisites": [
+      "L300 lesson 14 (release signing)",
+      "L300 lesson 16 (secrets in applications)",
+      "L400 lesson 17 (registry and policy)"
+    ],
+    "glossary": [
+      {
+        "term": "PKCS#11 (Cryptoki)",
+        "meaning": "OASIS C API for cryptographic tokens (HSMs, smart cards, SoftHSM): slots, tokens, sessions, objects with attributes, mechanisms (CKM_*)."
+      },
+      {
+        "term": "Object handle",
+        "meaning": "A number that refers to a key inside the token; the app passes it to C_Sign - the key bytes never leave."
+      },
+      {
+        "term": "CKA_SENSITIVE / CKA_EXTRACTABLE",
+        "meaning": "Never reveal the value in plaintext / never allow wrapping it out. One-way: sensitive can only be turned on, extractable only off."
+      },
+      {
+        "term": "CKA_ALWAYS_SENSITIVE / CKA_NEVER_EXTRACTABLE",
+        "meaning": "Read-only history: true only if the key was protected for its whole life (generated inside, never exposed)."
+      },
+      {
+        "term": "Key ceremony",
+        "meaning": "Scripted, witnessed generation of a long-term key inside the device, ending with a public-key fingerprint and proof of possession."
+      }
+    ],
+    "concepts": [
+      "The app holds a handle, not a key.",
+      "The token enforces non-exportability; templates cannot opt out.",
+      "Compromise turns theft into misuse: bounded and logged.",
+      "Long-term keys are born in a ceremony."
+    ],
+    "designBrief": {
+      "context": "The release-signing key (lesson 14) signs every artifact. It sits as a PEM file on the build host. A build-host compromise must not let the attacker sign releases after the incident is cleaned up.",
+      "constraints": [
+        "the application process can never read private key bytes",
+        "after clean-up (key disabled / session closed) the attacker can no longer sign",
+        "signing latency <= 1 ms on the build host",
+        "every signing operation leaves an audit event",
+        "recovery plan if the device is lost"
+      ],
+      "question": "Where should the signing key live and how does the application use it?"
+    },
+    "options": [
+      {
+        "name": "A: PEM file next to the app",
+        "description": "Load the key from disk (optionally password-encrypted; the app can decrypt it).",
+        "evidence": "app can read key: True; sign ≈35.1 µs; attacker signs after clean-up: True.",
+        "verdict": "Rejected: a single read gives permanent signing power."
+      },
+      {
+        "name": "B: KMS-style remote signing",
+        "description": "Key stays in a service (OpenBao transit exportable=false, cloud KMS); app sends data to sign.",
+        "evidence": "app can read key: False; sign ≈5001.5 µs over HTTP on 127.0.0.1 (new connection per call); after clean-up: False (key disabled).",
+        "verdict": "Good for many services; misses the 1 ms constraint without connection reuse."
+      },
+      {
+        "name": "C: PKCS#11 token, non-exportable, sign via handle",
+        "description": "Key generated inside the token; token policy forces SENSITIVE=True, EXTRACTABLE=False.",
+        "evidence": "app can read key: False; sign ≈40.1 µs; after clean-up: False.",
+        "verdict": "Chosen for the build host (ADR-0019); front with a KMS when many services sign."
+      }
+    ],
+    "decisionRecord": "labs/L400/19-hsm-pkcs11/ADR-0019-signing-key-storage.md",
+    "fitnessFunction": {
+      "what": "Static: no module outside the token implementation reads private key bytes (private_bytes*, wrap_key). Inventory: every private key on the token is ALWAYS_SENSITIVE and NEVER_EXTRACTABLE. Also run over the capstone.",
+      "test": "labs/L400/19-hsm-pkcs11/test_fitness_no_key_export.py",
+      "threshold": "0 forbidden calls; 0 exportable private keys in the inventory"
+    },
+    "scalingLimits": [
+      "Throughput: one token signs serially; signal = sign queue latency rising with release frequency - add tokens/HSM partitions or batch-sign manifests.",
+      "Many consumers: per-host tokens multiply ceremonies and PINs; signal = number of hosts holding signing PINs - centralise behind a KMS (OpenBao transit with external-key) and audit there.",
+      "Disaster recovery: non-exportable keys cannot be restored from software backups; signal = a single device holding a production key - provision a second device in the ceremony and rehearse rotation."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "python soft_token.py - wrong PIN, login, generate 'release-signing' with the token's defaults, sign through handle 1.",
+        "expected": "1) wrong PIN: CKR_PIN_INCORRECT / 2) signed via handle 1 | sig bytes: 64 | public key DER bytes: 44",
+        "ifNot": "ModuleNotFoundError: activate the venv; cryptography==50.0.2."
+      },
+      {
+        "title": "Watch the seeded fault",
+        "detail": "A compromised app asks for attributes (order from random.Random(19)) and the CKA_VALUE of the private key.",
+        "expected": "attributes: {'CKA_SENSITIVE': False, 'CKA_VALUE': 48, 'CKA_EXTRACTABLE': True} / after logout the stolen key still signs offline: True | audit events: 6",
+        "ifNot": "SEED must stay 19."
+      },
+      {
+        "title": "Measure the three storage options",
+        "detail": "python key_storage_options.py - same message signed three ways, then a simulated compromise + clean-up (latencies vary by machine; the KMS uses a new HTTP connection per call).",
+        "expected": "{\"option\": \"file key\", \"app_can_read_key\": true, \"sign_us\": 35.1, \"attacker_signs_after_cleanup\": true} / {\"option\": \"KMS-style remote signing (HTTP, 127.0.0.1)\", \"app_can_read_key\": false, \"sign_us\": 5001.5, \"attacker_signs_after_clean / {\"option\": \"token handle (PKCS#11-shaped, non-exportable)\", \"app_can_read_key\": false, \"sign_us\": 40.1, \"attacker_signs_after_clea",
+        "ifNot": "A firewall prompt on Windows for 127.0.0.1 can be allowed for private networks only."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v (lab tests, build task against the solution, fitness function; the SoftHSM test skips without PKCS11_MODULE).",
+        "expected": "Ran 14 tests in 0.088s | OK (skipped=1)",
+        "ifNot": "Read the failing assertion."
+      },
+      {
+        "title": "Build task (the design fix) - test your own file",
+        "detail": "Fix the fault in soft_token.py, then run the failure-lab proof against it. The shipped file is the unfixed one, so it fails until you finish.",
+        "expected": "Reference solution: Ran 4 tests in 0.010s | OK. Shipped/unfixed file: FAILED (the 'fails before'); your fixed file: OK.",
+        "ifNot": "Read the failing assertion: it names the case your code still accepts.",
+        "mac": "BUILD_TARGET=mine python -m unittest -v test_build_task",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_TARGET"
+      },
+      {
+        "title": "Run a key ceremony",
+        "detail": "python ceremony.py - custodian + 2 witnesses, key generated non-exportable in the token, fingerprint read aloud, proof-of-possession signature over the transcript; then edit the record.",
+        "expected": "transcript verifies: True / edited transcript verifies: False / custodian as own witness: need 2 distinct witnesses who are not the custodian",
+        "ifNot": "If the edited transcript still verifies, the signature does not cover the steps."
+      },
+      {
+        "title": "Equivalent: SoftHSM2 + python-pkcs11 (optional, pending CI)",
+        "detail": "Same design against a real PKCS#11 module: init a token, export PKCS11_MODULE, run pkcs11_softhsm.py (P-256 key, SENSITIVE/non-EXTRACTABLE, sign via handle, verify with cryptography).",
+        "expected": "PKCS11_MODULE not set: skipped (CI ubuntu job installs softhsm2 and python-pkcs11==0.10.1) (CI: verified_with_cryptography True, private_value_readable False)",
+        "ifNot": "CKR_TOKEN_NOT_PRESENT: wrong label; check softhsm2-util --show-slots. Windows: SoftHSM2 for Windows was not verified - use WSL2 or the Mac.",
+        "mac": "brew install softhsm\nsofthsm2-util --init-token --free --label kb-l19 --so-pin 5678 --pin 1234   # demo PINs\npython -m pip install python-pkcs11==0.10.1\nexport PKCS11_MODULE=$(brew --prefix softhsm)/lib/softhsm/libsofthsm2.so\npython pkcs11_softhsm.py",
+        "windows": "Not verified natively: run the mac/Linux commands inside WSL2 (Ubuntu: sudo apt install softhsm2; module /usr/lib/softhsm/libsofthsm2.so)"
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"A PKCS#11-shaped software token: slots, PIN login, sessions, object HANDLES and attributes.\nApplications get a handle and ask the token to sign; with CKA_SENSITIVE / CKA_EXTRACTABLE set right they can never\nread the private key. LEARNING CODE: a software token protects nothing from a process that can read its memory -\nthe real boundary is SoftHSM2 / an HSM behind PKCS#11 (pkcs11_softhsm.py, pending CI).\"\"\"\nimport json\nimport random\n\nfrom cryptography.hazmat.primitives import hashes, serialization as ser\nfrom cryptography.hazmat.primitives.asymmetric import ec, ed25519\n\nSEED = 19  # seeds the injected fault (which attribute the compromised app asks for first)\nCKA_LABEL, CKA_SIGN, CKA_VALUE, CKA_CLASS = \"CKA_LABEL\", \"CKA_SIGN\", \"CKA_VALUE\", \"CKA_CLASS\"\nCKA_SENSITIVE, CKA_EXTRACTABLE = \"CKA_SENSITIVE\", \"CKA_EXTRACTABLE\"\nCKA_ALWAYS_SENSITIVE, CKA_NEVER_EXTRACTABLE = \"CKA_ALWAYS_SENSITIVE\", \"CKA_NEVER_EXTRACTABLE\"\nCKM_EDDSA, CKM_ECDSA_SHA256 = \"CKM_EDDSA\", \"CKM_ECDSA_SHA256\"\nMAX_PIN_TRIES = 3\n\n\nclass PKCS11Error(Exception):\n    \"\"\"Carries a PKCS#11 return value name, e.g. CKR_ATTRIBUTE_SENSITIVE.\"\"\"\n\n\nclass SoftToken:\n    def __init__(self, label: str, so_pin: str, user_pin: str):\n        self.label, self._pins, self._tries = label, {\"SO\": so_pin, \"USER\": user_pin}, 0\n        self._objects, self._next = {}, 1\n        self.audit = []  # JSON events: who did what with which handle\n\n    def open_session(self):\n        return Session(self)\n\n    def _log(self, **event):\n        self.audit.append(json.dumps(event, sort_keys=True))\n\n\nclass Session:\n    def __init__(self, token: SoftToken):\n        self.t, self.user = token, None\n\n    def login(self, user_type: str, pin: str):\n        if self.t._tries >= MAX_PIN_TRIES:\n            raise PKCS11Error(\"CKR_PIN_LOCKED\")\n        if pin != self.t._pins[user_type]:\n            self.t._tries += 1\n            self.t._log(op=\"C_Login\", user=user_type, ok=False)\n            raise PKCS11Error(\"CKR_PIN_INCORRECT\")\n        self.t._tries, self.user = 0, user_type\n        self.t._log(op=\"C_Login\", user=user_type, ok=True)\n\n    def _new(self, attrs, key) -> int:\n        h, self.t._next = self.t._next, self.t._next + 1\n        self.t._objects[h] = {\"attrs\": attrs, \"key\": key}\n        return h\n\n    def generate_key_pair(self, mechanism: str, label: str, private_template=None):\n        if self.user != \"USER\":\n            raise PKCS11Error(\"CKR_USER_NOT_LOGGED_IN\")  # the SO administers the token but cannot use keys\n        key = ed25519.Ed25519PrivateKey.generate() if mechanism == CKM_EDDSA else ec.generate_private_key(ec.SECP256R1())\n        # BUG on purpose: when the template omits them, defaults are \"sensitive: no, extractable: yes\"\n        attrs = {CKA_CLASS: \"CKO_PRIVATE_KEY\", CKA_LABEL: label, CKA_SIGN: True, CKA_SENSITIVE: False, CKA_EXTRACTABLE: True,\n                 **(private_template or {})}\n        attrs[CKA_ALWAYS_SENSITIVE], attrs[CKA_NEVER_EXTRACTABLE] = attrs[CKA_SENSITIVE], not attrs[CKA_EXTRACTABLE]\n        priv = self._new(attrs, key)\n        pub = self._new({CKA_CLASS: \"CKO_PUBLIC_KEY\", CKA_LABEL: label, CKA_SENSITIVE: False}, key.public_key())\n        self.t._log(op=\"C_GenerateKeyPair\", label=label, mechanism=mechanism, handle=priv)\n        return pub, priv\n\n    def find_objects(self, label: str, cls: str = \"CKO_PRIVATE_KEY\") -> list:\n        return [h for h, o in self.t._objects.items() if o[\"attrs\"].get(CKA_LABEL) == label and o[\"attrs\"][CKA_CLASS] == cls]\n\n    def get_attribute_value(self, handle: int, attr: str):\n        o = self.t._objects[handle]\n        if attr == CKA_VALUE:\n            if o[\"attrs\"][CKA_CLASS] == \"CKO_PUBLIC_KEY\":\n                return o[\"key\"].public_bytes(ser.Encoding.DER, ser.PublicFormat.SubjectPublicKeyInfo)\n            if o[\"attrs\"][CKA_SENSITIVE] or not o[\"attrs\"][CKA_EXTRACTABLE]:\n                self.t._log(op=\"C_GetAttributeValue\", attr=attr, handle=handle, ok=False)\n                raise PKCS11Error(\"CKR_ATTRIBUTE_SENSITIVE\")  # the key never leaves the token in plaintext\n            self.t._log(op=\"C_GetAttributeValue\", attr=attr, handle=handle, ok=True)\n            return o[\"key\"].private_bytes(ser.Encoding.DER, ser.PrivateFormat.PKCS8, ser.NoEncryption())\n        return o[\"attrs\"][attr]\n\n    def set_attribute_value(self, handle: int, attr: str, value: bool):\n        attrs = self.t._objects[handle][\"attrs\"]\n        if (attr == CKA_SENSITIVE and attrs[attr] and not value) or (attr == CKA_EXTRACTABLE and not attrs[attr] and value):\n            raise PKCS11Error(\"CKR_ATTRIBUTE_READ_ONLY\")  # one-way switches: sensitive stays on, extractable stays off\n        attrs[attr] = value\n        attrs[CKA_ALWAYS_SENSITIVE] &= attrs[CKA_SENSITIVE]\n        attrs[CKA_NEVER_EXTRACTABLE] &= not attrs[CKA_EXTRACTABLE]\n\n    def wrap_key(self, wrapping_handle: int, handle: int) -> bytes:\n        if not self.t._objects[handle][\"attrs\"][CKA_EXTRACTABLE]:\n            raise PKCS11Error(\"CKR_KEY_UNEXTRACTABLE\")\n        return b\"wrapped:\" + self.get_attribute_value(handle, CKA_VALUE)[:8]  # placeholder: real tokens wrap with a key\n\n    def sign(self, handle: int, mechanism: str, data: bytes) -> bytes:\n        if self.user != \"USER\":\n            raise PKCS11Error(\"CKR_USER_NOT_LOGGED_IN\")\n        o = self.t._objects[handle]\n        if not o[\"attrs\"].get(CKA_SIGN):\n            raise PKCS11Error(\"CKR_KEY_FUNCTION_NOT_PERMITTED\")\n        self.t._log(op=\"C_Sign\", handle=handle, mechanism=mechanism, bytes=len(data))\n        return o[\"key\"].sign(data) if mechanism == CKM_EDDSA else o[\"key\"].sign(data, ec.ECDSA(hashes.SHA256()))\n\n    def logout(self):\n        self.user = None\n\n\nif __name__ == \"__main__\":\n    rng = random.Random(SEED)\n    token = SoftToken(\"kb-l19\", so_pin=\"so-demo-1234\", user_pin=\"user-demo-5678\")  # demo PINs only\n    s = token.open_session()\n    try:\n        s.login(\"USER\", \"0000\")\n    except PKCS11Error as e:\n        print(\"1) wrong PIN:\", e)\n    s.login(\"USER\", \"user-demo-5678\")\n    pub, priv = s.generate_key_pair(CKM_EDDSA, \"release-signing\")  # app relies on the token's defaults\n    sig = s.sign(priv, CKM_EDDSA, b\"release 1.4.0\")\n    print(\"2) signed via handle\", priv, \"| sig bytes:\", len(sig), \"| public key DER bytes:\", len(s.get_attribute_value(pub, CKA_VALUE)))\n    print(\"--- fault: a compromised app asks the token for the private key\")\n    ask = rng.sample([CKA_VALUE, CKA_EXTRACTABLE, CKA_SENSITIVE], 3)\n    print(\"attributes:\", {a: (len(v) if isinstance(v, bytes) else v) for a in ask for v in [s.get_attribute_value(priv, a)]})\n    stolen = ser.load_der_private_key(s.get_attribute_value(priv, CKA_VALUE), None)\n    s.logout()\n    print(\"after logout the stolen key still signs offline:\", stolen.sign(b\"release 6.6.6\") is not None,\n          \"| audit events:\", len(token.audit))\n",
+    "codeWalkthrough": [
+      {
+        "title": "Constants",
+        "detail": "Attribute and mechanism names mirror PKCS#11 (CKA_*, CKM_EDDSA, CKM_ECDSA_SHA256); PKCS11Error carries the CKR_* return value name."
+      },
+      {
+        "title": "SoftToken / login",
+        "detail": "Separate SO and USER PINs; 3 wrong PINs -> CKR_PIN_LOCKED; every call writes a JSON audit event."
+      },
+      {
+        "title": "generate_key_pair (the bug)",
+        "detail": "Requires a USER login (the SO cannot use keys); when the template omits them, defaults are SENSITIVE=False, EXTRACTABLE=True - and ALWAYS/NEVER attributes record that history."
+      },
+      {
+        "title": "get_attribute_value",
+        "detail": "Public keys export as DER; a private CKA_VALUE is refused with CKR_ATTRIBUTE_SENSITIVE when sensitive or non-extractable."
+      },
+      {
+        "title": "set_attribute_value / wrap_key",
+        "detail": "One-way switches (CKR_ATTRIBUTE_READ_ONLY) and CKR_KEY_UNEXTRACTABLE for wrapping a non-extractable key."
+      },
+      {
+        "title": "sign",
+        "detail": "C_Sign through a handle: checks login and CKA_SIGN, logs the operation, never returns key material."
+      },
+      {
+        "title": "solution_nonexportable.py",
+        "detail": "HardenedSession forces SENSITIVE=True / EXTRACTABLE=False and rejects templates asking otherwise (CKR_TEMPLATE_INCONSISTENT); the token, not the app, decides."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/19-hsm-pkcs11/ADR-0019-signing-key-storage.md",
+        "purpose": "decision record (Nygard)"
+      },
+      {
+        "path": "labs/L400/19-hsm-pkcs11/ceremony.py",
+        "purpose": "key ceremony with a verifiable transcript"
+      },
+      {
+        "path": "labs/L400/19-hsm-pkcs11/key_storage_options.py",
+        "purpose": "evidence: file vs KMS-style vs token"
+      },
+      {
+        "path": "labs/L400/19-hsm-pkcs11/pkcs11_softhsm.py",
+        "purpose": "equivalent: SoftHSM2 via python-pkcs11 (pending CI)"
+      },
+      {
+        "path": "labs/L400/19-hsm-pkcs11/soft_token.py",
+        "purpose": "main lab (shipped with exportable defaults)"
+      },
+      {
+        "path": "labs/L400/19-hsm-pkcs11/solution_nonexportable.py",
+        "purpose": "build solution (token-enforced non-exportable keys)"
+      },
+      {
+        "path": "labs/L400/19-hsm-pkcs11/test_build_task.py",
+        "purpose": "failure-lab proof (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/19-hsm-pkcs11/test_fitness_no_key_export.py",
+        "purpose": "fitness function (static + inventory)"
+      },
+      {
+        "path": "labs/L400/19-hsm-pkcs11/test_pending_ci.py",
+        "purpose": "SoftHSM2 check (skips without PKCS11_MODULE)"
+      },
+      {
+        "path": "labs/L400/19-hsm-pkcs11/test_soft_token.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/19-hsm-pkcs11/try_it.py",
+        "purpose": "tryIt"
+      }
+    ],
+    "expectedResults": [
+      "1) wrong PIN: CKR_PIN_INCORRECT",
+      "2) signed via handle 1 | sig bytes: 64 | public key DER bytes: 44",
+      "attributes: {'CKA_SENSITIVE': False, 'CKA_VALUE': 48, 'CKA_EXTRACTABLE': True}",
+      "after logout the stolen key still signs offline: True | audit events: 6",
+      "transcript verifies: True"
+    ],
+    "testCases": [
+      {
+        "action": "Three wrong PINs, then the right one",
+        "expected": "CKR_PIN_LOCKED"
+      },
+      {
+        "action": "SO logs in and generates a key",
+        "expected": "CKR_USER_NOT_LOGGED_IN"
+      },
+      {
+        "action": "Set CKA_SENSITIVE back to False",
+        "expected": "CKR_ATTRIBUTE_READ_ONLY"
+      },
+      {
+        "action": "Read CKA_VALUE / wrap a key generated with the token defaults",
+        "expected": "CKR_ATTRIBUTE_SENSITIVE / CKR_KEY_UNEXTRACTABLE with the fix"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "CKR_PIN_LOCKED",
+        "action": "Only the SO can reset the user PIN (C_InitPIN); in the lab, create a new SoftToken."
+      },
+      {
+        "symptom": "CKR_TEMPLATE_INCONSISTENT",
+        "action": "Your template asked for an extractable or non-sensitive private key; the hardened token refuses by design."
+      },
+      {
+        "symptom": "pkcs11_softhsm.py: KeyError PKCS11_MODULE",
+        "action": "Export PKCS11_MODULE to the libsofthsm2 path (see the step's mac/windows lines)."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Try three wrong PINs and then the correct one against the hardened token.",
+        "predict": "Locked out even with the right PIN.",
+        "expected": "1) logins: ['CKR_PIN_INCORRECT', 'CKR_PIN_INCORRECT', 'CKR_PIN_INCORRECT', 'CKR_PIN_LOCKED']"
+      },
+      {
+        "task": "Measure signing via a handle against signing with raw key bytes (500 runs, median).",
+        "predict": "Handle costs a few microseconds more.",
+        "expected": "2) sign via handle 39.9 us vs raw key 34.0 us (overhead 1.18x, plus one audit event per call: 502 events)"
+      }
+    ],
+    "buildTask": {
+      "task": "Token-enforced non-exportable keys: private keys are always created CKA_SENSITIVE=True and CKA_EXTRACTABLE=False (so ALWAYS_SENSITIVE and NEVER_EXTRACTABLE are True); a template that asks otherwise raises CKR_TEMPLATE_INCONSISTENT.",
+      "hints": [
+        "Override generate_key_pair in a Session subclass and merge an ENFORCED dict last.",
+        "Return your session class from SoftToken.open_session()."
+      ],
+      "solution": "labs/L400/19-hsm-pkcs11/solution_nonexportable.py",
+      "check": "test_build_task.py (4 tests: value unreadable, unwrappable, template cannot opt out, lifetime attributes true)"
+    },
+    "failureLab": {
+      "fault": "The application relies on the token's defaults (sensitive: no, extractable: yes); a compromised app asks for CKA_VALUE (attribute order from random.Random(19)).",
+      "symptom": "attributes: {'CKA_SENSITIVE': False, 'CKA_VALUE': 48, 'CKA_EXTRACTABLE': True} / after logout the stolen key still signs offline: True | audit events: 6",
+      "fix": "Move the decision into the token: enforced SENSITIVE/non-EXTRACTABLE private keys, CKR_TEMPLATE_INCONSISTENT for opt-outs; the inventory fitness test checks ALWAYS_SENSITIVE/NEVER_EXTRACTABLE.",
+      "proof": "test_build_task.py: against the shipped file (BUILD_TARGET=mine) Ran 4 tests in 0.008s | FAILED (failures=4); against the reference solution Ran 4 tests in 0.010s | OK"
+    },
+    "tradeOffs": [
+      {
+        "option": "PKCS#11 token / HSM",
+        "gains": "Key never leaves; local latency (≈40 µs here); hardware boundary",
+        "costs": "Devices, PINs, ceremonies, backups; vendor quirks",
+        "chooseWhen": "Few high-value keys on known hosts (release signing, CA keys)"
+      },
+      {
+        "option": "KMS-style service (OpenBao transit, cloud KMS)",
+        "gains": "Central policy, audit, instant disable; no device per host",
+        "costs": "Network latency per call; the service becomes critical",
+        "chooseWhen": "Many services sign or decrypt; key use must be centrally revocable"
+      },
+      {
+        "option": "File key",
+        "gains": "Zero infrastructure, fastest",
+        "costs": "Theft = permanent signing power",
+        "chooseWhen": "Throwaway or test keys only"
+      }
+    ],
+    "equivalents": [
+      "Same API with a real module: SoftHSM2 2.7.0 (BSD-2-Clause) + python-pkcs11 0.10.1 (pkcs11_softhsm.py, pending CI)",
+      "Same idea as a service: OpenBao transit keys with exportable=false (default) and external-key for HSM/KMS-backed material",
+      "Same attributes in Java: SunPKCS11 provider; in Go: crypto11 over PKCS#11",
+      "Vendor equivalent (one line, not a source): cloud KMS / cloud HSM services offer non-exportable keys with sign APIs"
+    ],
+    "learningTools": [
+      {
+        "name": "OpenBao (transit engine + web UI)",
+        "role": "SEE / CHECK",
+        "licence": "MPL-2.0 (OSI)",
+        "url": "https://github.com/openbao/openbao/releases",
+        "mac": "brew install openbao (official install page), or podman run -d --name bao -p 127.0.0.1:8200:8200 docker.io/openbao/openbao:2.7.2 server -dev -dev-root-token-id=root -dev-listen-address=0.0.0.0:8200",
+        "windows": "Container only (Docker Desktop / Podman), same podman run command; a native Windows binary was not checked",
+        "exercise": "Start the dev server (lesson 12 README), enable transit, then: bao write transit/keys/release-signing type=ed25519 ; bao write transit/sign/release-signing input=$(echo -n 'release 1.4.0' | base64) ; bao read transit/export/signing-key/release-signing",
+        "expected": "Signing returns 'vault:v1:...'; the export is refused because transit keys are created with exportable=false (OpenBao transit API: 'exportable (bool: false)', and once set to true it cannot be disabled) - the service version of the lab's 'read CKA_VALUE: CKR_ATTRIBUTE_SENSITIVE'. The exact CLI error text was not checked. Dev mode only, 127.0.0.1. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's printed output."
+      }
+    ],
+    "caution": "A software token protects nothing from a process that can read its memory; it teaches the interface. Demo PINs only; never put real PINs in code, env vars or logs (lesson 16). Generate production keys inside the device in a witnessed ceremony.",
+    "checkpoint": "PASS if you can explain why option A fails the clean-up constraint, your hardened token makes test_build_task pass (the shipped one fails 4/4), the ceremony transcript verifies and an edited one does not, and the fitness test reports 0 forbidden calls and 0 exportable keys.",
+    "checkYourself": [
+      {
+        "q": "Does a non-exportable key stop an attacker who controls the host?",
+        "a": "No - they can still ask the token to sign while they are in. It stops them signing AFTER clean-up and leaves audit events."
+      },
+      {
+        "q": "Why must the token, not the application, decide CKA_EXTRACTABLE?",
+        "a": "PKCS#11 defaults are token-specific and an application template can be wrong or compromised; token policy is the boundary."
+      },
+      {
+        "q": "What does CKA_NEVER_EXTRACTABLE=True prove that CKA_EXTRACTABLE=False does not?",
+        "a": "That the key was never extractable during its whole life (not imported or switched later)."
+      }
+    ],
+    "sources": [
+      {
+        "title": "OASIS PKCS #11 Specification Version 3.1",
+        "url": "https://docs.oasis-open.org/pkcs11/pkcs11-spec/v3.1/os/pkcs11-spec-v3.1-os.html"
+      },
+      {
+        "title": "SoftHSM version 2 (OpenDNSSEC)",
+        "url": "https://github.com/softhsm/SoftHSMv2"
+      },
+      {
+        "title": "python-pkcs11 (PyPI)",
+        "url": "https://pypi.org/project/python-pkcs11/"
+      },
+      {
+        "title": "OpenBao - Transit secrets engine (API): exportable, export, external-key",
+        "url": "https://openbao.org/docs/api/secret/transit/"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran soft_token.py, solution_nonexportable.py, key_storage_options.py (real loopback HTTP KMS), ceremony.py, try_it.py and the unittests (Ran 14 tests in 0.088s | OK (skipped=1)) locally. test_build_task observed FAILED (failures=4) with BUILD_TARGET=mine and OK against solution_nonexportable.py. pkcs11_softhsm.py ran its skip branch (no SoftHSM2).",
+      "pendingCi": [
+        "test_pending_ci.py (SoftHSM2 + python-pkcs11 0.10.1, CI ubuntu job; python-pkcs11 API calls written from the PyPI README, not run)",
+        "SoftHSM2 on macOS (Homebrew) and Windows (WSL2 only)",
+        "macOS/Windows runs (matrix)",
+        "OpenBao learning-tool exercise (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/19-keys-in-hardware.md",
+    "conceptSummary": "Keep long-term keys inside a token or KMS and use them through handles: the token (not the app) enforces CKA_SENSITIVE and non-extractable keys, so a host compromise becomes bounded, logged misuse instead of permanent theft. Generate keys in a witnessed ceremony and audit the inventory.",
+    "inRealSystems": [
+      "CAs and code-signing services keep keys in HSMs (CA/Browser Forum requires hardware protection for publicly trusted CA keys).",
+      "OpenSSL 3 providers, Java SunPKCS11 and many TLS servers can use PKCS#11 keys; OpenBao/Vault transit and cloud KMSs expose sign/decrypt APIs over keys you cannot export."
+    ],
+    "useWhen": "Use a token/HSM or KMS for any key whose theft would outlive an incident (release, CA, audit-log keys); avoid file keys outside tests, keys generated outside the device, and relying on token defaults.",
+    "next": "L400 #20 End-to-end encryption for groups: pairwise, sender keys and MLS-style epochs: what happens to keys when the group, not one service, holds them.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "cryptography L300 #14 Signing the software supply chain: the release-signing key this lesson moves into a token.",
+      "cryptography L300 #16 Secrets handling in applications: the token PIN is a secret - load it from a file, never log it.",
+      "cryptography Capstone #22 Capstone: an encrypted document service: document and audit-log signatures go through token handles."
+    ]
+  },
+  {
+    "id": "group-e2ee",
+    "number": 20,
+    "level": "L400",
+    "title": "End-to-end encryption for groups: pairwise, sender keys and MLS-style epochs",
+    "phase": "Design",
+    "category": "Group key management",
+    "description": "Compare pairwise fan-out, sender keys and an MLS-style ratchet tree (RFC 9420 ideas: epochs, Commits with fresh entropy, log-sized updates) with measured encryption counts; build a toy epoch-based group key whose removal really excludes the removed member.",
+    "outcome": "You can explain forward secrecy and post-compromise security for groups, compute what a removal costs in each design at n = 8, 64, 256, implement tree Commits (path secrets to copath resolutions) with HPKE, find and fix the 'forgot to blank the removed path' bug, and keep it fixed with a property-style fitness test.",
+    "environment": "Python 3.12 (3.9+), cryptography==50.0.2 (wheels built with OpenSSL 4.0.3: ML-KEM, ML-DSA, HPKE available), stdlib otherwise; equivalent (pending CI): OpenMLS (Rust, MIT)",
+    "estimatedTime": "90-120 minutes",
+    "overview": [
+      "Count real encryptions for three designs, choose the tree, then remove a member with a seeded bug: the removed leaf is blanked but its parent keys are not, so the removed member reads the next epoch. Blank the path, and prove it over every (committer, removed) pair."
+    ],
+    "prerequisites": [
+      "L200 lesson 8 (X25519 + HKDF + AEAD, multi-recipient)",
+      "L400 lesson 18 (HPKE)"
+    ],
+    "glossary": [
+      {
+        "term": "Epoch",
+        "meaning": "A period with one group secret known exactly to the current members; every Commit starts a new epoch (RFC 9420)."
+      },
+      {
+        "term": "Commit",
+        "meaning": "A message that applies changes (add/remove/update) and injects fresh entropy along the committer's path to the root."
+      },
+      {
+        "term": "Ratchet tree / resolution",
+        "meaning": "Binary tree of key pairs; the resolution of a node is the smallest set of non-blank nodes covering everyone below it."
+      },
+      {
+        "term": "Forward secrecy (FS)",
+        "meaning": "Compromise now does not reveal past messages (old epoch keys are deleted)."
+      },
+      {
+        "term": "Post-compromise security (PCS)",
+        "meaning": "After a compromised member updates, the attacker loses access to future epochs."
+      }
+    ],
+    "concepts": [
+      "New epochs need fresh entropy the removed member never receives.",
+      "A Commit costs about log2(n) public-key encryptions.",
+      "Remove = blank the leaf AND its direct path.",
+      "Updates heal compromise; forward secrecy alone does not."
+    ],
+    "designBrief": {
+      "context": "Project rooms of 8-256 members; people join and leave weekly; the relay server must not read messages; phones get lost.",
+      "constraints": [
+        "a removed member reads nothing sent after removal",
+        "a member who updates after a compromise locks the attacker out (PCS)",
+        "removal at n=256 costs <= 2*log2(n) public-key encryptions",
+        "1 encryption per application message"
+      ],
+      "question": "Which group-key design meets removal and recovery requirements at 256 members?"
+    },
+    "options": [
+      {
+        "name": "A: pairwise fan-out",
+        "description": "Each message encrypted to each member over pairwise channels.",
+        "evidence": "per message: 255 encryptions at n=256; removal: 0.",
+        "verdict": "Rejected for big rooms: per-message cost grows with n (fine below ~5 members)."
+      },
+      {
+        "name": "B: sender keys",
+        "description": "Each member distributes a chain key; 1 encryption per message; after removal all remaining members redistribute.",
+        "evidence": "removal: 42 / 3,906 / 64,770 encryptions at n=8/64/256 (5,181,600 B at 256).",
+        "verdict": "Rejected: removal and PCS scale quadratically (RFC 9420 introduction)."
+      },
+      {
+        "name": "C: MLS-style tree with epochs",
+        "description": "Commits encrypt fresh path secrets to copath resolutions; removal blanks the removed path.",
+        "evidence": "removal: 4 / 10 / 14 encryptions (1,120 B at 256); removed member can read: False.",
+        "verdict": "Chosen (ADR-0020); production via a reviewed RFC 9420 implementation."
+      }
+    ],
+    "decisionRecord": "labs/L400/20-group-e2ee/ADR-0020-group-key-design.md",
+    "fitnessFunction": {
+      "what": "Seeded random sequence of removals and updates in a 16-member group: after every change exactly the current members read the new epoch, and no commit exceeds the log budget.",
+      "test": "labs/L400/20-group-e2ee/test_fitness_removal.py",
+      "threshold": "0 leaks to removed members; commit cost <= 2*log2(16) = 8 HPKE encryptions"
+    },
+    "scalingLimits": [
+      "Concurrent commits: two committers in one epoch fork the group; signal = decrypt failures clustered by epoch - the delivery service must order commits per group.",
+      "Very large groups (thousands): tree blanks from many removals push commit cost towards O(n); signal = commit size growing over time - re-key the whole path with periodic full updates.",
+      "Idle members: PCS only arrives when members update; signal = age of each leaf key - require updates on a schedule and remove members who never update (RFC 9420 3.2)."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "python group_keys.py - 8 members, epoch 0 message, then carol's update Commit (fresh entropy from her device).",
+        "expected": "1) group of 8 | epoch 0 | alice -> all: kick-off at 10 / 2) carol updates her path: HPKE encryptions: 3 | epoch 1 | all in sync: True",
+        "ifNot": "If not 'all in sync', a member decrypted the wrong path secret: check copath/resolution."
+      },
+      {
+        "title": "Count the designs",
+        "detail": "python compare_designs.py - real HPKE/AEAD encryptions for n <= 64, counted with the same code above that; the tree always runs for real.",
+        "expected": "{\"design\": \"pairwise\", \"n\": 64, \"encryptions_per_message\": 63, \"encryptions_per_removal\": 0, \"bytes_per_removal\": 0, \"real_crypto\": true} / {\"design\": \"sender keys\", \"n\": 64, \"encryptions_per_message\": 1, \"encryptions_per_removal\": 3906, \"bytes_per_removal\": 312480, \"real_crypto\" / {\"design\": \"MLS-style tree (toy)\", \"n\": 64, \"encryptions_per_message\": 1, \"encryptions_per_removal\": 10, \"bytes_per_removal\": 800, \"removed_",
+        "ifNot": "Counts are deterministic; only commit_and_process_ms varies."
+      },
+      {
+        "title": "Read the tree math",
+        "detail": "tree_math.py: heap-order tree, direct path, copath, resolution (RFC 9420 4.1 uses another array layout; the relations are the same).",
+        "expected": "direct_path(leaf 3 of 8) = [5, 2, 1]; copath = [10, 4, 3] (test_group_keys)",
+        "ifNot": "Draw the 15-node tree and label nodes 1..15."
+      },
+      {
+        "title": "Watch the seeded fault",
+        "detail": "A removal (who removes whom from random.Random(20)) blanks only the leaf; the committer's fresh secret is encrypted to a parent key the removed member still knows.",
+        "expected": "--- fault: frank removes dave; the removed leaf's parent keys are not blanked / commit HPKE encryptions: 3 | epoch 2 | can read post-removal message: {'alice': True, 'bob': True, 'carol': True, 'dave': True, 'erin': True, 'frank': True, 'grace': True, 'heidi': True}",
+        "ifNot": "SEED must stay 20."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v (lab tests, build task against the solution, fitness sequence).",
+        "expected": "Ran 9 tests in 3.823s | OK",
+        "ifNot": "Read the failing assertion."
+      },
+      {
+        "title": "Build task (the design fix) - test your own file",
+        "detail": "Fix the fault in group_keys.py, then run the failure-lab proof against it. The shipped file is the unfixed one, so it fails until you finish.",
+        "expected": "Reference solution: Ran 2 tests in 0.742s | OK. Shipped/unfixed file: FAILED (the 'fails before'); your fixed file: OK.",
+        "ifNot": "Read the failing assertion: it names the case your code still accepts.",
+        "mac": "BUILD_TARGET=mine python -m unittest -v test_build_task",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_TARGET"
+      },
+      {
+        "title": "Equivalent: OpenMLS (optional, pending CI)",
+        "detail": "OpenMLS (Rust, MIT) implements RFC 9420: remove_members(...) returns a Commit; the removed member's group becomes inactive after merge_staged_commit. CI clones openmls and runs its remove-related tests.",
+        "expected": "Pending CI: cargo test -p openmls remove (upstream tests; the filter was not run here)",
+        "ifNot": "Needs a Rust toolchain (rustup); see the OpenMLS book.",
+        "mac": "brew install rustup && export PATH=\"$(brew --prefix rustup)/bin:$PATH\" && rustup default stable\ngit clone --depth 1 https://github.com/openmls/openmls && cd openmls && cargo test -p openmls remove",
+        "windows": "winget install -e --id Rustlang.Rustup\ngit clone --depth 1 https://github.com/openmls/openmls; cd openmls; cargo test -p openmls remove"
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"Toy MLS-style group key (RFC 9420 ideas, NOT the MLS wire protocol): a ratchet tree of X25519 node keys,\nepochs, and Commits that inject fresh entropy. A Commit encrypts new path secrets (HPKE) to the resolution of each\ncopath node - about log2(n) encryptions - so only current members can compute the next epoch secret.\"\"\"\nimport os\nimport random\n\nfrom cryptography.exceptions import InvalidTag\nfrom cryptography.hazmat.primitives import hashes, hpke\nfrom cryptography.hazmat.primitives.asymmetric import x25519\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nfrom cryptography.hazmat.primitives.kdf.hkdf import HKDF\n\nimport tree_math as tm\n\nSEED = 20  # seeds the injected fault (who is removed, who commits)\nSUITE = hpke.Suite(hpke.KEM.X25519, hpke.KDF.HKDF_SHA256, hpke.AEAD.AES_128_GCM)\n\n\ndef kdf(secret: bytes, label: bytes) -> bytes:\n    return HKDF(hashes.SHA256(), 32, salt=None, info=b\"kb-l20 \" + label).derive(secret)\n\n\ndef node_key(path_secret: bytes) -> x25519.X25519PrivateKey:\n    return x25519.X25519PrivateKey.from_private_bytes(kdf(path_secret, b\"node\"))  # key pair derived from the path secret\n\n\nclass Member:\n    def __init__(self, name: str):\n        self.name, self.privs, self.epoch, self.epoch_secret, self.init_secret = name, {}, 0, None, None\n\n\nclass Group:\n    def __init__(self, names: list):\n        self.n = len(names)  # power of two in this toy (no tree growth)\n        self.members = {name: Member(name) for name in names}\n        self.index = {name: i for i, name in enumerate(names)}\n        self.nodes, self.encryptions = {}, 0\n        privs = {x: x25519.X25519PrivateKey.generate() for x in range(1, 2 * self.n)}  # creator builds the tree\n        self.nodes = {x: k.public_key() for x, k in privs.items()}\n        first, init = os.urandom(32), os.urandom(32)\n        for name, m in self.members.items():  # \"Welcome\": each member learns keys on its own direct path only\n            x = tm.leaf(self.n, self.index[name])\n            m.privs = {y: privs[y] for y in [x] + tm.direct_path(x)}\n            m.epoch_secret, m.init_secret = first, init\n\n    def _remove(self, name: str):\n        self.nodes[tm.leaf(self.n, self.index.pop(name))] = None\n        # BUG on purpose: RFC 9420 12.1.3 also blanks the removed leaf's direct path; here those parent keys stay\n\n    def commit(self, committer: str, remove: str = None):\n        if remove:\n            self._remove(remove)\n        c, x = self.members[committer], tm.leaf(self.n, self.index[committer])\n        ps = os.urandom(32)  # fresh entropy: the heart of post-compromise security\n        c.privs[x] = node_key(ps)\n        self.nodes[x] = c.privs[x].public_key()\n        sent = []\n        for parent, sibling in zip(tm.direct_path(x), tm.copath(x)):\n            ps = kdf(ps, b\"path\")\n            c.privs[parent] = node_key(ps)\n            self.nodes[parent] = c.privs[parent].public_key()\n            for target in tm.resolution(self.nodes, sibling, self.n):  # everyone under the sibling, as few keys as possible\n                sent.append((parent, target, SUITE.encrypt(ps, self.nodes[target], info=b\"kb-l20 path\")))\n                self.encryptions += 1\n        receivers = [m for name, m in self.members.items() if name != committer]\n        for m in receivers:  # removed members try too: they keep whatever keys they had\n            self._process(m, sent, x)\n        self._advance(c, kdf(ps, b\"commit\"))\n        return len(sent)\n\n    def _process(self, m: Member, sent: list, committer_leaf: int):\n        for parent, target, ct in sent:\n            if target in m.privs:\n                try:\n                    ps = SUITE.decrypt(ct, m.privs[target], info=b\"kb-l20 path\")\n                except InvalidTag:  # a stale key for a node that has since been re-keyed\n                    continue\n                for node in tm.direct_path(committer_leaf)[tm.direct_path(committer_leaf).index(parent):]:\n                    m.privs[node] = node_key(ps)\n                    last, ps = ps, kdf(ps, b\"path\")\n                return self._advance(m, kdf(last, b\"commit\"))\n\n    @staticmethod\n    def _advance(m: Member, commit_secret: bytes):\n        m.epoch_secret = kdf(m.init_secret + commit_secret, b\"epoch\")  # new epoch = old init secret + fresh commit\n        m.init_secret, m.epoch = kdf(m.epoch_secret, b\"init\"), m.epoch + 1\n\n    def send(self, sender: str, text: str) -> dict:\n        m, n = self.members[sender], os.urandom(12)\n        return {\"epoch\": m.epoch, \"n\": n, \"ct\": AESGCM(kdf(m.epoch_secret, b\"app\")).encrypt(n, text.encode(), b\"%d\" % m.epoch)}\n\n    def read(self, reader: str, msg: dict):\n        m = self.members[reader]\n        if m.epoch != msg[\"epoch\"]:\n            return None\n        try:\n            return AESGCM(kdf(m.epoch_secret, b\"app\")).decrypt(msg[\"n\"], msg[\"ct\"], b\"%d\" % m.epoch).decode()\n        except Exception:\n            return None\n\n\nif __name__ == \"__main__\":\n    rng = random.Random(SEED)\n    names = [\"alice\", \"bob\", \"carol\", \"dave\", \"erin\", \"frank\", \"grace\", \"heidi\"]\n    g = Group(names)\n    print(\"1) group of\", g.n, \"| epoch\", g.members[\"alice\"].epoch, \"| alice -> all:\", g.read(\"heidi\", g.send(\"alice\", \"kick-off at 10\")))\n    sent = g.commit(\"carol\")  # an empty Commit = key update (post-compromise security for carol's old keys)\n    print(\"2) carol updates her path: HPKE encryptions:\", sent, \"| epoch\", g.members[\"bob\"].epoch, \"| all in sync:\",\n          len({m.epoch_secret for m in g.members.values()}) == 1)\n    removed, committer = rng.choice(names[1:4]), rng.choice(names[4:])\n    print(f\"--- fault: {committer} removes {removed}; the removed leaf's parent keys are not blanked\")\n    sent = g.commit(committer, remove=removed)\n    msg = g.send(committer, \"new launch date: 1 March\")\n    readers = {name: g.read(name, msg) is not None for name in names}\n    print(f\"commit HPKE encryptions: {sent} | epoch {g.members[committer].epoch} | can read post-removal message:\", readers)\n",
+    "codeWalkthrough": [
+      {
+        "title": "kdf / node_key",
+        "detail": "HKDF-SHA256 with labels ('path', 'node', 'commit', 'epoch', 'init', 'app'); node key pairs are derived from path secrets, so whoever learns a path secret learns the node key."
+      },
+      {
+        "title": "Group.__init__",
+        "detail": "The creator builds the tree; each member learns only the private keys on its own direct path (a simulated Welcome)."
+      },
+      {
+        "title": "_remove (the bug)",
+        "detail": "Blanks only the removed leaf; the parent keys the removed member knew stay in the tree and appear in resolutions. The fix also blanks the direct path."
+      },
+      {
+        "title": "commit",
+        "detail": "Fresh path secret at the committer's leaf; for each parent: next secret = kdf(prev, 'path'), new node key, HPKE-encrypt the secret to every node in the copath child's resolution."
+      },
+      {
+        "title": "_process",
+        "detail": "A member decrypts the one entry addressed to a node it knows, derives the rest of the path upward, and computes the commit secret; stale keys (InvalidTag) are skipped."
+      },
+      {
+        "title": "_advance",
+        "detail": "epoch_secret = kdf(init_secret || commit_secret); the next init_secret comes from the epoch secret - the removed member has init but no commit secret."
+      },
+      {
+        "title": "send / read",
+        "detail": "Messages are AEAD-sealed with kdf(epoch_secret, 'app') and bound to the epoch number; old epochs no longer decrypt (forward secrecy in the toy)."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/20-group-e2ee/ADR-0020-group-key-design.md",
+        "purpose": "decision record (Nygard)"
+      },
+      {
+        "path": "labs/L400/20-group-e2ee/compare_designs.py",
+        "purpose": "evidence: pairwise vs sender keys vs tree"
+      },
+      {
+        "path": "labs/L400/20-group-e2ee/group_keys.py",
+        "purpose": "main lab (shipped with the removal bug)"
+      },
+      {
+        "path": "labs/L400/20-group-e2ee/solution_remove.py",
+        "purpose": "build solution (blank the removed path)"
+      },
+      {
+        "path": "labs/L400/20-group-e2ee/test_build_task.py",
+        "purpose": "failure-lab proof (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/20-group-e2ee/test_fitness_removal.py",
+        "purpose": "fitness function (seeded membership sequence)"
+      },
+      {
+        "path": "labs/L400/20-group-e2ee/test_group_keys.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/20-group-e2ee/tool_check.py",
+        "purpose": "fixed demo values for CyberChef (HKDF)"
+      },
+      {
+        "path": "labs/L400/20-group-e2ee/tree_math.py",
+        "purpose": "tree helpers: direct path, copath, resolution"
+      },
+      {
+        "path": "labs/L400/20-group-e2ee/try_it.py",
+        "purpose": "tryIt"
+      }
+    ],
+    "expectedResults": [
+      "1) group of 8 | epoch 0 | alice -> all: kick-off at 10",
+      "2) carol updates her path: HPKE encryptions: 3 | epoch 1 | all in sync: True",
+      "commit HPKE encryptions: 3 | epoch 2 | can read post-removal message: {'alice': True, 'bob': True, 'carol': True, 'dave': True, 'erin': True, 'frank': True, 'grace': True, 'heidi': True}"
+    ],
+    "testCases": [
+      {
+        "action": "Update commit in a full tree of 8",
+        "expected": "3 HPKE encryptions; all members share one epoch secret"
+      },
+      {
+        "action": "Read an epoch-0 message after a commit",
+        "expected": "None (old epoch key gone)"
+      },
+      {
+        "action": "Commit cost for n = 4, 16, 64",
+        "expected": "[2, 4, 6] (log2 n)"
+      },
+      {
+        "action": "Every (committer, removed) pair in a group of 8",
+        "expected": "Removed member reads nothing (with the fix)"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "InvalidTag while processing a commit",
+        "action": "A member tried a stale key for a re-keyed node; _process skips it. If it happens for a current member, the tree views diverged."
+      },
+      {
+        "symptom": "Members end in different epochs",
+        "action": "Two commits were applied in different orders - commits must be totally ordered per group."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Copy carol's whole key state (the attacker), then let carol send an update Commit. Can the attacker read before / after?",
+        "predict": "Before yes, after no.",
+        "expected": "1) attacker with carol's stolen state reads: before update True, after carol's update False"
+      },
+      {
+        "task": "With the UNFIXED remove, try all 56 (committer, removed) pairs in a group of 8. In how many does the removed member still read?",
+        "predict": "Most of them.",
+        "expected": "2) unfixed remove leaks in 48 of 56 pairs; safe only when the committer is the removed member's sibling: [('alice', 'bob'), ('bob', 'alice'), ('carol', 'dave'), ('dave', 'carol')] ..."
+      }
+    ],
+    "buildTask": {
+      "task": "Removal that excludes: blank the removed leaf and every node on its direct path before the Commit, so the fresh path secrets are encrypted only to keys the removed member never knew.",
+      "hints": [
+        "tree_math.direct_path(leaf) gives the parents up to the root.",
+        "Blank nodes make resolution() descend to the children, i.e. to keys of members who stay."
+      ],
+      "solution": "labs/L400/20-group-e2ee/solution_remove.py",
+      "check": "test_build_task.py (2 tests: the lab's seeded removal and all 56 committer/removed pairs)"
+    },
+    "failureLab": {
+      "fault": "frank removes dave (both chosen by random.Random(20)); _remove blanks only dave's leaf, not its direct path.",
+      "symptom": "commit HPKE encryptions: 3 | epoch 2 | can read post-removal message: {'alice': True, 'bob': True, 'carol': True, 'dave': True, 'erin': True, 'frank': True, 'grace': True, 'heidi': True}",
+      "fix": "Blank the removed leaf's direct path (RFC 9420 12.1.3); the fitness test checks a seeded sequence of removals and updates.",
+      "proof": "test_build_task.py: against the shipped file (BUILD_TARGET=mine) Ran 2 tests in 0.337s | FAILED (failures=2); against the reference solution Ran 2 tests in 0.742s | OK"
+    },
+    "tradeOffs": [
+      {
+        "option": "MLS-style tree",
+        "gains": "log n removal, FS + PCS, 1 encryption per message",
+        "costs": "Ordered commits, credentials, complex state",
+        "chooseWhen": "Groups beyond a handful of members with churn"
+      },
+      {
+        "option": "Sender keys",
+        "gains": "Simple, 1 encryption per message, FS via hash ratchet",
+        "costs": "Quadratic removal and PCS cost",
+        "chooseWhen": "Medium groups with little churn"
+      },
+      {
+        "option": "Pairwise fan-out",
+        "gains": "Reuses 1:1 sessions (double ratchet FS/PCS)",
+        "costs": "n-1 encryptions per message",
+        "chooseWhen": "Very small groups (< ~5)"
+      }
+    ],
+    "equivalents": [
+      "Same protocol, production grade: OpenMLS (Rust, MIT) implementing RFC 9420 (pending CI)",
+      "Sender keys in practice: Signal and WhatsApp group messaging",
+      "Pairwise sessions: the double ratchet (Signal) for 1:1 chats",
+      "Same HPKE used for path secrets: RFC 9180 (cryptography's hpke module)"
+    ],
+    "learningTools": [
+      {
+        "name": "CyberChef",
+        "role": "CHECK",
+        "licence": "Apache-2.0 (OSI)",
+        "url": "https://github.com/gchq/CyberChef",
+        "mac": "Open the CyberChef web app linked from github.com/gchq/CyberChef, or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side); Docker ghcr.io/gchq/cyberchef",
+        "windows": "Same: web app or the offline release zip from https://github.com/gchq/CyberChef/releases (runs fully client-side)",
+        "exercise": "Run `python tool_check.py`. In CyberChef use Derive HKDF key (or HKDF): hash SHA256, salt empty, info 'kb-l20 epoch', length 32, input = the printed IKM hex (init_secret || commit_secret).",
+        "expected": "Should match the lab's printed value: 1c797e51158e809b97b7aa54052e0aaf0b78d2067ce913dfbde8183b9ae38781 (expected epoch secret). If your CyberChef build lacks an HKDF operation, note it - the catalog lists 'Derive HKDF key' but its exact parameters were not checked. Demo values only. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's printed output."
+      }
+    ],
+    "caution": "The toy omits MLS signatures, credentials, tree hashes, the Welcome message and the secret tree; it is for understanding, not for messaging. Use OpenMLS or another reviewed RFC 9420 implementation.",
+    "checkpoint": "PASS if your counts match compare_designs.py, you can explain why removal must blank the path, your fix makes test_build_task pass for all 56 pairs (the shipped file fails), and the fitness sequence finds 0 leaks within the log budget.",
+    "checkYourself": [
+      {
+        "q": "Why can't a new epoch simply be HKDF(old epoch secret)?",
+        "a": "The removed member knows the old epoch secret and computes the new one; only fresh entropy delivered to remaining members excludes it."
+      },
+      {
+        "q": "Why does sender-key removal cost (n-1)(n-2) encryptions?",
+        "a": "Every remaining member must create a new sender key and send it to every other remaining member."
+      },
+      {
+        "q": "Forward secrecy vs post-compromise security?",
+        "a": "FS protects past messages after a compromise; PCS restores secrecy for future messages after the compromised member updates."
+      }
+    ],
+    "sources": [
+      {
+        "title": "RFC 9420 - The Messaging Layer Security (MLS) Protocol",
+        "url": "https://www.rfc-editor.org/rfc/rfc9420.html"
+      },
+      {
+        "title": "OpenMLS - Rust implementation of RFC 9420",
+        "url": "https://github.com/openmls/openmls"
+      },
+      {
+        "title": "OpenMLS book - Removing members from a group",
+        "url": "https://book.openmls.tech/user_manual/remove_members.html"
+      },
+      {
+        "title": "pyca/cryptography - HPKE",
+        "url": "https://cryptography.io/en/latest/hazmat/primitives/hpke/"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran group_keys.py, solution_remove.py, compare_designs.py (real HPKE for n <= 64 and for every tree commit), try_it.py, tool_check.py and the unittests (Ran 9 tests in 3.823s | OK) locally. test_build_task observed FAILED (failures=2) with BUILD_TARGET=mine and OK against solution_remove.py.",
+      "pendingCi": [
+        "OpenMLS equivalent (CI job clones openmls and runs `cargo test -p openmls remove`; filter not run here)",
+        "Sender-key/pairwise counts for n=256 are computed by the same loop without crypto (stated in the output)",
+        "macOS/Windows runs (matrix)",
+        "CyberChef learning-tool exercise (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/20-group-e2ee.md",
+    "conceptSummary": "Group E2EE needs keys that change when membership changes. Pairwise costs n-1 per message, sender keys cost (n-1)(n-2) per removal, an MLS-style tree costs ~log2 n per Commit. Each Commit injects fresh entropy encrypted to copath resolutions; removal must blank the removed path; regular updates give post-compromise security.",
+    "inRealSystems": [
+      "RFC 9420 MLS is deployed in messaging products (e.g. Webex, RCS via GSMA Universal Profile work); OpenMLS and mls-rs are open implementations.",
+      "Signal/WhatsApp groups use sender keys over pairwise double-ratchet sessions."
+    ],
+    "useWhen": "Use an MLS implementation for groups with churn beyond a few members; avoid inventing epoch rotation without fresh entropy, sender keys for large high-churn rooms, and shipping a toy tree.",
+    "next": "L400 #21 Threat modelling cryptographic systems: STRIDE, attack trees and tests: how to find the next 'forgot to blank the path' before an attacker does.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "cryptography L200 #8 Key exchange and hybrid encryption (X25519 + HKDF + AEAD): multi-recipient file keys - pairwise fan-out in miniature.",
+      "cryptography Capstone #22 Capstone: an encrypted document service: revocation there faces the same 'removed party must lose access' problem."
+    ]
+  },
+  {
+    "id": "threat-modelling",
+    "number": 21,
+    "level": "L400",
+    "title": "Threat modelling cryptographic systems: STRIDE, attack trees and tests",
+    "phase": "Design",
+    "category": "Threat modelling",
+    "description": "Model this topic's designs (envelopes and rotation, token signing, TLS/PQ key exchange, keys in a token, group messaging) as a data-flow diagram with trust zones, STRIDE threats, controls and the tests that prove them; compute attack-tree paths over verified controls only; let an agent propose threats that code classifies.",
+    "outcome": "You can build a DFD with trust boundaries, apply STRIDE per element, map every threat to a control or a recorded acceptance and every control to tests that exist and pass, compute the cheapest attack path, detect model drift in CI, and use a local model as a brainstorming aid whose proposals are judged by code.",
+    "environment": "Python 3.12 (3.9+), cryptography==50.0.2 (wheels built with OpenSSL 4.0.3: ML-KEM, ML-DSA, HPKE available), stdlib otherwise; agent assist: vendored fake model server (tests) or Ollama via LOCAL_MODEL_URL / LOCAL_MODEL",
+    "estimatedTime": "75-100 minutes",
+    "overview": [
+      "Compare STRIDE per element, attack trees and agent brainstorming on the topic's real designs, then inject everyday drift (a refactor deletes a test, a SIEM export flow is added) that a name-only checker misses. Harden the checker so controls count only with existing, passing tests."
+    ],
+    "prerequisites": [
+      "L300 lesson 15 (misuse you can test)",
+      "L400 lessons 17-20 (the designs being modelled)",
+      "L300 lesson 16 agent assist (secret gate)"
+    ],
+    "glossary": [
+      {
+        "term": "DFD",
+        "meaning": "Data-flow diagram: external entities, processes, data stores, flows, and trust boundaries between zones."
+      },
+      {
+        "term": "STRIDE",
+        "meaning": "Spoofing, Tampering, Repudiation, Information disclosure, Denial of service, Elevation of privilege - each violates authentication, integrity, accountability, confidentiality, availability or authorisation (OWASP)."
+      },
+      {
+        "term": "STRIDE per element",
+        "meaning": "Apply only the letters that fit an element type (here: external S,R; process all; store and flow T,I,D)."
+      },
+      {
+        "term": "Attack tree",
+        "meaning": "Attacker goal decomposed into AND/OR steps with costs; a step behind a verified control is closed."
+      },
+      {
+        "term": "Model drift",
+        "meaning": "The model no longer matches the system: deleted tests, unmodelled flows."
+      }
+    ],
+    "concepts": [
+      "A control is only as good as the test that proves it.",
+      "Every boundary-crossing flow needs Tampering and Information-disclosure threats.",
+      "Attack trees show which control matters most.",
+      "Agents propose; code classifies; nothing merges automatically."
+    ],
+    "designBrief": {
+      "context": "The topic now has envelopes + rotation (12, 17), token-based signing (14, 19), TLS and PQ key exchange (10, 18), group keys (20) and secret handling (16). A threat-model document written once would drift within weeks.",
+      "constraints": [
+        "every element has >= 1 threat; every boundary-crossing flow has T and I threats",
+        "every threat has a control or an acceptance that names an ADR",
+        "every control names tests that exist and pass (run in CI)",
+        "an agent may propose threats but never change the model by itself"
+      ],
+      "question": "How do we keep the threat model honest as the code changes?"
+    },
+    "options": [
+      {
+        "name": "A: STRIDE per element",
+        "description": "Checklist of (element, letter) pairs from the DFD.",
+        "evidence": "1) elements 11 (flows 5, crossing a boundary 4) | STRIDE-per-element candidates 41 | threats 18 | controls 12",
+        "verdict": "Kept as the coverage backbone (rules in the checker)."
+      },
+      {
+        "name": "B: attack tree over verified controls",
+        "description": "Attacker goal with AND/OR costs; only controls with existing tests close leaves.",
+        "evidence": "3) cheapest open attack path: cost 9 via ['phish an authorised user']; after the drift: cheapest open attack path with only VERIFIED controls: cost 8 via ['record traffic on path', 'client accepts classical-only share', 'wait for a quantum computer']",
+        "verdict": "Kept for prioritisation: shows which deleted test matters."
+      },
+      {
+        "name": "C: agent brainstorming",
+        "description": "A local model proposes threats from element names; code classifies.",
+        "evidence": "verdicts {'CONFIRMED': 2, 'GAP': 1, 'REJECTED': 3}; the model only proposes - the checker decides, and nothing is merged automatically.",
+        "verdict": "Kept as an aid only; proposals never merge automatically."
+      }
+    ],
+    "decisionRecord": "labs/L400/21-threat-model/ADR-0021-threat-model-as-code.md",
+    "fitnessFunction": {
+      "what": "The checker finds 0 problems in model.json and every referenced control test passes when run (one unittest process per test file).",
+      "test": "labs/L400/21-threat-model/test_fitness_threat_model.py",
+      "threshold": "0 checker problems; 12/12 control tests pass"
+    },
+    "scalingLimits": [
+      "Model size: hundreds of elements make STRIDE-per-element candidates explode (41 for 11 elements here); signal = triage backlog of unjudged candidates - split the model per component with shared boundary flows.",
+      "Test runtime: running every control test on each change gets slow (~100-180 s on the sandbox's slow file mount, ~6 s CPU); signal = fitness job time - run it in CI on model or control-test changes only.",
+      "Agent noise: more proposals than reviewers; signal = GAP/REJECTED ratio rising - tighten the prompt or rate-limit proposals; never auto-merge."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "python threat_model.py - counts, checker result, attack-tree cheapest path.",
+        "expected": "1) elements 11 (flows 5, crossing a boundary 4) | STRIDE-per-element candidates 41 | threats 18 | controls 12 / 2) checker problems: [] | controls whose tests exist: 12/12 / 3) cheapest open attack path: cost 9 via ['phish an authorised user']",
+        "ifNot": "A missing test reference prints as 'controls whose tests exist: 11/12' - fix the reference."
+      },
+      {
+        "title": "Draw the DFD",
+        "detail": "python threat_model.py --mermaid > dfd.mmd and open it in any Mermaid viewer: zones are subgraphs, flows are labelled with their threat ids.",
+        "expected": "  client -->|T2,T3,T4| doc_api /   doc_api -->|T16,T8| envelope_db /   doc_api -->|T13,T17| signer /   doc_api -->|T14| app_log /   client -->|T15,T18| group_chat",
+        "ifNot": "A flow labelled NO THREATS is a gap."
+      },
+      {
+        "title": "Map threats to tests",
+        "detail": "Read model.json: each control names tests as file::Class::method (relative to the topic). test_exists() checks them by AST without importing.",
+        "expected": "12 controls, all tests resolve (step 1 line 2)",
+        "ifNot": "Paths are relative to the cryptography/ folder."
+      },
+      {
+        "title": "Watch the seeded drift",
+        "detail": "A refactor deletes the test behind one attack-tree control (random.Random(21)) and a SIEM export flow is added.",
+        "expected": "control C-NO-FALLBACK now points at a missing test: True | checker problems: [] | new flow app-log->siem threats: []",
+        "ifNot": "SEED must stay 21."
+      },
+      {
+        "title": "Run the tests (slow: the fitness test runs 12 control tests)",
+        "detail": "python -m unittest -v",
+        "expected": "Ran 14 tests in 182.982s | OK",
+        "ifNot": "A failing control test means the control is broken - fix the control, not the model."
+      },
+      {
+        "title": "Build task (the design fix) - test your own file",
+        "detail": "Fix the fault in threat_model.py, then run the failure-lab proof against it. The shipped file is the unfixed one, so it fails until you finish.",
+        "expected": "Reference solution: Ran 4 tests in 4.843s | OK. Shipped/unfixed file: FAILED (the 'fails before'); your fixed file: OK.",
+        "ifNot": "Read the failing assertion: it names the case your code still accepts.",
+        "mac": "BUILD_TARGET=mine python -m unittest -v test_build_task",
+        "windows": "$env:BUILD_TARGET=\"mine\"; python -m unittest -v test_build_task; Remove-Item Env:BUILD_TARGET"
+      },
+      {
+        "title": "Agent assist: proposals judged by code",
+        "detail": "python agent_assist.py (fake model) or --real with Ollama. Only element names and control ids are sent; the secret gate checks the prompt.",
+        "expected": "verdicts {'CONFIRMED': 2, 'GAP': 1, 'REJECTED': 3}; the model only proposes - the checker decides, and nothing is merged automatically.",
+        "ifNot": "With --real the proposals vary; the verdicts still come from judge()."
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"Threat model as code: a data-flow diagram (elements, zones, flows), STRIDE threats, controls, and the TESTS that\nprove each control. The checker answers \"did we do a good enough job?\" (OWASP's 4th question) with evidence.\"\"\"\nimport ast\nimport json\nimport random\nimport sys\nfrom pathlib import Path\n\nHERE = Path(__file__).resolve().parent\nTOPIC = HERE.parents[2]  # the cryptography/ folder; test references are relative to it\nSEED = 21  # seeds the injected model drift (which control's test disappears)\nAPPLIES = {\"external\": \"SR\", \"process\": \"STRIDE\", \"store\": \"TID\", \"flow\": \"TID\"}  # STRIDE-per-element table used here\n\n\ndef load(path=HERE / \"model.json\") -> dict:\n    return json.loads(Path(path).read_text(encoding=\"utf-8\"))\n\n\ndef candidates(model) -> list:\n    \"\"\"Every (element, STRIDE letter) pair the table says to consider: the brainstorming checklist.\"\"\"\n    return [(name, c) for name, e in model[\"elements\"].items() for c in APPLIES[e[\"type\"]]]\n\n\ndef crosses_boundary(model, flow: dict) -> bool:\n    els = model[\"elements\"]\n    return els[flow[\"from\"]][\"zone\"] != els[flow[\"to\"]][\"zone\"]\n\n\ndef test_exists(ref: str) -> bool:\n    \"\"\"'labs/.../test_x.py::Class::method' -> does that test function exist (AST, no import)?\"\"\"\n    file, cls, meth = ref.split(\"::\")\n    path = TOPIC / file\n    if not path.is_file():\n        return False\n    for node in ast.parse(path.read_text(encoding=\"utf-8\")).body:\n        if isinstance(node, ast.ClassDef) and node.name == cls:\n            return any(isinstance(f, ast.FunctionDef) and f.name == meth for f in node.body)\n    return False\n\n\ndef check(model) -> list:\n    problems = []\n    for t in model[\"threats\"]:\n        el = model[\"elements\"].get(t[\"element\"])\n        if el is None:\n            problems.append(f\"{t['id']}: unknown element {t['element']}\")\n        elif t[\"stride\"] not in APPLIES[el[\"type\"]]:\n            problems.append(f\"{t['id']}: {t['stride']} does not apply to a {el['type']}\")\n        if not t[\"controls\"] and not t.get(\"accepted\"):\n            problems.append(f\"{t['id']}: no control and no recorded acceptance\")\n        problems += [f\"{t['id']}: unknown control {c}\" for c in t[\"controls\"] if c not in model[\"controls\"]]\n    # BUG on purpose: a control counts as soon as it is NAMED - nobody checks that its tests still exist, and\n    # nobody checks that every element (e.g. a newly added boundary-crossing flow) has threats at all\n    return problems\n\n\ndef verified_controls(model) -> set:\n    return set(model[\"controls\"])  # (the unfixed checker trusts every named control)\n\n\ndef cheapest(node: dict, verified: set):\n    \"\"\"Attack tree: OR = cheapest child, AND = sum of children; a leaf behind a verified control is closed (inf).\"\"\"\n    if \"children\" not in node:\n        return (float(\"inf\"), []) if node.get(\"control\") in verified else (node[\"cost\"], [node[\"name\"]])\n    kids = [cheapest(c, verified) for c in node[\"children\"]]\n    if node[\"type\"] == \"OR\":\n        return min(kids, key=lambda k: k[0])\n    return sum(k[0] for k in kids), [step for k in kids for step in k[1]]\n\n\ndef tree_controls(node: dict) -> set:\n    return {node[\"control\"]} if \"control\" in node else set().union(*(tree_controls(c) for c in node.get(\"children\", [])))\n\n\ndef mermaid(model) -> str:\n    lines = [\"flowchart LR\"]\n    for zone, label in model[\"boundaries\"].items():\n        lines.append(f'  subgraph {zone}[\"{label}\"]')\n        lines += [f\"    {n.replace('-', '_')}[{n}]\" for n, e in model[\"elements\"].items() if e[\"type\"] != \"flow\" and e[\"zone\"] == zone]\n        lines.append(\"  end\")\n    for name, e in model[\"elements\"].items():\n        if e[\"type\"] == \"flow\":\n            ids = sorted(t[\"id\"] for t in model[\"threats\"] if t[\"element\"] == name)\n            lines.append(f\"  {e['from'].replace('-', '_')} -->|{','.join(ids) or 'NO THREATS'}| {e['to'].replace('-', '_')}\")\n    return \"\\n\".join(lines)\n\n\ndef inject_drift(model, rng) -> str:\n    \"\"\"Two everyday changes: a refactor deletes a test, and a new integration adds a flow nobody modelled.\"\"\"\n    victim = rng.choice(sorted(tree_controls(model[\"attack_tree\"])))\n    model[\"controls\"][victim][\"tests\"] = [model[\"controls\"][victim][\"tests\"][0].rsplit(\"::\", 1)[0] + \"::test_removed_in_refactor\"]\n    model[\"elements\"][\"siem\"] = {\"type\": \"external\", \"zone\": \"internet\"}\n    model[\"elements\"][\"app-log->siem\"] = {\"type\": \"flow\", \"from\": \"app-log\", \"to\": \"siem\"}\n    return victim\n\n\nif __name__ == \"__main__\":\n    if \"--mermaid\" in sys.argv:\n        print(mermaid(load()))\n        sys.exit(0)\n    m = load()\n    flows = [n for n, e in m[\"elements\"].items() if e[\"type\"] == \"flow\"]\n    print(f\"1) elements {len(m['elements'])} (flows {len(flows)}, crossing a boundary \"\n          f\"{sum(crosses_boundary(m, m['elements'][f]) for f in flows)}) | STRIDE-per-element candidates {len(candidates(m))}\"\n          f\" | threats {len(m['threats'])} | controls {len(m['controls'])}\")\n    print(\"2) checker problems:\", check(m), \"| controls whose tests exist:\",\n          f\"{sum(all(test_exists(r) for r in c['tests']) for c in m['controls'].values())}/{len(m['controls'])}\")\n    cost, path = cheapest(m[\"attack_tree\"], verified_controls(m))\n    print(f\"3) cheapest open attack path: cost {cost} via {path}\")\n    print(\"--- fault: model drift (a test is deleted in a refactor; a SIEM export flow is added)\")\n    victim = inject_drift(m, random.Random(SEED))\n    print(f\"control {victim} now points at a missing test: {not test_exists(m['controls'][victim]['tests'][0])} | \"\n          f\"checker problems: {check(m)} | new flow app-log->siem threats: \"\n          f\"{[t['id'] for t in m['threats'] if t['element'] == 'app-log->siem']}\")\n",
+    "codeWalkthrough": [
+      {
+        "title": "APPLIES",
+        "detail": "The STRIDE-per-element table used here: external S,R; process STRIDE; store and flow T,I,D."
+      },
+      {
+        "title": "candidates / crosses_boundary",
+        "detail": "Every (element, letter) pair to consider; a flow crosses a boundary when its endpoints are in different zones."
+      },
+      {
+        "title": "test_exists",
+        "detail": "Parses 'file::Class::method' and looks for that class and function with ast - no import, no execution."
+      },
+      {
+        "title": "check (the bug)",
+        "detail": "Validates elements, letters and that controls are NAMED - but not that their tests exist, nor that every element/boundary flow has threats."
+      },
+      {
+        "title": "cheapest",
+        "detail": "Attack tree: OR = cheapest child, AND = sum; a leaf whose control is verified costs infinity."
+      },
+      {
+        "title": "mermaid / inject_drift",
+        "detail": "Generates the DFD; the fault deletes the test behind an attack-tree control and adds an unmodelled SIEM flow."
+      },
+      {
+        "title": "solution_verified.py + agent_assist.py",
+        "detail": "The fix adds test existence, coverage rules and verified_controls(); run_control_tests() executes them. agent_assist.judge() classifies proposals CONFIRMED / GAP / REJECTED."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/21-threat-model/ADR-0021-threat-model-as-code.md",
+        "purpose": "decision record (Nygard)"
+      },
+      {
+        "path": "labs/L400/21-threat-model/agent_assist.py",
+        "purpose": "agent proposes threats, code classifies"
+      },
+      {
+        "path": "labs/L400/21-threat-model/model.json",
+        "purpose": "the threat model: elements, controls with test references, threats, attack tree"
+      },
+      {
+        "path": "labs/L400/21-threat-model/solution_verified.py",
+        "purpose": "build solution (tests must exist; coverage rules; runs control tests)"
+      },
+      {
+        "path": "labs/L400/21-threat-model/test_agent_assist.py",
+        "purpose": "agent assist tests (fake server only)"
+      },
+      {
+        "path": "labs/L400/21-threat-model/test_build_task.py",
+        "purpose": "failure-lab proof (BUILD_TARGET=mine)"
+      },
+      {
+        "path": "labs/L400/21-threat-model/test_fitness_threat_model.py",
+        "purpose": "fitness function (runs every control test)"
+      },
+      {
+        "path": "labs/L400/21-threat-model/test_threat_model.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/21-threat-model/threat_model.py",
+        "purpose": "main lab (checker shipped trusting named controls)"
+      },
+      {
+        "path": "labs/L400/21-threat-model/try_it.py",
+        "purpose": "tryIt"
+      }
+    ],
+    "expectedResults": [
+      "1) elements 11 (flows 5, crossing a boundary 4) | STRIDE-per-element candidates 41 | threats 18 | controls 12",
+      "2) checker problems: [] | controls whose tests exist: 12/12",
+      "3) cheapest open attack path: cost 9 via ['phish an authorised user']",
+      "control C-NO-FALLBACK now points at a missing test: True | checker problems: [] | new flow app-log->siem threats: []",
+      "  - C-NO-FALLBACK: test missing labs/L400/18-post-quantum/test_build_task.py::TestNoSilentFallback::test_removed_in_refactor",
+      "  - siem: no threats modelled",
+      "  - app-log->siem: no threats modelled",
+      "  - app-log->siem: boundary-crossing flow lacks T",
+      "  - app-log->siem: boundary-crossing flow lacks I"
+    ],
+    "testCases": [
+      {
+        "action": "Count STRIDE-per-element candidates",
+        "expected": "41 for 11 elements"
+      },
+      {
+        "action": "Delete threat T3",
+        "expected": "client->doc-api: boundary-crossing flow lacks T"
+      },
+      {
+        "action": "Point a control at a missing test",
+        "expected": "'<control>: test missing ...' and the attack tree path gets cheaper"
+      },
+      {
+        "action": "Agent proposes 6 threats (fake model)",
+        "expected": "2 CONFIRMED, 1 GAP, 3 REJECTED"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "test_fitness_threat_model is slow",
+        "action": "It runs 12 control tests in subprocesses; on a normal disk it takes seconds, on the sandbox mount minutes."
+      },
+      {
+        "symptom": "A control test fails in the fitness run",
+        "action": "The control is broken: fix the code it protects (do not remove the mapping)."
+      },
+      {
+        "symptom": "agent_assist refuses to send",
+        "action": "Something secret-like reached the prompt; only element names and control ids belong there."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Delete threat T3 ('request modified in transit') because 'TLS handles that'. What does the fixed checker say?",
+        "predict": "It notices the boundary-crossing flow has no Tampering threat.",
+        "expected": "1) without T3: ['client->doc-api: boundary-crossing flow lacks T']"
+      },
+      {
+        "task": "Point C-NONEXPORT at a missing test. Which attack path becomes cheapest?",
+        "predict": "Stealing the key from the host.",
+        "expected": "2) C-NONEXPORT unverified -> cheapest path cost 6 via ['compromise the app host', 'read key bytes out of the token'] (was 9 via ['phish an authorised user'])"
+      }
+    ],
+    "buildTask": {
+      "task": "Verified model checker: a control counts only if every test it names exists; every element has >= 1 threat; every boundary-crossing flow has T and I threats; verified_controls() returns only controls with existing tests (and run_control_tests() runs them).",
+      "hints": [
+        "Reuse test_exists() for every reference in model['controls'][cid]['tests'].",
+        "Collect covered STRIDE letters per element with a defaultdict(set)."
+      ],
+      "solution": "labs/L400/21-threat-model/solution_verified.py",
+      "check": "test_build_task.py (4 tests: clean model passes, deleted test reported, unmodelled boundary flow reported, unverified control does not close the attack tree)"
+    },
+    "failureLab": {
+      "fault": "inject_drift() with random.Random(21): the test behind C-NO-FALLBACK is 'deleted in a refactor' and an app-log -> siem flow (crossing to the internet zone) is added without threats.",
+      "symptom": "control C-NO-FALLBACK now points at a missing test: True | checker problems: [] | new flow app-log->siem threats: []",
+      "fix": "Controls count only with existing (and, in CI, passing) tests; coverage rules for elements and boundary flows; the attack tree uses verified controls only (cheapest path drops from 9 to 8).",
+      "proof": "test_build_task.py: against the shipped file (BUILD_TARGET=mine) Ran 4 tests in 0.065s | FAILED (failures=3); against the reference solution Ran 4 tests in 4.843s | OK"
+    },
+    "tradeOffs": [
+      {
+        "option": "Threat model as code + CI",
+        "gains": "Drift breaks the build; traceability threat -> control -> test",
+        "costs": "Maintenance in every PR; slow fitness job",
+        "chooseWhen": "Systems with security-relevant changes every sprint"
+      },
+      {
+        "option": "Document/whiteboard model",
+        "gains": "Fast, collaborative, good for discovery",
+        "costs": "Drifts silently; no proof controls still exist",
+        "chooseWhen": "Early design sessions (then encode it)"
+      },
+      {
+        "option": "Agent-assisted brainstorming",
+        "gains": "Breadth, quick first draft",
+        "costs": "Invented elements/controls; review load",
+        "chooseWhen": "As input to a human session, never as the model"
+      }
+    ],
+    "equivalents": [
+      "OWASP Threat Dragon and pytm (threat models as code) - not in this KB's tool catalog, named as equivalents only",
+      "Microsoft Threat Modeling Tool (STRIDE per element) - vendor tool, one-line equivalent",
+      "Attack trees: ADTool and attack-defense trees literature",
+      "LINDDUN for privacy threats; PASTA/OCTAVE for business-risk views (OWASP cheat sheet)"
+    ],
+    "learningTools": [
+      {
+        "name": "Wireshark",
+        "role": "INSPECT",
+        "licence": "GPL-2.0 (OSI)",
+        "url": "https://www.wireshark.org/download.html",
+        "mac": "brew install --cask wireshark-app (or the official universal .dmg)",
+        "windows": "Official x64/Arm64 installer from wireshark.org (bundles Npcap)",
+        "exercise": "Prove a control instead of trusting it: capture lesson 10's localhost TLS run (SSLKEYLOGFILE as in lesson 10) and confirm the client->doc-api flow (threats T2/T3) carries no readable application data without the key log.",
+        "expected": "Without the key log only TLS records are visible; with it Wireshark decrypts 'hello over TLS' - the evidence behind control C-MTLS / C-NO-FALLBACK for that flow. Compare with model.json's flow labels (step 2). Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's printed output."
+      }
+    ],
+    "agentAssist": {
+      "task": "A local model proposes STRIDE threats for the model's elements; deterministic code classifies each proposal against the model and the existing tests.",
+      "prompt": "System: You are a threat-modelling assistant. For the data-flow elements given, propose threats using STRIDE. Answer one per line: 'THREAT <element> <S|T|R|I|D|E>: <threat> | CONTROL <control id or NONE>'. User: [[THREAT-PROPOSE]] Propose threats for: <model>element names, types, zones + known control ids</model>",
+      "check": "judge(): REJECTED if the element is unknown, the STRIDE letter does not apply to its type, or the control is invented/unverified; GAP if the threat is valid but has no control (triage, never auto-merged); CONFIRMED only if the control exists and its tests exist. The prompt carries no secrets and passes lesson 9's SECRET gate.",
+      "expected": "doc-api->envelope-db T (an attacker swaps a stored envelope for ) -> CONFIRMED - C-DUAL-SIG proven by TestPolicyDecidesSignatures::test_stripped_envelope_rejected_in_transition\napp-log I (bearer tokens end up in the application ) -> CONFIRMED - C-REDACT proven by TestNoSecretsInLogs::test_seeded_request_mix_leaves_clean_logs\nsigner R (nobody can prove which operator signed a) -> GAP - valid threat with no control: triage it (not added automatically)\nclient->doc-api E (privilege escalation over the wire) -> REJECTED - E does not apply to a flow\nblockchain-ledger T (the ledger is rewritten) -> REJECTED - unknown element\nenvelope-db I (database backups are readable by the bac) -> REJECTED - control C-QUANTUM-SHIELD does not exist\nverdicts {'CONFIRMED': 2, 'GAP': 1, 'REJECTED': 3}; the model only proposes - the checker decides, and nothing is merged automatically.",
+      "realModelNote": "--real uses Ollama (default qwen2.5:1.5b; Metal on the Mac mini, CUDA/CPU on Windows); wording and proposals vary, verdicts still come from judge(). Not run in the sandbox (no model)."
+    },
+    "caution": "Threat models describe how to attack your system: keep them internal. Never paste keys, logs or customer data into a model prompt; the agent sees element names only, and its proposals change nothing until a human accepts them.",
+    "checkpoint": "PASS if the model has 0 checker problems, your verified checker makes test_build_task pass (the shipped one fails 3/4), all 12 control tests pass in the fitness run, and you can explain why the cheapest path moved from 9 to 8 after the drift.",
+    "checkYourself": [
+      {
+        "q": "Why must a control point to a test, not just a description?",
+        "a": "Descriptions survive refactors that delete the protection; a missing or failing test is detectable in CI."
+      },
+      {
+        "q": "Which STRIDE letters must a boundary-crossing flow have in this model, and why?",
+        "a": "Tampering and Information disclosure: data crossing a trust boundary can be modified or read by whoever controls the other side or the wire."
+      },
+      {
+        "q": "What does the attack tree add to STRIDE?",
+        "a": "Prioritisation: it shows which control closes the cheapest path for a concrete attacker goal."
+      }
+    ],
+    "sources": [
+      {
+        "title": "OWASP Threat Modeling Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html"
+      },
+      {
+        "title": "RFC 7696 - algorithm agility (downgrade threats in negotiation)",
+        "url": "https://www.rfc-editor.org/rfc/rfc7696.html"
+      },
+      {
+        "title": "RFC 9420 - MLS security considerations (DS/AS compromise)",
+        "url": "https://www.rfc-editor.org/rfc/rfc9420.html"
+      },
+      {
+        "title": "Ollama - OpenAI compatibility (agent assist endpoint)",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran threat_model.py (+ --mermaid), solution_verified.py, agent_assist.py (fake model server), try_it.py and the unittests (Ran 14 tests in 182.982s | OK; the fitness test ran all 12 control tests across L200-L400) locally. test_build_task observed FAILED (failures=3) with BUILD_TARGET=mine and OK against solution_verified.py.",
+      "pendingCi": [
+        "agent_assist.py --real (real local model)",
+        "macOS/Windows runs (matrix)",
+        "Wireshark learning-tool exercise (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/21-threat-modelling.md",
+    "conceptSummary": "Model the system as a DFD with trust zones, apply STRIDE per element, map every threat to a control (or an ADR-backed acceptance) and every control to tests that exist and pass; use attack trees over verified controls to prioritise; let agents propose but code classify; fail the build on drift.",
+    "inRealSystems": [
+      "OWASP Threat Dragon, pytm and Microsoft's Threat Modeling Tool use STRIDE on DFDs; NIST SSDF (SP 800-218 PW.1.2) asks teams to keep design risk decisions current.",
+      "Security reviews of TLS, MLS and PQ migrations start from the same questions: what crosses which boundary, what if negotiation is attacked, which test proves the mitigation."
+    ],
+    "useWhen": "Use a threat model as code for any system with cryptographic boundaries that changes often; avoid untested 'controls', models without boundary flows, and auto-merging agent output.",
+    "next": "Capstone #22 Capstone: an encrypted document service: everything from L100-L400 in one service, with its own threat model checked by this lesson's code.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "cryptography L300 #15 Misuse you can test: Wycheproof vectors, timing and nonce reuse: the kind of tests controls should point at.",
+      "cryptography Capstone #22 Capstone: an encrypted document service: its threat_model.json is checked by this lesson's solution_verified.check()."
+    ]
+  },
+  {
+    "id": "capstone-encrypted-document-service",
+    "number": 22,
+    "level": "Capstone",
+    "title": "Capstone: an encrypted document service",
+    "phase": "Capstone",
+    "category": "Capstone",
+    "description": "One service that reuses the whole topic: per-document keys in the versioned envelope (17), KEK rotation with retire-after-rewrap (12) in a KMS behind mutual TLS (9-10), document and audit signatures through non-exportable token handles (19), a hash-chained signed audit log with deterministic anomaly rules, PQ-hybrid sharing via HPKE (18), secrets from files with redacted logs (16), a threat model checked by lesson 21's code, and an agent that only explains anomalies.",
+    "outcome": "You can run and extend an end-to-end encrypted document service on 127.0.0.1, explain every component's decision (4 ADRs), read its JSON-lines scorecard, find seeded faults (rewrap crash, rogue KMS clients, tampered audit log, insider bursts, access after revocation, deprecated KEM) and keep the design true with reused fitness functions.",
+    "environment": "Python 3.12 (3.9+), cryptography==50.0.2 (wheels built with OpenSSL 4.0.3: ML-KEM, ML-DSA, HPKE available), stdlib otherwise; agent assist: vendored fake model server (tests) or Ollama via LOCAL_MODEL_URL / LOCAL_MODEL",
+    "estimatedTime": "3-5 hours",
+    "overview": [
+      "Run the capstone, read the six milestone lines and the scorecard, then work through the milestones: each has a test file, a seeded fault and a decision record. Code decides every verdict; the agent only explains."
+    ],
+    "prerequisites": [
+      "L400 lessons 17-21",
+      "L300 lessons 12 and 16",
+      "L200 lessons 9 and 10"
+    ],
+    "glossary": [
+      {
+        "term": "DEK / KEK",
+        "meaning": "Data-encryption key per document / key-encryption key in the KMS that wraps DEKs (lesson 12)."
+      },
+      {
+        "term": "Scorecard",
+        "meaning": "JSON lines printed by run_capstone.py: one per milestone with metrics and pass, then passed/total."
+      },
+      {
+        "term": "Hash chain",
+        "meaning": "Each audit entry stores the SHA-256 of the previous one; with signatures this makes edits, deletions and reordering detectable."
+      }
+    ],
+    "concepts": [
+      "Reuse earlier labs by import; one implementation per rule.",
+      "The KEK lives behind mTLS; identity comes from the client certificate.",
+      "Audit rules decide; the agent explains.",
+      "Fitness functions from 17, 19 and 21 run on the capstone too."
+    ],
+    "designBrief": {
+      "context": "A small company stores signed contracts, lets listed colleagues read them, shares some with external partners, and must later prove who read what. Hosts get compromised; insiders exist; quantum attackers may record shares.",
+      "constraints": [
+        "no plaintext DEK or document in the store; KEK only in the KMS",
+        "KMS reachable only with a client certificate from our CA",
+        "KEK rotation without re-encrypting data; no KEK retired while records need it",
+        "audit log tamper-evident (edit, delete, reorder) and signed with a non-exportable key",
+        "external shares quantum-safe (hybrid KEM); deprecated KEM refused for new shares",
+        "0 hard-coded algorithms, 0 key-export calls, 0 threat-model problems, 0 secrets in logs",
+        "an agent may explain anomalies but never decide"
+      ],
+      "question": "How do the L100-L400 building blocks fit into one service that meets these constraints, and how do we prove it end to end?"
+    },
+    "architecture": {
+      "diagram": "labs/L400/22-capstone/architecture.mmd",
+      "summary": "Users call doc_service.py on the app host. For each document it creates a DEK, seals the document in lesson 17's envelope (AEAD id in the AAD header) and signs it through the token's doc-signing handle (lesson 19). It asks kms.py - a separate component holding lesson 12's versioned KEKs - to wrap the DEK over mutual TLS (lessons 9-10), where the caller's identity is its certificate CN. Every operation, including the KMS's, is appended to a hash-chained audit log signed through the token's audit-log handle; audit.py's rules decide anomalies and agent_explain.py only explains them. External recipients receive the DEK through HPKE ML-KEM-768+X25519 (lesson 18). The token PIN is loaded from a file and the JSON app log passes lesson 16's redaction filter."
+    },
+    "milestones": [
+      {
+        "title": "M1 Envelope encryption with versioned KEKs and rotation",
+        "deliverable": "put/get with per-document DEKs; rotate_kek + resumable rewrap; retire refused while records need the version",
+        "test": "labs/L400/22-capstone/test_m1_envelope_rotation.py"
+      },
+      {
+        "title": "M2 KMS behind mutual TLS",
+        "deliverable": "KMS over TLS with CERT_REQUIRED; caller identity from the client certificate",
+        "test": "labs/L400/22-capstone/test_m2_mtls_kms.py"
+      },
+      {
+        "title": "M3 Signed, hash-chained audit log + anomaly rules",
+        "deliverable": "audit-v1 entries signed via a token handle; verify_chain; burst / access-after-revoke / clock rules",
+        "test": "labs/L400/22-capstone/test_m3_signed_audit.py"
+      },
+      {
+        "title": "M4 PQ-hybrid sharing",
+        "deliverable": "HPKE MLKEM768_X25519 share of the DEK; recipient opens; deprecated KEM refused",
+        "test": "labs/L400/22-capstone/test_m4_pq_sharing.py"
+      },
+      {
+        "title": "M5 Fitness functions, threat model and secret handling",
+        "deliverable": "agility lint, no-key-export, token inventory, threat_model.json check, leak scan of logs",
+        "test": "labs/L400/22-capstone/test_m5_fitness.py"
+      },
+      {
+        "title": "M6 Agent explains, code decides",
+        "deliverable": "anomaly explanations through the secret gate; invented anomaly ids rejected; action decided by code",
+        "test": "labs/L400/22-capstone/test_m6_agent_explain.py"
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Confidentiality at rest",
+        "measure": "store holds only {env, kek, wdek}; wrapped DEK 60 B; plaintext absent from the store dump",
+        "pass": "test_m1::test_store_holds_no_plaintext_keys passes"
+      },
+      {
+        "criterion": "Safe rotation",
+        "measure": "records_by_kid after a seeded crash; retire refused until 0 records",
+        "pass": "M1 retire_refused_while_in_use = True, readable 6/6"
+      },
+      {
+        "criterion": "Component authentication",
+        "measure": "KMS calls without a client cert / with a foreign CA cert",
+        "pass": "both refused (M2)"
+      },
+      {
+        "criterion": "Tamper-evident audit",
+        "measure": "findings on an edited + truncated copy",
+        "pass": "bad_signature, chain_break and seq_gap all reported (M3)"
+      },
+      {
+        "criterion": "Misuse detection",
+        "measure": "rules on the clean log",
+        "pass": "exactly access_after_revoke and unwrap_burst (M3)"
+      },
+      {
+        "criterion": "Quantum-safe sharing",
+        "measure": "share KEM pq flag; deprecated KEM for new shares",
+        "pass": "pq = true, X25519-only KEM refused (M4)"
+      },
+      {
+        "criterion": "Design stays true",
+        "measure": "agility violations, key-export calls, exportable keys, threat-model problems, secrets in logs",
+        "pass": "all 0 (M5)"
+      },
+      {
+        "criterion": "AI boundary",
+        "measure": "explanations accepted only for code-reported anomalies",
+        "pass": "A99 rejected; action decided by code (M6)"
+      }
+    ],
+    "fitnessFunctions": [
+      {
+        "what": "No hard-coded algorithm outside the capstone registry (lesson 17)",
+        "test": "labs/L400/22-capstone/test_m5_fitness.py::TestM5::test_no_hard_coded_algorithms",
+        "threshold": "0 violations"
+      },
+      {
+        "what": "No private key bytes read outside the token; token inventory non-exportable (lesson 19)",
+        "test": "labs/L400/22-capstone/test_m5_fitness.py::TestM5::test_no_key_export",
+        "threshold": "0 calls; 0 exportable keys"
+      },
+      {
+        "what": "Capstone threat model checked by lesson 21's verified checker",
+        "test": "labs/L400/22-capstone/test_m5_fitness.py::TestM5::test_threat_model_clean",
+        "threshold": "0 problems"
+      },
+      {
+        "what": "No secrets in the JSON app log after a seeded leak attempt (lesson 16)",
+        "test": "labs/L400/22-capstone/test_m5_fitness.py::TestM5::test_no_secrets_in_logs",
+        "threshold": "0 scanner findings"
+      },
+      {
+        "what": "End to end scorecard",
+        "test": "labs/L400/22-capstone/test_run_capstone.py",
+        "threshold": "6/6 milestones pass"
+      }
+    ],
+    "decisionRecords": [
+      "labs/L400/22-capstone/ADR-0022-1-kms-boundary-mtls.md",
+      "labs/L400/22-capstone/ADR-0022-2-envelope-reuse.md",
+      "labs/L400/22-capstone/ADR-0022-3-signed-audit-chain.md",
+      "labs/L400/22-capstone/ADR-0022-4-pq-hybrid-sharing.md"
+    ],
+    "steps": [
+      {
+        "title": "Run the capstone",
+        "detail": "python run_capstone.py - starts the KMS (mTLS, 127.0.0.1, random port), opens the token with a PIN from a file, runs M1-M6 with seeded faults (SEED=22) and prints the scorecard.",
+        "expected": "{\"scorecard\": \"capstone\", \"passed\": 6, \"total\": 6, \"decided_by\": \"code\"}",
+        "ifNot": "Read the failing milestone line; each has its own test file."
+      },
+      {
+        "title": "M1 + M2: keys and the KMS boundary",
+        "detail": "Read the first two lines: records_by_kid after the crash, retire refused, resumed rewrap; rogue KMS clients refused.",
+        "expected": "{\"milestone\": \"M1 envelope + versioned KEK + rotation\", \"crash_after\": 3, \"records_by_kid_after_crash\": {\"docs-kek:v1\": 3, \"docs-kek:v2\": 3}, \"retire_refused_while_in_use / {\"milestone\": \"M2 mTLS between doc service and KMS\", \"doc_service_client\": \"ok\", \"no client cert\": \"refused (SSLError)\", \"cert from another CA\": \"refused (SSLEOFError)\", ",
+        "ifNot": "SSL errors for the doc service itself: lab 10's solution_mtls PKI was not created (check the temporary folder permissions)."
+      },
+      {
+        "title": "M3: audit log",
+        "detail": "Rules on the clean log and on the attacker's edited + truncated copy.",
+        "expected": "{\"milestone\": \"M3 signed, hash-chained audit log\", \"entries\": 50, \"clean_log_anomalies\": [\"access_after_revoke\", \"unwrap_burst\"], \"tampered_at_seq\": 10, \"tampered_log_findings\": [\"access_after_revoke\", \"bad_signature\", \"chain_break\", \"seq_gap\", \"unwrap_burst\"], \"pass\": true}",
+        "ifNot": "Clock-dependent? No - the capstone uses a fake clock."
+      },
+      {
+        "title": "M4 + M5: PQ sharing and fitness",
+        "detail": "HPKE share with the PQ hybrid KEM; all fitness counts must be 0.",
+        "expected": "{\"milestone\": \"M4 PQ-hybrid sharing (HPKE)\", \"kem\": \"HPKE-XWING\", \"pq\": true, \"recipient_opened\": true, \"wrapped_dek_bytes\": 1168, \"new_share_with_HPKE-X25519\": \"refused\", \"pass\": true} / {\"milestone\": \"M5 fitness functions + threat model + secret handling\", \"agility_lint_violations\": 0, \"key_export_calls\": 0, \"token_keys_exportable\": 0, \"threat_model_problems\": 0, \"secrets_in_logs\": 0, \"pass\": true}",
+        "ifNot": "threat_model_problems > 0: a referenced capstone test was renamed - update threat_model.json."
+      },
+      {
+        "title": "M6: agent explains",
+        "detail": "Fake model explains the anomalies and invents A99, which code rejects. Optional: python run_capstone.py --real (Ollama).",
+        "expected": "{\"milestone\": \"M6 agent explains, code decides\", \"anomalies\": 7, \"accepted\": 7, \"rejected\": [\"A99\"], \"action\": \"page on-call (integrity)\", \"pass\": true}",
+        "ifNot": "With --real the wording varies; accepted/rejected still come from code."
+      },
+      {
+        "title": "Run all milestone tests",
+        "detail": "python -m unittest -v (19 tests incl. the end-to-end scorecard; slow on network mounts).",
+        "expected": "Ran 19 tests in 37.749s | OK",
+        "ifNot": "Each test class starts its own service in a unique folder inside the lab and removes it afterwards."
+      },
+      {
+        "title": "Extend it (your project)",
+        "detail": "Pick one: dual-sign documents (ADR-0017 transition phase) once the token supports ML-DSA; ship audit entries off-host; reuse KMS connections; add a revocation that clears the ACL cache. Add a milestone line, a test and an ADR.",
+        "expected": "Your new milestone passes and the existing six still do.",
+        "ifNot": "Run the fitness functions first: they show what your change broke."
+      }
+    ],
+    "codeLanguage": "python",
+    "code": "\"\"\"Capstone: an encrypted document service, end to end on 127.0.0.1 with seeded faults. Prints one JSON line per\nmilestone and a final scorecard. Deterministic code decides every verdict; the agent only explains anomalies.\nRun: python run_capstone.py   (add --real to let a local model explain; tests always use the fake server).\"\"\"\nimport base64\nimport json\nimport random\nimport sys\nimport tempfile\nfrom pathlib import Path\n\nimport paths  # noqa: F401\nimport agent_explain\nimport agility_lint\nimport audit\nimport kms\nimport registry as reg\nimport service\nimport solution_mtls\nimport solution_verified\nimport test_fitness_no_key_export as l19_fitness\nfrom doc_service import open_shared\nfrom secrets_app import scan_log\n\nSEED = 22\nHERE = Path(__file__).resolve().parent\n\n\ndef m1_envelope_rotation(ns, rng) -> dict:\n    for i in range(1, 7):\n        ns.svc.put(\"alice\", f\"doc-{i}\", f\"contract {i}: price {rng.randrange(100, 999)}\".encode(), readers=(\"bob\", \"mallory\"))\n        ns.clock.advance(1)\n    ns.svc.rotate_kek()\n    crash = rng.randrange(1, 4)\n    try:\n        ns.svc.rewrap(crash_after=crash)  # seeded crash part-way\n    except RuntimeError:\n        pass\n    mixed = ns.svc.records_by_kid()\n    try:\n        ns.svc.retire(1)\n        refused = False\n    except PermissionError:\n        refused = True\n    resumed = ns.svc.rewrap()\n    retired = ns.svc.retire(1)[\"retired\"]\n    readable = sum(1 for d in ns.svc.docs if ns.svc.get(\"alice\", d).startswith(b\"contract\"))\n    return {\"milestone\": \"M1 envelope + versioned KEK + rotation\", \"crash_after\": crash, \"records_by_kid_after_crash\": mixed,\n            \"retire_refused_while_in_use\": refused, \"resumed\": resumed, \"retired\": retired, \"readable\": f\"{readable}/6\",\n            \"pass\": refused and readable == 6}\n\n\ndef m2_mtls(ns) -> dict:\n    results = {}\n    for name, client in ((\"no client cert\", kms.KMSClient(ns.port, ns.pki, with_cert=False)),\n                         (\"cert from another CA\", kms.KMSClient(ns.port, solution_mtls.make_pki_with_client(ns.work / \"rogue\", \"rogue\"), ca_file=ns.pki / \"ca.pem\"))):\n        try:\n            client.call(\"rotate\")\n            results[name] = \"accepted\"\n        except (OSError, PermissionError) as e:\n            results[name] = f\"refused ({type(e).__name__})\"\n    ok = ns.svc.get(\"bob\", \"doc-1\").startswith(b\"contract\")\n    return {\"milestone\": \"M2 mTLS between doc service and KMS\", \"doc_service_client\": \"ok\" if ok else \"failed\", **results,\n            \"pass\": ok and all(v.startswith(\"refused\") for v in results.values())}\n\n\ndef m3_audit(ns, rng) -> tuple:\n    for i in range(1, 7):  # insider: mallory reads every document within 30 s\n        ns.svc.get(\"mallory\", f\"doc-{i}\")\n        ns.clock.advance(5)\n    ns.svc.revoke(\"admin\", \"mallory\")\n    ns.clock.advance(10)\n    ns.svc.get(\"mallory\", \"doc-2\")  # stale ACL cache: still allowed (seeded weakness)\n    ns.clock.advance(400)\n    try:\n        ns.svc.get(\"mallory\", \"doc-3\")\n    except PermissionError:\n        pass\n    clean = audit.detect(ns.audit.entries, ns.audit_pub)\n    tampered = json.loads(json.dumps(ns.audit.entries))  # the attacker works on a copy of the stored log\n    victim = rng.randrange(2, len(tampered) - 2)\n    tampered[victim][\"actor\"] = \"doc-service/bob\"  # attacker blames bob\n    del tampered[victim + 2]  # and deletes a later entry\n    found = audit.detect(tampered, ns.audit_pub)\n    rules = sorted({a[\"rule\"] for a in clean})\n    return {\"milestone\": \"M3 signed, hash-chained audit log\", \"entries\": len(ns.audit.entries), \"clean_log_anomalies\": rules,\n            \"tampered_at_seq\": victim + 1, \"tampered_log_findings\": sorted({a[\"rule\"] for a in found}),\n            \"pass\": rules == [\"access_after_revoke\", \"unwrap_burst\"] and {\"bad_signature\", \"seq_gap\", \"chain_break\"} <= {a[\"rule\"] for a in found}}, found\n\n\ndef m4_pq_sharing(ns) -> dict:\n    kem = reg.POLICY[\"share_kem\"]\n    recipient = reg.new_recipient(kem)\n    package = ns.svc.share(\"alice\", \"doc-1\", recipient.public_key())\n    opened = open_shared(package, recipient).startswith(b\"contract\")\n    old = [a.id for a in reg.REGISTRY.values() if a.kind == \"kem\" and a.status == \"deprecated\"][0]\n    try:\n        reg.share_seal(old, recipient.public_key(), b\"k\" * 32, b\"x\")\n        refused = False\n    except reg.DisallowedAlgorithm:\n        refused = True\n    return {\"milestone\": \"M4 PQ-hybrid sharing (HPKE)\", \"kem\": kem, \"pq\": reg.REGISTRY[kem].pq, \"recipient_opened\": opened,\n            \"wrapped_dek_bytes\": len(base64.b64decode(package[\"blob\"])), f\"new_share_with_{old}\": \"refused\" if refused else \"allowed\",\n            \"pass\": opened and refused and reg.REGISTRY[kem].pq}\n\n\ndef m5_fitness(ns) -> dict:\n    ns.log.debug(\"upstream call\", extra={\"ctx\": {\"authorization\": \"Bearer \" + \"z\" * 24, \"pin\": ns.pin.reveal()}})  # seeded leak attempt\n    checks = {\"agility_lint_violations\": len(agility_lint.scan([HERE])),\n              \"key_export_calls\": len(l19_fitness.key_export_calls([HERE])),\n              \"token_keys_exportable\": len(l19_fitness.inventory(ns.token)),\n              \"threat_model_problems\": len(solution_verified.check(solution_verified.load(HERE / \"threat_model.json\"))),\n              \"secrets_in_logs\": len(scan_log(ns.log_stream.getvalue(), known=[ns.pin.reveal()]))}\n    return {\"milestone\": \"M5 fitness functions + threat model + secret handling\", **checks, \"pass\": not any(checks.values())}\n\n\ndef m6_agent(anomalies, real=False) -> dict:\n    rows = agent_explain.explain(anomalies, real=real)\n    verdicts = {r[\"id\"]: r[\"verdict\"].split()[0] for r in rows}\n    page = any(a[\"rule\"] in (\"bad_signature\", \"chain_break\", \"seq_gap\") for a in anomalies)  # code decides the action\n    return {\"milestone\": \"M6 agent explains, code decides\", \"anomalies\": len(anomalies),\n            \"accepted\": sum(v == \"ACCEPTED\" for v in verdicts.values()), \"rejected\": [i for i, v in verdicts.items() if v == \"REJECTED\"],\n            \"action\": \"page on-call (integrity)\" if page else \"ticket\", \"pass\": all(verdicts.get(a[\"id\"]) for a in anomalies) and \"A99\" not in [i for i, v in verdicts.items() if v == \"ACCEPTED\"]}\n\n\ndef run(real=False) -> list:\n    rng = random.Random(SEED)\n    with tempfile.TemporaryDirectory(dir=HERE, ignore_cleanup_errors=True) as work:\n        ns = service.start(Path(work))\n        ns.work = Path(work)\n        try:\n            rows = [m1_envelope_rotation(ns, rng), m2_mtls(ns)]\n            m3, anomalies = m3_audit(ns, rng)\n            rows += [m3, m4_pq_sharing(ns), m5_fitness(ns), m6_agent(anomalies, real)]\n        finally:\n            service.stop(ns)\n    return rows\n\n\nif __name__ == \"__main__\":\n    rows = run(real=\"--real\" in sys.argv)\n    for row in rows:\n        print(json.dumps(row, sort_keys=False))\n    print(json.dumps({\"scorecard\": \"capstone\", \"passed\": sum(r[\"pass\"] for r in rows), \"total\": len(rows), \"decided_by\": \"code\"}))\n",
+    "codeWalkthrough": [
+      {
+        "title": "paths.py + registry.py",
+        "detail": "Reused labs go on sys.path (import, don't copy); the capstone registry wraps lesson 17's registry and adds the sharing KEMs."
+      },
+      {
+        "title": "kms.py",
+        "detail": "Lesson 12's Keyring behind ThreadingHTTPServer wrapped with lesson 10's mTLS context; caller CN from getpeercert(); retire-after-rewrap decided by the KMS."
+      },
+      {
+        "title": "doc_service.py",
+        "detail": "put/get/share/revoke/rotate/rewrap; TokenSigner adapts the token handle to the registry's .sign(); envelope verify via solution_agile; ACL cache with a 300 s refresh (seeded weakness)."
+      },
+      {
+        "title": "audit.py",
+        "detail": "audit-v1 hash chain signed through the token; verify_chain reports bad_signature/chain_break/seq_gap; detect() adds burst, access-after-revoke and clock rules."
+      },
+      {
+        "title": "agent_explain.py",
+        "detail": "Only anomaly lines, gated by lesson 16's scanner and lesson 9's regex; explanations for unknown ids are rejected."
+      },
+      {
+        "title": "run_capstone.py",
+        "detail": "Seeded milestones M1-M6 in a temporary folder inside the lab; prints JSON lines and the scorecard; tests reuse service.start()."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/22-capstone/ADR-0022-1-kms-boundary-mtls.md",
+        "purpose": "lab file"
+      },
+      {
+        "path": "labs/L400/22-capstone/ADR-0022-2-envelope-reuse.md",
+        "purpose": "lab file"
+      },
+      {
+        "path": "labs/L400/22-capstone/ADR-0022-3-signed-audit-chain.md",
+        "purpose": "lab file"
+      },
+      {
+        "path": "labs/L400/22-capstone/ADR-0022-4-pq-hybrid-sharing.md",
+        "purpose": "lab file"
+      },
+      {
+        "path": "labs/L400/22-capstone/agent_explain.py",
+        "purpose": "agent explains anomalies (code decides)"
+      },
+      {
+        "path": "labs/L400/22-capstone/architecture.mmd",
+        "purpose": "architecture diagram (Mermaid)"
+      },
+      {
+        "path": "labs/L400/22-capstone/audit.py",
+        "purpose": "signed hash-chained audit log + rules"
+      },
+      {
+        "path": "labs/L400/22-capstone/capstone_testing.py",
+        "purpose": "shared test fixture"
+      },
+      {
+        "path": "labs/L400/22-capstone/doc_service.py",
+        "purpose": "document service"
+      },
+      {
+        "path": "labs/L400/22-capstone/kms.py",
+        "purpose": "KMS component behind mTLS"
+      },
+      {
+        "path": "labs/L400/22-capstone/paths.py",
+        "purpose": "reused lab folders on sys.path"
+      },
+      {
+        "path": "labs/L400/22-capstone/registry.py",
+        "purpose": "capstone registry (lesson 17 + sharing KEMs)"
+      },
+      {
+        "path": "labs/L400/22-capstone/run_capstone.py",
+        "purpose": "end-to-end run + scorecard"
+      },
+      {
+        "path": "labs/L400/22-capstone/service.py",
+        "purpose": "wires PKI, PIN file, token, audit, KMS, doc service"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_m1_envelope_rotation.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_m2_mtls_kms.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_m3_signed_audit.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_m4_pq_sharing.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_m5_fitness.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_m6_agent_explain.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_run_capstone.py",
+        "purpose": "tests"
+      },
+      {
+        "path": "labs/L400/22-capstone/threat_model.json",
+        "purpose": "capstone threat model (checked in M5)"
+      }
+    ],
+    "expectedResults": [
+      "{\"milestone\": \"M1 envelope + versioned KEK + rotation\", \"crash_after\": 3, \"records_by_kid_after_crash\": {\"docs-kek:v1\": 3, \"docs-kek:v2\": 3}, \"retire_refused_while_in_use\": true, \"resumed\": 3, \"retired\": \"docs-kek:v1\", \"readable\": \"6/6\", \"pass\": true}",
+      "{\"milestone\": \"M2 mTLS between doc service and KMS\", \"doc_service_client\": \"ok\", \"no client cert\": \"refused (SSLError)\", \"cert from another CA\": \"refused (SSLEOFError)\", \"pass\": true}",
+      "{\"milestone\": \"M3 signed, hash-chained audit log\", \"entries\": 50, \"clean_log_anomalies\": [\"access_after_revoke\", \"unwrap_burst\"], \"tampered_at_seq\": 10, \"tampered_log_findings\": [\"access_after_revoke\", \"bad_signature\", \"chain_break\", \"seq_gap\", \"unwrap_burst\"], \"pass\": true}",
+      "{\"milestone\": \"M4 PQ-hybrid sharing (HPKE)\", \"kem\": \"HPKE-XWING\", \"pq\": true, \"recipient_opened\": true, \"wrapped_dek_bytes\": 1168, \"new_share_with_HPKE-X25519\": \"refused\", \"pass\": true}",
+      "{\"milestone\": \"M5 fitness functions + threat model + secret handling\", \"agility_lint_violations\": 0, \"key_export_calls\": 0, \"token_keys_exportable\": 0, \"threat_model_problems\": 0, \"secrets_in_logs\": 0, \"pass\": true}",
+      "{\"milestone\": \"M6 agent explains, code decides\", \"anomalies\": 7, \"accepted\": 7, \"rejected\": [\"A99\"], \"action\": \"page on-call (integrity)\", \"pass\": true}",
+      "{\"scorecard\": \"capstone\", \"passed\": 6, \"total\": 6, \"decided_by\": \"code\"}"
+    ],
+    "testCases": [
+      {
+        "action": "python run_capstone.py",
+        "expected": "{\"scorecard\": \"capstone\", \"passed\": 6, \"total\": 6, \"decided_by\": \"code\"}"
+      },
+      {
+        "action": "Relabel a stored envelope header",
+        "expected": "get() refuses (signature policy or InvalidTag)"
+      },
+      {
+        "action": "Edit and delete audit entries in a copy",
+        "expected": "bad_signature at the edit, chain_break after it, seq_gap at the deletion"
+      },
+      {
+        "action": "Agent explains A99 (not reported)",
+        "expected": "REJECTED (no such anomaly)"
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "PermissionError: KeyInUse ... still wraps N record(s)",
+        "action": "Expected before the rewrap job finishes; run svc.rewrap() first."
+      },
+      {
+        "symptom": "SSLEOFError for your own client",
+        "action": "The client did not load client.pem/client-key.pem from the capstone PKI."
+      },
+      {
+        "symptom": "Leftover tmp* folders in the lab",
+        "action": "Only on file systems that refuse fast deletes (e.g. network mounts); safe to delete."
+      }
+    ],
+    "agentAssist": {
+      "task": "A local model explains audit anomalies for the on-call engineer; the rules in audit.py decide what is anomalous and run_capstone decides the action.",
+      "prompt": "System: You explain security audit anomalies to an on-call engineer in one sentence each. Answer one line per anomaly: 'EXPLAIN <id>: <explanation>'. Do not invent anomalies. User: [[AUDIT-EXPLAIN]] Explain these anomalies: <anomalies>ANOMALY A1 bad_signature: seq 10 - ...</anomalies>",
+      "check": "Only anomaly lines (rule, seq, user, summary) are sent, after lesson 16's scan_log and lesson 9's SECRET gate. Explanations are ACCEPTED only for ids the rules reported; others are REJECTED; unexplained anomalies stay reported. Paging vs ticket is decided by code from the rule names.",
+      "expected": "{\"milestone\": \"M6 agent explains, code decides\", \"anomalies\": 7, \"accepted\": 7, \"rejected\": [\"A99\"], \"action\": \"page on-call (integrity)\", \"pass\": true}",
+      "realModelNote": "python run_capstone.py --real uses Ollama (default qwen2.5:1.5b); wording varies, verdicts and actions still come from code. Not run in the sandbox (no model)."
+    },
+    "learningTools": [
+      {
+        "name": "Wireshark",
+        "role": "INSPECT",
+        "licence": "GPL-2.0 (OSI)",
+        "url": "https://www.wireshark.org/download.html",
+        "mac": "brew install --cask wireshark-app (or the official universal .dmg)",
+        "windows": "Official x64/Arm64 installer from wireshark.org (bundles Npcap)",
+        "exercise": "Capture loopback while running run_capstone.py with SSLKEYLOGFILE set (as in lesson 10; the KMS client uses ssl.create_default_context): find the KMS handshakes, the CertificateRequest the KMS sends, and the client Certificate message.",
+        "expected": "Should match the lab's printed value: the doc-service client presents a certificate (handshake completes) while the 'no client cert' and 'cert from another CA' attempts end without application data (M2: both 'refused (SSLEOFError)'). Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's printed output."
+      },
+      {
+        "name": "OpenBao (transit engine + web UI)",
+        "role": "SEE / CHECK",
+        "licence": "MPL-2.0 (OSI)",
+        "url": "https://github.com/openbao/openbao/releases",
+        "mac": "brew install openbao (official install page), or podman run -d --name bao -p 127.0.0.1:8200:8200 docker.io/openbao/openbao:2.7.2 server -dev -dev-root-token-id=root -dev-listen-address=0.0.0.0:8200",
+        "windows": "Container only (Docker Desktop / Podman), same podman run command; a native Windows binary was not checked",
+        "exercise": "Production KMS equivalent: in a dev server, create transit key docs-kek, use datakey/wrapped to get a wrapped DEK, rotate, rewrap, then set min_decryption_version - the same story as M1.",
+        "expected": "'vault:v1:' then 'vault:v2:' ciphertexts after rotate + rewrap, and refusal of v1 after min_decryption_version=2 - the service form of M1's 'retire_refused_while_in_use' and 'retired: docs-kek:v1'. Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's printed output."
+      },
+      {
+        "name": "step CLI (smallstep)",
+        "role": "CHECK",
+        "licence": "Apache-2.0 (OSI)",
+        "url": "https://github.com/smallstep/cli/releases",
+        "mac": "brew install step",
+        "windows": "winget install -e --id Smallstep.step (manifest at 0.30.6) or step_windows_0.31.0_amd64.zip",
+        "exercise": "Inspect the capstone's KMS client certificate: step certificate inspect <work dir>/pki/client.pem (print the path from service.start in a Python shell).",
+        "expected": "Subject CN doc-service, Extended Key Usage TLS Web Client Authentication, issued by 'KB Local Root CA' - the identity the KMS logs as 'doc-service/<user>' (test_m2::test_caller_identity_logged). Pending a manual run: the tool was not run in the sandbox; the value comes from the lab's printed output."
+      }
+    ],
+    "caution": "Learning service: in-process KMS and software token, demo PKI, fake clock. Never reuse its keys or certificates; in production the KMS is OpenBao/HSM-backed, the token is an HSM, and audit logs ship off-host. The agent never sees keys, documents or wrapped keys.",
+    "checkpoint": "PASS if run_capstone.py prints passed 6 of 6, all 19 tests pass, you can point each rubric line to its evidence, and you can explain each ADR's main trade-off.",
+    "checkYourself": [
+      {
+        "q": "Why can the attacker who owns the doc-service host still read documents, and what limits it?",
+        "a": "It can ask the KMS to unwrap while it is in; the KEK never leaves the KMS and the audit rules flag bursts, so access is bounded and visible."
+      },
+      {
+        "q": "What does the hash chain detect that signatures alone do not?",
+        "a": "Deletion and reordering: each entry commits to the previous one, so a missing or moved entry breaks the chain and the sequence."
+      },
+      {
+        "q": "Why is the agent's A99 explanation rejected?",
+        "a": "No rule reported A99; the agent explains, code decides what is an anomaly."
+      }
+    ],
+    "sources": [
+      {
+        "title": "OpenBao - Transit secrets engine (API)",
+        "url": "https://openbao.org/docs/api/secret/transit/"
+      },
+      {
+        "title": "RFC 9180 / pyca/cryptography - HPKE",
+        "url": "https://cryptography.io/en/latest/hazmat/primitives/hpke/"
+      },
+      {
+        "title": "OWASP Logging Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html"
+      },
+      {
+        "title": "OWASP Threat Modeling Cheat Sheet",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html"
+      }
+    ],
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran run_capstone.py ({\"scorecard\": \"capstone\", \"passed\": 6, \"total\": 6, \"decided_by\": \"code\"}), agent_explain.py (fake model server) and the 19 unittests (Ran 19 tests in 37.749s | OK) locally: real mTLS on 127.0.0.1, real AEAD/HPKE/Ed25519, software token, fake clock.",
+      "pendingCi": [
+        "run_capstone.py --real (real local model)",
+        "macOS/Windows runs (matrix; Windows firewall prompt for 127.0.0.1 untested)",
+        "OpenBao/HSM-backed KMS and SoftHSM-backed token instead of the in-process ones",
+        "Wireshark, OpenBao and step CLI learning-tool exercises (manual)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/22-capstone-encrypted-document-service.md",
+    "conceptSummary": "An encrypted document service built from the topic's labs: envelope + registry (17), KEK rotation (12) in a KMS behind mTLS (9-10), signatures through non-exportable token handles (19), a signed hash-chained audit log with rule-based anomalies, PQ-hybrid sharing (18), secret handling (16) and a threat model checked by code (21). Code decides; the agent explains.",
+    "inRealSystems": [
+      "Document and file services (and secrets managers) use exactly this split: envelope encryption with KMS-held KEKs, mTLS between components, append-only signed audit trails.",
+      "Cloud object stores encrypt each object with a data key wrapped by a KMS key and log every KMS call - the same audit-and-rotate story."
+    ],
+    "useWhen": "Use this architecture for any service holding confidential documents for years; avoid KEKs in the app process, local file keys for signing, editable logs, and AI that decides security outcomes.",
+    "next": "Done: see the L400 candidates in KNOWN-GAPS for further study",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "cryptography L400 #17 Crypto agility: versioned envelopes, negotiation and dual signing: envelope, registry and agility lint reused here.",
+      "cryptography L400 #18 Post-quantum cryptography in practice: ML-KEM, ML-DSA and hybrids: the HPKE hybrid used for sharing.",
+      "cryptography L400 #19 Keys in hardware-style storage: PKCS#11, non-exportable keys and key ceremonies: the token handles that sign documents and the audit log.",
+      "cryptography L400 #20 End-to-end encryption for groups: pairwise, sender keys and MLS-style epochs: revocation faces the same 'removed party must lose access' problem.",
+      "cryptography L400 #21 Threat modelling cryptographic systems: STRIDE, attack trees and tests: its checker validates threat_model.json in M5."
+    ]
+  }
+]

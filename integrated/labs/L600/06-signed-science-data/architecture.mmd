@@ -1,0 +1,25 @@
+flowchart LR
+  subgraph AST[astronomy]
+    IN["inputs.rows()<br/>L400 #21 (synthetic Gaia-like,<br/>real CC BY-NC 3.0 IGO credit)"] --> PROC["science.process()<br/>parallax/error >= 5 ? 1/parallax : needs-prior<br/>L100 #4 units"]
+    LIC["licence gate<br/>L400 #21 release_licence()<br/>keeps NC -> CC-BY-NC-4.0"]
+  end
+  subgraph CRY[cryptography]
+    PROC -->|"JCS bytes (RFC 8785)"| FILES["5 files<br/>catalogue.json, LICENSE.txt,<br/>ACKNOWLEDGEMENTS.md, CITATION.cff,<br/>provenance.json"]
+    LIC --> FILES
+    FILES --> MAN["manifest: sha256 + length per file,<br/>Merkle root (RFC 9162)"]
+    MAN --> SIG["release.json<br/>Ed25519 + ML-DSA-65<br/>(L400 #17 registry, transition phase)"]
+    ROOT["root.json v1 -> v2<br/>rotation keeps retired keys<br/>valid_through_version"] -.trusts.-> SIG
+    SIG --> LOG["transparency log<br/>STH, inclusion + consistency proofs"]
+    SIG --> TS["timestamp.json<br/>TTL 3600 s, version"]
+  end
+  subgraph DS[distributed systems]
+    M0[(m0)] <-->|"push-pull gossip<br/>Merkle over 16 buckets"| M1[(m1)]
+    M1 <--> M2[(m2<br/>re-serialises JSON)]
+    M2 <--> M3[(m3<br/>partitioned for v4)]
+    M0 <--> M3
+  end
+  SIG -->|upload to ONE mirror| M0
+  TS --> M0
+  CL["client<br/>root chain -> timestamp (freeze, rollback)<br/>-> signatures -> hashes -> Merkle root<br/>-> licence -> log proofs"]
+  M0 & M1 & M2 & M3 -->|any mirror, untrusted| CL
+  LOG -->|STH + proofs| CL

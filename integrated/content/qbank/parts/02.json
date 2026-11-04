@@ -1,0 +1,601 @@
+[
+  {
+    "id": "int02-L600-001",
+    "level": "L600",
+    "lesson": 2,
+    "type": "scenario",
+    "focus": "seam",
+    "difficulty": 3,
+    "question": "A colleague reads the scorecard (N = 21 factored on 15 simulated qubits) and proposes setting z = 25 years in the plan because 'the simulator shows how far we are from RSA-2048'. What does the quantum -> risk seam say?",
+    "options": [
+      "Accept it: the simulator measured the real qubit gap, so z can be derived from it directly",
+      "Refuse it: the toy run shows the mechanism; z must be a labelled assumption",
+      "Accept it only if the gate-level oracle was used, because that is the honest circuit",
+      "Refuse it: z must be computed from the 512 KiB statevector size of the run instead"
+    ],
+    "answer": 1,
+    "explanation": "Horizon only accepts a planning assumption or a policy date and raises TypeError for a simulator result; the compiled N = 21 run says nothing about when RSA-2048 falls. Using the gate-level oracle does not change that.",
+    "source": "L600 #02 seam S1, migration_plan.Horizon"
+  },
+  {
+    "id": "int02-L600-002",
+    "level": "L600",
+    "lesson": 2,
+    "type": "scenario",
+    "focus": "seam",
+    "difficulty": 2,
+    "question": "The scanner reports ECDH P-256 in vendor/legacy/kx.py, a path no service in services.json owns. What should the plan do?",
+    "options": [
+      "Drop it, because without x and y Mosca's inequality cannot be evaluated",
+      "Mark it P2-kex, the safe middle priority for unknown key exchange",
+      "Escalate it as P1-review so an owner is assigned before it can be classified",
+      "Mark it done, since vendored code is the vendor's responsibility"
+    ],
+    "answer": 2,
+    "explanation": "The inventory -> plan seam must never lose a finding; an unowned file becomes P1-review. Dropping it is the silent-join failure the seam test guards against.",
+    "source": "L600 #02 seam S2, migration_plan.plan"
+  },
+  {
+    "id": "int02-L600-003",
+    "level": "L600",
+    "lesson": 2,
+    "type": "concept",
+    "focus": "seam",
+    "difficulty": 2,
+    "question": "What exactly does the agility-layer <-> wire-format seam test (S3) compare?",
+    "options": [
+      "Offered groups and every share and signature size versus the registry's promises",
+      "The Python imports of every service against the modules the agility lint allows",
+      "The number of inventory findings before and after the migration of each service",
+      "The CPU time spent per handshake against a latency budget for the messaging service"
+    ],
+    "answer": 0,
+    "explanation": "S3 reads the tapped bytes: offered groups must equal registry.expected_offers() and blob sizes must equal the advertised 1216/1120 B (hybrid) and 3309 B (ML-DSA-65). Import checks are the static lint, a different check.",
+    "source": "L600 #02 seam S3, seams.s3_agility_to_wire"
+  },
+  {
+    "id": "int02-L600-004",
+    "level": "L600",
+    "lesson": 2,
+    "type": "scenario",
+    "focus": "seam",
+    "difficulty": 3,
+    "question": "pq_required.messaging is switched on while one messaging server is still v1 (X25519 only). Which outcome keeps the rollout <-> policy seam intact?",
+    "options": [
+      "The v1 server's handshakes complete with X25519 and are logged as downgrades",
+      "The client retries the v1 server without the flag until the handshake succeeds",
+      "The v1 server is upgraded automatically by the registry",
+      "The handshakes to the v1 server are refused, and 0 classical sessions occur"
+    ],
+    "answer": 3,
+    "explanation": "With PQ required, a classical session for 12-year data is exactly the harm; refusing (2 refusals in the lab) is the contract. Logging a downgrade still sends recordable classical traffic.",
+    "source": "L600 #02 seam S4, rollback-v1 phase"
+  },
+  {
+    "id": "int02-L600-005",
+    "level": "L600",
+    "lesson": 2,
+    "type": "concept",
+    "focus": "seam",
+    "difficulty": 2,
+    "question": "Why does inventory.py ask crypto_registry.describe() what a registry call resolves to, instead of reading an algorithm name from the migrated service file?",
+    "options": [
+      "Because the AST scanner from quantum lesson 21 cannot parse files that import the registry module",
+      "The service names no algorithm; policy and flags decide it at run time",
+      "Because describe() is much faster than parsing the Python source files of every service",
+      "Because the registry encrypts the service source code so the scanner cannot read it"
+    ],
+    "answer": 1,
+    "explanation": "After the migration the algorithm lives in policy + flags, not in code; the inventory must ask the registry and is only as true as the flags when it ran. The scanner parses those files fine.",
+    "source": "L600 #02 inventory.scan_registry_calls"
+  },
+  {
+    "id": "int02-L600-006",
+    "level": "L600",
+    "lesson": 2,
+    "type": "concept",
+    "focus": "seam",
+    "difficulty": 2,
+    "question": "Why does fitness F1 check only key establishment for data with x + y > z, and not signatures?",
+    "options": [
+      "Signatures are not quantum-vulnerable at all; only key exchange is broken by Shor's algorithm today",
+      "Signatures are already covered by the agility lint, so F1 would count them twice",
+      "Only broken key establishment lets recorded traffic be decrypted later; signatures are checked at use",
+      "NIST IR 8547 does not list any signature algorithm as quantum-vulnerable in its tables"
+    ],
+    "answer": 2,
+    "explanation": "NIST IR 8547 says signatures are not vulnerable to HNDL, though they are quantum-vulnerable and still need migrating before 2030 deprecation (P2-sig). The first option confuses 'not HNDL-exposed' with 'not vulnerable'.",
+    "source": "L600 #02 fitness F1; NIST IR 8547 sec. 3"
+  },
+  {
+    "id": "int02-L600-007",
+    "level": "L600",
+    "lesson": 2,
+    "type": "design",
+    "focus": "seam",
+    "difficulty": 3,
+    "question": "Which piece of data crosses from application architecture into the cryptography risk model and decides whether a finding is P1?",
+    "options": [
+      "The service manifest's secrecy years x and migration years y for the finding's owner",
+      "The feature flag pq_hybrid_kex.messaging",
+      "The number of servers per version in the fleet",
+      "The ADR status of the service's last architecture decision"
+    ],
+    "answer": 0,
+    "explanation": "migration_plan joins each finding with services.json (x, y) and compares x + y with z. Flags change what is negotiated, not the HNDL exposure of the data.",
+    "source": "L600 #02 seam S2, services.json"
+  },
+  {
+    "id": "int02-L600-008",
+    "level": "L600",
+    "lesson": 2,
+    "type": "calculation",
+    "focus": "calculation",
+    "difficulty": 2,
+    "question": "Records data must stay secret for x = 7 years and its migration takes y = 3 years; the plan uses z = 10. What priority does its ECDH P-384 key exchange get?",
+    "options": [
+      "P1, because 7 + 3 >= 10",
+      "P1-review, because the inequality is undecided at equality",
+      "P2-kex, because 7 + 3 = 10 is not greater than 10",
+      "none, because P-384 is strong enough"
+    ],
+    "answer": 2,
+    "explanation": "Mosca's inequality is strict: exposure needs x + y > z. 10 > 10 is false, so it is P2-kex (before 2030). Using >= would wrongly promote it.",
+    "source": "L600 #02 M4, migration_plan.exposed"
+  },
+  {
+    "id": "int02-L600-009",
+    "level": "L600",
+    "lesson": 2,
+    "type": "calculation",
+    "focus": "calculation",
+    "difficulty": 2,
+    "question": "Order finding for N = 21 uses t = 2 * ceil(log2 21) counting qubits plus ceil(log2 21) work qubits. How many bytes does the complex128 statevector need?",
+    "options": [
+      "32,768 bytes",
+      "262,144 bytes",
+      "524,288 bytes",
+      "1,048,576 bytes"
+    ],
+    "answer": 2,
+    "explanation": "n = 5, t = 10, 15 qubits, 2^15 amplitudes x 16 bytes = 524,288 B (512 KiB). 32,768 is the amplitude count, not bytes.",
+    "source": "L600 #02 M1, shor_sim statevector_bytes"
+  },
+  {
+    "id": "int02-L600-010",
+    "level": "L600",
+    "lesson": 2,
+    "type": "calculation",
+    "focus": "calculation",
+    "difficulty": 1,
+    "question": "In X25519MLKEM768 the client share is a 1184-byte ML-KEM-768 key plus a 32-byte X25519 share, and the server share is a 1088-byte ciphertext plus 32 bytes. How many key-share bytes cross the wire per handshake?",
+    "options": [
+      "2,336",
+      "2,272",
+      "1,216",
+      "2,400"
+    ],
+    "answer": 0,
+    "explanation": "1216 + 1120 = 2336 bytes (RFC 10024 sizes). 2,272 omits both X25519 parts; 1,216 is the client share alone.",
+    "source": "L600 #02 M5, adapters.X25519MLKEM768Kex"
+  },
+  {
+    "id": "int02-L600-011",
+    "level": "L600",
+    "lesson": 2,
+    "type": "calculation",
+    "focus": "calculation",
+    "difficulty": 3,
+    "question": "In the all-v2 phase the measured handshake (client hello + server hello) is 5,827 bytes with an ML-DSA-65 transcript signature (3,309 B). With ML-DSA-87 (4,627 B signatures) and nothing else changed, by how many bytes does it exceed the 6,144-byte budget?",
+    "options": [
+      "0 - it still fits",
+      "1,001",
+      "1,318",
+      "1,045"
+    ],
+    "answer": 1,
+    "explanation": "5827 + (4627 - 3309) = 7145 bytes, and 7145 - 6144 = 1001 over budget, which is what try_it measured. 1,318 is the size increase, not the overshoot.",
+    "source": "L600 #02 try_it bigger_signature"
+  },
+  {
+    "id": "int02-L600-012",
+    "level": "L600",
+    "lesson": 2,
+    "type": "calculation",
+    "focus": "calculation",
+    "difficulty": 2,
+    "question": "The inverse QFT on t = 10 counting qubits is built from H gates, controlled phases and swaps. How many controlled-phase gates does it contain?",
+    "options": [
+      "10",
+      "20",
+      "55",
+      "45"
+    ],
+    "answer": 3,
+    "explanation": "t(t - 1)/2 = 45 controlled phases (plus 10 H and 5 swaps). 55 = t(t + 1)/2 counts the H gates too.",
+    "source": "L600 #02 M1 gates.iqft_cp; quantum L500 #25 T25.2"
+  },
+  {
+    "id": "int02-L600-013",
+    "level": "L600",
+    "lesson": 2,
+    "type": "calculation",
+    "focus": "calculation",
+    "difficulty": 2,
+    "question": "For N = 15, a = 7, t = 8 the counting register reads m in {0, 64, 128, 192}, each with probability 0.25. Continued fractions of m/256 succeed only when they give r = 4. What is the success probability per run?",
+    "options": [
+      "0.25",
+      "0.75",
+      "1.0",
+      "0.5"
+    ],
+    "answer": 3,
+    "explanation": "64/256 = 1/4 and 192/256 = 3/4 give r = 4; 128/256 = 1/2 gives r = 2 (7^2 = 4 mod 15, not 1) and m = 0 gives nothing, so P = 0.5 - the lab's measured value.",
+    "source": "L600 #02 M1 p_success_per_run"
+  },
+  {
+    "id": "int02-L600-014",
+    "level": "L600",
+    "lesson": 2,
+    "type": "calculation",
+    "focus": "calculation",
+    "difficulty": 2,
+    "question": "Gidney & Ekera's abstract-circuit formula is 3n + 0.002 n lg n logical qubits. Rounded up, what is it for n = 2048?",
+    "options": [
+      "6,144",
+      "6,145",
+      "6,190",
+      "6,235"
+    ],
+    "answer": 2,
+    "explanation": "3 x 2048 = 6144 plus 0.002 x 2048 x 11 = 45.06, so 6190 after rounding up - an evaluated published formula, not an extrapolation from the toy run.",
+    "source": "L600 #02 M2, estimates.ge_formula"
+  },
+  {
+    "id": "int02-L600-015",
+    "level": "L600",
+    "lesson": 2,
+    "type": "code-reading",
+    "focus": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "import math\nfrom fractions import Fraction\n\ndef recover(m, t, a, n):\n    r = Fraction(m, 2 ** t).limit_denominator(n).denominator\n    if pow(a, r, n) != 1 or r % 2 or pow(a, r // 2, n) == n - 1:\n        return None\n    f = math.gcd(pow(a, r // 2, n) - 1, n)\n    return (f, n // f)\n\nprint(recover(192, 8, 7, 15))",
+    "options": [
+      "(3, 5)",
+      "None",
+      "(5, 3)",
+      "(1, 15)"
+    ],
+    "answer": 0,
+    "explanation": "192/256 = 3/4 -> r = 4; 7^4 = 1 mod 15, r is even, 7^2 = 4 != 14, gcd(4 - 1, 15) = 3, so (3, 15 // 3) = (3, 5).",
+    "source": "L600 #02 M1, shor_sim.recover_factors"
+  },
+  {
+    "id": "int02-L600-016",
+    "level": "L600",
+    "lesson": 2,
+    "type": "code-reading",
+    "focus": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "def offers(hybrid_flag, required):\n    hybrid = required or hybrid_flag\n    return ([\"X25519MLKEM768\"] if hybrid else []) + ([] if required else [\"X25519\"])\n\nprint(offers(hybrid_flag=False, required=True))",
+    "options": [
+      "['X25519']",
+      "['X25519MLKEM768', 'X25519']",
+      "[]",
+      "['X25519MLKEM768']"
+    ],
+    "answer": 3,
+    "explanation": "required=True forces the hybrid on and removes the classical group even though the hybrid flag is off - the same rule as crypto_registry.expected_offers.",
+    "source": "L600 #02 crypto_registry.expected_offers"
+  },
+  {
+    "id": "int02-L600-017",
+    "level": "L600",
+    "lesson": 2,
+    "type": "code-reading",
+    "focus": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "SERVICES = {\"platform\": [\"sample_repo/services\"], \"payments\": [\"sample_repo/services/payments\"]}\n\ndef service_of(rel):\n    owners = [(len(p), n) for n, ps in SERVICES.items() for p in ps if rel.startswith(p + \"/\")]\n    return max(owners)[1] if owners else \"unowned\"\n\nprint(service_of(\"sample_repo/services/payments/k.py\"), service_of(\"sample_repo/servicesX/y.py\"))",
+    "options": [
+      "payments platform",
+      "payments unowned",
+      "platform unowned",
+      "platform platform"
+    ],
+    "answer": 1,
+    "explanation": "The longest matching prefix wins, so payments; 'sample_repo/servicesX/y.py' does not start with 'sample_repo/services/' (note the slash), so it is unowned.",
+    "source": "L600 #02 inventory.service_of"
+  },
+  {
+    "id": "int02-L600-018",
+    "level": "L600",
+    "lesson": 2,
+    "type": "code-reading",
+    "focus": "code-reading",
+    "difficulty": 2,
+    "question": "What does this print?",
+    "code": "kex = {\"messaging\": (12, 2), \"pay-rsa\": (10, 3), \"pay-tls\": (10, 3), \"records\": (7, 3), \"edge\": (5, 2)}\nprint([sum(1 for x, y in kex.values() if x + y > z) for z in (5, 10, 15)])",
+    "options": [
+      "[5, 3, 0]",
+      "[3, 3, 3]",
+      "[5, 3, 1]",
+      "[6, 3, 0]"
+    ],
+    "answer": 0,
+    "explanation": "Exposed items need x + y > z: at z = 5 all five key exchanges (14, 13, 13, 10, 7), at z = 10 three, at z = 15 none - the same 5 / 3 / 0 the lab's horizon sweep printed.",
+    "source": "L600 #02 try_it horizon_sweep"
+  },
+  {
+    "id": "int02-L600-019",
+    "level": "L600",
+    "lesson": 2,
+    "type": "code-reading",
+    "focus": "code-reading",
+    "difficulty": 3,
+    "question": "What does this print?",
+    "code": "import json, struct\n\ndef encode(header, *blobs):\n    h = dict(header, v=2, lens=[len(b) for b in blobs])\n    raw = json.dumps(h, separators=(\",\", \":\"), sort_keys=True).encode()\n    return struct.pack(\">H\", len(raw)) + raw + b\"\".join(blobs)\n\nprint(len(encode({\"t\": \"ack\"})))",
+    "options": [
+      "27",
+      "29",
+      "31",
+      "2"
+    ],
+    "answer": 1,
+    "explanation": "The compact header is '{\"lens\":[],\"t\":\"ack\",\"v\":2}' = 27 bytes plus the 2-byte length prefix = 29, the size of every ack the tap recorded.",
+    "source": "L600 #02 wire.encode"
+  },
+  {
+    "id": "int02-L600-020",
+    "level": "L600",
+    "lesson": 2,
+    "type": "debugging",
+    "focus": "diagnose",
+    "difficulty": 3,
+    "question": "After the 'latency fast path' change, the inventory lists messaging as done, F1 and the agility lint pass, but S3 reports \"offered ['X25519'], registry says ['X25519MLKEM768', 'X25519']\" and F3 counts 0 registry resolutions for 24 handshakes. What is the most likely cause?",
+    "options": [
+      "The registry's flags file expired on the fake clock and every client fell back to X25519",
+      "The v1 servers that remain in the fleet forced every client down to X25519",
+      "The client loads the curve module by name at run time, skipping the registry",
+      "The wire tap truncates client hellos larger than 1,400 bytes and drops the hybrid share"
+    ],
+    "answer": 2,
+    "explanation": "A dynamic import named in a string is invisible to the AST scanner and lint; only the wire shows the classical offer and the missing resolutions. Flags are still live (F4 passes) and v2 servers prefer the hybrid when offered.",
+    "source": "L600 #02 failure lab --inject bypass"
+  },
+  {
+    "id": "int02-L600-021",
+    "level": "L600",
+    "lesson": 2,
+    "type": "debugging",
+    "focus": "diagnose",
+    "difficulty": 3,
+    "question": "A refactor of the N = 15 gate-level oracle keeps P(success) = 0.5 and the same counting histogram, but a test that compares the full statevector with the permutation oracle fails. What happened?",
+    "options": [
+      "Floating-point error in the inverse QFT accumulates past the 1e-8 comparison tolerance",
+      "Swaps in the wrong order multiply by 13 = 7^-1 mod 15, which has the same period",
+      "The CCX gates were replaced by CX gates, which changes only a global phase of the state",
+      "The seed for the 200 shots changed, so the histogram matches the old one only by chance"
+    ],
+    "answer": 1,
+    "explanation": "This happened while building the lab: multiplying by 7^-1 visits the same orbit in reverse with the same period 4, so the counting distribution is identical. Only the work register differs - test states, not just histograms.",
+    "source": "L600 #02 M1 test_gate_level_oracle_equals_permutation"
+  },
+  {
+    "id": "int02-L600-022",
+    "level": "L600",
+    "lesson": 2,
+    "type": "debugging",
+    "focus": "diagnose",
+    "difficulty": 2,
+    "question": "Running the 15-qubit order-finding circuit through the shared simulator's sv.run(n, ops) raises 'Unable to allocate 16.0 GiB for an array with shape (32768, 32768)'. What is the fix?",
+    "options": [
+      "Pass an explicit |0...0> state vector, because sv.run builds np.eye(2**n) when no state is given",
+      "Reduce the shots from 200 to 20",
+      "Switch the oracle from the permutation to the gate-level version",
+      "Use float32 amplitudes instead of complex128"
+    ],
+    "answer": 0,
+    "explanation": "The statevector is only 512 KiB; the 16 GiB is the identity matrix sv.run creates to get |0>. Shots and oracle style do not touch that allocation.",
+    "source": "L600 #02 shor_sim.run_order_finding comment"
+  },
+  {
+    "id": "int02-L600-023",
+    "level": "L600",
+    "lesson": 2,
+    "type": "debugging",
+    "focus": "diagnose",
+    "difficulty": 3,
+    "question": "With pq_required on and one v1 server left, every message is still delivered and there are 0 refusals, but S4 reports classical_sessions = 2. What is the cause?",
+    "options": [
+      "The v2 servers ignore the pq_required flag and pick X25519 when it is offered first",
+      "A client shim re-adds X25519 when PQ is required and accepts a classical choice",
+      "The ML-DSA-65 transcript signature check is skipped when the server is a v1 server",
+      "The wire tap double-counts the sessions to v1 servers when the flag is switched on"
+    ],
+    "answer": 1,
+    "explanation": "That is --inject downgrade: the client re-adds the classical group and no longer refuses it; the old v1 server happily picks X25519. v2 servers do enforce the flag, so they still negotiate the hybrid.",
+    "source": "L600 #02 --inject downgrade, seam S4"
+  },
+  {
+    "id": "int02-L600-024",
+    "level": "L600",
+    "lesson": 2,
+    "type": "debugging",
+    "focus": "diagnose",
+    "difficulty": 2,
+    "question": "Weeks after the bypass shipped, operations turns on pq_required.messaging on an all-v2 fleet and suddenly 6 of 6 messaging handshakes are refused. Why now and not earlier?",
+    "options": [
+      "The ML-KEM-768 keys expired on the fake clock at the moment the flag was switched on",
+      "The byte-budget fitness function started blocking large handshakes in production",
+      "v2 servers now refuse classical groups, and the fast-path client offers only X25519",
+      "The registry ran out of audit space, so new resolutions were rejected by the servers"
+    ],
+    "answer": 2,
+    "explanation": "During the rollout window classical sessions were allowed, so the bypass was silent; once PQ is required, v2 servers answer insufficient_security. The S3 seam would have caught it months earlier.",
+    "source": "L600 #02 failure lab test_bypass_breaks_loudly_once_pq_is_required"
+  },
+  {
+    "id": "int02-L600-025",
+    "level": "L600",
+    "lesson": 2,
+    "type": "debugging",
+    "focus": "diagnose",
+    "difficulty": 2,
+    "question": "On the fake clock date 2027-02-01, fitness F4 fails with expired = ['pq_required.messaging']. What is the right response?",
+    "options": [
+      "Delete the expiry field so the check passes",
+      "Turn the flag off to make it disappear from the check",
+      "Raise the F4 threshold to allow one expired flag",
+      "Have the owner either make PQ-required permanent policy and remove the flag, or renew it with a recorded reason"
+    ],
+    "answer": 3,
+    "explanation": "Flags are transitional (application-architecture lesson 20): an expired ops flag means a decision is overdue. Deleting the expiry or raising the threshold hides the decision instead of making it.",
+    "source": "L600 #02 fitness F4"
+  },
+  {
+    "id": "int02-L600-026",
+    "level": "L600",
+    "lesson": 2,
+    "type": "design",
+    "focus": "design",
+    "difficulty": 3,
+    "question": "Why does ADR-0001 choose hybrid X25519MLKEM768 for messaging instead of ML-KEM-768 alone?",
+    "options": [
+      "Hybrid shares are smaller on the wire than an ML-KEM-768 share on its own would be in TLS",
+      "ML-KEM-768 on its own is not yet standardised by NIST, so it cannot be used alone",
+      "The key stays secret if either part holds, hedging new lattice code for 64 more bytes",
+      "Adding X25519 is what makes the key exchange safe against a quantum attacker"
+    ],
+    "answer": 2,
+    "explanation": "The combiner protects as long as one component holds (RFC 10024, NIST IR 8547 sec. 3.2); ML-KEM is FIPS 203. X25519 alone is exactly what Shor breaks.",
+    "source": "L600 #02 ADR-0001"
+  },
+  {
+    "id": "int02-L600-027",
+    "level": "L600",
+    "lesson": 2,
+    "type": "design",
+    "focus": "design",
+    "difficulty": 2,
+    "question": "If a 15-qubit compiled-oracle demo cannot predict the RSA-2048 threat, why does the project still run it?",
+    "options": [
+      "It validates the pipeline end to end and makes the compiled-oracle caveat concrete",
+      "To estimate how many years remain until RSA-2048 can be factored in practice by an attacker",
+      "To benchmark the numpy simulator against real quantum hardware of the same size",
+      "To produce gate counts that scale linearly up to 2048-bit moduli for the plan"
+    ],
+    "answer": 0,
+    "explanation": "The run checks the algorithm's pieces and shows why small demos mislead (Smolin, Smith & Vargo 2013). It is explicitly not a timeline or a scaling law.",
+    "source": "L600 #02 M1, ADR-0003"
+  },
+  {
+    "id": "int02-L600-028",
+    "level": "L600",
+    "lesson": 2,
+    "type": "design",
+    "focus": "design",
+    "difficulty": 3,
+    "question": "Where should 'PQ required' be enforced during a mixed-version rollout?",
+    "options": [
+      "Only on the client, because servers are upgraded last",
+      "Only on v2 servers, because clients cannot be trusted",
+      "Only in the inventory scanner, as a static rule",
+      "On clients and v2 servers, and only switched on once every server is v2 (the flip gate)"
+    ],
+    "answer": 3,
+    "explanation": "Either side alone leaves a gap (a shimmed client, or a v1 server); the gate prevents flipping early, and both ends refuse classical groups once it is on.",
+    "source": "L600 #02 ADR-0002, seams.can_require_pq"
+  },
+  {
+    "id": "int02-L600-029",
+    "level": "L600",
+    "lesson": 2,
+    "type": "design",
+    "focus": "design",
+    "difficulty": 2,
+    "question": "Payments still uses RSA-3072 key wrap for 10-year data. Why keep it in a dated baseline instead of failing F1 today?",
+    "options": [
+      "Because RSA-3072 is quantum-safe until 2035",
+      "Because F1 only applies to services that already use the registry",
+      "Because baselines make F1 advisory rather than blocking",
+      "The ratchet lets the planned wave proceed while blocking any NEW exposure; an entry past its due date fails F1"
+    ],
+    "answer": 3,
+    "explanation": "The baseline is a ratchet with due dates (2027-06-30 for the key wrap); on 2027-07-01 both payments entries become violations. RSA-3072 is quantum-vulnerable, which is why it is P1.",
+    "source": "L600 #02 fitness F1, migration_baseline.json"
+  },
+  {
+    "id": "int02-L600-030",
+    "level": "L600",
+    "lesson": 2,
+    "type": "design",
+    "focus": "design",
+    "difficulty": 2,
+    "question": "Auth signs 15-minute session tokens with ECDSA P-256 and RS256. Why is it P2-sig rather than P1?",
+    "options": [
+      "ECDSA and RSA signatures are not affected by Shor's algorithm, so nothing changes",
+      "Short-lived signatures need no migration at all, so the plan could also say none",
+      "Checked at use, so recordings give nothing to decrypt; still move by 2030",
+      "Auth has the largest migration time y of all services, which lowers its priority"
+    ],
+    "answer": 2,
+    "explanation": "NIST IR 8547: authentication stays secure while the algorithm is unbroken at use time; ECDSA and RSA are still deprecated after 2030 and disallowed after 2035, hence P2 rather than none.",
+    "source": "L600 #02 M4, migration_plan.ACTION"
+  },
+  {
+    "id": "int02-L600-031",
+    "level": "L600",
+    "lesson": 2,
+    "type": "design",
+    "focus": "design",
+    "difficulty": 3,
+    "question": "ML-DSA-87 would raise the handshake to 7,145 B against a 6,144 B budget. Which response matches the project's decision process?",
+    "options": [
+      "Raise the budget to 8 KiB so the fitness function passes",
+      "Turn off the budget check for the messaging service",
+      "Sign with Ed25519 instead to save bytes",
+      "Keep ML-DSA-65 (within budget), record why in the ADR, and revisit the budget only with new evidence"
+    ],
+    "answer": 3,
+    "explanation": "The fitness function protects a stated constraint; changing it needs evidence and an ADR, not convenience. Ed25519 would undo the post-quantum signature decision.",
+    "source": "L600 #02 ADR-0001, fitness F2"
+  },
+  {
+    "id": "int02-L600-032",
+    "level": "L600",
+    "lesson": 2,
+    "type": "design",
+    "focus": "design",
+    "difficulty": 3,
+    "question": "The horizon sweep gives 5, 3 and 0 P1 items for z = 5, 10 and 15. What should a team do with this?",
+    "options": [
+      "Plan with a pessimistic z (or a range) and record it as an assumption, because a large z silently empties the P1 list",
+      "Pick z = 15 because it produces the shortest plan",
+      "Average the three results and migrate 2.7 items",
+      "Derive z from the published qubit estimates divided by today's largest device"
+    ],
+    "answer": 0,
+    "explanation": "z is uncertain and the plan is sensitive to it; an optimistic z hides HNDL exposure. Dividing qubit counts by device sizes is the extrapolation ADR-0003 forbids.",
+    "source": "L600 #02 try_it horizon_sweep, ADR-0003"
+  },
+  {
+    "id": "int02-L600-033",
+    "level": "L600",
+    "lesson": 2,
+    "type": "design",
+    "focus": "design",
+    "difficulty": 2,
+    "question": "Why does ADR-0004 add a runtime wire contract when the project already has an AST inventory and an agility lint?",
+    "options": [
+      "Static analysis is far too slow to run on large repositories on every single commit",
+      "Static checks see code, not behaviour: only the wire shows what is negotiated",
+      "The agility lint from lesson 17 cannot run on the Windows build agents",
+      "The inventory reports false positives for every call into the registry"
+    ],
+    "answer": 1,
+    "explanation": "The failure lab shows a bypass that every static check passes; the wire shows the classical group within one traffic phase. Speed and platform are not the reason.",
+    "source": "L600 #02 ADR-0004"
+  }
+]

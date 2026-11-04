@@ -1,0 +1,794 @@
+[
+  {
+    "id": "ds-L400-001",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A Dynamo-style store has N = 5 and W = 3. What is the smallest R that makes every read quorum overlap every write quorum?",
+    "options": [
+      "R = 2",
+      "R = 3",
+      "R = 1",
+      "R = 5"
+    ],
+    "answer": 1,
+    "explanation": "Overlap needs R + W > N, so R > 2 and the smallest value is 3. R = 2 gives R + W = N, so a read can hit only the two replicas the write missed.",
+    "source": "Lesson 17 glossary (quorum)"
+  },
+  {
+    "id": "ds-L400-002",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "With N = 5, R = 2, W = 4, how many replicas can be down while reads still answer, and while writes still succeed?",
+    "options": [
+      "reads survive 2 down, writes survive 4 down",
+      "reads survive 1 down, writes survive 3 down",
+      "reads survive 3 down, writes survive 3 down",
+      "reads survive 3 down, writes survive 1 down"
+    ],
+    "answer": 3,
+    "explanation": "A read needs R live replicas (5 - 2 = 3 may fail) and a write needs W (5 - 4 = 1 may fail). Large W buys fresher reads at the price of write availability, the PC side of PACELC.",
+    "source": "Lesson 17 glossary; tryIt 2"
+  },
+  {
+    "id": "ds-L400-003",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "N = 3, R = 2, W = 2 showed 0% stale reads but 2 inversions under a slow-message tail. Why is R + W > N not enough for linearizability?",
+    "options": [
+      "It only holds when every replica is in the same region",
+      "It prevents stale reads of finished writes, not new-then-old reads during an in-flight write",
+      "Inversions come from clock skew, which quorums cannot see",
+      "R + W > N is only a liveness rule; it says nothing at all about which value a read returns to clients"
+    ],
+    "answer": 1,
+    "explanation": "While a write has reached only some replicas, one read quorum can include the new value and a later one can miss it. Read write-back (store the newest value on W replicas before returning) closes that gap.",
+    "source": "Lesson 17 concepts; failureLab"
+  },
+  {
+    "id": "ds-L400-004",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "N = 3, R = 2, W = 2. A write has reached replica a only. Reader 1 asks a and b; reader 2 starts after reader 1 finishes and asks b and c. What do they return?",
+    "options": [
+      "Reader 1 the new value, reader 2 the old one: not linearizable",
+      "Both return the new value, because R + W > N",
+      "Both return the old value, because the write has not finished",
+      "Reader 2 blocks until the write reaches a majority"
+    ],
+    "answer": 0,
+    "explanation": "Reader 1 sees the new version on a; reader 2's quorum {b, c} has only the old one, so values go backwards between two non-overlapping reads. It can still be sequentially consistent, but not linearizable.",
+    "source": "Lesson 17 checkYourself"
+  },
+  {
+    "id": "ds-L400-005",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why did read write-back barely change read p50 but nearly double read p99 (65.9 to 124.5 ms)?",
+    "options": [
+      "It runs on every read, but most reads hit a replica in the local zone, which hides its cost",
+      "It only runs when the R replies disagree, which happens mostly in the tail",
+      "It replaces the second replica's reply with a slower region",
+      "It waits for all N replicas instead of R"
+    ],
+    "answer": 1,
+    "explanation": "The extra write phase is needed only when replies differ, mostly while a write is in flight or delayed, so typical reads are unaffected. Keep write-back for keys that need linearizability.",
+    "source": "Lesson 17 checkYourself; troubleshooting"
+  },
+  {
+    "id": "ds-L400-006",
+    "level": "L400",
+    "lesson": 17,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Clients are partitioned so only replica a is reachable. With R = 1, W = 3, what share of reads and writes are answered?",
+    "options": [
+      "Reads 0%, writes 100%",
+      "Reads 100%, writes 100%",
+      "Reads 0%, writes 0%",
+      "Reads 100%, writes 0%"
+    ],
+    "answer": 3,
+    "explanation": "A read needs one replica, which is reachable; a write needs all three acknowledgements, which it cannot get. R = 3, W = 1 is the mirror image, and R = 2, W = 2 refuses both.",
+    "source": "Lesson 17 tryIt 2"
+  },
+  {
+    "id": "ds-L400-007",
+    "level": "L400",
+    "lesson": 17,
+    "type": "design",
+    "difficulty": 3,
+    "question": "One store holds a cart badge (≤20% stale, fast), feature flags (≤1% stale, read-your-writes) and a lock-owner key (linearizable). Which assignment did the lab's measurements support?",
+    "options": [
+      "Cart R=2 W=2; flags R=1 W=1; lock R=3 W=1, the only linearizable choice",
+      "All three R=2 W=2, since it has 0% stale reads",
+      "Cart R=1 W=1; flags R=2 W=2; lock R=2 W=2 plus read write-back",
+      "All three R=1 W=1, since partitions are rare"
+    ],
+    "answer": 2,
+    "explanation": "Each use case gets the fastest setting that meets its constraints: R=1 W=1 is fine for a badge, R=2 W=2 for flags, and only write-back makes the lock linearizable while surviving region C's loss. R=3 W=1 is linearizable but answers 0% with C down.",
+    "source": "Lesson 17 options; decisionRecord"
+  },
+  {
+    "id": "ds-L400-008",
+    "level": "L400",
+    "lesson": 17,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "Finished reads of a single-writer register are scanned for inversions (a read older than an already finished read). What is printed?",
+    "code": "reads = [(0, 5, 2), (6, 9, 1), (10, 12, 2)]  # (start, end, version)\ninv = 0\nfor s, e, v in reads:\n    if any(e2 < s and v2 > v for _, e2, v2 in reads):\n        inv += 1\nprint(inv)",
+    "options": [
+      "0",
+      "2",
+      "3",
+      "1"
+    ],
+    "answer": 3,
+    "explanation": "The read at [6, 9] returned version 1 after the read at [0, 5] had already returned version 2, which is one inversion; the read at [10, 12] returning 2 is fine. Overlapping reads would not count.",
+    "source": "Lesson 17 codeWalkthrough (history checks)"
+  },
+  {
+    "id": "ds-L400-009",
+    "level": "L400",
+    "lesson": 18,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A G-Counter merge is applied, and the laptop's state is delivered twice. What is printed?",
+    "code": "def merge(a, b):\n    return {k: max(a.get(k, 0), b.get(k, 0)) for k in a.keys() | b.keys()}\n\nphone = {\"phone\": 3}\nlaptop = {\"laptop\": 2, \"phone\": 1}\nm = merge(phone, laptop)\nm2 = merge(m, laptop)  # duplicated sync\nprint(sum(m2.values()))",
+    "options": [
+      "6",
+      "8",
+      "4",
+      "5"
+    ],
+    "answer": 3,
+    "explanation": "Merge takes the per-slot max, so phone=3 and laptop=2 give 5, and merging the same state again changes nothing. A sum-based merge would double-count the duplicate.",
+    "source": "Lesson 18 codeWalkthrough (G-Counter)"
+  },
+  {
+    "id": "ds-L400-010",
+    "level": "L400",
+    "lesson": 18,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A PN-Counter has increments P = {a: 7, b: 4} and decrements N = {a: 2, b: 3}. What is its value?",
+    "options": [
+      "16",
+      "6",
+      "11",
+      "5"
+    ],
+    "answer": 1,
+    "explanation": "The value is sum(P) - sum(N) = 11 - 5. Each side is a G-Counter, so both stay monotone and merge by per-slot max.",
+    "source": "Lesson 18 codeWalkthrough (PN-Counter)"
+  },
+  {
+    "id": "ds-L400-011",
+    "level": "L400",
+    "lesson": 18,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Two replicas that assigned the title at the same Lamport timestamp never agree after syncing. What is the fix?",
+    "code": "class LWWRegister:\n    def __init__(self, value, ts):\n        self.value, self.ts = value, ts\n    def merge(self, other):\n        if other.ts > self.ts:\n            self.value, self.ts = other.value, other.ts",
+    "options": [
+      "Order by (timestamp, replica id) so every replica picks the same winner",
+      "Use wall-clock time instead of Lamport timestamps",
+      "Change > to >= so that the incoming value always wins when the timestamps are equal",
+      "Sync more often so ties cannot happen"
+    ],
+    "answer": 0,
+    "explanation": "On a tie each side keeps its own value, so merge(x, y) != merge(y, x); a total order on (timestamp, replica id) makes it commutative. '>=' still diverges, because each side then takes the other's value.",
+    "source": "Lesson 18 failureLab; checkYourself"
+  },
+  {
+    "id": "ds-L400-012",
+    "level": "L400",
+    "lesson": 18,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The phone removes milk while the laptop concurrently re-adds it; the OR-Set states are then merged. What is printed?",
+    "code": "a_tags, a_tomb = {\"t1\"}, set()  # phone\nb_tags, b_tomb = {\"t1\"}, set()  # laptop\na_tomb |= a_tags                  # phone removes milk (saw t1)\nb_tags = b_tags | {\"t2\"}          # laptop re-adds milk concurrently\ntags, tomb = a_tags | b_tags, a_tomb | b_tomb\nprint(sorted(tags - tomb))",
+    "options": [
+      "[]",
+      "['t1']",
+      "['t1', 't2']",
+      "['t2']"
+    ],
+    "answer": 3,
+    "explanation": "The phone's remove tombstones only the tag it saw (t1); the laptop's new tag t2 was never observed, so it survives and milk stays in the list. That is the 'add wins' behaviour.",
+    "source": "Lesson 18 glossary (OR-Set); checkYourself"
+  },
+  {
+    "id": "ds-L400-013",
+    "level": "L400",
+    "lesson": 18,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A like-counter is edited offline on several devices. Last-writer-wins ended at 81 against a true total of 140. Which representation fits?",
+    "options": [
+      "A LWW-Register holding the number, with a replica-id tie-break",
+      "An OR-Set with one element per like, so that every concurrent like is kept as a separate tag",
+      "A PN-Counter: per-replica slots merged by max, so no increment is lost",
+      "A plain integer synced more often"
+    ],
+    "answer": 2,
+    "explanation": "Concurrent increments must all survive, which a per-replica counter merged by max guarantees (140 on every replica, 76 bytes per sync). A tie-break makes LWW converge but still discards concurrent increments.",
+    "source": "Lesson 18 options; tradeOffs"
+  },
+  {
+    "id": "ds-L400-014",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "One item is added and removed 1,000 times; the list shows one item but each sync ships 31,813 bytes. What is the cause?",
+    "options": [
+      "The G-Counter slots grow by one byte per sync",
+      "Duplicated syncs make the merge store a second copy of each state it receives",
+      "OR-Set tombstones are never collected; compaction needs coordination",
+      "LWW timestamps grow without bound as more writes happen"
+    ],
+    "answer": 2,
+    "explanation": "Every remove keeps the observed tags as tombstones, so metadata grows while the visible value does not. Compaction is possible but needs agreement that every replica has seen the removes.",
+    "source": "Lesson 18 tryIt 2; scalingLimits"
+  },
+  {
+    "id": "ds-L400-015",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why can a CRDT not enforce 'stock never goes below 0' across offline replicas?",
+    "options": [
+      "CRDTs cannot represent negative numbers",
+      "Each replica decides locally; merged decrements can oversell the item",
+      "The merge is not commutative for counters, so replicas disagree about the stock level",
+      "Stock needs a wall clock, and CRDTs use Lamport clocks"
+    ],
+    "answer": 1,
+    "explanation": "Two replicas can each sell the last item without seeing the other, and merging both decrements gives -1. Global invariants need reservations or coordination; merge laws only guarantee convergence.",
+    "source": "Lesson 18 useWhen; scalingLimits"
+  },
+  {
+    "id": "ds-L400-016",
+    "level": "L400",
+    "lesson": 19,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A leader takes 100 order writes per second with asynchronous replication, and the cross-region follower lags about 160 ms when the leader's region fails. Roughly how many acknowledged writes are lost?",
+    "options": [
+      "about 1.6 writes",
+      "about 0 writes",
+      "about 16 writes",
+      "about 160 writes"
+    ],
+    "answer": 2,
+    "explanation": "Writes acknowledged within the replication lag never reached the survivor: 100/s x 0.16 s, in line with the lab's 16-17 lost writes. Majority-sync makes this zero by waiting for a follower before acknowledging.",
+    "source": "Lesson 19 failureLab; tradeOffs"
+  },
+  {
+    "id": "ds-L400-017",
+    "level": "L400",
+    "lesson": 19,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "One-way latencies are us-eu 40 ms, eu-ap 70 ms, us-ap 110 ms. With majority-sync, a write goes client -> leader -> nearest follower and back -> client. Ignoring jitter, which leader region minimises the worst region's commit latency?",
+    "options": [
+      "us (worst region 300 ms)",
+      "eu (worst region 220 ms)",
+      "ap (worst region 360 ms)",
+      "eu (worst region 160 ms)"
+    ],
+    "answer": 1,
+    "explanation": "With the leader in eu the nearest follower is us (80 ms round trip): us users 160 ms, eu 80 ms, ap 220 ms. A leader in us makes ap users pay 110 ms each way plus the commit leg (300 ms).",
+    "source": "Lesson 19 glossary (leader placement); checkYourself"
+  },
+  {
+    "id": "ds-L400-018",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why can majority-sync lose no committed write when the whole leader region fails?",
+    "options": [
+      "The leader flushes every write to its local disk before it acknowledges the client",
+      "A commit needs one follower, and the most up-to-date survivor becomes leader",
+      "Followers reject writes from a leader in another region",
+      "Clients resend every write after a failover"
+    ],
+    "answer": 1,
+    "explanation": "A committed write is on the leader plus at least one follower, and electing the most up-to-date survivor guarantees the new leader holds it. A disk flush on the failed region does not help when the region is gone.",
+    "source": "Lesson 19 checkYourself; glossary (majority-sync)"
+  },
+  {
+    "id": "ds-L400-019",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What does a follower read in ap cost and buy compared with reading at the leader in eu?",
+    "options": [
+      "A fresh value at local speed, because followers apply every write before the leader acknowledges it",
+      "About 2 ms locally instead of a leader round trip, but stale by up to the replication lag",
+      "Lower write latency, because reads stop competing with writes",
+      "Higher availability with no staleness, because it bypasses the leader"
+    ],
+    "answer": 1,
+    "explanation": "A local follower answers in ~2 ms but may be up to 103.6 ms behind (p99) in ap, while a leader read costs ~140 ms. Freshness at the leader also requires it to confirm it still leads.",
+    "source": "Lesson 19 tryIt 1; checkYourself"
+  },
+  {
+    "id": "ds-L400-020",
+    "level": "L400",
+    "lesson": 19,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "You switch to a LAN-style election timeout (150-300 ms instead of 1-2 s) on the same WAN. RTO falls from 1,313 ms to 278 ms in the simulation. What is the main risk in production?",
+    "options": [
+      "Lost acknowledged writes, because RPO rises above 0",
+      "Conflicting writes, because two leaders could accept writes for the same order at once",
+      "Slower writes, because every write waits for the election timer",
+      "False elections when WAN round trips plus jitter approach the timeout"
+    ],
+    "answer": 3,
+    "explanation": "The simulation does not model false elections, but on a real WAN a timeout close to RTT plus jitter triggers elections without failures. Majority-sync keeps RPO 0 either way.",
+    "source": "Lesson 19 tryIt 2; troubleshooting"
+  },
+  {
+    "id": "ds-L400-021",
+    "level": "L400",
+    "lesson": 19,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Orders must never conflict and RPO must be 0. Multi-leader gave 140/127/113 ms writes but 434 conflicts. Where is multi-leader an acceptable choice?",
+    "options": [
+      "For orders too, provided conflicts are resolved by a last-writer-wins rule on each order",
+      "For orders, once a region failure has made it the only option",
+      "For carts or counters with mergeable CRDT values, not for orders",
+      "Nowhere: multi-leader always loses acknowledged writes"
+    ],
+    "answer": 2,
+    "explanation": "Multi-leader writes are local and survive failures, but concurrent writes to one key conflict; that is fine only when values merge (lesson 18). LWW on orders would silently drop customers' writes.",
+    "source": "Lesson 19 options; useWhen"
+  },
+  {
+    "id": "ds-L400-022",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The deployed leader sits in ap because the team launched there first. How should the leader region be chosen instead?",
+    "options": [
+      "By measured, traffic-weighted p99 for today's users, kept true by a fitness test",
+      "By the region with the most servers, since that region can absorb the extra load of a failover",
+      "By whichever region launched first, to avoid a migration",
+      "By the region with the lowest average ping to the database vendor"
+    ],
+    "answer": 0,
+    "explanation": "Leader placement fixes every user's commit path, so it should follow measured latency weighted by where traffic comes from (eu in the lab). History is not evidence; a fitness test re-checks the choice as traffic shifts.",
+    "source": "Lesson 19 concepts; failureLab"
+  },
+  {
+    "id": "ds-L400-023",
+    "level": "L400",
+    "lesson": 19,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Traffic is us 50%, eu 35%, ap 15%, and the brief caps us and eu write p99 at 350 ms. What is wrong with this place_leader()?",
+    "code": "P99 = {  # leader -> {user region: write p99 in ms}\n    \"us\": {\"us\": 200, \"eu\": 340, \"ap\": 520},\n    \"eu\": {\"us\": 345, \"eu\": 240, \"ap\": 330},\n    \"ap\": {\"us\": 360, \"eu\": 300, \"ap\": 200},\n}\n\ndef place_leader(p99):\n    return min(p99, key=lambda leader: sum(p99[leader].values()) / 3)",
+    "options": [
+      "It weights every region equally and ignores the per-region budget",
+      "It should use max() so the leader lands in the slowest region",
+      "It should rank leaders by p50, because p99 is too noisy to compare",
+      "It should always pick us, the region with the most traffic"
+    ],
+    "answer": 0,
+    "explanation": "Here it returns 'ap' (plain mean 286.7 ms), which breaks the 350 ms cap for us users (360 ms). Placement should first drop leaders that break a per-region cap, then minimise traffic-weighted p99: that picks 'us' (297.0 ms). Picking the busiest region by rule ignores everyone else's commit path.",
+    "source": "Lesson 19 concepts; codeWalkthrough (brief as code)"
+  },
+  {
+    "id": "ds-L400-024",
+    "level": "L400",
+    "lesson": 20,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A chaos experiment injects a fault that harms every faulted order. 80 orders run with a 25% cohort. How many customers are hurt without an abort rule, and with an abort after the first harmed order?",
+    "options": [
+      "80 without abort, 1 with abort",
+      "20 without abort, 0 with abort",
+      "20 without abort, 1 with abort",
+      "25 without abort, 1 with abort"
+    ],
+    "answer": 2,
+    "explanation": "The cohort is 25% of 80 = 20 orders, all harmed if the hypothesis is false; an abort rule stops injecting after the first harm. The lab saw the same pattern: 30 hurt at 50%, 6 at 10%, 1 with abort.",
+    "source": "Lesson 20 tryIt 1; tradeOffs"
+  },
+  {
+    "id": "ds-L400-025",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What is a chaos experiment's hypothesis about?",
+    "options": [
+      "That the system will break in a visible way as soon as the planned fault is injected into it",
+      "That the fault injection tool works as configured",
+      "That no customer will notice the experiment",
+      "That the steady state continues in the experiment group as in the control group"
+    ],
+    "answer": 3,
+    "explanation": "The experiment tries to refute a claim about measurable normal behaviour (here: harmed orders = 0) under a real-world fault. It is a test of steady state, not a plan to break things.",
+    "source": "Lesson 20 glossary; concepts"
+  },
+  {
+    "id": "ds-L400-026",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What does a control group give you that the experiment group alone cannot?",
+    "options": [
+      "A second chance to inject the same fault if the first run passes without any harm to customers",
+      "Extra traffic so the experiment finishes faster",
+      "A baseline under the same conditions, showing whether harm came from your fault",
+      "A place to inject the fault if the cohort is too small"
+    ],
+    "answer": 2,
+    "explanation": "If the control group is harmed too, the cause is not your fault, or the fault leaked beyond the cohort. Without it, you cannot tell your fault's effect from background problems.",
+    "source": "Lesson 20 checkYourself"
+  },
+  {
+    "id": "ds-L400-027",
+    "level": "L400",
+    "lesson": 20,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Random single-node crashes held the hypothesis in 20 of 20 runs against the unhardened Raft, yet a fast rolling restart lost committed entries in 1 of 20. Why?",
+    "options": [
+      "Rolling restarts take two of the three nodes down at once, which is more than a majority can ever tolerate",
+      "Random crashes were injected into the wrong cluster",
+      "The rolling restart used a different, buggier Raft build",
+      "The bug needs a lagging node to win right after restarting, which a rolling restart lines up"
+    ],
+    "answer": 3,
+    "explanation": "Independent random crashes rarely create the sequence the bug needs; an operational sequence like a quick rollout does. That is why incident sequences belong in the campaign alongside random faults.",
+    "source": "Lesson 20 checkYourself; concepts"
+  },
+  {
+    "id": "ds-L400-028",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Which number should an experiment's abort rule watch?",
+    "options": [
+      "A five-minute aggregate error rate across all traffic, which smooths out noise",
+      "The CPU load of the fault-injection tool",
+      "The number of faults injected so far",
+      "The experiment group's steady-state metric, per request or order"
+    ],
+    "answer": 3,
+    "explanation": "An abort is only as fast as its signal: a per-order metric on the experiment group stops after the first harm, while a delayed aggregate lets harm accumulate. Counting faults says nothing about harm.",
+    "source": "Lesson 20 checkYourself; scalingLimits"
+  },
+  {
+    "id": "ds-L400-029",
+    "level": "L400",
+    "lesson": 20,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "Waiting 20-30 ticks between nodes in the rolling restart made the unhardened Raft pass 20 of 20 seeds. What should the team conclude?",
+    "options": [
+      "The slower rollout hides the bug; the election-restriction fix removes it",
+      "The bug is fixed, because the experiment no longer refutes the hypothesis",
+      "The experiment is broken, because it stopped finding the bug",
+      "Rolling restarts are unsafe and must be replaced by full restarts"
+    ],
+    "answer": 0,
+    "explanation": "An operational workaround changes the timing so the bug is no longer reached, but the code still has it; the code fix makes it impossible. Safety must not depend on timing.",
+    "source": "Lesson 20 tryIt 2"
+  },
+  {
+    "id": "ds-L400-030",
+    "level": "L400",
+    "lesson": 20,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A bounded experiment faults a 10% cohort of 60 orders and aborts after the first harmed order. What does it print?",
+    "code": "ABORT_AFTER, hurt, injected = 1, 0, 0\ncohort = [o for o in range(60) if o % 10 == 0]  # 10% of 60 orders\nfor order in cohort:\n    injected += 1\n    hurt += 1  # the hypothesis is false: every faulted order is harmed\n    if hurt >= ABORT_AFTER:\n        break\nprint(injected, hurt, 60 - len(cohort))",
+    "options": [
+      "1 1 54",
+      "6 6 54",
+      "6 1 54",
+      "1 1 59"
+    ],
+    "answer": 0,
+    "explanation": "The first cohort order is harmed, which meets ABORT_AFTER, so injection stops after 1 order; the other 54 orders form the control group. Without the break all 6 cohort orders would be harmed.",
+    "source": "Lesson 20 designBrief; failureLab (fix)"
+  },
+  {
+    "id": "ds-L400-031",
+    "level": "L400",
+    "lesson": 20,
+    "type": "design",
+    "difficulty": 3,
+    "question": "You want to test a fault in a cache shared by all orders. In earlier runs the control group showed harmed orders. What should you do?",
+    "options": [
+      "Stop and redesign: the fault cannot be keyed to the cohort, so it leaks",
+      "Increase the cohort to 100% so the control group is no longer needed",
+      "Ignore the control group for this one, since the cache is shared by every order anyway",
+      "Raise the abort threshold so the experiment can finish"
+    ],
+    "answer": 0,
+    "explanation": "Faults on shared components (caches, global config, a region) leak into the control group, and harm there is the signal to stop. Dropping the control group removes the evidence rather than the risk.",
+    "source": "Lesson 20 scalingLimits"
+  },
+  {
+    "id": "ds-L400-032",
+    "level": "L400",
+    "lesson": 20,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "This harness correctly refuted the saga hypothesis but hurt all 60 customers. Which change bounds it?",
+    "code": "def run_saga_experiment(orders, inject, harmed):\n    hurt = 0\n    for order in orders:\n        inject(order)\n        if harmed(order):\n            hurt += 1\n    return {\"held\": hurt == 0, \"customers_hurt\": hurt}",
+    "options": [
+      "Fault only a stable 10% cohort, keep the rest as control, and stop after the first harm",
+      "Wrap inject() in try/except so a failing fault cannot crash the harness",
+      "Shuffle the orders first so the fault hits them in a random order",
+      "Count harmed orders only at the end, so one bad order cannot stop the run"
+    ],
+    "answer": 0,
+    "explanation": "The harness injects into every order, keeps no control group and never aborts, so harm scales with all traffic; the bounded version hurt 1 customer with the same verdict. Deferring the count is the opposite of an abort rule.",
+    "source": "Lesson 20 codeWalkthrough (the unbounded harness); failureLab"
+  },
+  {
+    "id": "ds-L400-033",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does breadth-first search return the shortest counterexample trace?",
+    "options": [
+      "It visits states in order of distance from the start, so the first violation is closest",
+      "It collects every violating trace it finds, sorts them by length, and returns the shortest one at the end",
+      "It stops exploring a branch as soon as it becomes long",
+      "It only explores traces up to a fixed maximum length"
+    ],
+    "answer": 0,
+    "explanation": "BFS explores all states at depth k before depth k+1, so the first violating state found has the minimal number of steps. Depth bounds limit the search but do not by themselves make the result shortest.",
+    "source": "Lesson 21 checkYourself; codeWalkthrough (BFS)"
+  },
+  {
+    "id": "ds-L400-034",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does the VoteOnce invariant check a ghost log of votes instead of each node's votedFor?",
+    "options": [
+      "votedFor is not hashable, so it cannot be stored in the visited set of explored states",
+      "Ghost variables are faster to check than real ones",
+      "votedFor is only set on the leader, not on voters",
+      "A restart erases votedFor, so an invariant over it cannot see the double vote"
+    ],
+    "answer": 3,
+    "explanation": "The bug is that a node forgets its vote after restarting; the ghost log keeps every vote ever cast and is never erased by crashes. Checking the cause (VoteOnce) finds the bug in 4 steps.",
+    "source": "Lesson 21 checkYourself; glossary"
+  },
+  {
+    "id": "ds-L400-035",
+    "level": "L400",
+    "lesson": 21,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Raising MAX_TERM from 2 to 3 grew the fixed election model from 1,853 to 29,221 distinct states. By what factor did the state space grow?",
+    "options": [
+      "about 1.6x",
+      "about 27.4x",
+      "about 15.8x",
+      "about 0.1x"
+    ],
+    "answer": 2,
+    "explanation": "29,221 / 1,853 is about 15.8, the lab's 'x16 per extra term'. State explosion is why bounds must be small and stated with every claim.",
+    "source": "Lesson 21 tryIt 2; scalingLimits"
+  },
+  {
+    "id": "ds-L400-036",
+    "level": "L400",
+    "lesson": 21,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Random simulation hit the election bug in 16 of 1,000 random walks. If each walk independently hits it with that probability, what is the chance that a CI run of 100 walks finds it?",
+    "options": [
+      "about 80%",
+      "about 16%",
+      "about 100%",
+      "about 2%"
+    ],
+    "answer": 0,
+    "explanation": "The chance of at least one hit is 1 - (1 - 0.016)^100. Random walks are a cheap smoke test, but one run in five would still pass the buggy protocol, while BFS finds it every time.",
+    "source": "Lesson 21 options; tradeOffs"
+  },
+  {
+    "id": "ds-L400-037",
+    "level": "L400",
+    "lesson": 21,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "BFS searches this state graph for the 'bad' state and rebuilds the trace from parents. What does it print?",
+    "code": "from collections import deque\ngraph = {\"s\": [\"a\", \"b\"], \"a\": [\"c\"], \"b\": [\"bad\"], \"c\": [\"bad\"], \"bad\": []}\nparent, q = {\"s\": None}, deque([\"s\"])\nwhile q:\n    x = q.popleft()\n    if x == \"bad\":\n        break\n    for y in graph[x]:\n        if y not in parent:\n            parent[y] = x\n            q.append(y)\npath = []\nwhile x:\n    path.append(x); x = parent[x]\nprint(\"->\".join(reversed(path)))",
+    "options": [
+      "s->a->c->bad",
+      "s->a->bad",
+      "s->b->bad",
+      "bad->b->s"
+    ],
+    "answer": 2,
+    "explanation": "BFS reaches 'bad' first through b at depth 2, before the longer path through a and c; the path is rebuilt backwards from parents and then reversed. A depth-first search might return the longer trace.",
+    "source": "Lesson 21 codeWalkthrough (BFS)"
+  },
+  {
+    "id": "ds-L400-038",
+    "level": "L400",
+    "lesson": 21,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "The history checker says 'not linearizable', but the store looks correct. The recorder is below. What is the likely problem?",
+    "code": "import time\n\ndef record(history, op, call):\n    result = call()\n    start = time.monotonic()\n    end = time.monotonic()\n    history.append((op, start, end, result))\n    return result",
+    "options": [
+      "time.monotonic() is not precise enough for history checking",
+      "The start time is taken after the request returns, so operations look shorter than they were",
+      "The checker needs the operations sorted by end time first",
+      "The result value should be recorded before the request is sent, because replies can arrive out of order"
+    ],
+    "answer": 1,
+    "explanation": "An operation's start must be recorded before the request is sent and its end after the reply; here both are taken after the call, so the interval shrinks and valid overlaps look like reorderings. Monotonic time is the right clock.",
+    "source": "Lesson 21 troubleshooting"
+  },
+  {
+    "id": "ds-L400-039",
+    "level": "L400",
+    "lesson": 21,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A pull request says votedFor need not be persisted, and three example tests pass. What should guard protocol changes like this before merge?",
+    "options": [
+      "More example-based tests written by the reviewers",
+      "1,000 random simulation walks, which found the bug 16 times",
+      "Exhaustive model checking of the protocol model within stated bounds",
+      "Linearizability checks of production histories after release"
+    ],
+    "answer": 2,
+    "explanation": "BFS over every reachable state found a 7-step counterexample after 4,519 states, which example tests missed. Random walks give no guarantee, and history checking judges only runs that already happened.",
+    "source": "Lesson 21 designBrief; options"
+  },
+  {
+    "id": "ds-L400-040",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "What does a transactional outbox guarantee?",
+    "options": [
+      "The event is stored in the same local transaction as the state change, then relayed at least once",
+      "The event is delivered exactly once to every consumer",
+      "The state change and every consumer's effect commit together in one distributed transaction across services",
+      "The relay publishes the event before the state change commits"
+    ],
+    "answer": 0,
+    "explanation": "Writing state and event together means neither exists without the other; the relay then publishes at least once, so consumers must still deduplicate. It is not a distributed transaction with the consumers.",
+    "source": "Lesson 22 glossary; architecture"
+  },
+  {
+    "id": "ds-L400-041",
+    "level": "L400",
+    "lesson": 22,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "You remove deduplication from the consumers and run with duplicate deliveries. Which rubric criterion fails?",
+    "options": [
+      "One order and one charge per key: two orders created per key",
+      "Exactly-once effects: up to 2 emails per event and 14 revenue mismatches",
+      "Bounded queue: the queue grows above its committed bound",
+      "One trace per order: duplicates start new traces"
+    ],
+    "answer": 1,
+    "explanation": "Duplicated events now cause duplicated effects, which is exactly what the exactly-once-effects check measures. Order creation is guarded by the gateway's idempotency keys, which were not changed.",
+    "source": "Lesson 22 tryIt 1; rubric"
+  },
+  {
+    "id": "ds-L400-042",
+    "level": "L400",
+    "lesson": 22,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "The gateway forgets idempotency keys and acknowledgements are lost. Which criteria fail?",
+    "options": [
+      "Only the money invariant, because charges are doubled",
+      "Only bounded queue, because the clients' retries pile up in the gateway queue until it overflows",
+      "None, because consumers deduplicate every event",
+      "One order and one charge per key, and exactly-once effects (2 orders created for a key)"
+    ],
+    "answer": 3,
+    "explanation": "Client retries now create a second order for the same key (max created 2), and the exactly-once-effects check also fails (up to 2 emails per event); charges stay at 1 per key, so the money invariant is not what breaks. Consumer dedup works per event id, so it cannot undo a second order.",
+    "source": "Lesson 22 tryIt 2"
+  },
+  {
+    "id": "ds-L400-043",
+    "level": "L400",
+    "lesson": 22,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "An idempotent email consumer receives these events. How many emails does it send?",
+    "code": "processed, emails = set(), []\n\ndef on_event(ev):\n    if ev[\"id\"] in processed:\n        return\n    emails.append(ev[\"order\"])\n    processed.add(ev[\"id\"])\n\nfor ev in [{\"id\": \"e1\", \"order\": \"o1\"}, {\"id\": \"e1\", \"order\": \"o1\"}, {\"id\": \"e2\", \"order\": \"o1\"}]:\n    on_event(ev)\nprint(len(emails))",
+    "options": [
+      "1",
+      "2",
+      "3",
+      "0"
+    ],
+    "answer": 1,
+    "explanation": "The duplicate e1 is skipped, but e2 has a new event id for the same order, so a second email goes out. That is why outbox events must be written only when state actually changed: a re-run that emits a new event defeats consumer dedup.",
+    "source": "Lesson 22 checkYourself; troubleshooting"
+  },
+  {
+    "id": "ds-L400-044",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The gateway's queue bound stays at 1 until the first config change commits through Raft. Why not apply the newest proposed value right away?",
+    "options": [
+      "Proposed values are encrypted until they commit",
+      "A proposal may never commit, e.g. after a leader crash; only committed, versioned config is safe",
+      "The gateway is unable to read the Raft log at all until the very first entry has been committed by a majority",
+      "Applying a proposal would double the queue bound"
+    ],
+    "answer": 1,
+    "explanation": "A proposed entry can be lost if the leader crashes before a majority stores it; acting on it could apply a value the cluster never agreed on. Versions also stop a stale leader or retry from applying an older value.",
+    "source": "Lesson 22 checkYourself; glossary (versioned config)"
+  },
+  {
+    "id": "ds-L400-045",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The local model's summary says the relay-crash experiment 'held=no' and that the build is not safe to release. What happens?",
+    "options": [
+      "Code marks the claim WRONG and the scorecard decides; the model never decides",
+      "The release is blocked, because any negative claim must be investigated first",
+      "The scorecard is recomputed with the model's verdict as an extra criterion",
+      "The experiment is re-run until the model and the code agree"
+    ],
+    "answer": 0,
+    "explanation": "The model only explains; checks.py computes each criterion from the system's own data and flags model claims that disagree. Its release verdict is ignored by design.",
+    "source": "Lesson 22 checkYourself; caution"
+  },
+  {
+    "id": "ds-L400-046",
+    "level": "L400",
+    "lesson": 22,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Where does the capstone shed load during a flash-sale burst, and why there?",
+    "options": [
+      "In the payments service, so that only orders which have not been paid yet are dropped",
+      "In the email consumer, since emails are the least important effect",
+      "At admission in the gateway, with 503 + Retry-After, before any saga work starts",
+      "Nowhere: the outbox absorbs any burst, so no shedding is needed"
+    ],
+    "answer": 2,
+    "explanation": "Refusing work before the saga starts costs almost nothing and keeps the queue under its committed bound (ADR shed at admission). Dropping work mid-saga would leave half-finished orders needing compensation.",
+    "source": "Lesson 22 architecture; decisionRecords"
+  }
+]

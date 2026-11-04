@@ -1,0 +1,2245 @@
+[
+ {
+  "id": "survey-pipeline",
+  "number": 17,
+  "level": "L400",
+  "title": "Survey pipeline architecture: ingest, calibrate, detect, catalogue - throughput measured",
+  "phase": "Design",
+  "category": "pipeline architecture",
+  "description": "Design a nightly survey pipeline (ingest -> calibrate -> detect -> catalogue), compare three execution options by measured throughput, and keep the catalogue identical whichever you pick.",
+  "outcome": "You can decide a unit of work from measurements, make every stage deterministic, estimate a spatially varying background, and guard the design with a fitness test.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3 (1 CPU in the sandbox; spawn process pool); photutils 3.1.1 Background2D as the library equivalent",
+  "estimatedTime": "75 minutes",
+  "overview": [
+   "Measure before you parallelise: on one core a process pool is the slowest option, and a background bug hides behind perfect purity."
+  ],
+  "prerequisites": [
+   "Lesson 13 (Calibration frames: bias, dark, flat and cosmic-ray rejection)",
+   "Lesson 16 (Reproducible data pipelines: provenance, caching and versioned inputs)",
+   "Lesson 9 (Aperture photometry: background annulus and signal-to-noise)"
+  ],
+  "glossary": [
+   {
+    "term": "unit of work",
+    "meaning": "What one call (or one worker task) processes: a frame or a batch of frames."
+   },
+   {
+    "term": "mesh background",
+    "meaning": "Sky estimated as box medians on a grid and interpolated between box centres (SExtractor, photutils Background2D)."
+   },
+   {
+    "term": "completeness / purity",
+    "meaning": "Fraction of detectable true stars found / fraction of detections that are real."
+   }
+  ],
+  "concepts": [
+   "Pure stages make every split give the same catalogue.",
+   "Throughput is decided by the unit of work, not by 'more processes'.",
+   "A single background level fails on gradients.",
+   "Per-unit stage timings tell you what to optimise."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python survey.py`",
+    "mac": "cd labs/L400/17-survey-pipeline\npython survey.py",
+    "windows": "cd labs\\L400\\17-survey-pipeline\npython survey.py",
+    "expected": "3 JSON lines (A, B, C): 172 detections, completeness 0.1745, purity 1.0, the same catalogue_sha cb7b9698de2d; frames_per_s varies.",
+    "ifNot": "Keep the __main__ guard: the spawn pool re-imports the module on macOS and Windows."
+   },
+   {
+    "title": "Read the metrics log",
+    "detail": "pipeline_metrics.jsonl has one line per unit: option, unit, frames, ingest_s, calibrate_s, detect_s.",
+    "expected": "A and B: 48 lines (one per frame); C: 3 lines (16 frames each); detect dominates.",
+    "ifNot": "Missing B lines: the pool failed to start - run from the lab folder so pool_worker imports."
+   },
+   {
+    "title": "Failure lab: completeness 0.17",
+    "detail": "Shipped background() takes one median per frame; the moonlight gradient (300 -> 900 e-) inflates the robust rms and the 5-sigma threshold.",
+    "expected": "172 of the night's stars found; purity stays 1.0, so nothing looks wrong.",
+    "ifNot": "If completeness is 0.97 you are running the solution."
+   },
+   {
+    "title": "Mesh background (build task)",
+    "detail": "32 x 32 box medians, bilinear interpolation between box centres, one extrapolated virtual box beyond each edge.",
+    "expected": "1808 detections, completeness 0.9729, purity 0.984, catalogue_sha b51fb7f42583 for A, B and C.",
+    "ifNot": "Edge stars missing: add the extrapolated virtual boxes (np.interp holds the edge value)."
+   },
+   {
+    "title": "Build task: check your own file",
+    "detail": "Edit the shipped file, then run the build-task test against it (test_build_task test_fitness).",
+    "mac": "cd labs/L400/17-survey-pipeline\nBUILD_TARGET=mine python -m unittest test_build_task test_fitness -v",
+    "windows": "cd labs\\L400\\17-survey-pipeline\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task test_fitness -v\nRemove-Item Env:BUILD_TARGET",
+    "expected": "Shipped file: Ran 5 tests ... FAILED (failures=3). After your fix: OK.",
+    "ifNot": "Without BUILD_TARGET the test checks solution/ - make sure the variable is set in the same shell."
+   },
+   {
+    "title": "Decide and record",
+    "detail": "Compare frames/s (best of 3) and memory per unit; read decisions/0001-survey-pipeline-execution.md; run the fitness test 3 times.",
+    "mac": "cd labs/L400/17-survey-pipeline\nfor i in 1 2 3; do python -m unittest test_fitness; done",
+    "windows": "cd labs\\L400\\17-survey-pipeline\n1..3 | ForEach-Object { python -m unittest test_fitness }",
+    "expected": "A 166-241, B 10-19, C ~259 frames/s; OK three times.",
+    "ifNot": "On a slow runner the 50 frames/s bound is generous; investigate if C drops below it."
+   }
+  ],
+  "code": "\"\"\"L400 survey pipeline: ingest -> calibrate -> detect -> catalogue, three ways to run it, measured.\n\nA sequential per frame | B process pool per frame (spawn, picklable worker) | C vectorised batches of 16 frames.\nAll three must produce the SAME catalogue; the ADR picks one by throughput and simplicity.\npython survey.py   ->  options table, completeness/purity, pipeline_metrics.jsonl (one JSON line per stage/batch)\n\"\"\"\nimport hashlib\nimport json\nimport multiprocessing as mp\nimport time\nfrom pathlib import Path\n\nimport numpy as np\n\nimport pool_worker\nimport survey_sim as sim\n\nHERE = Path(__file__).resolve().parent\nBOX, NSIGMA, BATCH = 32, 5.0, 16\n\n\ndef background(cal):\n    \"\"\"Sky level per pixel for a stack (B, H, W).\"\"\"\n    return np.broadcast_to(np.median(cal, axis=(1, 2), keepdims=True), cal.shape)  # one level per frame\n\n\ndef detect(cal, bkg):\n    \"\"\"Local maxima above bkg + NSIGMA x robust rms; returns (frame, x, y, flux) sorted - deterministic.\"\"\"\n    resid = cal - bkg\n    rms = 1.4826 * np.median(np.abs(resid - np.median(resid, axis=(1, 2), keepdims=True)), axis=(1, 2), keepdims=True)\n    p = np.pad(resid, ((0, 0), (1, 1), (1, 1)), constant_values=-np.inf)\n    peak = resid > NSIGMA * rms\n    for dy in (-1, 0, 1):\n        for dx in (-1, 0, 1):\n            if dy or dx:\n                peak &= resid >= p[:, 1 + dy:1 + dy + resid.shape[1], 1 + dx:1 + dx + resid.shape[2]]\n    f, y, x = np.nonzero(peak[:, 3:-3, 3:-3])\n    y, x = y + 3, x + 3\n    win = np.stack([resid[f, y + dy, x + dx] for dy in range(-3, 4) for dx in range(-3, 4)], axis=1)\n    offs = np.array([(dy, dx) for dy in range(-3, 4) for dx in range(-3, 4)], float)\n    flux = win.sum(axis=1)\n    cy, cx = y + (win @ offs[:, 0]) / flux, x + (win @ offs[:, 1]) / flux\n    return [(int(a), round(float(b), 2), round(float(c), 2), round(float(d), 1)) for a, b, c, d in zip(f, cx, cy, flux)]\n\n\ndef process(raws, first_frame, bias, flat):\n    \"\"\"One unit of work: a list of raw frames -> catalogue rows (frame index offset by first_frame).\"\"\"\n    t0 = time.perf_counter()\n    stack = np.stack([np.frombuffer(r, dtype=\"<f4\").reshape(sim.SIZE, sim.SIZE) for r in raws]).astype(float)\n    t1 = time.perf_counter()\n    cal = (stack - bias) / flat  # calibrate: bias, then flat\n    t2 = time.perf_counter()\n    rows = [(f + first_frame, x, y, fl) for f, x, y, fl in detect(cal, background(cal))]\n    t3 = time.perf_counter()\n    return rows, {\"frames\": len(raws), \"ingest_s\": t1 - t0, \"calibrate_s\": t2 - t1, \"detect_s\": t3 - t2}\n\n\ndef run(option, raws, bias, flat, workers=2):\n    if option == \"A\":\n        units = [([r], i) for i, r in enumerate(raws)]\n    else:\n        units = [(raws[i:i + BATCH], i) for i in range(0, len(raws), BATCH)] if option == \"C\" else \\\n            [([r], i) for i, r in enumerate(raws)]\n    t0 = time.perf_counter()\n    if option == \"B\":\n        with mp.get_context(\"spawn\").Pool(workers, initializer=pool_worker.load, initargs=(__file__,)) as pool:\n            out = pool.map(pool_worker.work, [(u, i, bias, flat) for u, i in units])\n    else:\n        out = [process(u, i, bias, flat) for u, i in units]\n    wall = time.perf_counter() - t0\n    rows = sorted(r for rows, _ in out for r in rows)\n    return rows, [m for _, m in out], wall\n\n\ndef score(rows, truth, min_snr=10.0, tol=1.5):\n    \"\"\"Completeness on stars with peak SNR >= min_snr; purity = detections matching ANY true star.\"\"\"\n    by_frame = {}\n    for f, x, y, fl in truth:\n        by_frame.setdefault(f, []).append((x, y, fl))\n    found, bright, good = 0, 0, 0\n    for f, stars in by_frame.items():\n        det = np.array([(x, y) for g, x, y, _ in rows if g == f]).reshape(-1, 2)\n        for x, y, fl in stars:\n            hit = det.size and np.min(np.hypot(det[:, 0] - x, det[:, 1] - y)) < tol\n            if sim.snr(fl, x) >= min_snr:\n                bright += 1\n                found += bool(hit)\n        st = np.array([(x, y) for x, y, _ in stars])\n        good += sum(np.min(np.hypot(st[:, 0] - x, st[:, 1] - y)) < tol for x, y in det)\n    return round(found / bright, 4), round(good / max(len(rows), 1), 4)\n\n\ndef checksum(rows):\n    return hashlib.sha256(json.dumps(rows).encode()).hexdigest()[:12]\n\n\ndef main(workers=2, log=HERE / \"pipeline_metrics.jsonl\"):\n    raws, bias, flat, truth = sim.night()\n    lines, results = [], {}\n    for option in (\"A\", \"B\", \"C\"):\n        runs = [run(option, raws, bias, flat, workers) for _ in range(1 if option == \"B\" else 3)]\n        rows, metrics, _ = runs[0]\n        wall = min(r[2] for r in runs)  # best of 3 (A, C): timing noise only ever adds time\n        comp, pur = score(rows, truth)\n        results[option] = {\"option\": option, \"frames_per_s\": round(len(raws) / wall, 1), \"detections\": len(rows),\n                           \"completeness\": comp, \"purity\": pur, \"catalogue_sha\": checksum(rows)}\n        lines += [json.dumps({\"option\": option, \"unit\": k, **{a: round(b, 5) if isinstance(b, float) else b\n                                                               for a, b in m.items()}}) for k, m in enumerate(metrics)]\n    if log:\n        Path(log).write_text(\"\\n\".join(lines) + \"\\n\", encoding=\"utf-8\")\n    return results\n\n\nif __name__ == \"__main__\":  # required for the spawn pool on macOS and Windows\n    for r in main().values():\n        print(json.dumps(r))\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "survey_sim.night() (helper)",
+    "detail": "48 seeded raw frames as float32 bytes, master bias/flat, moonlight gradient and a truth list (frame, x, y, flux)."
+   },
+   {
+    "title": "background()",
+    "detail": "The fault: one median per frame. The fix (solution): a mesh of 32-px box medians interpolated bilinearly with extrapolated edges."
+   },
+   {
+    "title": "detect()",
+    "detail": "Vectorised over a stack: robust rms per frame, 3x3 local maxima above 5 sigma, 7x7 centroid and flux; sorted output = deterministic."
+   },
+   {
+    "title": "process()",
+    "detail": "One unit of work: ingest bytes -> calibrate (bias, flat) -> background -> detect, with per-stage timings."
+   },
+   {
+    "title": "run() and pool_worker",
+    "detail": "Option A per frame, B per frame in a spawn pool (initializer loads this file by path in each child), C 16-frame batches."
+   },
+   {
+    "title": "score() and checksum()",
+    "detail": "Completeness on stars with peak SNR >= 10, purity against all true stars, SHA-256 of the sorted catalogue."
+   },
+   {
+    "title": "main()",
+    "detail": "All three options on the same night, best-of-3 timing for A and C, metrics written as JSON lines."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped background() estimates one sky level per frame (median); the seeded night has a 300 -> 900 e- moonlight gradient.",
+   "symptom": "172 detections, completeness 0.1745, purity 1.0 for all three options - the threshold rose with the gradient-inflated rms.",
+   "fix": "Your build task: SExtractor-style mesh background (solution/survey.py) -> 1808 detections, completeness 0.9729, purity 0.984.",
+   "proof": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness: shipped -> FAILED (failures=3); solution -> OK. TestFailureLab in test_survey.py keeps the fault reproducible."
+  },
+  "tradeOffs": [
+   {
+    "option": "One frame per unit (A)",
+    "gains": "Lowest memory, simplest",
+    "costs": "Per-call overhead on every frame",
+    "chooseWhen": "Large frames, memory-bound hosts"
+   },
+   {
+    "option": "Process pool (B)",
+    "gains": "Uses many cores",
+    "costs": "Start-up + pickling: 10-19 frames/s on 1 CPU here",
+    "chooseWhen": "Multi-core host AND per-unit compute >> transfer cost (use batch tasks)"
+   },
+   {
+    "option": "Vectorised batches (C)",
+    "gains": "Amortised overhead, ~259 frames/s",
+    "costs": "Memory grows with batch size",
+    "chooseWhen": "Small/medium frames, one host (this design)"
+   }
+  ],
+  "buildTask": {
+   "task": "Replace background() in survey.py with a mesh background that follows the sky across the frame.",
+   "hints": [
+    "cal.reshape(b, h // BOX, BOX, w // BOX, BOX) then np.median(..., axis=(2, 4)) gives all box medians at once.",
+    "Interpolate between box centres with np.interp along rows, then columns; add a virtual box on each side."
+   ],
+   "solution": "labs/L400/17-survey-pipeline/solution/survey.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped: FAILED (failures=3); after your fix: OK."
+  },
+  "observability": {
+   "emits": "pipeline_metrics.jsonl: one JSON line per unit {option, unit, frames, ingest_s, calibrate_s, detect_s}.",
+   "read": "Compare per-frame detect_s across options; a large gap between wall time and the sum of stage times in option B is pool overhead (start-up, pickling)."
+  },
+  "designBrief": {
+   "context": "A small survey camera delivers 48 raw 128 x 128 frames per night as float32 bytes with a master bias and flat; the sky has a moonlight gradient.",
+   "constraints": [
+    "completeness >= 0.95 for stars with peak SNR >= 10",
+    "purity >= 0.98",
+    "identical catalogue (SHA-256) whatever the split of work",
+    ">= 50 frames/s on one core",
+    "numpy + stdlib only"
+   ],
+   "question": "What is the unit of work and execution model, and which background estimate makes detection correct across the frame?"
+  },
+  "options": [
+   {
+    "name": "A. Sequential, one frame per unit",
+    "description": "process() called per frame in one process.",
+    "evidence": "166-241 frames/s (best of 3, varies by run); same catalogue b51fb7f42583.",
+    "verdict": "Rejected: slower than C, no simpler result."
+   },
+   {
+    "name": "B. Spawn process pool, one frame per task",
+    "description": "2 workers; pool_worker loads the pipeline file in each child.",
+    "evidence": "10-19 frames/s on 1 CPU; same catalogue.",
+    "verdict": "Rejected for now: kept as the scale-out path (pool of batches) pending a multi-core measurement."
+   },
+   {
+    "name": "C. Vectorised 16-frame batches in one process",
+    "description": "Stages operate on (B, H, W) stacks.",
+    "evidence": "~259 frames/s in three runs; same catalogue; 2.1 MB per float64 batch array.",
+    "verdict": "Chosen (ADR 0001)."
+   }
+  ],
+  "decisionRecord": "labs/L400/17-survey-pipeline/decisions/0001-survey-pipeline-execution.md",
+  "fitnessFunction": {
+   "what": "Replays the seeded night through the chosen design and checks the brief.",
+   "test": "labs/L400/17-survey-pipeline/test_fitness.py",
+   "threshold": "completeness >= 0.95, purity >= 0.98, identical catalogue for A/B/C, option C >= 50 frames/s (best of 3)"
+  },
+  "scalingLimits": [
+   "Frame size: at 4k x 4k a 16-frame float64 batch is ~2.1 GB per array (signal: memory errors or swapping) - derive the batch size from a memory budget.",
+   "Cores: on a multi-core Mac mini or Windows PC a pool of BATCHES may beat C (signal: detect_s per frame flat while wall time per night grows) - re-measure B with batch tasks.",
+   "Background structure finer than 32 px (moon halo, bright galaxy): completeness falls near bright sources first (signal: completeness by radius) - smaller boxes or source masking."
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/17-survey-pipeline/survey.py",
+    "purpose": "main lab code (ships the unfixed background())"
+   },
+   {
+    "path": "labs/L400/17-survey-pipeline/survey_sim.py",
+    "purpose": "seeded night + truth"
+   },
+   {
+    "path": "labs/L400/17-survey-pipeline/pool_worker.py",
+    "purpose": "spawn-safe pool loader"
+   },
+   {
+    "path": "labs/L400/17-survey-pipeline/solution/survey.py",
+    "purpose": "buildTask solution (mesh background)"
+   },
+   {
+    "path": "labs/L400/17-survey-pipeline/decisions/0001-survey-pipeline-execution.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/17-survey-pipeline/test_fitness.py",
+    "purpose": "fitness function"
+   },
+   {
+    "path": "labs/L400/17-survey-pipeline/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L400/17-survey-pipeline/test_survey.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L400/17-survey-pipeline/test_build_task.py",
+    "purpose": "buildTask check"
+   }
+  ],
+  "expectedResults": [
+   "Shipped: completeness 0.1745",
+   "Fixed: completeness 0.9729, purity 0.984, identical A/B/C catalogue",
+   "C fastest on 1 CPU; B slowest"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 9 tests ... OK"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness (shipped)",
+    "expected": "FAILED (failures=3)"
+   },
+   {
+    "action": "detect() on one synthetic star at (40.3, 70.6)",
+    "expected": "one detection, centroid within 0.05 px"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "RuntimeError about bootstrapping a new process",
+    "action": "Keep the if __name__ == '__main__' guard; spawn re-imports the main module."
+   },
+   {
+    "symptom": "Catalogue hash differs between runs",
+    "action": "Sort rows before hashing; never assign IDs in completion order."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Lower the detection threshold from 5 to 3 sigma (fixed pipeline, option A).",
+    "predict": "More real stars, or more noise?",
+    "expected": "1. 3 sigma, 32 px mesh: 2597 detections, completeness 0.9739, purity 0.7624"
+   },
+   {
+    "task": "Use a coarser 64 x 64 px mesh.",
+    "predict": "Does it still follow the gradient?",
+    "expected": "2. 5 sigma, 64 px mesh: 1799 detections, completeness 0.9729, purity 0.98"
+   }
+  ],
+  "equivalents": [
+   "photutils Background2D(box_size, filter_size, SExtractorBackground) + DAOStarFinder / segmentation.",
+   "SExtractor / sep (BACK_SIZE, BACK_FILTERSIZE).",
+   "Rubin Science Pipelines (ip_isr, meas_algorithms) and ZTF's nine pipelines at survey scale."
+  ],
+  "learningTools": [
+   {
+    "name": "JupyterLab (+ JupyterLab Desktop)",
+    "role": "CHECK",
+    "exercise": "In a notebook: from solution.survey import *  (or load it by path); plot detect_s per unit from pipeline_metrics.jsonl for options A, B and C.",
+    "expected": "Per-frame detect_s should be similar for A and C while B's wall time is much larger - the lab's 10-19 vs ~259 frames/s. Pending a manual run.",
+    "mac": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or the JupyterLab Desktop arm64 installer",
+    "windows": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or winget install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   }
+  ],
+  "inRealSystems": [
+   "ZTF: nine pipelines, 64 CCD quadrants per exposure, alerts within 13 min (95th percentile).",
+   "Rubin Science Pipelines: per-detector tasks orchestrated over many cores with a data butler."
+  ],
+  "useWhen": "Use this design method whenever a pipeline must keep up with incoming data; re-measure when frame size or hardware changes.",
+  "caution": "Throughput numbers are wall-clock on a 1-CPU sandbox and vary; decisions that depend on cores must be re-measured on the Mac mini / Windows PC (pending).",
+  "checkpoint": "PASS: shipped completeness 0.17; after your fix test_build_task + test_fitness pass with BUILD_TARGET=mine and the A/B/C catalogues are identical.",
+  "checkYourself": [
+   {
+    "q": "Why can purity be perfect while the pipeline is broken?",
+    "a": "A too-high threshold finds only bright, certain stars: no false detections, but most stars missed."
+   },
+   {
+    "q": "Why is the process pool slowest here?",
+    "a": "Starting spawn workers and pickling frames costs more than the tiny per-frame compute on 1 CPU."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Masci et al. 2019, The ZTF Science Data System",
+    "url": "https://arxiv.org/abs/1902.01872"
+   },
+   {
+    "title": "Bertin & Arnouts 1996, SExtractor",
+    "url": "https://articles.adsabs.harvard.edu/pdf/1996A%26AS..117..393B"
+   },
+   {
+    "title": "photutils: Background2D",
+    "url": "https://photutils.readthedocs.io/en/stable/api/photutils.background.Background2D.html"
+   },
+   {
+    "title": "Python docs: multiprocessing (start methods)",
+    "url": "https://docs.python.org/3/library/multiprocessing.html"
+   },
+   {
+    "title": "Rubin/LSST Science Pipelines",
+    "url": "https://pipelines.lsst.io/"
+   }
+  ],
+  "next": "L400 #18 Time-domain alerts: difference detection, alert schema and broker filters: compare tonight's catalogue with the reference - and decide what deserves an alert.",
+  "validation": {
+   "status": "validated-local",
+   "how": "survey.py, solution/survey.py, try_it.py and unittests (Ran 9 tests ... OK) ran locally on Python 3.12.15 + numpy 2.5.3 with a 1-CPU spawn pool; test_fitness ran 3x OK; BUILD_TARGET=mine fails (failures=3); L400 cross_platform fingerprints match on Linux.",
+   "pendingCi": [
+    "macOS (Apple silicon) and Windows runs incl. the spawn pool",
+    "multi-core throughput of option B (pool of batches) on the Mac mini / Windows PC",
+    "photutils Background2D comparison (not written; equivalent named only)",
+    "JupyterLab exercise (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L400/17-survey-pipeline.md",
+  "conceptSummary": "A survey pipeline is a chain of pure stages; the unit of work decides throughput and must not change the catalogue. Measure options on the same seeded night, use a mesh background for gradients, and keep the decision true with a fitness test.",
+  "seeAlso": [
+   "astronomy L300 #13 Calibration frames: bias, dark, flat and cosmic-ray rejection: the calibrate stage of this pipeline, hardened.",
+   "astronomy L400 #18 Time-domain alerts: difference detection, alert schema and broker filters: the next stage: differences and alerts on these catalogues.",
+   "astronomy Capstone #22 Capstone: an exoplanet transit search pipeline: the capstone reuses the stage-by-stage design.",
+   "simulation L400 #20 Large-scale and parallel simulation: reproducible streams, checkpoints and result storage: the same 'identical results whatever the worker count' rule.",
+   "application-architecture L300 #16 Performance and architecture fitness functions in CI: the fitness-test pattern used to keep this ADR true."
+  ]
+ },
+ {
+  "id": "alert-broker",
+  "number": 18,
+  "level": "L400",
+  "title": "Time-domain alerts: difference detection, alert schema and broker filters",
+  "phase": "Design",
+  "category": "time-domain",
+  "description": "Design an alert stream: PSF- and flux-matched difference images, a validated packet schema, and a broker that classifies, filters and associates - a local model may only explain.",
+  "outcome": "You can match a reference to a new image, write schema-valid alert packets, design broker rules against a volume/purity brief, and gate model-written explanations with code.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; fastavro 1.13.1 (Avro round trip) in CI; local model via Ollama (optional; tests use the fake server)",
+  "estimatedTime": "75 minutes",
+  "overview": [
+   "Naive subtraction makes every star an alert; matching, rules and association bring 58 alerts per night down to 3.5, mostly real."
+  ],
+  "prerequisites": [
+   "Lesson 17 (Survey pipeline architecture: ingest, calibrate, detect, catalogue - throughput measured)",
+   "Lesson 7 (Catalogues and cross-matching: angular separation and a k-d tree)",
+   "Lesson 10 (Light curves and periods: Lomb-Scargle, transits vs variable stars)"
+  ],
+  "glossary": [
+   {
+    "term": "difference imaging",
+    "meaning": "Subtracting a reference image matched in PSF and flux to find what changed."
+   },
+   {
+    "term": "alert packet",
+    "meaning": "A schema-defined record (ZTF/Rubin: Avro) with the candidate measurement and its history."
+   },
+   {
+    "term": "broker",
+    "meaning": "A service that classifies and filters alert streams for users (ALeRCE, Fink, Lasair, ANTARES)."
+   }
+  ],
+  "concepts": [
+   "Blur the sharper reference to tonight's seeing and fit the flux scale.",
+   "Validate every packet against the schema.",
+   "Code classifies: bogus, known variable, moving, transient.",
+   "A model may explain - only facts, gated by code."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python alerts.py`",
+    "mac": "cd labs/L400/18-alert-broker\npython alerts.py",
+    "windows": "cd labs\\L400\\18-alert-broker\npython alerts.py",
+    "expected": "Options A/B/C with 192.4 / 74.4 / 58.2 alerts per night and real fractions 0.027 / 0.045 / 0.045.",
+    "ifNot": "Run from the lab folder."
+   },
+   {
+    "title": "Failure lab: alert storm",
+    "detail": "Shipped difference() = new - reference. Seeing (sigma 1.5-2.1 vs 1.2 px) and transparency (0.75-1.0) differ every night.",
+    "expected": "Constant stars become 'transient' alerts: 58.2 per night, 4.5 % real under option C.",
+    "ifNot": "3.5 per night: you are running the solution."
+   },
+   {
+    "title": "Match PSF and flux (build task)",
+    "detail": "Blur the reference by sqrt(sigma_new^2 - sigma_ref^2) and fit new = a * ref + b by least squares.",
+    "expected": "A 9.8 (46.2 % real), B 4.2 (88.2 %), C 3.5 (85.7 %) alerts per night.",
+    "ifNot": "Rings remain around stars: you blurred the new image instead of the reference."
+   },
+   {
+    "title": "Build task: check your own file",
+    "detail": "Edit the shipped file, then run the build-task test against it (test_build_task test_fitness).",
+    "mac": "cd labs/L400/18-alert-broker\nBUILD_TARGET=mine python -m unittest test_build_task test_fitness -v",
+    "windows": "cd labs\\L400\\18-alert-broker\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task test_fitness -v\nRemove-Item Env:BUILD_TARGET",
+    "expected": "Shipped file: Ran 6 tests ... FAILED (failures=2). After your fix: OK.",
+    "ifNot": "Without BUILD_TARGET the test checks solution/ - make sure the variable is set in the same shell."
+   },
+   {
+    "title": "Packets and the broker",
+    "detail": "schema.py validates every packet (type, required, enum, min/max); classify() applies sharpness, sign, a known-variable cross-match within 1.5 px and motion between exposures a and b.",
+    "expected": "schema_errors 0; supernova 'transient' on nights 3-7; V1 'known_variable'; asteroid 'moving'.",
+    "ifNot": "V1 as transient: the known-variable catalogue is missing (tryIt 2)."
+   },
+   {
+    "title": "Agent explains, code decides",
+    "detail": "agent_assist.py sends one alert per class as a facts block to the fake model; code publishes only text that names code's class and quotes only facts.",
+    "mac": "cd labs/L400/18-alert-broker\npython agent_assist.py",
+    "windows": "cd labs\\L400\\18-alert-broker\npython agent_assist.py",
+    "expected": "3 lines, all publish false: V1 class mismatch ('a new transient'), invented '2.5' in every text.",
+    "ifNot": "Connection refused: the fake server did not start - run from the lab folder (it imports ../_agent)."
+   }
+  ],
+  "code": "\"\"\"L400 time-domain alerts: difference images -> detections -> alert packets -> broker filter + association.\n\nOptions: A firehose (every detection is an alert) | B broker classifies and drops bogus | C B + one alert per\nobject per night with its history (prv_candidates). Code classifies; a local model may only EXPLAIN (agent_assist.py).\npython alerts.py   ->  options table + the alerts of the last night as JSON lines\n\"\"\"\nimport json\n\nimport numpy as np\n\nimport alert_sim as sim\nfrom schema import validate\n\nNSIG, KNOWN_R, MOVE_MIN, MOVE_MAX = 5.0, 1.5, 2.0, 8.0\n\n\ndef blur(img, sigma):\n    r = int(np.ceil(4 * sigma))\n    k = np.exp(-np.arange(-r, r + 1) ** 2 / (2 * sigma ** 2))\n    k /= k.sum()\n    tmp = np.apply_along_axis(lambda v: np.convolve(np.pad(v, r, mode=\"edge\"), k, \"valid\"), 1, img)\n    return np.apply_along_axis(lambda v: np.convolve(np.pad(v, r, mode=\"edge\"), k, \"valid\"), 0, tmp)\n\n\ndef difference(new, ref, sigma_new):\n    \"\"\"Difference image new - reference.\"\"\"\n    return new - ref\n\n\ndef detect(diff):\n    \"\"\"Positive and negative 3x3 extrema beyond NSIG robust sigmas: x, y, flux (5x5), sharpness, isdiffpos.\"\"\"\n    noise = 1.4826 * np.median(np.abs(diff - np.median(diff)))\n    out = []\n    for sign in (1, -1):\n        d = sign * diff\n        p = np.pad(d, 1, constant_values=-np.inf)\n        peak = d > NSIG * noise\n        for dy in (-1, 0, 1):\n            for dx in (-1, 0, 1):\n                if dy or dx:\n                    peak &= d >= p[1 + dy:1 + dy + d.shape[0], 1 + dx:1 + dx + d.shape[1]]\n        for y, x in zip(*np.nonzero(peak[3:-3, 3:-3])):\n            y, x = y + 3, x + 3\n            nb = (d[y - 1, x] + d[y + 1, x] + d[y, x - 1] + d[y, x + 1]) / 4\n            out.append({\"x\": int(x), \"y\": int(y), \"flux\": float(sign * d[y - 2:y + 3, x - 2:x + 3].sum()),\n                        \"sigmaflux\": float(5 * noise), \"sharp\": float(d[y, x] / max(nb, 1e-9)),\n                        \"isdiffpos\": \"t\" if sign > 0 else \"f\"})\n    return out\n\n\ndef classify(det, other, known):\n    \"\"\"Broker filter: bogus (too sharp / negative), known variable (cross-match), moving (shifted in the other\n    exposure of the same night), else transient.\"\"\"\n    if det[\"sharp\"] > 3.0 or det[\"isdiffpos\"] == \"f\":\n        return \"bogus\"\n    if any(np.hypot(det[\"x\"] - kx, det[\"y\"] - ky) < KNOWN_R for _, kx, ky in known):\n        return \"known_variable\"\n    gaps = [np.hypot(det[\"x\"] - o[\"x\"], det[\"y\"] - o[\"y\"]) for o in other if o[\"isdiffpos\"] == \"t\"]\n    if not any(g < KNOWN_R for g in gaps) and any(MOVE_MIN <= g <= MOVE_MAX for g in gaps):\n        return \"moving\"\n    return \"transient\"\n\n\ndef packet(candid, det, exp, cls, history):\n    return {\"schemavsn\": \"astro-kb-1.0\", \"candid\": candid, \"objectId\": f\"AKB{det['x'] // 2:03d}{det['y'] // 2:03d}\",\n            \"candidate\": {\"mjd\": exp[\"mjd\"], \"x\": float(det[\"x\"]), \"y\": float(det[\"y\"]), \"flux\": round(det[\"flux\"], 1),\n                          \"sigmaflux\": round(det[\"sigmaflux\"], 1), \"isdiffpos\": det[\"isdiffpos\"],\n                          \"rb\": 0.1 if det[\"sharp\"] > 3.0 else 0.9, \"fwhm\": round(2.355 * exp[\"sigma\"], 2)},\n            \"prv_candidates\": history, \"class\": cls}\n\n\ndef run(option, exposures=None, ref=None):\n    exposures = exposures or sim.nights()\n    ref = sim.reference() if ref is None else ref\n    known, alerts, history, candid = sim.known_variables(), [], {}, 0\n    for i in range(0, len(exposures), 2):\n        pair = exposures[i:i + 2]\n        dets = [detect(difference(e[\"image\"], ref, e[\"sigma\"])) for e in pair]\n        night_seen = set()\n        for k, e in enumerate(pair):\n            for d in dets[k]:\n                cls = classify(d, dets[1 - k], known)\n                if option != \"A\" and cls == \"bogus\":\n                    continue\n                candid += 1\n                p = packet(candid, d, e, cls, list(history.get(f\"AKB{d['x'] // 2:03d}{d['y'] // 2:03d}\", []))[-5:])\n                if option == \"C\":\n                    if p[\"objectId\"] in night_seen:\n                        continue  # one alert per object per night; the a/b detection is already in history\n                    night_seen.add(p[\"objectId\"])\n                history.setdefault(p[\"objectId\"], []).append({\"mjd\": e[\"mjd\"], \"flux\": p[\"candidate\"][\"flux\"]})\n                alerts.append((e[\"night\"], e[\"exposure\"], p))\n    return alerts\n\n\ndef summary(option, alerts, exposures):\n    \"\"\"Alerts per night and the fraction that is real (truth: supernova, variable star, asteroid).\"\"\"\n    (vx, vy), real = sim.known_variables()[0][1:], 0\n    truth = {(e[\"night\"], e[\"exposure\"]): e[\"truth_asteroid\"] for e in exposures}\n    for night, expo, p in alerts:\n        x, y = p[\"candidate\"][\"x\"], p[\"candidate\"][\"y\"]\n        ax, ay = truth[(night, expo)]\n        real += (night >= 3 and np.hypot(x - sim.SN_POS[0], y - sim.SN_POS[1]) < 2) or np.hypot(x - vx, y - vy) < 2 \\\n            or np.hypot(x - ax, y - ay) < 2\n    nights = len(exposures) // 2\n    classes = {}\n    for _, _, p in alerts:\n        classes[p[\"class\"]] = classes.get(p[\"class\"], 0) + 1\n    return {\"option\": option, \"alerts_per_night\": round(len(alerts) / nights, 1),\n            \"real_fraction\": round(real / max(len(alerts), 1), 3), \"classes\": dict(sorted(classes.items())),\n            \"schema_errors\": sum(len(validate(p)) for _, _, p in alerts)}\n\n\nif __name__ == \"__main__\":\n    exposures, ref = sim.nights(), sim.reference()\n    results = {o: run(o, exposures, ref) for o in \"ABC\"}\n    for o in \"ABC\":\n        print(json.dumps(summary(o, results[o], exposures)))\n    last = [(n, e, p) for n, e, p in results[\"C\"] if n == 7]\n    print(f\"option C, night 7: {len(last)} alerts; first 5:\")\n    for night, expo, p in last[:5]:\n        print(json.dumps({\"night\": night, \"exposure\": expo, \"objectId\": p[\"objectId\"], \"class\": p[\"class\"],\n                              \"flux\": p[\"candidate\"][\"flux\"], \"n_prv\": len(p[\"prv_candidates\"])}))\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "alert_sim (helper)",
+    "detail": "Deep reference + 8 nights x 2 exposures with varying seeing/transparency; truth: supernova from night 3, variable V1, an asteroid, cosmic rays."
+   },
+   {
+    "title": "difference()",
+    "detail": "The fault: plain subtraction. The fix: blur the reference to the night's seeing (single Gaussian kernel, Alard & Lupton idea) and fit a flux scale + offset."
+   },
+   {
+    "title": "detect()",
+    "detail": "Positive and negative 3x3 extrema beyond 5 robust sigmas; flux in 5x5, sharpness vs the 4 neighbours, isdiffpos."
+   },
+   {
+    "title": "classify()",
+    "detail": "Broker rules in code: too sharp or negative -> bogus; within 1.5 px of a known variable -> known_variable; shifted 2-8 px between exposures -> moving; else transient."
+   },
+   {
+    "title": "packet() + schema.validate()",
+    "detail": "ZTF/Rubin-style fields (candid, objectId, candidate{...}, prv_candidates) checked before publishing."
+   },
+   {
+    "title": "run() options",
+    "detail": "A publishes everything; B drops bogus; C also keeps one alert per object per night with up to 5 history entries."
+   },
+   {
+    "title": "summary()",
+    "detail": "Alerts per night, real fraction against the truth, class counts, schema errors."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped difference() subtracts the reference without PSF or flux matching (seed 18).",
+   "symptom": "Every star leaves a residual: option C 58.2 alerts/night, real fraction 0.045; firehose 192.4/night.",
+   "fix": "Your build task: blur the reference to the night's seeing and fit new = a*ref + b (solution/alerts.py) -> option C 3.5/night, 0.857 real.",
+   "proof": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness: shipped -> FAILED (failures=2: test_constant_stars_vanish, test_alert_volume_and_purity); solution -> OK. TestFailureLab in test_alerts.py keeps the fault reproducible."
+  },
+  "tradeOffs": [
+   {
+    "option": "Single Gaussian kernel + flux fit",
+    "gains": "Fast, few parameters, no FFTs",
+    "costs": "Assumes round, constant PSFs",
+    "chooseWhen": "Small fields, stable optics (this lab)"
+   },
+   {
+    "option": "Alard-Lupton spatially varying kernel",
+    "gains": "Handles PSF variation across the field",
+    "costs": "Many parameters; needs enough stars",
+    "chooseWhen": "Wide fields (production surveys)"
+   },
+   {
+    "option": "ZOGY",
+    "gains": "Optimal statistic, symmetric in new/reference",
+    "costs": "Needs good PSF models and noise maps",
+    "chooseWhen": "Background-limited data; ZTF uses it"
+   }
+  ],
+  "buildTask": {
+   "task": "Replace difference() in alerts.py with a PSF- and flux-matched subtraction.",
+   "hints": [
+    "Blur the REFERENCE (the sharper image) by sqrt(sigma_new^2 - sim.REF_SIGMA^2) with blur().",
+    "Fit new ~ a*ref_blurred + b with np.linalg.lstsq on all pixels."
+   ],
+   "solution": "labs/L400/18-alert-broker/solution/alerts.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped: FAILED (failures=2); after your fix: OK."
+  },
+  "agentAssist": {
+   "task": "A local model explains an alert (one per class) to an observer; code has already classified it and publishes the explanation only if it names code's class and no other, and every number is a fact.",
+   "prompt": "[[ASTRO-ALERT]] Explain this alert in 3 sentences. <facts> candid: 23  objectId: AKB035017  class: known_variable  flux: ...  magpsf: ...  rb: 0.9  fwhm: ...  n_prv: ... </facts>",
+   "check": "agent_assist.check(): class words found in the text must equal {code's class}; every number token must be in the facts; publish = class_ok and no unverified numbers. The class is computed before the call and never read back.",
+   "expected": "known_variable: class_ok false, unverified ['2.5'], publish false | moving: class_ok true, unverified ['2.5'], publish false | transient: class_ok true, unverified ['2.5'], publish false",
+   "realModelNote": "python agent_assist.py --real uses LOCAL_MODEL_URL / LOCAL_MODEL (default qwen2.5:1.5b via Ollama). Only the facts block is sent - no images, no keys. Real wording varies; the gate does not. Not run here against a real model."
+  },
+  "observability": {
+   "emits": "summary() per option as JSON {alerts_per_night, real_fraction, classes, schema_errors}; agent_assist prints one JSON line per explanation {candid, code_class, class_ok, unverified, publish}.",
+   "read": "A jump in alerts_per_night with 'transient' dominating is the matching failure; bogus counts in option A show what the broker removes; unverified numbers show what the model invented."
+  },
+  "designBrief": {
+   "context": "A field imaged twice per night for 8 nights against a deep reference; followers can act on a handful of alerts per night.",
+   "constraints": [
+    "<= 6 alerts per night",
+    ">= 80 % real",
+    "the supernova alerted every night from night 3",
+    "a known variable never sold as a transient",
+    "100 % schema-valid packets",
+    "code classifies; a model may only explain"
+   ],
+   "question": "How should differences be made, and where should filtering and association happen, to meet the volume and purity brief?"
+  },
+  "options": [
+   {
+    "name": "A. Firehose",
+    "description": "Every 5-sigma residual becomes an alert; users filter.",
+    "evidence": "9.8 alerts/night, 46.2 % real (matched differences).",
+    "verdict": "Rejected: volume and purity fail the brief."
+   },
+   {
+    "name": "B. Broker classifies, drops bogus",
+    "description": "Rules: sharpness/sign, known-variable cross-match, motion between exposures.",
+    "evidence": "4.2 alerts/night, 88.2 % real.",
+    "verdict": "Meets the brief; kept as the core of C."
+   },
+   {
+    "name": "C. B + one alert per object per night with history",
+    "description": "objectId on a 2 px grid; prv_candidates up to 5 entries.",
+    "evidence": "3.5 alerts/night, 85.7 % real; supernova on nights 3-7; 0 schema errors.",
+    "verdict": "Chosen (ADR 0001): fewer, richer alerts."
+   }
+  ],
+  "decisionRecord": "labs/L400/18-alert-broker/decisions/0001-alert-broker-design.md",
+  "fitnessFunction": {
+   "what": "Runs the 8 seeded nights through option C and checks the brief.",
+   "test": "labs/L400/18-alert-broker/test_fitness.py",
+   "threshold": "<= 6 alerts/night, >= 0.8 real, 0 schema errors, supernova transient on nights 3-7, V1 always known_variable, >= 80 % of asteroid detections moving"
+  },
+  "scalingLimits": [
+   "Field-varying PSF: one Gaussian kernel leaves edge residuals (signal: bogus alerts clustered by position) - spatially varying kernel or ZOGY.",
+   "Fast movers: a 2 px objectId grid gives an asteroid a new objectId every exposure (signal: many single-detection 'moving' objects) - add a moving-object linking stage.",
+   "Stream volume: millions of alerts per night need Avro + a schema registry + Kafka (DMTN-093), not JSON lists (signal: serialisation time per alert)."
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/18-alert-broker/alerts.py",
+    "purpose": "main lab code (ships the unfixed difference())"
+   },
+   {
+    "path": "labs/L400/18-alert-broker/alert_sim.py",
+    "purpose": "seeded sky + truth"
+   },
+   {
+    "path": "labs/L400/18-alert-broker/schema.py",
+    "purpose": "packet schema + validator"
+   },
+   {
+    "path": "labs/L400/18-alert-broker/alert_avro.py",
+    "purpose": "fastavro round trip (pending-ci)"
+   },
+   {
+    "path": "labs/L400/18-alert-broker/agent_assist.py",
+    "purpose": "gated model explanations"
+   },
+   {
+    "path": "labs/L400/_agent/fake_model_server.py",
+    "purpose": "vendored fake model with the documented [[ASTRO-ALERT]] rule"
+   },
+   {
+    "path": "labs/L400/18-alert-broker/solution/alerts.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L400/18-alert-broker/decisions/0001-alert-broker-design.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/18-alert-broker/test_fitness.py",
+    "purpose": "fitness function"
+   },
+   {
+    "path": "labs/L400/18-alert-broker/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L400/18-alert-broker/test_alerts.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L400/18-alert-broker/test_build_task.py",
+    "purpose": "buildTask check"
+   },
+   {
+    "path": "labs/L400/18-alert-broker/test_agent_assist.py",
+    "purpose": "agent gate tests (fake server)"
+   }
+  ],
+  "expectedResults": [
+   "Shipped: 58.2 alerts/night (C), 4.5 % real",
+   "Fixed: 3.5/night, 85.7 % real, 0 schema errors",
+   "All fake-model explanations blocked"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 14 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness (shipped)",
+    "expected": "FAILED (failures=2)"
+   },
+   {
+    "action": "blur() of a sigma 1.2 Gaussian by 1.6",
+    "expected": "sigma 2.0 (quadrature)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Dipoles (+/-) at every star",
+    "action": "Sub-pixel misalignment or unmatched PSF: register first, then match."
+   },
+   {
+    "symptom": "Explanations never published with a real model",
+    "action": "Expected when the model adds numbers; shorten the prompt to the facts and keep the gate."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Match the PSF but not the transparency (a = 1, b = 0).",
+    "predict": "More or fewer alerts?",
+    "expected": "1. PSF matched, flux not, option A: 43.8 alerts/night, classes {'bogus': 320, 'known_variable': 2, 'moving': 18, 'transient': 10} | option C: 3.0 alerts/night, classes {'known_variable': 1, 'moving': 18, 'transient': 5}"
+   },
+   {
+    "task": "Run the broker without the known-variable catalogue.",
+    "predict": "What does V1 become?",
+    "expected": "2. no known-variable catalogue: V1 alerts classified as ['transient', 'transient']"
+   }
+  ],
+  "equivalents": [
+   "ZTF / Rubin alert packets (Avro, schema registry, Kafka).",
+   "Brokers: Lasair (SQL-like filters), Fink, ALeRCE, ANTARES.",
+   "Image differencing: HOTPANTS (Alard-Lupton), ZOGY implementations, Rubin ip_diffim."
+  ],
+  "learningTools": [
+   {
+    "name": "JupyterLab (+ JupyterLab Desktop)",
+    "role": "CHECK",
+    "exercise": "In a notebook: load solution/alerts.py by path, compute difference() for night 5 exposure a, and show it next to new - ref (shipped) with the same colour scale.",
+    "expected": "The matched difference is flat except the supernova at (40, 90) and the asteroid; the plain difference shows a ring at every star - the 58.2 vs 3.5 alerts/night. Pending a manual run.",
+    "mac": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or the JupyterLab Desktop arm64 installer",
+    "windows": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or winget install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   }
+  ],
+  "inRealSystems": [
+   "ZTF publishes Avro alerts within minutes; brokers redistribute filtered streams.",
+   "Rubin's alert production uses ip_diffim and association into DIAObjects with history."
+  ],
+  "useWhen": "Use matched differencing + a code-controlled broker for any time-domain stream; add association before alerts reach people.",
+  "caution": "Never let a model's text decide or change a class; send it only facts (no images, credentials or private data).",
+  "checkpoint": "PASS: shipped broker floods (58.2/night); after your fix test_build_task + test_fitness pass with BUILD_TARGET=mine; all fake-model explanations are blocked.",
+  "checkYourself": [
+   {
+    "q": "Why blur the reference rather than the new image?",
+    "a": "The reference is sharper; blurring it to tonight's seeing keeps tonight's resolution and noise properties."
+   },
+   {
+    "q": "Why is association (C) worth a small purity loss?",
+    "a": "One alert per object per night with history is far more useful per alert than duplicates of the same event."
+   }
+  ],
+  "sources": [
+   {
+    "title": "ZTF Avro alert schemas",
+    "url": "https://zwickytransientfacility.github.io/ztf-avro-alert/schema.html"
+   },
+   {
+    "title": "Alard & Lupton 1998, image subtraction",
+    "url": "https://arxiv.org/abs/astro-ph/9712287"
+   },
+   {
+    "title": "Zackay, Ofek & Gal-Yam 2016, ZOGY",
+    "url": "https://arxiv.org/abs/1601.02655"
+   },
+   {
+    "title": "DMTN-093: Rubin alert distribution design",
+    "url": "https://dmtn-093.lsst.io/"
+   },
+   {
+    "title": "Apache Avro specification",
+    "url": "https://avro.apache.org/docs/current/specification/"
+   },
+   {
+    "title": "Lasair docs: Make a filter",
+    "url": "https://lasair.readthedocs.io/en/main/core_functions/make_filter.html"
+   }
+  ],
+  "next": "L400 #19 Big catalogues: sky indexing, cone-search performance and TAP/ADQL: every alert needs a fast 'what is known here?' - index the catalogue.",
+  "validation": {
+   "status": "validated-local",
+   "how": "alerts.py, solution/alerts.py, agent_assist.py (fake server), try_it.py and unittests (Ran 14 tests ... OK (skipped=1)) ran locally 3x; BUILD_TARGET=mine fails (failures=2).",
+   "pendingCi": [
+    "labs/L400/18-alert-broker/alert_avro.py (fastavro 1.13.1)",
+    "test_alerts.py: test_fastavro_round_trip",
+    "agent_assist.py --real against a local Ollama model",
+    "macOS and Windows runs",
+    "JupyterLab exercise (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L400/18-alert-broker.md",
+  "conceptSummary": "Alerts are what remains after subtracting a PSF- and flux-matched reference; a broker in code classifies, filters and associates them into a small, schema-valid stream. A local model may explain an alert, but only facts go in and code gates what comes out.",
+  "seeAlso": [
+   "astronomy L400 #17 Survey pipeline architecture: ingest, calibrate, detect, catalogue - throughput measured: the catalogue and calibrated frames this stage consumes.",
+   "astronomy L400 #19 Big catalogues: sky indexing, cone-search performance and TAP/ADQL: the known-variable cross-match is a cone search.",
+   "astronomy Capstone #22 Capstone: an exoplanet transit search pipeline: the capstone reuses this explain-but-never-decide gate.",
+   "ai-agents L400 #20 Deterministic core, LLM at the edge: the same boundary - code classifies, the model only explains.",
+   "distributed-systems L200 #8 At-least-once messaging: ack, visibility timeout, redelivery, dead letters: what an alert stream needs on the wire."
+  ]
+ },
+ {
+  "id": "big-catalogues",
+  "number": 19,
+  "level": "L400",
+  "title": "Big catalogues: sky indexing, cone-search performance and TAP/ADQL",
+  "phase": "Design",
+  "category": "catalogues",
+  "description": "Index a million-source catalogue for cone searches: brute force vs declination zones (fine vs coarse), exact against brute force everywhere - poles and RA = 0 included - and the same question as ADQL for TAP.",
+  "outcome": "You can design and verify a sky index, choose its granularity from measurements, and express the query in ADQL 2.1 for a TAP service.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; pyvo 1.9.1 (TAP, needs network) and healpy 1.20.1 (macOS/Linux only) in CI",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "An index that misses rows is a correctness bug; brute force is the oracle and the hard cones are seeded on purpose."
+  ],
+  "prerequisites": [
+   "Lesson 7 (Catalogues and cross-matching: angular separation and a k-d tree)",
+   "Lesson 14 (Plate solving (astrometry-lite): match star triangles, fit a WCS, check residuals)"
+  ],
+  "glossary": [
+   {
+    "term": "cone search",
+    "meaning": "All sources within radius r of a sky position (IVOA SCS; ADQL CONTAINS(POINT, CIRCLE))."
+   },
+   {
+    "term": "declination zone",
+    "meaning": "A stripe of the sky of fixed height in Dec; rows sorted by RA inside it."
+   },
+   {
+    "term": "TAP / ADQL",
+    "meaning": "IVOA protocol and SQL dialect for querying remote astronomical tables."
+   }
+  ],
+  "concepts": [
+   "Index to candidates, then test exactly.",
+   "RA windows widen as 1/cos Dec, cover all RA at a pole, and wrap at 0/360.",
+   "Zone height trades loop overhead against candidates.",
+   "Ask archives in ADQL; keep network calls out of unit tests."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python catalog.py`",
+    "mac": "cd labs/L400/19-big-catalogues\npython catalog.py",
+    "windows": "cd labs\\L400\\19-big-catalogues\npython catalog.py",
+    "expected": "3 JSON lines: brute force 0 wrong cones (16 738 found), zones h=0.1 and h=1.0 each 374 wrong cones (12 765 found); an ADQL line.",
+    "ifNot": "Needs ~40 MB RAM for the catalogue."
+   },
+   {
+    "title": "Failure lab: 374 wrong cones",
+    "detail": "Shipped Zones.ra_windows() searches ra +/- r: no 1/cos(dec) widening, no pole case, no wrap.",
+    "expected": "Every wrong cone is MISSING sources; nothing crashes.",
+    "ifNot": "0 wrong cones: you are running the solution."
+   },
+   {
+    "title": "Exact RA window (build task)",
+    "detail": "alpha = atan(sin r / sqrt|cos(d-r) cos(d+r)|); whole zone if |d| + r >= 90; two windows across 0/360.",
+    "expected": "0 wrong cones for both zone options; 16 738 sources found.",
+    "ifNot": "Wrong cones only near RA = 0: the wrap split is missing."
+   },
+   {
+    "title": "Build task: check your own file",
+    "detail": "Edit the shipped file, then run the build-task test against it (test_build_task test_fitness).",
+    "mac": "cd labs/L400/19-big-catalogues\nBUILD_TARGET=mine python -m unittest test_build_task test_fitness -v",
+    "windows": "cd labs\\L400\\19-big-catalogues\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task test_fitness -v\nRemove-Item Env:BUILD_TARGET",
+    "expected": "Shipped file: Ran 5 tests ... FAILED (failures=8). After your fix: OK.",
+    "ifNot": "Without BUILD_TARGET the test checks solution/ - make sure the variable is set in the same shell."
+   },
+   {
+    "title": "Choose the zone height",
+    "detail": "Compare ms/query and tested_per_query for h = 0.1 and 1.0; read decisions/0001-catalogue-index.md.",
+    "expected": "h=0.1: ~0.2-0.5 ms, 39 tested; h=1.0: ~0.05-0.14 ms, 62 tested; brute 6-11 ms.",
+    "ifNot": "Timings vary by run; the ranking (C < B << A) should hold."
+   },
+   {
+    "title": "Same question for an archive (CI)",
+    "detail": "adql_cone() writes 1 = CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', ...)); pyvo_query.py sends it to the Gaia TAP service; healpix_check.py compares HEALPix candidates.",
+    "mac": "cd labs/L400/19-big-catalogues\npython -c \"import catalog; print(catalog.adql_cone(83.82, -5.39, 0.05))\"",
+    "windows": "cd labs\\L400\\19-big-catalogues\npython -c \"import catalog; print(catalog.adql_cone(83.82, -5.39, 0.05))\"",
+    "expected": "SELECT source_id, ra, dec FROM gaiadr3.gaia_source WHERE 1 = CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', 83.82, -5.39, 0.05))",
+    "ifNot": "No REQUEST=doQuery: TAP 1.1 removed it."
+   }
+  ],
+  "code": "\"\"\"L400 big catalogues: cone search over 1 million sources - brute force vs declination zones (fine vs coarse).\n\nZones (Gray, Szalay et al. 2004): sort by (zone, RA) with zone = floor((dec + 90) / h); a cone touches a few\nzones, and in each a binary search on RA finds a narrow window. Every candidate is then checked exactly.\npython catalog.py   ->  options table (build s, ms/query, wrong cones vs brute force, sources tested) + an ADQL equivalent\n\"\"\"\nimport json\nimport time\n\nimport numpy as np\n\nD2R = np.pi / 180.0\n\n\ndef make_catalogue(n=1_000_000, seed=19):\n    \"\"\"SYNTHETIC all-sky catalogue, uniform on the sphere (dec from arcsin of a uniform).\"\"\"\n    rng = np.random.default_rng(seed)\n    return {\"ra\": rng.uniform(0.0, 360.0, n), \"dec\": np.degrees(np.arcsin(rng.uniform(-1.0, 1.0, n))),\n            \"id\": np.arange(n, dtype=np.int64)}\n\n\ndef unit(ra, dec):\n    r, d = np.asarray(ra) * D2R, np.asarray(dec) * D2R\n    return np.stack([np.cos(d) * np.cos(r), np.cos(d) * np.sin(r), np.sin(d)], axis=-1)\n\n\nclass Brute:\n    \"\"\"Option A: one dot product per source: dot >= cos(radius).\"\"\"\n\n    def __init__(self, cat):\n        self.ids, self.xyz = cat[\"id\"], unit(cat[\"ra\"], cat[\"dec\"])\n\n    def query(self, ra, dec, radius):\n        return np.sort(self.ids[self.xyz @ unit(ra, dec) >= np.cos(radius * D2R)])\n\n\nclass Zones:\n    \"\"\"Option B: declination zones of height h, RA-sorted inside each zone.\"\"\"\n\n    def __init__(self, cat, h=0.1):\n        self.h, self.nz = h, int(np.ceil(180.0 / h))\n        zone = np.minimum(((cat[\"dec\"] + 90.0) / h).astype(int), self.nz - 1)\n        order = np.lexsort((cat[\"ra\"], zone))\n        self.zone, self.ra, self.ids = zone[order], cat[\"ra\"][order], cat[\"id\"][order]\n        self.xyz = unit(self.ra, cat[\"dec\"][order])\n        self.start = np.searchsorted(self.zone, np.arange(self.nz + 1))\n        self.candidates = 0  # sources tested exactly, summed over queries (efficiency metric)\n\n    def ra_windows(self, ra, dec, radius):\n        \"\"\"RA intervals (degrees) a cone can touch.\"\"\"\n        return [(ra - radius, ra + radius)]\n\n    def query(self, ra, dec, radius):\n        z0 = max(int((dec - radius + 90.0) / self.h), 0)\n        z1 = min(int((dec + radius + 90.0) / self.h), self.nz - 1)\n        cand = []\n        for z in range(z0, z1 + 1):\n            a, b = self.start[z], self.start[z + 1]\n            for lo, hi in self.ra_windows(ra, dec, radius):\n                i, j = np.searchsorted(self.ra[a:b], [lo, hi])\n                cand.append(np.arange(a + i, a + j))\n        idx = np.concatenate(cand) if cand else np.array([], int)\n        self.candidates += len(idx)\n        keep = self.xyz[idx] @ unit(ra, dec) >= np.cos(radius * D2R)  # exact test on the few candidates\n        return np.sort(self.ids[idx[keep]])\n\n\nclass CoarseZones(Zones):\n    \"\"\"Option C: the same zones, 1 degree high - fewer Python-level zone loops, more candidates to test.\"\"\"\n\n    def __init__(self, cat):\n        super().__init__(cat, h=1.0)\n\n\ndef adql_cone(ra, dec, radius, table=\"gaiadr3.gaia_source\"):\n    \"\"\"The same question for a TAP service (ADQL 2.1; the coordinate-system argument is optional since 2.1).\"\"\"\n    return (f\"SELECT source_id, ra, dec FROM {table} \"\n            f\"WHERE 1 = CONTAINS(POINT('ICRS', ra, dec), CIRCLE('ICRS', {ra}, {dec}, {radius}))\")\n\n\ndef test_cones(n=600, seed=7):\n    \"\"\"Random cones plus the hard cases: 50 near the poles (|dec| > 80) and 50 straddling RA = 0/360.\"\"\"\n    rng = np.random.default_rng(seed)\n    ra, dec = rng.uniform(0, 360, n), np.degrees(np.arcsin(rng.uniform(-1, 1, n)))\n    dec[:50] = rng.choice([-1, 1], 50) * rng.uniform(80, 89.9, 50)\n    ra[50:100] = rng.uniform(-0.3, 0.3, 50) % 360.0\n    return list(zip(ra, dec, rng.uniform(0.1, 1.0, n)))\n\n\ndef measure(index, cones, reference=None):\n    t0 = time.perf_counter()\n    results = [index.query(*c) for c in cones]\n    ms = 1000 * (time.perf_counter() - t0) / len(cones)\n    wrong = sum(not np.array_equal(a, b) for a, b in zip(results, reference)) if reference else 0\n    return results, round(ms, 4), wrong\n\n\ndef main(n=1_000_000):\n    cat, cones = make_catalogue(n), test_cones()\n    rows, ref = [], None\n    for name, cls in ((\"A brute force\", Brute), (\"B zones h=0.1\", Zones), (\"C zones h=1.0\", CoarseZones)):\n        t0 = time.perf_counter()\n        index = cls(cat)\n        build = time.perf_counter() - t0\n        res, ms, wrong = measure(index, cones, ref)\n        ref = ref or res\n        rows.append({\"option\": name, \"build_s\": round(build, 2), \"ms_per_query\": ms, \"wrong_cones\": wrong,\n                     \"sources_found\": int(sum(len(r) for r in res)),\n                     \"tested_per_query\": round(getattr(index, \"candidates\", n * len(cones)) / len(cones))})\n    return rows\n\n\nif __name__ == \"__main__\":\n    for row in main():\n        print(json.dumps(row))\n    print(adql_cone(83.82, -5.39, 0.05))\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "make_catalogue()",
+    "detail": "1 000 000 seeded sources uniform on the sphere (dec = arcsin of a uniform) - labelled synthetic."
+   },
+   {
+    "title": "Brute",
+    "detail": "Unit vectors once; a query is one matrix-vector product: dot >= cos r. The oracle."
+   },
+   {
+    "title": "Zones.__init__",
+    "detail": "zone = floor((dec + 90)/h); lexsort by (zone, RA); start offsets per zone via searchsorted."
+   },
+   {
+    "title": "Zones.ra_windows()",
+    "detail": "The fault: ra +/- r. The fix: exact half-width alpha, whole zone over a pole, two windows across 0/360."
+   },
+   {
+    "title": "Zones.query()",
+    "detail": "Zones touched by dec +/- r, binary search on RA per window, then the exact dot-product test on the candidates."
+   },
+   {
+    "title": "CoarseZones and adql_cone()",
+    "detail": "Option C = zones 1 deg high; adql_cone() is the same question in ADQL 2.1 for TAP."
+   },
+   {
+    "title": "test_cones() / measure()",
+    "detail": "600 cones with 50 near the poles and 50 across RA = 0; ms/query and wrong cones vs brute force."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped Zones.ra_windows() returns [ra - r, ra + r] (seeded cones incl. poles and RA = 0).",
+   "symptom": "374 of 600 cones wrong (12 765 sources instead of 16 738) for both zone options - every error a missed source.",
+   "fix": "Your build task: exact half-width, pole and wrap handling (solution/catalog.py) -> 0 wrong cones.",
+   "proof": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness: shipped -> FAILED (failures=8); solution -> OK. TestFailureLab in test_catalog.py (247 wrong cones at 200k rows) keeps the fault reproducible."
+  },
+  "tradeOffs": [
+   {
+    "option": "Brute force",
+    "gains": "Exact, no build, trivial",
+    "costs": "O(N) per query: 6-11 ms at 1M",
+    "chooseWhen": "One-off queries; the oracle in tests"
+   },
+   {
+    "option": "Declination zones",
+    "gains": "Plain sorted arrays or B-trees; fast; easy to verify",
+    "costs": "Zone height must suit the query radius",
+    "chooseWhen": "In-memory or SQL catalogues up to ~10^8 rows"
+   },
+   {
+    "option": "HEALPix (healpy) / TAP service",
+    "gains": "Equal-area, hierarchical, standard (HiPS, MOC); archives already indexed",
+    "costs": "healpy not on Windows; network for TAP",
+    "chooseWhen": "All-sky maps, archive-scale catalogues"
+   }
+  ],
+  "buildTask": {
+   "task": "Fix Zones.ra_windows() in catalog.py so the index returns exactly the brute-force answer for every cone.",
+   "hints": [
+    "If |dec| + r >= 90, return [(0.0, 360.0)].",
+    "alpha = atan(sin r / sqrt|cos(dec - r) cos(dec + r)|), in degrees.",
+    "If ra - alpha < 0 search [ra - alpha + 360, 360] and [0, ra + alpha]; likewise above 360."
+   ],
+   "solution": "labs/L400/19-big-catalogues/solution/catalog.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped: FAILED (failures=8); after your fix: OK."
+  },
+  "designBrief": {
+   "context": "A pipeline cross-matches detections against a 1 000 000-source all-sky catalogue; cones of 0.1-1.0 deg appear anywhere, including the poles and RA = 0.",
+   "constraints": [
+    "exactly the brute-force answer on every cone",
+    "build < 10 s",
+    ">= 10x faster than brute force",
+    "numpy + stdlib only",
+    "the same query expressible in ADQL for a TAP service"
+   ],
+   "question": "Which index, at which granularity, answers cone searches exactly and fast enough?"
+  },
+  "options": [
+   {
+    "name": "A. Brute force",
+    "description": "One dot product per source.",
+    "evidence": "6-11 ms per query; 1 000 000 tested; 0 wrong (oracle).",
+    "verdict": "Rejected as the service path; kept as the test oracle."
+   },
+   {
+    "name": "B. Zones h = 0.1 deg",
+    "description": "Fine zones, RA binary search, exact test.",
+    "evidence": "~0.2-0.5 ms per query; 39 tested per query; 0 wrong cones.",
+    "verdict": "Rejected: per-zone Python loop overhead dominates."
+   },
+   {
+    "name": "C. Zones h = 1.0 deg",
+    "description": "Coarse zones about the size of the typical radius.",
+    "evidence": "~0.05-0.14 ms per query; 62 tested per query; 0 wrong cones; build ~0.6-0.8 s.",
+    "verdict": "Chosen (ADR 0001)."
+   }
+  ],
+  "decisionRecord": "labs/L400/19-big-catalogues/decisions/0001-catalogue-index.md",
+  "fitnessFunction": {
+   "what": "Builds the chosen index on the 1M catalogue and compares it with brute force on 600 seeded cones.",
+   "test": "labs/L400/19-big-catalogues/test_fitness.py",
+   "threshold": "0 wrong cones; build < 10 s; >= 10x faster than brute force (best of 3)"
+  },
+  "scalingLimits": [
+   "Billions of rows (Gaia DR3 ~1.8e9): in-memory arrays no longer fit (signal: build time and RAM) - query a TAP service or a database with HEALPix/Q3C indexes.",
+   "Large cones (5 deg): speed-up shrinks to ~17-31x (two runs) (signal: tested_per_query grows) - batch cross-matching with a zone-on-zone join.",
+   "Mismatched epochs: high-proper-motion stars leave small cones (signal: unmatched bright stars) - propagate positions to the observation epoch first."
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/19-big-catalogues/catalog.py",
+    "purpose": "main lab code (ships the unfixed ra_windows())"
+   },
+   {
+    "path": "labs/L400/19-big-catalogues/solution/catalog.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L400/19-big-catalogues/pyvo_query.py",
+    "purpose": "TAP/ADQL equivalent (pending-ci, network)"
+   },
+   {
+    "path": "labs/L400/19-big-catalogues/healpix_check.py",
+    "purpose": "healpy equivalent (pending-ci, macOS/Linux)"
+   },
+   {
+    "path": "labs/L400/19-big-catalogues/decisions/0001-catalogue-index.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/19-big-catalogues/test_fitness.py",
+    "purpose": "fitness function"
+   },
+   {
+    "path": "labs/L400/19-big-catalogues/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L400/19-big-catalogues/test_catalog.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L400/19-big-catalogues/test_build_task.py",
+    "purpose": "buildTask check"
+   }
+  ],
+  "expectedResults": [
+   "Shipped: 374/600 cones wrong",
+   "Fixed: 0 wrong; coarse zones fastest",
+   "ADQL 2.1 cone query string"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 11 tests ... OK (skipped=2)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness (shipped)",
+    "expected": "FAILED (failures=8)"
+   },
+   {
+    "action": "ra_windows(100, 60, 1)",
+    "expected": "half-width ~2.0 deg (about 1/cos 60)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Fewer matches near the poles than elsewhere",
+    "action": "RA window not widened by 1/cos Dec or no pole case."
+   },
+   {
+    "symptom": "TAP query rejected",
+    "action": "Use ADQL 2.1 CONTAINS(POINT, CIRCLE) = 1 and the service's table names; TAP 1.1 has no REQUEST parameter."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Use very fine zones (h = 0.01 deg).",
+    "predict": "Faster than h = 1.0?",
+    "expected": "1. zones h=0.01: 1.877 ms/query (brute 6.16), wrong cones 0 | 1. zones h=1.0: 0.054 ms/query (brute 6.16), wrong cones 0"
+   },
+   {
+    "task": "Query 5-degree cones.",
+    "predict": "How much faster than brute force is the index now?",
+    "expected": "2. radius 5 deg: brute 8.16 ms, zones h=1.0 0.39 ms -> 21x, wrong 0"
+   }
+  ],
+  "equivalents": [
+   "pyvo TAPService(...).run_sync(adql) against Gaia, VizieR or GAVO TAP services.",
+   "healpy.query_disc / mocpy for HEALPix-based selections.",
+   "Database spatial indexes: HTM, Q3C, HEALPix in PostgreSQL; astroquery Gaia/VizieR cone searches."
+  ],
+  "learningTools": [
+   {
+    "name": "TOPCAT (+ STILTS)",
+    "role": "CHECK",
+    "exercise": "VO > Table Access Protocol: connect to the Gaia archive TAP service and run the ADQL printed by adql_cone(83.82, -5.39, 0.05); then Joins > Pair Match (Sky, 1 arcsec) between two downloaded tables.",
+    "expected": "TOPCAT submits the same CONTAINS/CIRCLE query the lab generates; the row count should equal pyvo_query.py's (pending-ci). Pending a manual run (network).",
+    "mac": "brew install --cask topcat   (4.10-8; installs the topcat and stilts commands)",
+    "windows": "Download topcat-full.jar from the TOPCAT page, then: java -jar topcat-full.jar   (needs Java 8 or later)",
+    "licence": "GPL (some library code LGPL) (OSI: yes)",
+    "url": "https://www.star.bris.ac.uk/mbt/topcat/"
+   }
+  ],
+  "inRealSystems": [
+   "SDSS SkyServer used declination zones in SQL for neighbour searches.",
+   "Gaia, VizieR and other archives answer ADQL cone queries over TAP with HEALPix-style indexes."
+  ],
+  "useWhen": "Index when the same catalogue is queried many times; always verify against brute force on hard cones.",
+  "caution": "Gaia data are CC BY-NC 3.0 IGO: credit ESA/Gaia/DPAC and respect the NonCommercial term if you use downloaded rows (lesson 21).",
+  "checkpoint": "PASS: shipped zones miss sources on 374 cones; after your fix test_build_task + test_fitness pass with BUILD_TARGET=mine (0 wrong, >= 10x faster).",
+  "checkYourself": [
+   {
+    "q": "Why does a cone at Dec 60 need an RA window twice its radius?",
+    "a": "Lines of constant RA converge; one degree of RA spans cos 60 = 0.5 deg on the sky."
+   },
+   {
+    "q": "Why can coarse zones be faster despite testing more candidates?",
+    "a": "In Python the per-zone loop costs more than testing a few dozen extra rows with numpy."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Gray, Szalay et al. 2004, There Goes the Neighborhood (zones)",
+    "url": "https://arxiv.org/abs/cs/0408031"
+   },
+   {
+    "title": "Gorski et al. 2005, HEALPix",
+    "url": "https://arxiv.org/abs/astro-ph/0409513"
+   },
+   {
+    "title": "IVOA ADQL (2.1 Recommendation)",
+    "url": "https://wiki.ivoa.net/twiki/bin/view/IVOA/ADQL"
+   },
+   {
+    "title": "IVOA TAP 1.1 RFC page",
+    "url": "https://wiki.ivoa.net/twiki/bin/view/IVOA/TAP11RFC"
+   },
+   {
+    "title": "Gaia archive: Extract data (ADQL examples)",
+    "url": "https://www.cosmos.esa.int/web/gaia-users/archive/extract-data"
+   },
+   {
+    "title": "pyvo: Data Access",
+    "url": "https://pyvo.readthedocs.io/en/latest/dal/index.html"
+   }
+  ],
+  "next": "L400 #20 Model comparison: a galaxy rotation curve with and without a dark-matter halo: with data in hand, decide between competing physical models - honestly.",
+  "validation": {
+   "status": "validated-local",
+   "how": "catalog.py, solution/catalog.py, try_it.py and unittests (Ran 11 tests ... OK (skipped=2)) ran locally 3x; test_fitness OK 3x; BUILD_TARGET=mine fails (failures=8).",
+   "pendingCi": [
+    "labs/L400/19-big-catalogues/pyvo_query.py (pyvo 1.9.1, Gaia TAP, network)",
+    "labs/L400/19-big-catalogues/healpix_check.py (healpy 1.20.1; no Windows wheels - skipped there)",
+    "macOS and Windows runs",
+    "TOPCAT exercise (manual, network)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L400/19-big-catalogues.md",
+  "conceptSummary": "Index the sky into zones or HEALPix cells, fetch only what a cone can touch, and test candidates exactly; brute force is the oracle. RA windows widen as 1/cos Dec, cover all RA at the poles and wrap at 0/360.",
+  "seeAlso": [
+   "astronomy L200 #7 Catalogues and cross-matching: angular separation and a k-d tree: the angular separation and k-d tree this index scales up.",
+   "astronomy L300 #14 Plate solving (astrometry-lite): match star triangles, fit a WCS, check residuals: the same cos(Dec) trap in plate solving.",
+   "astronomy L400 #18 Time-domain alerts: difference detection, alert schema and broker filters: alerts cross-match against known variables with a cone search.",
+   "distributed-systems L200 #9 Sharding with consistent hashing: virtual nodes, key movement, hot keys: partitioning keys vs partitioning the sky - both trade bucket size against lookup cost."
+  ]
+ },
+ {
+  "id": "model-comparison",
+  "number": 20,
+  "level": "L400",
+  "title": "Model comparison: a galaxy rotation curve with and without a dark-matter halo",
+  "phase": "Design",
+  "category": "model selection",
+  "description": "Fit four mass models to a synthetic NGC 3198-like rotation curve and design the rule that picks the one to publish: lowest chi^2, BIC, or a hold-out - measured on 50 galaxies.",
+  "outcome": "You can fit physical rotation-curve models, compare them with information criteria and residual tests, and justify a selection rule with simulations.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; scipy 1.18.1 (Bessel cross-check) in CI",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "Lowest chi^2 always crowns the most flexible model; a parameter must pay ln(n) to stay."
+  ],
+  "prerequisites": [
+   "Lesson 15 (Fitting with honest uncertainty: least squares, bootstrap and MCMC for a transit)",
+   "Lesson 5 (Orbits: Kepler's laws, Kepler's equation and a planet's position)"
+  ],
+  "glossary": [
+   {
+    "term": "rotation curve",
+    "meaning": "Circular velocity vs radius; V^2 = G M(<R) / R for spherical mass, Bessel functions for a thin disk."
+   },
+   {
+    "term": "BIC",
+    "meaning": "chi^2 + k ln n (Schwarz 1978): penalises each of k parameters by ln of the number of data points."
+   },
+   {
+    "term": "runs test",
+    "meaning": "Counts sign runs in residuals; |Z| > 1.96 means systematic misfit (NIST)."
+   }
+  ],
+  "concepts": [
+   "Physical models first: Freeman disk, cored halo, NFW.",
+   "chi^2 alone rewards flexibility.",
+   "BIC/AIC penalise parameters; residuals must show no structure.",
+   "Test the selection rule on many synthetic galaxies."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python compare.py`",
+    "mac": "cd labs/L400/20-model-comparison\npython compare.py",
+    "windows": "cd labs\\L400\\20-model-comparison\npython compare.py",
+    "expected": "4 model lines (chi2, bic, aic, runs_z, params), 'select() picks: disk + halo + wiggles', then 3 option lines over 50 galaxies.",
+    "ifNot": "Takes ~15 s."
+   },
+   {
+    "title": "Mass models",
+    "detail": "galaxy.py: Freeman disk via series I_n and integral K_n Bessel functions; cored halo V^2 = 4 pi G rho0 rc^2 [1 - (rc/R) atan(R/rc)]; NFW eq. 5 with V200 = 10 H r200.",
+    "expected": "Disk alone peaks ~112 km/s near 2.2 scale lengths and falls; the data stay flat near 150.",
+    "ifNot": "NaN velocities: the Bessel series needs y > 0 (R > 0)."
+   },
+   {
+    "title": "Failure lab: chi^2 picks wiggles",
+    "detail": "Shipped select() publishes the lowest chi^2.",
+    "expected": "wiggles chi2 40.63 beats cored halo 43.24 - with rho0 16.35e7 and rc 1.7 kpc (unphysical); 50/50 galaxies.",
+    "ifNot": "If it picks the cored halo you are running the solution."
+   },
+   {
+    "title": "Select by BIC (build task)",
+    "detail": "Pick the minimum BIC (chi2 + k ln n; ln 40 = 3.7 per parameter).",
+    "expected": "disk + cored halo (BIC 54.30 vs 62.76); 50/50 galaxies.",
+    "ifNot": "Using AIC also works here; the tests require a 3-parameter halo model."
+   },
+   {
+    "title": "Build task: check your own file",
+    "detail": "Edit the shipped file, then run the build-task test against it (test_build_task test_fitness).",
+    "mac": "cd labs/L400/20-model-comparison\nBUILD_TARGET=mine python -m unittest test_build_task test_fitness -v",
+    "windows": "cd labs\\L400\\20-model-comparison\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task test_fitness -v\nRemove-Item Env:BUILD_TARGET",
+    "expected": "Shipped file: Ran 4 tests ... FAILED (failures=12). After your fix: OK.",
+    "ifNot": "Without BUILD_TARGET the test checks solution/ - make sure the variable is set in the same shell."
+   },
+   {
+    "title": "Residuals and the decision",
+    "detail": "Check runs_z of the published fit and read decisions/0001-model-selection.md.",
+    "expected": "cored halo Z -1.27 (passes), disk only Z -6.05 (rejected).",
+    "ifNot": "|Z| > 1.96 for the chosen model means structure is left: question the model, not the rule."
+   }
+  ],
+  "code": "\"\"\"L400 model comparison: does this rotation curve need a dark-matter halo - and how do we decide?\n\nFour mass models are fitted by weighted least squares (Levenberg-Marquardt): disk only (1 parameter), disk +\ncored halo (3), disk + NFW halo (3), disk + cored halo + a cubic 'wiggle' term (6). Then one is SELECTED.\nOptions: A lowest chi^2 | B BIC = chi^2 + k ln n (Schwarz 1978) | C hold out the outer radii (R > 20 kpc).\npython compare.py\n\"\"\"\nimport json\n\nimport numpy as np\n\nimport galaxy as g\n\nMODELS = {  # name: (V^2 function of radius and parameters, starting values, lower bounds)\n    \"disk only\": (lambda r, p: g.v_disk2(r, p[0]), [1.0], [0.05]),\n    \"disk + cored halo\": (lambda r, p: g.v_disk2(r, p[0]) + g.v_iso2(r, p[1] * 1e7, p[2]), [0.8, 2.0, 3.0],\n                          [0.05, 0.01, 0.2]),\n    \"disk + NFW halo\": (lambda r, p: g.v_disk2(r, p[0]) + g.v_nfw2(r, p[1], p[2]), [0.8, 150.0, 8.0],\n                        [0.05, 20.0, 1.0]),\n    \"disk + halo + wiggles\": (lambda r, p: g.v_disk2(r, p[0]) + g.v_iso2(r, p[1] * 1e7, p[2])\n                              + 1e3 * (p[3] * (r / 30) + p[4] * (r / 30) ** 2 + p[5] * (r / 30) ** 3),\n                              [0.8, 2.0, 3.0, 0.0, 0.0, 0.0], [0.05, 0.01, 0.2, -1e9, -1e9, -1e9]),\n}\n\n\ndef fit(name, r, v, err, iters=80):\n    f, p0, lo = MODELS[name]\n    p, lam = np.array(p0, float), 1e-2\n    model = lambda q: np.sqrt(np.clip(f(r, q), 1e-9, None))  # noqa: E731\n    chi2 = np.sum(((v - model(p)) / err) ** 2)\n    for _ in range(iters):\n        J = np.column_stack([(model(p + 1e-6 * max(1, abs(p[k])) * np.eye(len(p))[k]) - model(p))\n                             / (1e-6 * max(1, abs(p[k]))) for k in range(len(p))]) / err[:, None]\n        res = (v - model(p)) / err\n        A = J.T @ J\n        trial = np.maximum(p + np.linalg.solve(A + lam * np.diag(np.diag(A)), J.T @ res), lo)\n        new = np.sum(((v - model(trial)) / err) ** 2)\n        p, chi2, lam = (trial, new, lam / 3) if new < chi2 else (p, chi2, lam * 4)\n    return p, float(chi2), model\n\n\ndef runs_z(resid):\n    \"\"\"Wald-Wolfowitz runs test on residual signs (NIST e-Handbook 1.3.5.13): |Z| > 1.96 -> structure left.\"\"\"\n    s = resid > 0\n    n1, n2 = int(s.sum()), int((~s).sum())\n    runs = 1 + int(np.sum(s[1:] != s[:-1]))\n    mean = 2 * n1 * n2 / (n1 + n2) + 1\n    var = 2 * n1 * n2 * (2 * n1 * n2 - n1 - n2) / ((n1 + n2) ** 2 * (n1 + n2 - 1))\n    return (runs - mean) / np.sqrt(var)\n\n\ndef table(r, v, err):\n    rows = []\n    for name in MODELS:\n        p, chi2, model = fit(name, r, v, err)\n        k, n = len(p), len(r)\n        rows.append({\"model\": name, \"k\": k, \"chi2\": round(chi2, 2), \"bic\": round(float(chi2 + k * np.log(n)), 2),\n                     \"aic\": round(chi2 + 2 * k, 2), \"runs_z\": round(float(runs_z(v - model(p))), 2),\n                     \"params\": [round(float(x), 3) for x in p]})\n    return rows\n\n\ndef holdout_choice(r, v, err, cut=20.0):\n    \"\"\"Option C: fit on R <= cut, pick the model with the lowest chi^2 on the outer, unseen radii.\"\"\"\n    inner, scores = r <= cut, {}\n    for name in MODELS:\n        p, _, _ = fit(name, r[inner], v[inner], err[inner])\n        f = MODELS[name][0]\n        scores[name] = float(np.sum(((v[~inner] - np.sqrt(np.clip(f(r[~inner], p), 1e-9, None))) / err[~inner]) ** 2))\n    return min(scores, key=scores.get)\n\n\ndef option_rates(seeds=range(100, 150)):\n    \"\"\"How often each selection rule picks each model over 50 seeded data sets (truth: disk + cored halo).\"\"\"\n    rates = {\"A chi2\": {}, \"B BIC\": {}, \"C holdout R>20\": {}}\n    for s in seeds:\n        v, err = g.observed(seed=s)\n        rows = table(g.R, v, err)\n        for opt, pick in ((\"A chi2\", min(rows, key=lambda x: x[\"chi2\"])[\"model\"]),\n                          (\"B BIC\", min(rows, key=lambda x: x[\"bic\"])[\"model\"]),\n                          (\"C holdout R>20\", holdout_choice(g.R, v, err))):\n            rates[opt][pick] = rates[opt].get(pick, 0) + 1\n    return rates\n\n\ndef select(r, v, err):\n    \"\"\"Pick the model to publish.\"\"\"\n    rows = table(r, v, err)\n    return min(rows, key=lambda row: row[\"chi2\"])[\"model\"], rows\n\n\nif __name__ == \"__main__\":\n    v, err = g.observed()\n    best, rows = select(g.R, v, err)\n    for row in rows:\n        print(json.dumps(row))\n    print(\"select() picks:\", best)\n    for opt, picks in option_rates().items():\n        print(json.dumps({\"option\": opt, \"picks_over_50_datasets\": dict(sorted(picks.items()))}))\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "galaxy.py (helper)",
+    "detail": "Freeman disk (cached shape x mass-to-light), cored halo, NFW; seeded synthetic data with 2-6 km/s errors."
+   },
+   {
+    "title": "MODELS",
+    "detail": "Four candidates as (V^2 function, start values, lower bounds): k = 1, 3, 3, 6."
+   },
+   {
+    "title": "fit()",
+    "detail": "Weighted Levenberg-Marquardt on V = sqrt(V^2) with a finite-difference Jacobian and lower bounds."
+   },
+   {
+    "title": "runs_z()",
+    "detail": "Wald-Wolfowitz runs test on residual signs (NIST e-Handbook formula)."
+   },
+   {
+    "title": "table()",
+    "detail": "chi2, BIC = chi2 + k ln n, AIC = chi2 + 2k, runs Z and parameters per model."
+   },
+   {
+    "title": "select()",
+    "detail": "The fault: min chi2. The fix (solution): min BIC."
+   },
+   {
+    "title": "holdout_choice() / option_rates()",
+    "detail": "Option C (fit R <= 20 kpc, score R > 20) and the frequency of each rule's pick over 50 galaxies."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped select() publishes the model with the lowest chi^2 (seed 20; 50 more galaxies seeds 100-149).",
+   "symptom": "disk + halo + wiggles (k = 6) wins with chi2 40.63 vs 43.24 - an unphysical halo (rho0 16.35e7 Msun/kpc^3, rc 1.7 kpc) - and wins 50/50 galaxies.",
+   "fix": "Your build task: select by BIC (solution/compare.py) -> disk + cored halo, 50/50.",
+   "proof": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness: shipped -> FAILED (failures=12, incl. 10 seed subtests); solution -> OK. TestFailureLab in test_compare.py keeps the fault reproducible."
+  },
+  "tradeOffs": [
+   {
+    "option": "AIC",
+    "gains": "Better predictive models for large n",
+    "costs": "Weaker penalty (2 per parameter) - more prone to over-fit",
+    "chooseWhen": "Prediction is the goal"
+   },
+   {
+    "option": "BIC",
+    "gains": "Consistent: picks the true model as n grows; strict penalty",
+    "costs": "Can under-fit when truth is complex",
+    "chooseWhen": "Choosing a physical explanation (this lab)"
+   },
+   {
+    "option": "Hold-out radii",
+    "gains": "Tests extrapolation directly",
+    "costs": "Less data per fit; depends on the cut (43/5/2 here)",
+    "chooseWhen": "As a robustness check beside BIC"
+   }
+  ],
+  "buildTask": {
+   "task": "Change select() in compare.py so it penalises parameters (BIC).",
+   "hints": [
+    "table() already returns 'bic' and 'aic' per model.",
+    "With n = 40 each parameter costs ln 40 = 3.7 in chi^2 - what do the wiggles buy?"
+   ],
+   "solution": "labs/L400/20-model-comparison/solution/compare.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped: FAILED (failures=12); after your fix: OK."
+  },
+  "designBrief": {
+   "context": "Publish one mass model for a disk galaxy's rotation curve (40 radii, 1-30 kpc, 2-6 km/s errors; synthetic, NGC 3198-like).",
+   "constraints": [
+    "the published model is physical and minimal",
+    "the rule does not reward flexibility",
+    "reproducible from the data alone",
+    "residuals of the published fit show no structure (|runs Z| < 1.96)",
+    "chosen correctly on >= 95 % of simulated galaxies"
+   ],
+   "question": "Which selection rule decides the published model?"
+  },
+  "options": [
+   {
+    "name": "A. Lowest chi^2",
+    "description": "Publish the best fit.",
+    "evidence": "wiggles 50/50 galaxies; on the published curve chi2 3267.95 / 43.24 / 67.83 / 40.63.",
+    "verdict": "Rejected: always the most flexible model."
+   },
+   {
+    "name": "B. BIC (+ runs test)",
+    "description": "chi2 + k ln n; publish only if |runs Z| < 1.96.",
+    "evidence": "cored halo 50/50; BIC 3271.64 / 54.30 / 78.90 / 62.76; Z -1.27 (published) vs -6.05 (disk only).",
+    "verdict": "Chosen (ADR 0001)."
+   },
+   {
+    "name": "C. Hold-out of R > 20 kpc",
+    "description": "Fit inner radii, score the outer ones.",
+    "evidence": "cored halo 43, NFW 5, wiggles 2 of 50.",
+    "verdict": "Kept as a robustness check, not the rule."
+   }
+  ],
+  "decisionRecord": "labs/L400/20-model-comparison/decisions/0001-model-selection.md",
+  "fitnessFunction": {
+   "what": "Applies select() to 50 seeded galaxies and checks the published fit's residuals.",
+   "test": "labs/L400/20-model-comparison/test_fitness.py",
+   "threshold": ">= 95 % pick a 3-parameter halo model, wiggles never; published |runs Z| < 1.96; disk only |Z| > 1.96"
+  },
+  "scalingLimits": [
+   "Underestimated errors: chi^2 differences grow and complex models win again (signal: chi^2_red >> 1) - fix the errors first (lesson 15).",
+   "Many galaxies: per-galaxy selection multiplies wrong picks (signal: halo parameters scattering wildly between similar galaxies) - hierarchical models.",
+   "Non-circular motions, warps, distance errors: residual structure no halo removes (signal: |runs Z| > 1.96 for every model) - revise the data model, not the selection rule."
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/20-model-comparison/compare.py",
+    "purpose": "main lab code (ships the unfixed select())"
+   },
+   {
+    "path": "labs/L400/20-model-comparison/galaxy.py",
+    "purpose": "mass models + seeded synthetic data"
+   },
+   {
+    "path": "labs/L400/20-model-comparison/bessel_scipy.py",
+    "purpose": "SciPy Bessel cross-check (pending-ci)"
+   },
+   {
+    "path": "labs/L400/20-model-comparison/solution/compare.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L400/20-model-comparison/decisions/0001-model-selection.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/20-model-comparison/test_fitness.py",
+    "purpose": "fitness function"
+   },
+   {
+    "path": "labs/L400/20-model-comparison/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L400/20-model-comparison/test_compare.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L400/20-model-comparison/test_build_task.py",
+    "purpose": "buildTask check"
+   }
+  ],
+  "expectedResults": [
+   "chi^2 picks wiggles 50/50",
+   "BIC picks the cored halo 50/50",
+   "Published residuals pass the runs test; disk only fails it"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 10 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness (shipped)",
+    "expected": "FAILED (failures=12)"
+   },
+   {
+    "action": "cored-halo V at 12 kpc vs a numerical mass integral",
+    "expected": "equal to 3 decimal places"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Fit wanders to bound values",
+    "action": "Degenerate parameters (disk M/L vs halo core); start from physical values and report uncertainties."
+   },
+   {
+    "symptom": "BIC and AIC disagree",
+    "action": "Expected for small differences; report both and the residual test."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Generate the data from an NFW halo (V200 130 km/s, c 10).",
+    "predict": "Does BIC switch?",
+    "expected": "1. NFW truth -> BIC picks disk + NFW halo {'disk only': 4281.27, 'disk + cored halo': 74.95, 'disk + NFW halo': 47.84, 'disk + halo + wiggles': 64.97}"
+   },
+   {
+    "task": "Keep only R <= 8 kpc (an optical curve).",
+    "predict": "Can BIC still tell disk from halo?",
+    "expected": "2. R <= 8 kpc -> disk + cored halo {'disk only': (92.21, 1.504), 'disk + cored halo': (12.5, 1.19)} (bic, mass-to-light)"
+   }
+  ],
+  "equivalents": [
+   "scipy.optimize.least_squares + scipy.special (i0, i1, k0, k1) for the disk.",
+   "lmfit (AIC/BIC reported per fit).",
+   "Bayesian evidence (dynesty, nested sampling) for formal model comparison."
+  ],
+  "learningTools": [
+   {
+    "name": "JupyterLab (+ JupyterLab Desktop)",
+    "role": "CHECK",
+    "exercise": "In a notebook: load solution/compare.py by path, fit the four models to galaxy.observed(), and plot the data with each model curve and the disk-only curve.",
+    "expected": "Disk only falls after ~6 kpc while the data stay flat (runs Z -6.05); the cored halo and wiggles look alike in-sample - the lab's chi2 43.24 vs 40.63. Pending a manual run.",
+    "mac": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or the JupyterLab Desktop arm64 installer",
+    "windows": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or winget install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   }
+  ],
+  "inRealSystems": [
+   "SPARC and THINGS mass-model studies compare halo profiles galaxy by galaxy with chi^2 and information criteria.",
+   "Exoplanet and cosmology pipelines use BIC/AIC or Bayesian evidence to choose model complexity."
+  ],
+  "useWhen": "Use information criteria plus residual tests whenever models of different complexity compete; validate the rule on simulations.",
+  "caution": "Synthetic data shaped like NGC 3198; the real SPARC curve has no stated licence and is not vendored. Do not read physics conclusions from this lab's numbers.",
+  "checkpoint": "PASS: shipped select() picks wiggles; after your fix test_build_task + test_fitness pass with BUILD_TARGET=mine (halo model >= 95 %, residuals pass).",
+  "checkYourself": [
+   {
+    "q": "Why does the wiggles model have the lowest chi^2?",
+    "a": "Six parameters can bend to the noise; chi^2 never increases when you add parameters."
+   },
+   {
+    "q": "What does the runs test add to BIC?",
+    "a": "BIC compares models; the runs test checks that the chosen one leaves no systematic pattern."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Navarro, Frenk & White 1996",
+    "url": "https://arxiv.org/abs/astro-ph/9508025"
+   },
+   {
+    "title": "Freeman 1970, ApJ 160, 811 (ADS scan)",
+    "url": "https://articles.adsabs.harvard.edu/pdf/1970ApJ...160..811F"
+   },
+   {
+    "title": "Begeman 1989, HI rotation curves of spiral galaxies (NGC 3198)",
+    "url": "https://sites.ualberta.ca/~pogosyan/teaching/ASTRO_322/WINTER_2008/Begeman1989A+A...223...47B.pdf"
+   },
+   {
+    "title": "Lelli, McGaugh & Schombert 2016, SPARC",
+    "url": "https://arxiv.org/abs/1606.09251"
+   },
+   {
+    "title": "Schwarz 1978, Estimating the dimension of a model",
+    "url": "https://projecteuclid.org/journals/annals-of-statistics/volume-6/issue-2/Estimating-the-Dimension-of-a-Model/10.1214/aos/1176344136.full"
+   },
+   {
+    "title": "NIST/SEMATECH e-Handbook: Runs test",
+    "url": "https://www.itl.nist.gov/div898/handbook/eda/section3/eda35d.htm"
+   }
+  ],
+  "next": "L400 #21 Open data and science software practice: VO standards, licences, citation and validation: publish the result so others can read, cite and reuse it - correctly licensed.",
+  "validation": {
+   "status": "validated-local",
+   "how": "compare.py, solution/compare.py, try_it.py and unittests (Ran 10 tests ... OK (skipped=1)) ran locally 3x; BUILD_TARGET=mine fails (failures=12). The cored-halo rotation curve is derived in the lab (enclosed-mass integral of rho0/(1 + (r/rc)^2), then V^2 = GM/R) - sketch in the README section 'Derived formula'; checked against a numerical mass integral.",
+   "pendingCi": [
+    "labs/L400/20-model-comparison/bessel_scipy.py (scipy 1.18.1)",
+    "test_compare.py: test_bessel_against_scipy",
+    "real SPARC NGC 3198 data (manual; licence not stated)",
+    "macOS and Windows runs",
+    "JupyterLab exercise (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L400/20-model-comparison.md",
+  "conceptSummary": "Fit physical mass models, then choose with a rule that charges each parameter (BIC) and check the residuals for structure. Test the rule on many simulated galaxies: lowest chi^2 always crowns the most flexible model.",
+  "seeAlso": [
+   "astronomy L300 #15 Fitting with honest uncertainty: least squares, bootstrap and MCMC for a transit: the error bars BIC depends on.",
+   "astronomy L100 #5 Orbits: Kepler's laws, Kepler's equation and a planet's position: Kepler's laws: what a falling curve would look like without dark matter.",
+   "simulation L300 #13 Calibration: fit to data, validate on data you did not fit: the same over-fitting trap, solved there with a holdout."
+  ]
+ },
+ {
+  "id": "open-data-practice",
+  "number": 21,
+  "level": "L400",
+  "title": "Open data and science software practice: VO standards, licences, citation and validation",
+  "phase": "Design",
+  "category": "open science",
+  "description": "Build a data release (VOTable 1.5, CITATION.cff, SPDX licence, verbatim credits, SHA-256 manifest) from Gaia, TESS and own inputs, and gate it with an automated check.",
+  "outcome": "You can package a release that VO tools read, people can cite, and that keeps every input's licence conditions - and prove it with a release gate.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3 (stdlib xml for VOTable); astropy 8.0.2 votable parser and cffconvert 2.0.0 in CI; TOPCAT/STILTS 4.10-8 for votlint (manual)",
+  "estimatedTime": "60 minutes",
+  "overview": [
+   "Every file present and well formed, and still wrong: the release dropped Gaia's NonCommercial term. A gate catches what a checklist misses."
+  ],
+  "prerequisites": [
+   "Lesson 16 (Reproducible data pipelines: provenance, caching and versioned inputs)",
+   "Lesson 19 (Big catalogues: sky indexing, cone-search performance and TAP/ADQL)"
+  ],
+  "glossary": [
+   {
+    "term": "VOTable",
+    "meaning": "IVOA XML table format with units and UCDs per FIELD (1.5 is the current Recommendation)."
+   },
+   {
+    "term": "CITATION.cff",
+    "meaning": "Citation File Format 1.2.0; required keys cff-version, message, title, authors."
+   },
+   {
+    "term": "SPDX identifier",
+    "meaning": "Standard short licence id (CC-BY-4.0, CC-BY-NC-4.0, ...); LicenseRef-... for others."
+   }
+  ],
+  "concepts": [
+   "Derived data keep their inputs' conditions (NC, SA).",
+   "Credits are quoted verbatim.",
+   "Units and UCDs travel with the data (VOTable).",
+   "A manifest proves the bytes; a gate proves the release."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python release.py`",
+    "mac": "cd labs/L400/21-open-data-practice\npython release.py",
+    "windows": "cd labs\\L400\\21-open-data-practice\npython release.py",
+    "expected": "release licence: CC-BY-4.0, six files, and one problem: 'licence: release CC-BY-4.0 drops the NC condition of input gaia_dr3_astrometry (LicenseRef-CC-BY-NC-3.0-IGO)'.",
+    "ifNot": "release/ is git-ignored; delete it any time."
+   },
+   {
+    "title": "Read the release",
+    "detail": "Open release/catalogue.vot (FIELD units and UCDs), CITATION.cff, ACKNOWLEDGEMENTS.md (Gaia DR3 and TESS texts verbatim), metadata.json (inputs + licences), MANIFEST.json.",
+    "expected": "VOTABLE version=\"1.5\"; 6 FIELDs (source_id, ra, dec, parallax, tmag, period_d); 8 rows.",
+    "ifNot": "Rows are synthetic stand-ins; the licences and credit texts are the providers' real ones."
+   },
+   {
+    "title": "Failure lab: the licence dropped NC",
+    "detail": "Shipped release_licence() always answers CC-BY-4.0; Gaia DR3 is CC BY-NC 3.0 IGO.",
+    "expected": "check() returns the NC problem; a 'files present' review would pass it.",
+    "ifNot": "No problem reported: you ran the solution."
+   },
+   {
+    "title": "Propagate restrictions (build task)",
+    "detail": "Keep every restriction an input carries (NC, SA); stop with 'needs human review' when NC and SA conflict.",
+    "expected": "release licence: CC-BY-NC-4.0; problems: [].",
+    "ifNot": "CC-BY-NC-SA-4.0 for NC + SA inputs is wrong: a BY-SA adaptation must stay BY-SA."
+   },
+   {
+    "title": "Build task: check your own file",
+    "detail": "Edit the shipped file, then run the build-task test against it (test_build_task test_fitness).",
+    "mac": "cd labs/L400/21-open-data-practice\nBUILD_TARGET=mine python -m unittest test_build_task test_fitness -v",
+    "windows": "cd labs\\L400\\21-open-data-practice\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task test_fitness -v\nRemove-Item Env:BUILD_TARGET",
+    "expected": "Shipped file: Ran 5 tests ... FAILED (failures=3). After your fix: OK.",
+    "ifNot": "Without BUILD_TARGET the test checks solution/ - make sure the variable is set in the same shell."
+   },
+   {
+    "title": "Measure review options",
+    "detail": "defects.py injects 6 realistic defects (5 with a re-hashed manifest) and asks a 'files present' review and check().",
+    "mac": "cd labs/L400/21-open-data-practice\npython defects.py",
+    "windows": "cd labs\\L400\\21-open-data-practice\npython defects.py",
+    "expected": "caught: A 0/6, B 6/6, each with a specific message.",
+    "ifNot": "If B catches everything only via the manifest, the defects were not re-hashed."
+   }
+  ],
+  "code": "\"\"\"L400 open-data practice: build a citable, licence-correct data release and check it like CI would.\n\nA release folder holds catalogue.vot (VOTable 1.5), CITATION.cff (Citation File Format 1.2.0), LICENSE.txt,\nACKNOWLEDGEMENTS.md (every input's credit text, verbatim), metadata.json (inputs + licences) and MANIFEST.json\n(SHA-256 of every file). check() is the fitness function: a list of problems, empty = publishable.\nNot legal advice: licence rules here are conservative defaults that flag a release for human review.\npython release.py   ->  builds release/ and prints the check\n\"\"\"\nimport hashlib\nimport json\nfrom pathlib import Path\n\nimport inputs\nimport votable\n\nHERE = Path(__file__).resolve().parent\nSPDX_OK = {\"CC0-1.0\", \"CC-BY-4.0\", \"CC-BY-SA-4.0\", \"CC-BY-NC-4.0\", \"CC-BY-NC-SA-4.0\", \"MIT\", \"BSD-3-Clause\"}\nRESTRICTIVE = [\"NC\", \"SA\"]  # restrictions a derived product must keep (CC deeds: NonCommercial, ShareAlike)\n\n\ndef release_licence(ins):\n    \"\"\"Licence of the derived product.\"\"\"\n    return \"CC-BY-4.0\"\n\n\ndef citation_cff(licence):\n    return \"\\n\".join([\"cff-version: 1.2.0\", 'message: \"If you use this catalogue, please cite it as below.\"',\n                      'title: \"Astro KB lab 21 example release\"', \"authors:\", '  - family-names: \"Learner\"',\n                      '    given-names: \"A.\"', 'version: \"1.0.0\"', 'date-released: \"2026-10-29\"',\n                      f\"license: {licence}\"]) + \"\\n\"\n\n\ndef build(out):\n    out = Path(out)\n    out.mkdir(parents=True, exist_ok=True)\n    lic = release_licence(inputs.INPUTS)\n    votable.write(out / \"catalogue.vot\", inputs.rows())\n    (out / \"CITATION.cff\").write_text(citation_cff(lic), encoding=\"utf-8\")\n    (out / \"LICENSE.txt\").write_text(f\"{lic}\\n\", encoding=\"utf-8\")\n    (out / \"ACKNOWLEDGEMENTS.md\").write_text(\"\\n\\n\".join(i[\"credit\"] for i in inputs.INPUTS) + \"\\n\", encoding=\"utf-8\")\n    meta = {\"inputs\": [{k: i[k] for k in (\"name\", \"licence\", \"family\")} for i in inputs.INPUTS], \"licence\": lic}\n    (out / \"metadata.json\").write_text(json.dumps(meta, indent=1) + \"\\n\", encoding=\"utf-8\")\n    files = sorted(p.name for p in out.iterdir() if p.name != \"MANIFEST.json\")\n    manifest = {f: hashlib.sha256((out / f).read_bytes()).hexdigest() for f in files}\n    (out / \"MANIFEST.json\").write_text(json.dumps(manifest, indent=1) + \"\\n\", encoding=\"utf-8\")\n    return out\n\n\ndef cff_keys(text):\n    return {line.split(\":\")[0] for line in text.splitlines() if line and not line.startswith(\" \") and \":\" in line}\n\n\ndef check(folder):\n    \"\"\"Every problem a reviewer (or CI) would raise; [] = ready to publish.\"\"\"\n    d, problems = Path(folder), []\n    manifest = json.loads((d / \"MANIFEST.json\").read_text(encoding=\"utf-8\"))\n    for name, digest in manifest.items():\n        if not (d / name).exists() or hashlib.sha256((d / name).read_bytes()).hexdigest() != digest:\n            problems.append(f\"manifest: {name} missing or changed\")\n    cff = (d / \"CITATION.cff\").read_text(encoding=\"utf-8\")\n    problems += [f\"citation: required key {k!r} missing\" for k in (\"cff-version\", \"message\", \"title\", \"authors\")\n                 if k not in cff_keys(cff)]\n    meta = json.loads((d / \"metadata.json\").read_text(encoding=\"utf-8\"))\n    lic = (d / \"LICENSE.txt\").read_text(encoding=\"utf-8\").strip()\n    if lic not in SPDX_OK and not lic.startswith(\"LicenseRef-\"):\n        problems.append(f\"licence: {lic!r} is not an SPDX id\")\n    for i in meta[\"inputs\"]:\n        for r in RESTRICTIVE:\n            if r in i[\"family\"].split(\"-\") and f\"-{r}\" not in lic:\n                problems.append(f\"licence: release {lic} drops the {r} condition of input {i['name']} ({i['licence']})\")\n    ack = (d / \"ACKNOWLEDGEMENTS.md\").read_text(encoding=\"utf-8\")\n    problems += [f\"credit: verbatim acknowledgement for {i['name']} missing\" for i in inputs.INPUTS\n                 if i[\"credit\"] not in ack]\n    return problems + votable.check(d / \"catalogue.vot\")\n\n\nif __name__ == \"__main__\":\n    folder = build(HERE / \"release\")\n    problems = check(folder)\n    print(\"release licence:\", (folder / \"LICENSE.txt\").read_text(encoding=\"utf-8\").strip())\n    print(json.dumps({\"files\": sorted(p.name for p in folder.iterdir()), \"problems\": problems}, indent=1))\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "inputs.py (helper)",
+    "detail": "Three inputs with real licences and verbatim credit texts (Gaia DR3, TESS/MAST, own); rows are synthetic stand-ins."
+   },
+   {
+    "title": "votable.py (helper)",
+    "detail": "Minimal VOTable 1.5 TABLEDATA writer and a structural checker (FIELD unit/ucd/datatype, TD count, value parsing)."
+   },
+   {
+    "title": "release_licence()",
+    "detail": "The fault: always CC-BY-4.0. The fix: keep NC/SA from inputs; NC + SA -> ValueError (human review)."
+   },
+   {
+    "title": "citation_cff()",
+    "detail": "CFF 1.2.0 with the required keys plus version, date-released and license."
+   },
+   {
+    "title": "build()",
+    "detail": "Writes catalogue.vot, CITATION.cff, LICENSE.txt, ACKNOWLEDGEMENTS.md, metadata.json, then MANIFEST.json with SHA-256 of each file."
+   },
+   {
+    "title": "check()",
+    "detail": "The gate: manifest hashes, CFF keys, SPDX id, restriction propagation, verbatim credits, VOTable structure - a list of problems, [] = publish."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped release_licence() returns CC-BY-4.0 regardless of the inputs.",
+   "symptom": "check(): 'licence: release CC-BY-4.0 drops the NC condition of input gaia_dr3_astrometry (LicenseRef-CC-BY-NC-3.0-IGO)'; every file is present and well formed.",
+   "fix": "Your build task: propagate NC/SA restrictions; conflict -> human review (solution/release.py) -> CC-BY-NC-4.0, check() == [].",
+   "proof": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness: shipped -> FAILED (failures=3); solution -> OK. TestFailureLab in test_release.py keeps the fault reproducible."
+  },
+  "tradeOffs": [
+   {
+    "option": "Manual checklist review",
+    "gains": "Human judgement on edge cases",
+    "costs": "Caught 0/6 seeded defects automatically",
+    "chooseWhen": "Never alone; as the human-review step"
+   },
+   {
+    "option": "Automated release gate (check())",
+    "gains": "6/6 defects with specific messages; runs on every build",
+    "costs": "Rules must be maintained; structure, not full schema",
+    "chooseWhen": "Every release (this design)"
+   },
+   {
+    "option": "Gate + external validators + DOI",
+    "gains": "Schema-level validation (astropy, votlint, cffconvert), persistent identifier",
+    "costs": "Extra tools, network, accounts",
+    "chooseWhen": "Public releases cited in papers"
+   }
+  ],
+  "buildTask": {
+   "task": "Fix release_licence() in release.py so the release keeps every restriction its inputs carry.",
+   "hints": [
+    "Each input has a family such as BY, BY-NC, BY-SA, PD; collect restrictions from RESTRICTIVE = ['NC', 'SA'].",
+    "Build CC-BY[-NC][-SA]-4.0 and check it is in SPDX_OK.",
+    "NC + SA cannot both be kept: raise ValueError for human review."
+   ],
+   "solution": "labs/L400/21-open-data-practice/solution/release.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped: FAILED (failures=3); after your fix: OK."
+  },
+  "designBrief": {
+   "context": "Publish a small derived catalogue built from Gaia DR3 astrometry (CC BY-NC 3.0 IGO), TESS light curves via MAST (public domain, acknowledgement requested) and own photometry (CC-BY-4.0).",
+   "constraints": [
+    "VO tools read it with units and UCDs (VOTable)",
+    "citable: CITATION.cff with the required keys",
+    "an SPDX licence that keeps every input restriction",
+    "every provider's credit text verbatim",
+    "verifiable bytes (SHA-256 manifest)",
+    "no release without a passing gate; conflicts go to a person"
+   ],
+   "question": "How do we make sure every release meets these before it is published?"
+  },
+  "options": [
+   {
+    "name": "A. 'Required files present' review",
+    "description": "Check the six files exist.",
+    "evidence": "catches 0/6 seeded defects.",
+    "verdict": "Rejected as a gate."
+   },
+   {
+    "name": "B. Automated check() gate in CI",
+    "description": "Manifest, CFF keys, SPDX, NC/SA propagation, verbatim credits, VOTable structure.",
+    "evidence": "catches 6/6 seeded defects; check() == [] for the fixed release.",
+    "verdict": "Chosen (ADR 0001)."
+   },
+   {
+    "name": "C. B + external validators + DOI deposit",
+    "description": "astropy.io.votable verify='exception', cffconvert --validate, STILTS votlint, Zenodo DOI.",
+    "evidence": "pending-ci / manual; not measured here.",
+    "verdict": "Run as a second opinion in CI; DOI for public releases."
+   }
+  ],
+  "decisionRecord": "labs/L400/21-open-data-practice/decisions/0001-release-gate.md",
+  "fitnessFunction": {
+   "what": "Builds the release and runs the gate, then re-runs the 6 seeded defects.",
+   "test": "labs/L400/21-open-data-practice/test_fitness.py",
+   "threshold": "check() == [] for the release; every seeded defect caught"
+  },
+  "scalingLimits": [
+   "Many inputs with exotic licences (ODbL, custom archive terms): the family table cannot express them (signal: ValueError / LicenseRef ids) - a person reviews and adds a row.",
+   "Provider credit texts change per data release (signal: verbatim-credit check fails after an input update) - re-quote with source and date.",
+   "Large tables: TABLEDATA XML grows ~10x vs binary (signal: release size, parse time) - VOTable BINARY2 or FITS/Parquet with the same metadata."
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/21-open-data-practice/release.py",
+    "purpose": "main lab code (ships the unfixed release_licence())"
+   },
+   {
+    "path": "labs/L400/21-open-data-practice/inputs.py",
+    "purpose": "inputs with real licences and credits (synthetic rows)"
+   },
+   {
+    "path": "labs/L400/21-open-data-practice/votable.py",
+    "purpose": "VOTable writer/checker"
+   },
+   {
+    "path": "labs/L400/21-open-data-practice/defects.py",
+    "purpose": "seeded defects for the options evidence"
+   },
+   {
+    "path": "labs/L400/21-open-data-practice/validate_external.py",
+    "purpose": "astropy + cffconvert validators (pending-ci)"
+   },
+   {
+    "path": "labs/L400/21-open-data-practice/solution/release.py",
+    "purpose": "buildTask solution"
+   },
+   {
+    "path": "labs/L400/21-open-data-practice/decisions/0001-release-gate.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/21-open-data-practice/test_fitness.py",
+    "purpose": "fitness function"
+   },
+   {
+    "path": "labs/L400/21-open-data-practice/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L400/21-open-data-practice/test_release.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L400/21-open-data-practice/test_build_task.py",
+    "purpose": "buildTask check"
+   }
+  ],
+  "expectedResults": [
+   "Shipped release flagged: NC dropped",
+   "Fixed release: CC-BY-NC-4.0, check() == []",
+   "Gate catches 6/6 seeded defects; files-present review 0/6"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 11 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness (shipped)",
+    "expected": "FAILED (failures=3)"
+   },
+   {
+    "action": "votable.check() after replacing a source_id with 'x1'",
+    "expected": "['votable: row 1 source_id=\\'x1\\' is not long']"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "TOPCAT shows no units",
+    "action": "FIELD unit attributes missing; check() reports 'has no unit'."
+   },
+   {
+    "symptom": "Credit check fails after editing ACKNOWLEDGEMENTS.md",
+    "action": "Credits must be verbatim; edit inputs.py (single source) and rebuild."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Add a CC BY-SA 4.0 input to the Gaia + TESS + own inputs.",
+    "predict": "Which licence must the release carry?",
+    "expected": "1. + BY-SA input -> ValueError: NonCommercial and ShareAlike inputs conflict: needs human review"
+   },
+   {
+    "task": "Drop the Gaia input.",
+    "predict": "Licence and problems?",
+    "expected": "2. without Gaia -> CC-BY-4.0 | problems: []"
+   }
+  ],
+  "equivalents": [
+   "astropy.io.votable (parse with verify='exception', from_table/writeto).",
+   "STILTS votlint and TOPCAT for VOTable checking; cffconvert for CITATION.cff.",
+   "Zenodo (GitHub integration) for DOIs; ASCL for software entries."
+  ],
+  "learningTools": [
+   {
+    "name": "TOPCAT (+ STILTS)",
+    "role": "CHECK",
+    "exercise": "Open release/catalogue.vot (File > Load Table); look at Columns (units, UCDs). Then run: stilts votlint release/catalogue.vot",
+    "expected": "TOPCAT should list the 6 FIELDs with units deg, deg, mas, mag, d and the UCDs the lab writes (8 rows); votlint should report no errors for the fixed release. Pending a manual run.",
+    "mac": "brew install --cask topcat   (4.10-8; installs the topcat and stilts commands)",
+    "windows": "Download topcat-full.jar from the TOPCAT page, then: java -jar topcat-full.jar   (needs Java 8 or later)",
+    "licence": "GPL (some library code LGPL) (OSI: yes)",
+    "url": "https://www.star.bris.ac.uk/mbt/topcat/"
+   }
+  ],
+  "inRealSystems": [
+   "Gaia, MAST and survey archives publish licence and acknowledgement texts per data release.",
+   "Astropy, Siril and Stellarium ship CITATION.cff / codemeta and ask users to cite."
+  ],
+  "useWhen": "Use a release gate for every data product others will reuse; route licence conflicts to a person.",
+  "caution": "The licence rules are conservative defaults that flag releases for human review - not legal advice. Gaia data are CC BY-NC 3.0 IGO: commercial use needs ESA's terms.",
+  "checkpoint": "PASS: the shipped release is flagged for dropping NC; after your fix test_build_task + test_fitness pass with BUILD_TARGET=mine (gate clean, 6/6 defects caught).",
+  "checkYourself": [
+   {
+    "q": "Why is CC-BY-NC-SA-4.0 not the answer for a BY-NC + BY-SA mix?",
+    "a": "BY-SA requires adaptations to stay BY-SA (which allows commercial use) - NC cannot be added; a person must decide."
+   },
+   {
+    "q": "Why re-hash the manifest when seeding defects?",
+    "a": "Otherwise every defect is caught by the manifest alone and the other checks are never tested."
+   }
+  ],
+  "sources": [
+   {
+    "title": "ESA Gaia: data licence (CC BY-NC 3.0 IGO)",
+    "url": "https://www.cosmos.esa.int/web/gaia-users/license"
+   },
+   {
+    "title": "Gaia DR3 credit and citation instructions",
+    "url": "https://gea.esac.esa.int/archive/documentation/GDR3/Miscellaneous/sec_credit_and_citation_instructions/"
+   },
+   {
+    "title": "MAST: Data Use",
+    "url": "https://archive.stsci.edu/publishing/data-use"
+   },
+   {
+    "title": "IVOA VOTable 1.5 (DocView)",
+    "url": "https://ivoa.github.io/IvoaDocViewSite/idoc/VOTable/VOTable.html"
+   },
+   {
+    "title": "Citation File Format 1.2.0 schema guide",
+    "url": "https://github.com/citation-file-format/citation-file-format/blob/main/schema-guide.md"
+   },
+   {
+    "title": "Wilkinson et al. 2016, FAIR Guiding Principles",
+    "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC4792175/"
+   },
+   {
+    "title": "Smith, Katz & Niemeyer 2016, Software citation principles",
+    "url": "https://force11.org/info/software-citation-principles-published-2016/"
+   }
+  ],
+  "next": "Capstone #22 Capstone: an exoplanet transit search pipeline: put search, vetting, fitting, provenance and a gated agent together.",
+  "validation": {
+   "status": "validated-local",
+   "how": "release.py, solution/release.py, defects.py, try_it.py and unittests (Ran 11 tests ... OK (skipped=1)) ran locally; BUILD_TARGET=mine fails (failures=3).",
+   "pendingCi": [
+    "labs/L400/21-open-data-practice/validate_external.py (astropy 8.0.2; cffconvert 2.0.0 if on PATH)",
+    "test_release.py: test_astropy_reads_the_votable",
+    "STILTS votlint / TOPCAT (manual)",
+    "macOS and Windows runs"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L400/21-open-data-practice.md",
+  "conceptSummary": "A release is a contract in files: VOTable with units, CITATION.cff, an SPDX licence that keeps every input restriction, verbatim credits and a SHA-256 manifest. An automated gate catches what a checklist misses; licence conflicts go to a person.",
+  "seeAlso": [
+   "astronomy L300 #16 Reproducible data pipelines: provenance, caching and versioned inputs: the manifest is the same content hashing as the pipeline cache.",
+   "astronomy L400 #19 Big catalogues: sky indexing, cone-search performance and TAP/ADQL: Gaia rows from a TAP query carry CC BY-NC 3.0 IGO terms.",
+   "simulation L400 #21 Model governance and V&V: model cards checked against evidence: a model card checked by code is the modelling twin of this release gate.",
+   "cryptography L300 #14 Signing the software supply chain: sign the manifest to prove who published the release."
+  ]
+ },
+ {
+  "id": "capstone-transit-search",
+  "number": 22,
+  "level": "Capstone",
+  "title": "Capstone: an exoplanet transit search pipeline",
+  "phase": "Capstone",
+  "category": "exoplanets",
+  "description": "Search 12 synthetic TESS-like light curves for transiting planets: detrend, BLS-lite, vetting by code, MCMC fits (lesson 15), provenance (lesson 16) and a local model that explains but never decides.",
+  "outcome": "You can run and defend an end-to-end transit search: recover real planets, reject eclipsing binaries and systematics with recorded reasons, fit honest depths, and keep a model's explanation behind a code gate.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; imports L300 #15 (transit_fit, mcmc); lightkurve 2.6.0 (real TESS data, network) in CI; optional local model via Ollama",
+  "estimatedTime": "3-4 hours",
+  "overview": [
+   "Three planets hide among twelve stars with binaries, spots and ramps; code decides every verdict and prints a scorecard."
+  ],
+  "prerequisites": [
+   "Lesson 10 (Light curves and periods: Lomb-Scargle, transits vs variable stars)",
+   "Lesson 15 (Fitting with honest uncertainty: least squares, bootstrap and MCMC for a transit)",
+   "Lesson 16 (Reproducible data pipelines: provenance, caching and versioned inputs)",
+   "Lesson 18 (Time-domain alerts: difference detection, alert schema and broker filters)"
+  ],
+  "glossary": [
+   {
+    "term": "BLS",
+    "meaning": "Box Least Squares: search for periodic box-shaped dips (Kovacs, Zucker & Mazeh 2002)."
+   },
+   {
+    "term": "SDE",
+    "meaning": "Signal detection efficiency: (peak - mean) / std of the periodogram."
+   },
+   {
+    "term": "vetting",
+    "meaning": "Tests that separate planet candidates from false positives (odd/even depths, secondary eclipse, duration)."
+   }
+  ],
+  "concepts": [
+   "Detrend without eating transits; mask them and re-detrend.",
+   "Search wide, then let deterministic rules reject impostors with reasons.",
+   "Fit survivors with honest uncertainties.",
+   "Record provenance; let a model explain behind a gate."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python run_capstone.py`",
+    "mac": "cd labs/L400/22-capstone\npython run_capstone.py",
+    "windows": "cd labs\\L400\\22-capstone\npython run_capstone.py",
+    "expected": "6 milestone lines, all pass true, then {\"scorecard\": \"PASS\", \"passed\": 6, \"total\": 6}.",
+    "ifNot": "First run writes data/ (seeded); ~30 s."
+   },
+   {
+    "title": "M1-M2: detrend and search",
+    "detail": "pipeline.detrend() (0.75 d running median) and pipeline.bls() (6000 frequencies x 4 durations, 15-min phase bins).",
+    "expected": "quiet-star rms / injected noise 0.973-1.02; periods of S01-S05 within 0.05 %.",
+    "ifNot": "A planet missed: check the window (0.25 d eats a 4.2 h transit - tryIt 1)."
+   },
+   {
+    "title": "M3: vetting (code decides)",
+    "detail": "pipeline.vet(): SNR >= 10, SDE >= 7, >= 2 transits, odd/even within 3 sigma, no secondary at phase 0.5, plausible duration.",
+    "expected": "candidates S01, S02, S03; S04 'secondary eclipse at phase 0.5 (5217 ppm)'; S05 'odd/even depths differ (5937 vs 11603 ppm)'.",
+    "ifNot": "S05 as a planet: the odd/even rule is off (tryIt 2)."
+   },
+   {
+    "title": "M4: fits",
+    "detail": "pipeline.fit(): fold, lesson 15 LM fit of the trapezoid, then mcmc.run with a free noise scale on the folded data.",
+    "expected": "depths 8169 +/- 76, 2940 +/- 63, 5096 +/- 107 ppm (injected 8000, 3000, 5000); acceptance 0.24-0.29.",
+    "ifNot": "Depth biased low: re-detrend with the transits masked (ADR 0001)."
+   },
+   {
+    "title": "M5-M6: provenance and the agent",
+    "detail": "prov.jsonl records each input's SHA-256 and parameters; agent_explain.py sends facts to the model and blocks unverified numbers and over-claims.",
+    "expected": "12 inputs hashed (S01 3a31a29c1689); 6 explanations, 0 published, over-claims blocked for S04, S05, S06, unverified '1.8'.",
+    "ifNot": "Agent errors: tests use only the fake server in ../_agent; --real-model needs a running Ollama."
+   },
+   {
+    "title": "Tests and fitness functions",
+    "detail": "Milestone tests and fitness functions share one search run per process.",
+    "mac": "cd labs/L400/22-capstone\npython -m unittest -v",
+    "windows": "cd labs\\L400\\22-capstone\npython -m unittest -v",
+    "expected": "Ran 13 tests ... OK (about 60 s).",
+    "ifNot": "Delete data/ to regenerate the seeded light curves (same bytes)."
+   }
+  ],
+  "code": "\"\"\"L400 capstone: an exoplanet transit search - synthetic TESS-like light curves to a vetted, fitted report.\n\nM1 load + detrend -> M2 BLS-lite search -> M3 vetting -> M4 MCMC fit (lesson 15) -> M5 provenance and\nreproducibility (lesson 16) -> M6 agent explanation (agent explains, code decides). Prints a JSON-lines scorecard.\npython run_capstone.py            (fake model for M6; --real-model uses LOCAL_MODEL_URL / LOCAL_MODEL)\n\"\"\"\nimport argparse\nimport functools\nimport hashlib\nimport json\nimport sys\nfrom pathlib import Path\n\nimport numpy as np\n\nimport agent_explain\nimport make_data\nimport pipeline\n\nHERE = Path(__file__).resolve().parent\nDATA = HERE / \"data\"\n\n\n@functools.lru_cache(maxsize=1)\ndef analyse_all():\n    \"\"\"Run the whole search once per process (tests share it). Returns {star: result} and provenance records.\"\"\"\n    if not (DATA / \"S12.csv\").exists():\n        make_data.write(DATA)\n    results, prov = {}, []\n    for star in sorted(make_data.STARS):\n        path = DATA / f\"{star}.csv\"\n        t, f, _ = pipeline.load(path)\n        flat = pipeline.detrend(t, f)\n        _, cand = pipeline.bls(t, flat)\n        flat = pipeline.detrend(t, f, mask=pipeline.in_transit(t, cand))  # re-detrend with the transit masked\n        verdict, reasons = pipeline.vet(t, flat, cand)\n        rms = 1.4826 * np.median(np.abs(flat - np.median(flat))) * 1e6\n        res = {\"star\": star, \"period_d\": round(cand[\"period_d\"], 4), \"depth_ppm\": round(cand[\"depth\"] * 1e6),\n               \"snr\": cand[\"snr\"], \"sde\": cand[\"sde\"], \"verdict\": verdict, \"reasons\": reasons, \"rms_ppm\": round(rms)}\n        if verdict == \"planet_candidate\":\n            res[\"fit\"] = pipeline.fit(t, flat, cand)\n        results[star] = res\n        prov.append({\"activity\": \"search\", \"used\": path.name, \"sha256\": hashlib.sha256(path.read_bytes()).hexdigest()[:12],\n                     \"params\": {\"window_d\": pipeline.WINDOW_D, \"snr_min\": pipeline.SNR_MIN, \"sde_min\": pipeline.SDE_MIN},\n                     \"generated\": hashlib.sha256(json.dumps(res, sort_keys=True).encode()).hexdigest()[:12]})\n    return results, prov\n\n\ndef score(name, passed, **measures):\n    line = {\"milestone\": name, \"pass\": bool(passed), **measures}\n    print(json.dumps(line))\n    return line\n\n\ndef main(real_model=False):\n    results, prov = analyse_all()\n    truth = json.loads((DATA / \"truth.json\").read_text(encoding=\"utf-8\"))\n    planets = [s for s, v in truth.items() if v[\"kind\"] == \"planet\"]\n    lines = []\n    quiet = {s: results[s][\"rms_ppm\"] / truth[s][\"noise_ppm\"] for s, v in truth.items() if v[\"kind\"] in (\"quiet\", \"ramp\")}\n    lines.append(score(\"M1 load + detrend\", all(0.85 <= r <= 1.15 for r in quiet.values()),\n                       rms_over_noise={k: round(v, 3) for k, v in quiet.items()}))\n    perr = {s: round(abs(results[s][\"period_d\"] / truth[s][\"period_d\"] - 1) * 100, 3) for s in planets + [\"S04\", \"S05\"]}\n    lines.append(score(\"M2 BLS search\", all(v < 0.1 for v in perr.values()), period_error_percent=perr))\n    found = sorted(s for s, r in results.items() if r[\"verdict\"] == \"planet_candidate\")\n    lines.append(score(\"M3 vetting\", found == planets, candidates=found,\n                       rejected={s: r[\"reasons\"][0] for s, r in results.items() if r[\"verdict\"] == \"rejected\"\n                                 and truth[s][\"kind\"].startswith(\"eb\")}))\n    sig = {s: round((results[s][\"fit\"][\"depth_ppm\"] - truth[s][\"depth\"] * 1e6) / results[s][\"fit\"][\"depth_err_ppm\"], 2)\n           for s in found if \"fit\" in results[s]}\n    acc = [results[s][\"fit\"][\"acceptance\"] for s in sig]\n    lines.append(score(\"M4 MCMC fit\", sig and all(abs(v) <= 3 for v in sig.values()) and all(0.2 <= a <= 0.5 for a in acc),\n                       depth_minus_truth_in_sigma=sig, fits={s: results[s][\"fit\"] for s in sig}))\n    t, f, _ = pipeline.load(DATA / \"S01.csv\")\n    again = pipeline.bls(t, pipeline.detrend(t, f))[1][\"period_d\"]\n    lines.append(score(\"M5 provenance + reproducibility\", len(prov) == 12 and round(again, 4) == results[\"S01\"][\"period_d\"],\n                       inputs_hashed=len(prov), s01_sha256=prov[0][\"sha256\"], rerun_period_d=round(again, 4)))\n    server, url = None, None\n    if not real_model:\n        sys.path.insert(0, str(HERE.parent / \"_agent\"))\n        import fake_model_server\n        server, url = fake_model_server.start_in_thread()\n    try:\n        exps = [agent_explain.explain({\"star\": s, \"period_d\": r[\"period_d\"], \"depth_ppm\": r[\"depth_ppm\"],\n                                       \"verdict\": r[\"verdict\"], \"reasons\": \"; \".join(r[\"reasons\"]) or \"none\"},\n                                      base_url=url) for s, r in results.items() if r[\"snr\"] >= pipeline.SNR_MIN]\n    finally:\n        if server:\n            server.shutdown()\n            server.server_close()\n    blocked = all(not e[\"publish\"] for e in exps if e[\"unverified\"] or e[\"overclaim\"])\n    lines.append(score(\"M6 agent explanation\", blocked and sorted(s for s, r in results.items()\n                                                                  if r[\"verdict\"] == \"planet_candidate\") == planets,\n                       explained=len(exps), published=[e[\"star\"] for e in exps if e[\"publish\"]],\n                       overclaims_blocked=[e[\"star\"] for e in exps if e[\"overclaim\"]],\n                       unverified_numbers=sorted({n for e in exps for n in e[\"unverified\"]})))\n    passed = sum(x[\"pass\"] for x in lines)\n    final = {\"scorecard\": \"PASS\" if passed == len(lines) else \"FAIL\", \"passed\": passed, \"total\": len(lines)}\n    print(json.dumps(final))\n    (HERE / \"scorecard.jsonl\").write_text(\"\".join(json.dumps(x) + \"\\n\" for x in lines + [final]), encoding=\"utf-8\")\n    (HERE / \"prov.jsonl\").write_text(\"\".join(json.dumps(x) + \"\\n\" for x in prov), encoding=\"utf-8\")\n    return lines, final\n\n\nif __name__ == \"__main__\":\n    ap = argparse.ArgumentParser()\n    ap.add_argument(\"--real-model\", action=\"store_true\")\n    main(ap.parse_args().real_model)\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "make_data.py",
+    "detail": "12 seeded light curves on a 27-day, 10-min grid with a gap; planets via lesson 15's trapezoid model; EBs, a rotator, a ramp; truth.json for scoring only."
+   },
+   {
+    "title": "pipeline.detrend() / in_transit()",
+    "detail": "Running median over 0.75 d; second pass excludes the candidate's in-transit points from the median."
+   },
+   {
+    "title": "pipeline.bls()",
+    "detail": "Per trial frequency: phase bins by bincount, wrap-around cumulative sums, box depth / its error for 4 durations; SDE over the periodogram."
+   },
+   {
+    "title": "pipeline.vet()",
+    "detail": "Deterministic rules with reasons; nothing here depends on the model."
+   },
+   {
+    "title": "pipeline.fit()",
+    "detail": "Imports L300 #15 transit_fit.fit_lm and mcmc.run (generalised to any time grid) - reuse, not a copy."
+   },
+   {
+    "title": "analyse_all()",
+    "detail": "One pass over all stars (cached per process) with provenance records: input SHA-256, parameters, output hash."
+   },
+   {
+    "title": "main()",
+    "detail": "Scores M1-M6 against truth.json, runs the gated agent, writes scorecard.jsonl and prov.jsonl."
+   }
+  ],
+  "designBrief": {
+   "context": "One simulated TESS-like sector: 12 stars, 27 days at 10-minute cadence, a mid-sector gap, an instrumental drift and 400-1000 ppm noise; 3 transiting planets among binaries, a spotted star, a ramp and quiet stars.",
+   "constraints": [
+    "recover every injected planet with period error < 0.1 %",
+    "0 false positives among the 9 other stars",
+    "fitted depths within 3 sigma of the injection",
+    "every verdict with recorded reasons, reproducible from hashed inputs",
+    "a local model may explain; it never decides and never sees anything but facts"
+   ],
+   "question": "How do we turn raw light curves into a defensible candidate list with honest parameters?"
+  },
+  "architecture": {
+   "diagram": "labs/L400/22-capstone/architecture.mmd",
+   "summary": "Seeded light curves (make_data.py) feed a 0.75-day running-median detrend (M1) and a BLS-lite search over 6000 frequencies and 4 durations (M2). Each candidate's transits are masked and the raw flux re-detrended before deterministic vetting (M3: SNR/SDE, transit count, odd/even, secondary, duration). Survivors are folded and fitted with lesson 15's trapezoid model and Metropolis sampler (M4). Every input's SHA-256 and the parameters go to prov.jsonl (M5, lesson 16 idea). Finally a local model explains each result from a facts block; code blocks unverified numbers and over-claims (M6, lesson 18 gate). Everything ends in scorecard.jsonl."
+  },
+  "milestones": [
+   {
+    "title": "M1 Load + detrend",
+    "deliverable": "make_data.py (seeded data), pipeline.detrend() with transit masking",
+    "test": "labs/L400/22-capstone/test_capstone.py::M1Data (same bytes; quiet-star rms within 15 % of injected noise)"
+   },
+   {
+    "title": "M2 BLS search",
+    "deliverable": "pipeline.bls() with SNR and SDE",
+    "test": "labs/L400/22-capstone/test_capstone.py::M2Search (periods within 0.1 %; injected box recovered)"
+   },
+   {
+    "title": "M3 Vetting",
+    "deliverable": "pipeline.vet() with reasons",
+    "test": "labs/L400/22-capstone/test_capstone.py::M3Vetting and test_fitness.py::test_no_false_positives"
+   },
+   {
+    "title": "M4 MCMC fit",
+    "deliverable": "pipeline.fit() reusing L300 #15",
+    "test": "labs/L400/22-capstone/test_capstone.py::M4Fit and test_fitness.py::test_depths_within_three_sigma"
+   },
+   {
+    "title": "M5 Provenance + reproducibility",
+    "deliverable": "prov.jsonl (SHA-256 + parameters); deterministic rerun",
+    "test": "labs/L400/22-capstone/test_capstone.py::M5Provenance"
+   },
+   {
+    "title": "M6 Agent explanation",
+    "deliverable": "agent_explain.py gate; scorecard.jsonl",
+    "test": "labs/L400/22-capstone/test_capstone.py::M6Agent and test_fitness.py::test_scorecard_pass_and_agent_gated"
+   }
+  ],
+  "rubric": [
+   {
+    "criterion": "Detrending keeps transits",
+    "measure": "quiet rms / noise; fitted depth bias",
+    "pass": "0.85-1.15; depths within 3 sigma"
+   },
+   {
+    "criterion": "Search finds the planets",
+    "measure": "period error of S01-S03",
+    "pass": "< 0.1 % (observed 0.032-0.049 %)"
+   },
+   {
+    "criterion": "Impostors rejected with reasons",
+    "measure": "false positives among 9 non-planets",
+    "pass": "0, each with a reason"
+   },
+   {
+    "criterion": "Honest parameters",
+    "measure": "(fit - injected) / sigma; MCMC acceptance",
+    "pass": "|z| <= 3; 0.2-0.5"
+   },
+   {
+    "criterion": "Reproducible",
+    "measure": "inputs hashed; rerun period",
+    "pass": "12/12; identical"
+   },
+   {
+    "criterion": "The agent never decides",
+    "measure": "published explanations with unverified numbers or over-claims",
+    "pass": "0; verdicts unchanged"
+   }
+  ],
+  "fitnessFunctions": [
+   {
+    "what": "Recovery of injected planets",
+    "test": "labs/L400/22-capstone/test_fitness.py::test_recovery",
+    "threshold": "3/3 planet_candidate, period error < 0.1 %"
+   },
+   {
+    "what": "No false positives",
+    "test": "labs/L400/22-capstone/test_fitness.py::test_no_false_positives",
+    "threshold": "0 of 9"
+   },
+   {
+    "what": "Honest depths",
+    "test": "labs/L400/22-capstone/test_fitness.py::test_depths_within_three_sigma",
+    "threshold": "|fit - injected| <= 3 sigma"
+   },
+   {
+    "what": "Scorecard and agent gate",
+    "test": "labs/L400/22-capstone/test_fitness.py::test_scorecard_pass_and_agent_gated",
+    "threshold": "PASS 6/6; nothing gated is published"
+   }
+  ],
+  "decisionRecords": [
+   "labs/L400/22-capstone/decisions/0001-detrending.md",
+   "labs/L400/22-capstone/decisions/0002-vetting-rules.md",
+   "labs/L400/22-capstone/decisions/0003-agent-boundary.md"
+  ],
+  "agentAssist": {
+   "task": "After code has vetted every star, a local model explains each result with SNR >= 10 in 2 sentences; code publishes it only if every number is a fact and a rejected candidate is not called a planet.",
+   "prompt": "[[ASTRO-CANDIDATE]] Explain this result in 2 sentences. <facts> star: S05  period_d: 4.799  depth_ppm: ...  verdict: rejected  reasons: odd/even depths differ (5937 vs 11603 ppm) </facts>",
+   "check": "agent_explain.check(): every number token must appear in the facts; a rejected verdict plus 'is a planet' is an over-claim; publish = neither. Verdicts are computed before the call and never read back.",
+   "expected": "explained 6, published [], overclaims_blocked ['S04', 'S05', 'S06'], unverified_numbers ['1.8']",
+   "realModelNote": "python run_capstone.py --real-model uses LOCAL_MODEL_URL / LOCAL_MODEL (default qwen2.5:1.5b via Ollama). Only the facts block is sent - no light curves, no keys. Not run here against a real model."
+  },
+  "learningTools": [
+   {
+    "name": "JupyterLab (+ JupyterLab Desktop)",
+    "role": "CHECK",
+    "exercise": "In a notebook in the capstone folder: from run_capstone import analyse_all; results, prov = analyse_all(); fold S01 at results['S01']['period_d'] and plot it; repeat for S05 at twice its period.",
+    "expected": "S01 shows one clean ~8169 ppm transit; S05 folded at 2 x 4.799 d shows two unequal eclipses (5937 vs 11603 ppm) - the lab's vetting reasons. Pending a manual run.",
+    "mac": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or the JupyterLab Desktop arm64 installer",
+    "windows": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or winget install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   },
+   {
+    "name": "Stellarium",
+    "role": "SEE",
+    "exercise": "Find pi Mensae (the real-data target of fetch_tess.py) from Gurgaon and from Sydney.",
+    "expected": "pi Men (Dec about -80 deg) never rises at Gurgaon (28.5 N) but is circumpolar from Sydney - TESS sees it from space either way. Pending a manual run.",
+    "mac": "brew install --cask stellarium   (26.3, Apple Silicon)",
+    "windows": "winget install -e --id Stellarium.Stellarium   (or the installer from stellarium.org)",
+    "licence": "GPL-2.0 (OSI: yes)",
+    "url": "https://stellarium.org/"
+   },
+   {
+    "name": "TOPCAT (+ STILTS)",
+    "role": "CHECK",
+    "exercise": "Load data/S01.csv (CSV) and plot flux vs time_d; add a column mod(time_d - 1.19, 3.1244) to see the folded transit.",
+    "expected": "The folded plot shows the dip near phase 0 with depth ~0.008 - the BLS result 3.1244 d. Pending a manual run.",
+    "mac": "brew install --cask topcat   (4.10-8; installs the topcat and stilts commands)",
+    "windows": "Download topcat-full.jar from the TOPCAT page, then: java -jar topcat-full.jar   (needs Java 8 or later)",
+    "licence": "GPL (some library code LGPL) (OSI: yes)",
+    "url": "https://www.star.bris.ac.uk/mbt/topcat/"
+   }
+  ],
+  "projectFiles": [
+   {
+    "path": "labs/L400/22-capstone/run_capstone.py",
+    "purpose": "runs M1-M6 and writes the scorecard"
+   },
+   {
+    "path": "labs/L400/22-capstone/pipeline.py",
+    "purpose": "detrend, BLS-lite, vetting, fit"
+   },
+   {
+    "path": "labs/L400/22-capstone/make_data.py",
+    "purpose": "seeded light curves + truth"
+   },
+   {
+    "path": "labs/L400/22-capstone/agent_explain.py",
+    "purpose": "gated explanations"
+   },
+   {
+    "path": "labs/L400/22-capstone/fetch_tess.py",
+    "purpose": "real TESS data via lightkurve (pending-ci)"
+   },
+   {
+    "path": "labs/L400/22-capstone/architecture.mmd",
+    "purpose": "architecture diagram"
+   },
+   {
+    "path": "labs/L400/22-capstone/decisions/0001-detrending.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/22-capstone/decisions/0002-vetting-rules.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/22-capstone/decisions/0003-agent-boundary.md",
+    "purpose": "ADR"
+   },
+   {
+    "path": "labs/L400/22-capstone/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L400/22-capstone/test_capstone.py",
+    "purpose": "milestone tests"
+   },
+   {
+    "path": "labs/L400/22-capstone/test_fitness.py",
+    "purpose": "fitness functions"
+   },
+   {
+    "path": "labs/L300/15-honest-uncertainty/transit_fit.py",
+    "purpose": "reused model + LM fit"
+   },
+   {
+    "path": "labs/L300/15-honest-uncertainty/mcmc.py",
+    "purpose": "reused Metropolis sampler"
+   }
+  ],
+  "expectedResults": [
+   "Scorecard PASS 6/6",
+   "3/3 planets recovered, 0/9 false positives",
+   "Depths within 3 sigma; all fake-model explanations blocked"
+  ],
+  "testCases": [
+   {
+    "action": "python run_capstone.py",
+    "expected": "{\"scorecard\": \"PASS\", \"passed\": 6, \"total\": 6}"
+   },
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 13 tests ... OK"
+   },
+   {
+    "action": "sha256 of data/S01.csv",
+    "expected": "starts 3a31a29c1689"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Scorecard FAIL on M4",
+    "action": "Check the masked re-detrend; an unmasked median biases S02 by -2.8 sigma."
+   },
+   {
+    "symptom": "Slow run",
+    "action": "BLS dominates (~2 s per star); reduce FREQ only for experiments - the period accuracy depends on it."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Detrend with a 0.25-day window.",
+    "predict": "What happens to S03's 4.2-hour transits?",
+    "expected": "1. S03 window 0.75 d: period 12.3454 d, depth 4834 ppm, SNR 43.96 | 1. S03 window 0.25 d: period 12.3454 d, depth 726 ppm, SNR 6.69"
+   },
+   {
+    "task": "Switch the odd/even test off.",
+    "predict": "Does the eclipsing binary S05 slip through?",
+    "expected": "2. S05 odd/even threshold 3.0 sigma -> ('rejected', ['odd/even depths differ (5937 vs 11603 ppm)']) | 2. S05 odd/even threshold inf sigma -> ('planet_candidate', [])"
+   }
+  ],
+  "equivalents": [
+   "lightkurve: search_lightcurve().download().flatten().to_periodogram(method='bls').",
+   "astropy BoxLeastSquares (compute_stats gives odd/even depths).",
+   "TESS SPOC / Kepler DR25 Robovetter for production vetting; TLS (transit least squares) as a BLS alternative."
+  ],
+  "inRealSystems": [
+   "TESS SPOC and QLP pipelines search every sector with BLS-like algorithms and vet with automated tests.",
+   "Kepler's DR25 Robovetter classified threshold crossing events into planet candidates and false-positive categories."
+  ],
+  "useWhen": "Use this structure for any periodic-signal search: wide search, deterministic vetting with reasons, honest fits, provenance.",
+  "caution": "Synthetic data with known truth; real sectors have scattered light, momentum dumps and blends. A local model's explanation is never evidence - verdicts come from code and need human review before publication.",
+  "checkpoint": "PASS: run_capstone.py prints PASS 6/6 and python -m unittest passes (milestones + fitness functions).",
+  "checkYourself": [
+   {
+    "q": "Why re-detrend with the transit masked?",
+    "a": "The running median otherwise includes in-transit points and lifts the baseline, biasing the depth low (S02: -2.8 sigma)."
+   },
+   {
+    "q": "Why does S05 fool BLS?",
+    "a": "Its two unequal eclipses fold onto one period of half the true value; only the odd/even comparison reveals it."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Kovacs, Zucker & Mazeh 2002, BLS",
+    "url": "https://arxiv.org/abs/astro-ph/0206099"
+   },
+   {
+    "title": "astropy: Box Least Squares",
+    "url": "https://docs.astropy.org/en/stable/timeseries/bls.html"
+   },
+   {
+    "title": "lightkurve (repo)",
+    "url": "https://github.com/lightkurve/lightkurve"
+   },
+   {
+    "title": "Thompson et al. 2018, Kepler DR25 Robovetter",
+    "url": "https://arxiv.org/abs/1710.06758"
+   },
+   {
+    "title": "Huang et al. 2018, TESS discovery of pi Men c",
+    "url": "https://arxiv.org/abs/1809.05967"
+   },
+   {
+    "title": "TESS FAQ (HEASARC): data become public immediately",
+    "url": "https://heasarc.gsfc.nasa.gov/docs/tess/faq.html"
+   }
+  ],
+  "next": "Done: see the L400 candidates in KNOWN-GAPS for further study",
+  "validation": {
+   "status": "validated-local",
+   "how": "run_capstone.py (scorecard PASS 6/6), try_it.py and python -m unittest -v (Ran 13 tests ... OK) ran locally 3x on Python 3.12.15 + numpy 2.5.3; agent tested against the fake server only. The vetting duration bound T14 <= 1.5 x 13 h (P/1 yr)^(1/3) is derived (small-angle limit of Seager & Mallen-Ornelas 2003 with Kepler's third law, R_sun/au = 0.00465) - sketch in the README section 'Derived formula' and decisions/0002.",
+   "pendingCi": [
+    "labs/L400/22-capstone/fetch_tess.py (lightkurve 2.6.0, network; expect ~6.27 d for pi Men c)",
+    "run_capstone.py --real-model against a local Ollama model",
+    "macOS and Windows runs",
+    "JupyterLab, Stellarium and TOPCAT exercises (manual)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L400/22-capstone.md",
+  "conceptSummary": "An end-to-end transit search: detrend without eating transits, search with BLS, let deterministic rules reject binaries and systematics with reasons, fit survivors honestly, hash every input, and let a local model explain behind a code gate.",
+  "seeAlso": [
+   "astronomy L300 #15 Fitting with honest uncertainty: least squares, bootstrap and MCMC for a transit: the model and sampler reused in M4.",
+   "astronomy L300 #16 Reproducible data pipelines: provenance, caching and versioned inputs: the provenance idea behind M5.",
+   "astronomy L400 #18 Time-domain alerts: difference detection, alert schema and broker filters: the explain-but-never-decide gate used in M6.",
+   "astronomy L400 #17 Survey pipeline architecture: ingest, calibrate, detect, catalogue - throughput measured: the stage-by-stage pipeline design.",
+   "ai-agents L400 #20 Deterministic core, LLM at the edge: the same architecture - deterministic verdicts, model text at the edge, checked by code."
+  ]
+ }
+]

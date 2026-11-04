@@ -1,0 +1,792 @@
+[
+ {
+  "id": "mb-L300-001",
+  "level": "L300",
+  "lesson": 12,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "The lab's CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF). What does this print for the standard check string?",
+  "code": "def crc16(text):\n    crc = 0xFFFF\n    for ch in text:\n        crc ^= ord(ch) << 8\n        for _ in range(8):\n            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else (crc << 1)\n            crc &= 0xFFFF\n    return crc\n\nprint(\"{:04X}\".format(crc16(\"123456789\")))",
+  "options": [
+   "29B1",
+   "31C3",
+   "E5CC",
+   "2189"
+  ],
+  "answer": 0,
+  "explanation": "CCITT-FALSE gives 29B1 for '123456789', the published check value. 31C3 is the XMODEM variant (init 0), the usual mix-up when the init value is wrong.",
+  "source": "Lesson 12 codeWalkthrough (crc16)"
+ },
+ {
+  "id": "mb-L300-002",
+  "level": "L300",
+  "lesson": 12,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Lab 12's main.py sends 20 readings over a lossy link; 14 arrive. Why does the sender's log still look healthy?",
+  "options": [
+   "Loss is silent: nothing ever tells the sender",
+   "The CRC hides lost frames by repairing them",
+   "The receiver queue resends missing frames",
+   "Lost frames are counted under 'bad' at the sender"
+  ],
+  "answer": 0,
+  "explanation": "send() is fire-and-forget, so tx counts 20 and nothing learns about the 6 losses. The CRC only rejects corrupted frames; it cannot notice a frame that never arrived.",
+  "source": "Lesson 12 concepts / failureLab"
+ },
+ {
+  "id": "mb-L300-003",
+  "level": "L300",
+  "lesson": 12,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "solution.py starts with a 100 ms timeout, doubles it after each try up to 800 ms, and gives up after MAX_TRIES = 8. On a dead link, how long until it gives up on one frame?",
+  "options": [
+   "6.4 s",
+   "25.5 s",
+   "4.7 s",
+   "0.8 s"
+  ],
+  "answer": 2,
+  "explanation": "100 + 200 + 400 + 800 + 800 + 800 + 800 + 800 ms = 4.7 s. Without the 800 ms cap the doubling would reach 25.5 s, the most tempting wrong total.",
+  "source": "Lesson 12 failureLab (dead link gives up after 4.7 s)"
+ },
+ {
+  "id": "mb-L300-004",
+  "level": "L300",
+  "lesson": 12,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "Each direction of a link loses 20 % of frames independently. A try succeeds only if the frame AND its ack arrive. What is the chance that all 8 tries of one frame fail?",
+  "options": [
+   "0.03 %",
+   "0.00 %",
+   "16.78 %",
+   "36.00 %"
+  ],
+  "answer": 0,
+  "explanation": "One try succeeds with 0.8 x 0.8 = 0.64, so it fails with 0.36, and 0.36^8 = 0.03 %. Using only the one-way loss (0.2^8) ignores lost acks and gives practically zero, and 36 % is the chance that a single try fails.",
+  "source": "Lesson 12 concepts (bounded retries)"
+ },
+ {
+  "id": "mb-L300-005",
+  "level": "L300",
+  "lesson": 12,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The receiver gets a frame whose sequence number it has already delivered. Why must it still send an ack?",
+  "options": [
+   "Acks keep the receiver's own radio queue from overflowing",
+   "The first ack was probably lost, so the sender keeps retrying",
+   "Duplicates must be acked twice before the sender deletes them",
+   "The CRC of a duplicate is only valid with an ack"
+  ],
+  "answer": 1,
+  "explanation": "A duplicate exists because the sender did not hear the first ack. Staying silent turns one lost ack into a full retry sequence and a false give-up.",
+  "source": "Lesson 12 checkYourself"
+ },
+ {
+  "id": "mb-L300-006",
+  "level": "L300",
+  "lesson": 12,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "The sender reports gave_up = 4 after a run. Does that mean 4 readings were lost?",
+  "options": [
+   "Yes: gave_up counts frames the receiver never got",
+   "No: gave_up counts duplicates the receiver dropped",
+   "Not necessarily: a lost ack looks the same as lost data",
+   "Yes, unless the CRC check failed on those frames"
+  ],
+  "answer": 2,
+  "explanation": "The sender cannot tell lost data from a lost ack, and the lesson's tryIt shows 4 give-ups with 0 readings missing. gave_up is the sender's view, not a delivery count.",
+  "source": "Lesson 12 checkYourself"
+ },
+ {
+  "id": "mb-L300-007",
+  "level": "L300",
+  "lesson": 12,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "This mirrors solution.py's receiver: deliver seq >= expected, count older copies as dup and a jump forward as a gap. What is printed?",
+  "code": "expected, delivered, dup, gap = 1, [], 0, 0\nfor seq in [1, 1, 2, 4, 3, 5]:\n    if seq < expected:\n        dup += 1\n        continue\n    if seq > expected:\n        gap += 1\n    delivered.append(seq)\n    expected = seq + 1\nprint(delivered, dup, gap)",
+  "options": [
+   "[1, 2, 4, 3, 5] 1 1",
+   "[1, 2, 4, 5] 2 1",
+   "[1, 2, 4, 5] 1 0",
+   "[1, 2, 3, 4, 5] 1 1"
+  ],
+  "answer": 1,
+  "explanation": "The second 1 and the late 3 (after 4 moved expected to 5) are both duplicates, and 2 -> 4 is one gap. Stop-and-wait never reorders, so 3 cannot be slotted back in.",
+  "source": "Lesson 12 codeWalkthrough (on_data)"
+ },
+ {
+  "id": "mb-L300-008",
+  "level": "L300",
+  "lesson": 12,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "After adding acks and retransmits, every reading is delivered twice. What is the most likely bug?",
+  "options": [
+   "The sender's first retransmit timeout is shorter than 100 ms",
+   "The CRC is computed over the payload only",
+   "The receiver delivers before it checks the sequence number",
+   "The radio queue was raised above 3 frames"
+  ],
+  "answer": 2,
+  "explanation": "Retransmits turn loss into duplicates, and dedupe must run before delivery. Timeouts or queue size change how many copies arrive, not whether they are filtered.",
+  "source": "Lesson 12 troubleshooting"
+ },
+ {
+  "id": "mb-L300-009",
+  "level": "L300",
+  "lesson": 12,
+  "type": "design",
+  "difficulty": 3,
+  "question": "A board sends readings to a PC receiver that cannot transmit back. Which approach from the lesson's trade-offs fits?",
+  "options": [
+   "Stop-and-wait ARQ with MAX_TRIES = 8",
+   "A sliding window with selective acks for higher throughput",
+   "Redundancy (FEC), so loss is covered without any acks",
+   "Fire-and-forget with a sequence number only"
+  ],
+  "answer": 2,
+  "explanation": "ARQ and sliding windows both need acks, which a one-way link cannot carry. FEC costs airtime on every frame but avoids the round trip; fire-and-forget only detects loss after the fact.",
+  "source": "Lesson 12 tradeOffs"
+ },
+ {
+  "id": "mb-L300-010",
+  "level": "L300",
+  "lesson": 12,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "What does the CRC-16 in each frame protect against?",
+  "options": [
+   "Forged frames from other boards on the group",
+   "Random bit errors in transit (1 in 65,536 slip through)",
+   "Lost frames, by telling the receiver to wait",
+   "Replayed frames recorded earlier and sent again on the group"
+  ],
+  "answer": 1,
+  "explanation": "A CRC detects accidental corruption; anyone on the group can compute a valid CRC for a forged or replayed frame. It also cannot notice a frame that never arrives.",
+  "source": "Lesson 12 checkYourself / caution"
+ },
+ {
+  "id": "mb-L300-011",
+  "level": "L300",
+  "lesson": 13,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Why does main.py's sleep(1000) loop miss a 150 ms tap that happens mid-sleep?",
+  "options": [
+   "The button buffer holds only one press per second",
+   "sleep() switches the buttons off to save power until it returns",
+   "temperature() blocks the buttons while it reads",
+   "is_pressed() only sees the button at the instant it is called"
+  ],
+  "answer": 3,
+  "explanation": "Polling sees only 'now'; a tap that starts and ends during the sleep is never seen, and no error is raised. The fix is to poll often, not a bigger buffer.",
+  "source": "Lesson 13 concepts / codeWalkthrough"
+ },
+ {
+  "id": "mb-L300-012",
+  "level": "L300",
+  "lesson": 13,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "Taps of 150 ms start at 932, 1680, 2630, 3695, 4645, 5655, 6689 and 7744 ms. A loop samples is_pressed() at 0, 300, 600, ... ms (sleep(300), no other delay). How many taps does it see?",
+  "options": [
+   "8 of 8",
+   "4 of 8",
+   "1 of 8",
+   "2 of 8"
+  ],
+  "answer": 1,
+  "explanation": "A tap is seen only if a sample time falls inside its 150 ms; with a 300 ms period that happens for the taps at 1680, 2630, 5655 and 7744 ms. With sleep(1000) only the 932 ms tap (covering t = 1000) is seen.",
+  "source": "Lesson 13 failureLab (seeded taps)"
+ },
+ {
+  "id": "mb-L300-013",
+  "level": "L300",
+  "lesson": 13,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "When the scheduler finds a task several periods late, why does it skip the missed periods instead of running the task once for each?",
+  "options": [
+   "Skipped periods free memory for the next task",
+   "Missed periods are illegal in MicroPython",
+   "Catch-up runs back to back would repeat the stall",
+   "Running late tasks would reset running_time()"
+  ],
+  "answer": 2,
+  "explanation": "A burst of catch-up runs delays every other task again. The lab logs 'late' with the number missed and schedules the next run in the future.",
+  "source": "Lesson 13 checkYourself / troubleshooting"
+ },
+ {
+  "id": "mb-L300-014",
+  "level": "L300",
+  "lesson": 13,
+  "type": "code-reading",
+  "difficulty": 3,
+  "question": "This mirrors how the scheduler moves a task's due time. The sensor task (period 1000 ms) was due at 1000 ms but finishes at 3450 ms. What is printed?",
+  "code": "def advance(due, now, period):\n    missed = 0\n    if now - due >= period:\n        missed = (now - due) // period\n    due += period * (1 + (now - due) // period)\n    return due, missed\n\nprint(advance(1000, 3450, 1000))",
+  "options": [
+   "(4000, 2)",
+   "(2000, 0)",
+   "(4450, 2)",
+   "(3000, 2)"
+  ],
+  "answer": 0,
+  "explanation": "Two whole periods were missed, and the due time jumps by whole periods to 4000, the first slot after now. Adding the period to 'now' (4450) would drift the schedule.",
+  "source": "Lesson 13 codeWalkthrough (run_once)"
+ },
+ {
+  "id": "mb-L300-015",
+  "level": "L300",
+  "lesson": 13,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "What does the lab's cooperative scheduler NOT protect you from?",
+  "options": [
+   "A task that raises an exception",
+   "A task that runs a little over budget",
+   "A task that is due while another runs",
+   "A task that blocks: every other task waits"
+  ],
+  "answer": 3,
+  "explanation": "Cooperative means each task must return quickly; a blocking task stalls all, and the overrun log only says who. Exceptions are contained and logged, and due tasks simply run next.",
+  "source": "Lesson 13 checkYourself"
+ },
+ {
+  "id": "mb-L300-016",
+  "level": "L300",
+  "lesson": 13,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "The overrun log blames the display task, but the slow code is in the sensor task that runs just before it. What is the bug?",
+  "options": [
+   "The display task's time budget is set too low for its work",
+   "The tasks are stored in a dict, not a list",
+   "The loop still has sleep(10) at the end",
+   "now is read once per pass, not at the start of each task"
+  ],
+  "answer": 3,
+  "explanation": "If start time is taken once per pass, later tasks inherit the time spent by earlier ones. Reading running_time() at each task's start measures each task alone.",
+  "source": "Lesson 13 troubleshooting"
+ },
+ {
+  "id": "mb-L300-017",
+  "level": "L300",
+  "lesson": 13,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "A deployed board shows a cross and stops reacting to buttons. Serial shows three 'error' JSON lines for the sensor task. What happened?",
+  "options": [
+   "The display task crashed and froze the last image on screen",
+   "The board ran out of battery mid-update",
+   "Three errors in a row put the scheduler in its safe state",
+   "The button task was skipped as 'late'"
+  ],
+  "answer": 2,
+  "explanation": "MAX_ERRORS consecutive failures disable the task and enter safe_state(): pin0 low, Image.NO, one JSON line naming the task. Read the error lines rather than reflashing blindly.",
+  "source": "Lesson 13 troubleshooting / codeWalkthrough"
+ },
+ {
+  "id": "mb-L300-018",
+  "level": "L300",
+  "lesson": 13,
+  "type": "design",
+  "difficulty": 3,
+  "question": "A project needs several periodic jobs plus responsive buttons, all in MicroPython, with no hard real-time deadlines. Which structure does the lesson recommend?",
+  "options": [
+   "A cooperative scheduler driven by running_time()",
+   "A sleep()-paced loop with one sleep per job",
+   "An RTOS with preemptive tasks per job",
+   "Separate boards, one per periodic job"
+  ],
+  "answer": 0,
+  "explanation": "The trade-off table picks the cooperative scheduler for several periodic jobs plus responsive inputs. An RTOS is for strict deadlines, and a sleep loop is blind while it sleeps.",
+  "source": "Lesson 13 tradeOffs"
+ },
+ {
+  "id": "mb-L300-019",
+  "level": "L300",
+  "lesson": 13,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "solution.py runs a button task every 20 ms, a display task every 100 ms and a sensor task every 1000 ms. How many task runs happen in 10 s if none is late?",
+  "options": [
+   "610",
+   "61",
+   "1000",
+   "520"
+  ],
+  "answer": 0,
+  "explanation": "Per second that is 50 + 10 + 1 = 61 runs, so 610 in 10 s, the figure in the lab's proof. 61 is one second only.",
+  "source": "Lesson 13 failureLab proof (610 runs)"
+ },
+ {
+  "id": "mb-L300-020",
+  "level": "L300",
+  "lesson": 14,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "main.py keeps the board awake at the 30 mA worst-case budget the whole time. How long do 2 x AAA cells rated 1,250 mAh last in the model?",
+  "options": [
+   "41.7 h",
+   "416.7 h",
+   "37.5 h",
+   "720.0 h"
+  ],
+  "answer": 0,
+  "explanation": "1,250 mAh / 30 mA = 41.7 h: under 2 days against a 30-day (720 h) brief. 37.5 h multiplies instead of divides the mAh figure (1,250 x 0.03).",
+  "source": "Lesson 14 failureLab"
+ },
+ {
+  "id": "mb-L300-021",
+  "level": "L300",
+  "lesson": 14,
+  "type": "concept",
+  "difficulty": 1,
+  "question": "In the power model, why does replacing sleep(100) with sleep(1000) barely change the current?",
+  "options": [
+   "The stub and the real board both ignore sleep() calls entirely",
+   "The current depends only on the radio power",
+   "sleep() already uses the chip-only sleep floor",
+   "sleep() keeps the board On; only Deep Sleep saves power"
+  ],
+  "answer": 3,
+  "explanation": "During sleep() the board stays in On mode at the awake current, so fewer samples save little. power.deep_sleep() is what switches components off between samples.",
+  "source": "Lesson 14 concepts"
+ },
+ {
+  "id": "mb-L300-022",
+  "level": "L300",
+  "lesson": 14,
+  "type": "calculation",
+  "difficulty": 3,
+  "question": "The adaptive design wakes 483 times in one hour (3,600,000 ms), awake 20 ms each at 30 mA, asleep the rest at the assumed 0.5 mA board floor. Battery 1,250 mAh. What is the board-life estimate?",
+  "options": [
+   "about 41.7 h",
+   "about 2,160 h",
+   "about 15,240 h",
+   "about 2,500 h"
+  ],
+  "answer": 1,
+  "explanation": "Awake time is 483 x 20 = 9,660 ms, so the average is (9,660 x 30 + 3,590,340 x 0.5) / 3,600,000 = 0.579 mA and 1,250 / 0.579 = about 2,160 h. 15,240 h comes from the chip-only floor, which is not a board figure.",
+  "source": "Lesson 14 code (life_h) / failureLab proof"
+ },
+ {
+  "id": "mb-L300-023",
+  "level": "L300",
+  "lesson": 14,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "Which input to the power model is least trustworthy?",
+  "options": [
+   "The 1,250 mAh battery capacity from the cell datasheet",
+   "The 30 mA awake current from the tech site",
+   "The one-hour temperature trace in budget.py",
+   "The board's Deep Sleep floor, which is unpublished"
+  ],
+  "answer": 3,
+  "explanation": "No board sleep figure is published, so the model brackets it and leads with the conservative end; 1.5 uA is the chip alone. The battery and awake figures have cited sources, and the trace is a fixed test input.",
+  "source": "Lesson 14 checkYourself"
+ },
+ {
+  "id": "mb-L300-024",
+  "level": "L300",
+  "lesson": 14,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "A fixed 100 ms sampling design with Deep Sleep between samples still misses the 720 h brief. Why?",
+  "options": [
+   "Deep Sleep cannot be shorter than one second on a V2 board",
+   "It wakes so often that awake time dominates the average",
+   "Each wake-up resets the battery's capacity",
+   "The board floor is higher than the awake current"
+  ],
+  "answer": 1,
+  "explanation": "Awake 20 ms out of every short cycle keeps the average around 6 mA, far above the floor. The sampling interval is the biggest lever, which adaptive sampling uses.",
+  "source": "Lesson 14 checkYourself / concepts"
+ },
+ {
+  "id": "mb-L300-025",
+  "level": "L300",
+  "lesson": 14,
+  "type": "scenario",
+  "difficulty": 2,
+  "question": "A teammate reads budget.py's output and announces the logger will run for years. What have they most likely quoted?",
+  "options": [
+   "life_h, the board estimate at 0.5 mA",
+   "avg_ma, mistaking milliamps for hours",
+   "max_delay_ms, mistaking it for battery life",
+   "chip_only_bound_h, the nRF52833 alone, not the board"
+  ],
+  "answer": 3,
+  "explanation": "chip_only_bound_h (15,245 h) uses the chip's 1.5 uA and ignores the rest of the board; the headline is life_h at the conservative floor. The model also ignores self-discharge, so measure before promising anything.",
+  "source": "Lesson 14 troubleshooting"
+ },
+ {
+  "id": "mb-L300-026",
+  "level": "L300",
+  "lesson": 14,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "This is solution.py's interval rule. What is printed?",
+  "code": "MIN_MS, MAX_MS = 100, 8000\n\ndef next_interval(interval, changed):\n    return MIN_MS if changed else min(interval * 2, MAX_MS)\n\niv = 100\nfor changed in [False, False, False, True, False, False]:\n    iv = next_interval(iv, changed)\nprint(iv)",
+  "options": [
+   "100",
+   "800",
+   "400",
+   "8000"
+  ],
+  "answer": 2,
+  "explanation": "Three steady samples double 100 to 800, the change resets to 100, then two steady samples give 400. Forgetting the reset on change gives 6400 or the 8000 cap.",
+  "source": "Lesson 14 solution (next_interval)"
+ },
+ {
+  "id": "mb-L300-027",
+  "level": "L300",
+  "lesson": 14,
+  "type": "design",
+  "difficulty": 2,
+  "question": "A logger will sit next to a PC and run on USB power. Which sampling design from the trade-offs fits best?",
+  "options": [
+   "Adaptive sampling with Deep Sleep",
+   "Fixed slow sampling with Deep Sleep",
+   "power.off() between samples",
+   "Fixed fast sampling with the board On"
+  ],
+  "answer": 3,
+  "explanation": "With USB power the battery cost does not matter, so the simplest design that never misses a change wins. Adaptive sampling trades missed short events for battery life you do not need here.",
+  "source": "Lesson 14 tradeOffs"
+ },
+ {
+  "id": "mb-L300-028",
+  "level": "L300",
+  "lesson": 14,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "What does adaptive sampling give up compared with fixed fast sampling?",
+  "options": [
+   "Events shorter than the current interval can be missed",
+   "Readings become less accurate after waking from Deep Sleep",
+   "The log loses its timestamp column",
+   "Changes are detected later than 100 ms always"
+  ],
+  "answer": 0,
+  "explanation": "While steady the interval grows to 8 s, so a 1.5 s spike between samples is never seen. Accuracy and timestamps are unchanged, and during changes it samples every 100 ms.",
+  "source": "Lesson 14 checkYourself / tradeOffs"
+ },
+ {
+  "id": "mb-L300-029",
+  "level": "L300",
+  "lesson": 15,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "This is the device's frame() from lab 15. What does it print?",
+  "code": "def crc16(text):\n    crc = 0xFFFF\n    for ch in text:\n        crc ^= ord(ch) << 8\n        for _ in range(8):\n            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else (crc << 1)\n            crc &= 0xFFFF\n    return crc\n\ndef frame(payload):\n    return \"${:03d}{}*{:04X}\".format(len(payload), payload, crc16(payload))\n\nprint(frame(\"7,21,180\"))",
+  "options": [
+   "$87,21,180*BE92",
+   "$0087,21,180*E700",
+   "$0097,21,180*BE92",
+   "$0087,21,180*BE92"
+  ],
+  "answer": 3,
+  "explanation": "The length is 3 zero-padded digits (8 characters) and the CRC covers the payload only, in 4 upper-case hex digits. Padding, CRC scope and case are exactly what the gateway's framer checks.",
+  "source": "Lesson 15 device main.py (frame)"
+ },
+ {
+  "id": "mb-L300-030",
+  "level": "L300",
+  "lesson": 15,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "Of 200 frames, the framer rejected 6 for bad length and 3 for bad CRC. What damaged share does decide_alarms() see, against its 2 % LINK_NOISY limit?",
+  "options": [
+   "4.5 %",
+   "3 %",
+   "1.5 %",
+   "9 %"
+  ],
+  "answer": 0,
+  "explanation": "(6 + 3) / 200 = 4.5 %, above 2 %, so code raises LINK_NOISY = 4.5. Counting only the CRC failures gives 1.5 %.",
+  "source": "Lesson 15 expectedResults (LINK_NOISY=4.5)"
+ },
+ {
+  "id": "mb-L300-031",
+  "level": "L300",
+  "lesson": 15,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "When a frame fails a check, why does the framer drop just ONE byte before searching again?",
+  "options": [
+   "Dropping more bytes would desync the CRC table",
+   "The serial port can only discard one byte per read call",
+   "The next valid frame may start just after the bad '$'",
+   "One byte is the length of the start marker '$'"
+  ],
+  "answer": 2,
+  "explanation": "Garbage can contain a '$' that is not a real start; the real frame may already be in the buffer just after it. Skipping a whole line or length would throw that frame away.",
+  "source": "Lesson 15 checkYourself"
+ },
+ {
+  "id": "mb-L300-032",
+  "level": "L300",
+  "lesson": 15,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "The CRC would also catch a dropped byte. What does the 3-digit length field add?",
+  "options": [
+   "It makes the CRC stronger against bit flips",
+   "It says when a frame is complete, so the framer can wait",
+   "It lets the gateway skip the CRC on short, complete frames",
+   "It encrypts the payload length for privacy"
+  ],
+  "answer": 1,
+  "explanation": "Reads arrive in arbitrary chunks; the length says how many bytes to wait for instead of guessing from a line end. Both catch a dropped byte, but only the length enables waiting for a partial frame.",
+  "source": "Lesson 15 checkYourself"
+ },
+ {
+  "id": "mb-L300-033",
+  "level": "L300",
+  "lesson": 15,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "The naive gateway parses two lines. The second is the first frame with one flipped bit (20 became 22), so its CRC no longer matches. What is printed?",
+  "code": "def parse_line(line):\n    payload = line.strip()[4:].split(\"*\")[0]\n    seq, temp, light = payload.split(\",\")\n    return int(temp)\n\nfor line in [\"$0083,20,140*5EC3\", \"$0083,22,140*5EC3\"]:\n    print(parse_line(line))",
+  "options": [
+   "20 / 20",
+   "20 / ValueError",
+   "20",
+   "20 / 22"
+  ],
+  "answer": 3,
+  "explanation": "parse_line() never checks the CRC, so the corrupted value 22 is forwarded as if it were real. That silent wrong value is worse than a crash.",
+  "source": "Lesson 15 failureLab / codeWalkthrough (parse_line)"
+ },
+ {
+  "id": "mb-L300-034",
+  "level": "L300",
+  "lesson": 15,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "The board printed a boot message before its first frame. What does the naive gateway do?",
+  "code": "def parse_line(line):\n    payload = line.strip()[4:].split(\"*\")[0]\n    seq, temp, light = payload.split(\",\")\n    return {\"seq\": int(seq), \"temp\": int(temp), \"light\": int(light)}\n\nfor line in [\"micro:bit booting...\", \"$0081,20,140*ABCD\"]:\n    print(parse_line(line))",
+  "options": [
+   "It skips the boot line and forwards the frame",
+   "It forwards {'seq': 0, 'temp': 0, 'light': 0} first",
+   "KeyError on the second line, after one reading",
+   "ValueError on the first line; nothing is forwarded"
+  ],
+  "answer": 3,
+  "explanation": "The boot line has no commas, so unpacking three values raises ValueError and the whole gateway stops. The hardened framer resyncs on '$' and counts the garbage instead.",
+  "source": "Lesson 15 failureLab"
+ },
+ {
+  "id": "mb-L300-035",
+  "level": "L300",
+  "lesson": 15,
+  "type": "scenario",
+  "difficulty": 3,
+  "question": "Feeding the same transcript to your gateway in 1-byte chunks and in 64-byte chunks gives different metrics. What does the lesson say is wrong?",
+  "options": [
+   "The logic depends on chunk size; emit results per frame",
+   "The serial port reorders bytes in large chunks",
+   "The CRC is only valid for 64-byte chunks",
+   "The metrics are sampled every 50 chunks"
+  ],
+  "answer": 0,
+  "explanation": "Serial reads come in arbitrary chunks, so per-chunk logic gives per-chunk results. solution.py's generator yields per frame, and the proof feeds 1 byte at a time to show the same result.",
+  "source": "Lesson 15 troubleshooting / concepts"
+ },
+ {
+  "id": "mb-L300-036",
+  "level": "L300",
+  "lesson": 15,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "In the lab, who raises the LINK_NOISY alarm?",
+  "options": [
+   "decide_alarms() in code; the model only explains it",
+   "The local model, after it reads the gateway's metrics",
+   "The micro:bit, when its CRC check fails",
+   "MQTT, when a message is published at QoS 1"
+  ],
+  "answer": 0,
+  "explanation": "Code decides (damaged > 2 %), the model only explains, and its text is checked. A model that raises or clears alarms would turn its errors into decisions.",
+  "source": "Lesson 15 checkYourself"
+ },
+ {
+  "id": "mb-L300-037",
+  "level": "L300",
+  "lesson": 15,
+  "type": "design",
+  "difficulty": 3,
+  "question": "A production link will carry high-rate telemetry and nobody needs to read it in a serial monitor. Which framing does the lesson's trade-off table point to?",
+  "options": [
+   "Plain CSV text lines with no checks",
+   "The lab's text frame with a longer length field",
+   "Binary framing such as COBS/SLIP with a CRC, or a protocol",
+   "JSON lines with a checksum field per key"
+  ],
+  "answer": 2,
+  "explanation": "Binary framing is compact and robust with standard tooling, at the cost of readability and more board code. The lab's text frame is chosen for readable telemetry over USB.",
+  "source": "Lesson 15 tradeOffs"
+ },
+ {
+  "id": "mb-L300-038",
+  "level": "L300",
+  "lesson": 15,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "A frame passes the length and CRC checks but reports temperature 900 °C. What should the hardened gateway do?",
+  "options": [
+   "Forward it, because the CRC proves the value is correct",
+   "Reject it: a valid CRC does not make a value plausible",
+   "Clamp it to 105 °C and forward it",
+   "Resend a request to the board for that frame"
+  ],
+  "answer": 1,
+  "explanation": "The CRC proves the bytes arrived as sent, not that they make sense; parse_payload() range-checks every field. Clamping would forward a value the device never sent.",
+  "source": "Lesson 15 codeWalkthrough (parse_payload)"
+ },
+ {
+  "id": "mb-L300-039",
+  "level": "L300",
+  "lesson": 16,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "TIMER1 runs from 16 MHz with PRESCALER 4 (16 MHz / 2^4) and CC[0] = 100. If you change PRESCALER to 5 and keep CC[0] = 100, how often does the interrupt fire?",
+  "options": [
+   "every 100 µs",
+   "200 µs",
+   "every 50 µs",
+   "every 320 µs"
+  ],
+  "answer": 1,
+  "explanation": "16 MHz / 2^5 = 500 kHz, so one tick is 2 µs and 100 ticks are 200 µs. The original prescaler of 4 gives 1 MHz and 100 µs.",
+  "source": "Lesson 16 code (start_timer1)"
+ },
+ {
+  "id": "mb-L300-040",
+  "level": "L300",
+  "lesson": 16,
+  "type": "concept",
+  "difficulty": 3,
+  "question": "PENDING is an AtomicU32. Why can take() still lose a tick?",
+  "options": [
+   "Relaxed ordering lets the CPU reorder the ISR",
+   "Each operation is atomic, but the ISR can run between them",
+   "AtomicU32 is not atomic on a Cortex-M4F core",
+   "The ISR writes ISR_TOTAL too, which races with PENDING in main"
+  ],
+  "answer": 1,
+  "explanation": "Two atomic operations are not one: an interrupt in the window between the read and the write adds 1 that the store of 0 wipes out. Orderings do not close that window; a critical section does.",
+  "source": "Lesson 16 checkYourself"
+ },
+ {
+  "id": "mb-L300-041",
+  "level": "L300",
+  "lesson": 16,
+  "type": "calculation",
+  "difficulty": 2,
+  "question": "In the soak test the ISR fired 1,316 times, the main loop consumed 1,000 ticks and 0 are pending. Using isr == consumed + pending + lost, how many were lost?",
+  "options": [
+   "0 lost (0 %)",
+   "316 lost (24 %)",
+   "316 lost (32 %)",
+   "1316 lost (100 %)"
+  ],
+  "answer": 1,
+  "explanation": "lost = 1,316 - 1,000 - 0 = 316, which is 24 % of the interrupts. Dividing by the 1,000 consumed instead of 1,316 gives the inflated 32 %.",
+  "source": "Lesson 16 failureLab"
+ },
+ {
+  "id": "mb-L300-042",
+  "level": "L300",
+  "lesson": 16,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "What does wrapping take() in a critical section cost?",
+  "options": [
+   "A lost tick every time it runs",
+   "Twice the RAM for the shared counter",
+   "Nothing, because the timer pauses meanwhile",
+   "Interrupt latency; if too long, interrupts merge"
+  ],
+  "answer": 3,
+  "explanation": "Masking interrupts delays the ISR until the section ends; if that is longer than the 100 µs timer period, two ticks merge into one. The timer keeps running, so keep the section short.",
+  "source": "Lesson 16 checkYourself / concepts"
+ },
+ {
+  "id": "mb-L300-043",
+  "level": "L300",
+  "lesson": 16,
+  "type": "code-reading",
+  "difficulty": 2,
+  "question": "This is the Python host model of the racy take(); irq() stands for the timer interrupt landing inside the work. What is printed?",
+  "code": "class M:\n    pending, consumed = 2, 0\n\ndef irq(m):\n    m.pending += 1\n\ndef take(m, work):\n    n = m.pending\n    work(m)\n    m.pending = 0\n    m.consumed += n\n\nm = M()\ntake(m, irq)\nprint(m.consumed, m.pending)",
+  "options": [
+   "2 0",
+   "3 0",
+   "2 1",
+   "3 1"
+  ],
+  "answer": 0,
+  "explanation": "take() reads 2, the interrupt raises pending to 3, then the store sets it to 0, so consumed is 2 and the third tick is lost. The invariant isr == consumed + pending + lost shows the missing one.",
+  "source": "Lesson 16 race_model.py"
+ },
+ {
+  "id": "mb-L300-044",
+  "level": "L300",
+  "lesson": 16,
+  "type": "concept",
+  "difficulty": 2,
+  "question": "The fixed firmware prints lost=0 under Renode's nRF52840 model. Why is that not a test of the micro:bit V2?",
+  "options": [
+   "Renode cannot run Rust firmware at all",
+   "The nRF52840 model uses different TIMER1 and UART0 addresses",
+   "It is a close sibling: other chip, no board, virtual time",
+   "Renode runs the firmware on the PC's CPU natively"
+  ],
+  "answer": 2,
+  "explanation": "The model shares the core and TIMER1/UART0 map but has more memory and no LED matrix, buttons or sensors, and its timing is virtual. The race itself is proven on the host model.",
+  "source": "Lesson 16 checkYourself / simulatorVsReal"
+ },
+ {
+  "id": "mb-L300-045",
+  "level": "L300",
+  "lesson": 16,
+  "type": "debugging",
+  "difficulty": 2,
+  "question": "After enabling TIMER1, the interrupt handler runs continuously and the main loop never advances. What is missing?",
+  "options": [
+   "Setting PRESCALER before CC[0]",
+   "A critical section around PENDING in the ISR",
+   "Clearing EVENTS_COMPARE[0] inside the handler",
+   "TASKS_STOP at the end of the handler"
+  ],
+  "answer": 2,
+  "explanation": "If the compare event is not cleared, the interrupt fires again as soon as the handler returns. Prescaler order or stopping the timer would not fix the latched event.",
+  "source": "Lesson 16 troubleshooting / codeWalkthrough"
+ },
+ {
+  "id": "mb-L300-046",
+  "level": "L300",
+  "lesson": 16,
+  "type": "design",
+  "difficulty": 3,
+  "question": "Your ISR produces sensor samples that a task processes, and the code must also build for micro:bit V1 (ARMv6-M). Which option from the trade-offs fits best?",
+  "options": [
+   "Atomic swap/fetch_sub on one shared counter",
+   "Message passing: a queue or channel from ISR to task",
+   "A long critical section around all processing",
+   "Disabling the timer while the task runs"
+  ],
+  "answer": 1,
+  "explanation": "A queue carries data with no shared mutable state, and it needs an overflow policy. Atomic read-modify-write instructions are missing on ARMv6-M, and long critical sections merge interrupts.",
+  "source": "Lesson 16 tradeOffs"
+ }
+]

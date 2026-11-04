@@ -1,0 +1,1708 @@
+[
+  {
+    "id": "reliable-radio-protocol",
+    "number": 12,
+    "level": "L300",
+    "title": "A reliable radio protocol",
+    "phase": "Harden it",
+    "category": "radio",
+    "description": "Turn lesson 7's fire-and-forget radio into a link that delivers every reading exactly once: sequence numbers, CRC-16, acks, retransmit with timeout and backoff, duplicate suppression.",
+    "outcome": "You can show a lossy radio silently dropping readings in a seeded test, add stop-and-wait ARQ, and prove all readings arrive once, in order.",
+    "environment": "Python 3.12 + labs/sim_stub (radio.Air with seeded loss/dup/reorder/corrupt; labtest.load_boards). Simulator: Python Editor v3 / two bridged simulators in CI (Node 24 + Playwright 1.64.1). No new packages.",
+    "estimatedTime": "60-90 minutes",
+    "overview": [
+      "The radio gives no delivery guarantee; you add one with numbered, checksummed frames, acks and retransmission, and you check it against seeded faults."
+    ],
+    "prerequisites": [
+      "L200 #7 Radio between two boards",
+      "L200 #11 (running_time for timeouts)"
+    ],
+    "glossary": [
+      {
+        "term": "ARQ",
+        "meaning": "Automatic repeat request: resend until acknowledged."
+      },
+      {
+        "term": "Stop-and-wait",
+        "meaning": "One frame in flight; the next waits for its ack."
+      },
+      {
+        "term": "CRC-16",
+        "meaning": "16-bit checksum that detects flipped bits; here CRC-16/CCITT-FALSE."
+      },
+      {
+        "term": "Backoff",
+        "meaning": "Each retry waits longer (here x2, capped)."
+      }
+    ],
+    "concepts": [
+      "Silence is the failure: the sender cannot see loss.",
+      "Ack + retransmit turns loss into duplicates; dedupe removes them.",
+      "Bound the retries and report what was given up."
+    ],
+    "steps": [
+      {
+        "title": "Happy path, then the fault",
+        "detail": "Run link_sim.py: main.py on a quiet link, then on the seeded faulty radio (loss 0.2, dup 0.1, reorder 0.1, corrupt 0.05, seed 12).",
+        "expected": "quiet: delivered 20/20; faulty: delivered 14/20, missing r2 r8 r11 r13 r14 r20, duplicates 2; sender JSON says \"tx\":20.",
+        "ifNot": "Run from the lab folder; the seed is fixed in link_sim.FAULTS.",
+        "mac": "cd labs/L300/12-reliable-radio && python3 link_sim.py",
+        "windows": "cd labs\\L300\\12-reliable-radio; py link_sim.py"
+      },
+      {
+        "title": "Pin the symptom",
+        "detail": "Run test_fault.py: it asserts the loss and that the sender's counters look perfect.",
+        "expected": "1 test OK.",
+        "ifNot": "If the numbers differ, the stub's radio fault order changed; compare with the README.",
+        "mac": "python3 -m unittest -v test_fault",
+        "windows": "py -m unittest -v test_fault"
+      },
+      {
+        "title": "Read the frame and its CRC",
+        "detail": "Open test_main.py: CRC-16 check value 0x29B1, a one-bit change ('3' -> '2') rejected, junk counted as bad.",
+        "expected": "6 tests OK.",
+        "ifNot": "binascii.crc_hqx(data, 0xFFFF) is the same CRC; compare."
+      },
+      {
+        "title": "Build task: ack, retransmit, dedupe",
+        "detail": "Make main.py reliable (see buildTask). First prove it fails, then pass it.",
+        "expected": "BUILD_FILE=main.py: FAILED (failures=2, errors=2); solution.py: 4 tests OK.",
+        "ifNot": "Compare with solution.py: send() only queues; pump() owns the radio.",
+        "mac": "BUILD_FILE=main.py python3 -m unittest -v test_build_task; python3 -m unittest -v test_build_task",
+        "windows": "$env:BUILD_FILE=\"main.py\"; py -m unittest -v test_build_task; Remove-Item Env:BUILD_FILE; py -m unittest -v test_build_task"
+      },
+      {
+        "title": "Read the counters after hardening",
+        "detail": "Run link_sim.py again and read solution.py's JSON lines.",
+        "expected": "solution.py faulty: delivered 20/20, in order; sender \"tx\":42,\"retx\":22,\"acked\":20; receiver \"dup\":19.",
+        "ifNot": "retx 0 on the faulty link means pump() never retransmits."
+      },
+      {
+        "title": "Try it",
+        "detail": "Run try_it.py (two edits to solution.py).",
+        "expected": "See tryIt.",
+        "ifNot": "try_it.json edits must match solution.py exactly once.",
+        "mac": "python3 try_it.py",
+        "windows": "py try_it.py"
+      }
+    ],
+    "code": "# Lab 12 - a radio link for sensor readings (BEFORE hardening). Flash the SAME\n# main.py on both boards. Press A: send the next reading. Every frame carries a\n# sequence number and a CRC-16, so corrupted frames are rejected - but nothing\n# notices a LOST frame: it works on a quiet bench and silently drops data in a\n# noisy room. The build task adds acks, retransmit and duplicate suppression.\nfrom microbit import *\nimport radio\n\nGROUP = 12\nradio.config(group=GROUP)       # default length=32 bytes, queue=3 frames\n\n\ndef crc16(text):\n    # CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF): catches flipped bits\n    crc = 0xFFFF\n    for ch in text:\n        crc ^= ord(ch) << 8\n        for _ in range(8):\n            crc = ((crc << 1) ^ 0x1021) if crc & 0x8000 else (crc << 1)\n            crc &= 0xFFFF\n    return crc\n\n\ndef encode(kind, seq, payload):\n    body = \"{}:{}:{}\".format(kind, seq, payload)    # kind D = data, A = ack\n    return \"{}:{:04X}\".format(body, crc16(body))    # checksum over the whole body\n\n\ndef decode(text):\n    # returns (kind, seq, payload) or None; nothing from the air is trusted\n    body, sep, check = text.rpartition(\":\")\n    if not sep or len(check) != 4:\n        return None\n    try:\n        if int(check, 16) != crc16(body):\n            return None\n        kind, seq, payload = body.split(\":\", 2)\n        return kind, int(seq), payload\n    except ValueError:\n        return None\n\n\ndef new_state():\n    return {\"seq\": 0, \"delivered\": [],\n            \"stats\": {\"tx\": 0, \"rx\": 0, \"bad\": 0, \"delivered\": 0}}\n\n\ndef jline(t, stats):\n    # observability: one JSON line per report, keys in a fixed order\n    keys = (\"tx\", \"rx\", \"bad\", \"delivered\")\n    return '{\"t\":%d,' % t + \",\".join('\"%s\":%d' % (k, stats[k]) for k in keys) + \"}\"\n\n\ndef send(state, payload):\n    state[\"seq\"] += 1\n    radio.send(encode(\"D\", state[\"seq\"], payload))  # fire and forget\n    state[\"stats\"][\"tx\"] += 1\n\n\ndef deliver(state, seq, payload):\n    state[\"delivered\"].append(payload)\n    state[\"stats\"][\"delivered\"] += 1\n    print(\"rx\", seq, payload)\n\n\ndef receive(state):\n    while True:                         # drain the queue: it holds only 3 frames\n        try:\n            text = radio.receive()\n        except ValueError:              # not a radio.send() string\n            text = \"?\"\n        if text is None:\n            return\n        state[\"stats\"][\"rx\"] += 1\n        msg = decode(text)\n        if msg is None:\n            state[\"stats\"][\"bad\"] += 1  # wrong CRC or format: drop it\n        elif msg[0] == \"D\":\n            deliver(state, msg[1], msg[2])\n\n\ndef step(state):\n    if button_a.was_pressed():\n        send(state, temperature())\n    receive(state)\n\n\ndef main():\n    print(\"link group\", GROUP)\n    state = new_state()\n    while True:\n        step(state)\n        if button_b.was_pressed():\n            print(jline(running_time(), state[\"stats\"]))\n        sleep(10)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "crc16()",
+        "detail": "Bitwise CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF): pure Python, so the same code runs in MicroPython and on the PC."
+      },
+      {
+        "title": "encode()/decode()",
+        "detail": "Frame = kind:seq:payload:CRC4. decode() uses rpartition so the CRC is always the last field and returns None for any mismatch or parse error."
+      },
+      {
+        "title": "receive() drains the queue",
+        "detail": "The radio queue holds 3 frames; reading until None keeps it from overflowing. ValueError (non-text packet) is counted as bad."
+      },
+      {
+        "title": "send() is fire-and-forget",
+        "detail": "It increments tx and moves on: nothing ever learns that a frame was lost. This is the line the build task replaces."
+      },
+      {
+        "title": "jline()",
+        "detail": "One JSON line with fixed key order; MicroPython has no guaranteed dict order, so keys are listed explicitly."
+      },
+      {
+        "title": "solution.py pump()",
+        "detail": "One frame in flight with a deadline from running_time(); on timeout resend and double the timeout (100 -> 800 ms); after MAX_TRIES report gave_up and move on."
+      },
+      {
+        "title": "solution.py on_data()",
+        "detail": "Ack every copy; deliver only seq >= expected; older copies count as dup. A jump forward is reported as gap."
+      }
+    ],
+    "buildTask": {
+      "task": "Make the link reliable: send() queues, pump() sends one frame at a time and retransmits after a timeout (doubling, capped) up to MAX_TRIES; the receiver acks every data frame and delivers each sequence number once.",
+      "hints": [
+        "Ack even duplicates: the first ack may be the one that was lost.",
+        "Ignore acks whose number is not the frame in flight.",
+        "Call pump() from step() after receive(), with running_time()."
+      ],
+      "solution": "labs/L300/12-reliable-radio/solution.py",
+      "check": "labs/L300/12-reliable-radio/test_build_task.py (4 tests; BUILD_FILE=main.py fails)"
+    },
+    "failureLab": {
+      "fault": "Seeded radio faults in the stub: radio.Air(loss=0.2, dup=0.1, reorder=0.1, corrupt=0.05, seed=12) between two stub boards; 20 readings, one every 50 ms.",
+      "symptom": "main.py delivers 14 of 20 (missing r2, r8, r11, r13, r14, r20), 2 duplicates, out of order; the sender's JSON line says {\"tx\":20,...} and nothing is reported.",
+      "fix": "Stop-and-wait ARQ: ack per frame, retransmit on timeout with x2 backoff (100-800 ms), MAX_TRIES = 8, receiver duplicate suppression by sequence number.",
+      "proof": "labs/L300/12-reliable-radio/test_build_task.py: BUILD_FILE=main.py -> FAILED (failures=2, errors=2); solution.py -> 4 tests OK (seed 12 and seeds 1-5 deliver r1..r20 exactly once, in order; a dead link gives up after 4.7 s per frame)."
+    },
+    "tradeOffs": [
+      {
+        "option": "Fire-and-forget (lesson 7)",
+        "gains": "One packet per reading, lowest airtime and code",
+        "costs": "Silent loss and duplicates",
+        "chooseWhen": "Losing some readings is fine (e.g. a live display that refreshes)"
+      },
+      {
+        "option": "Stop-and-wait ARQ (this lab)",
+        "gains": "Exactly once, in order; tiny code; bounded retries",
+        "costs": "One frame per round trip; a lost ack costs a resend",
+        "chooseWhen": "Low data rates between two boards, every reading matters"
+      },
+      {
+        "option": "Sliding window / redundancy (FEC)",
+        "gains": "Higher throughput; FEC avoids a round trip",
+        "costs": "More state and RAM; FEC costs airtime on every frame",
+        "chooseWhen": "Bulk transfer, long round trips, or one-way links"
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L300/12-reliable-radio/main.py",
+        "purpose": "BEFORE: framed, fire-and-forget"
+      },
+      {
+        "path": "labs/L300/12-reliable-radio/solution.py",
+        "purpose": "AFTER: ARQ + dedupe (build task solution)"
+      },
+      {
+        "path": "labs/L300/12-reliable-radio/link_sim.py",
+        "purpose": "Two stub boards over a seeded faulty radio"
+      },
+      {
+        "path": "labs/L300/12-reliable-radio/test_main.py",
+        "purpose": "Frames, CRC, happy path"
+      },
+      {
+        "path": "labs/L300/12-reliable-radio/test_fault.py",
+        "purpose": "failureLab symptom"
+      },
+      {
+        "path": "labs/L300/12-reliable-radio/test_build_task.py",
+        "purpose": "Proof: fails before, passes after"
+      },
+      {
+        "path": "labs/L300/12-reliable-radio/try_it.py",
+        "purpose": "tryIt runner (try_it.json, edits solution.py)"
+      },
+      {
+        "path": "labs/L300/12-reliable-radio/README.md",
+        "purpose": "Commands and observed output"
+      },
+      {
+        "path": "labs/sim_stub/radio.py",
+        "purpose": "Radio stub: Air(loss, dup, reorder, corrupt, seed)"
+      }
+    ],
+    "expectedResults": [
+      "Faulty link, main.py: 14/20 delivered, sender unaware.",
+      "Faulty link, solution.py: 20/20 exactly once, in order; 22 retransmits; 19 duplicates suppressed."
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v (lab folder)",
+        "expected": "13 tests OK"
+      },
+      {
+        "action": "BUILD_FILE=main.py python -m unittest test_build_task",
+        "expected": "FAILED (failures=2, errors=2)"
+      },
+      {
+        "action": "CI: harness/simulator-l300.spec.js '12-reliable-radio'",
+        "expected": "board 1 'rx 1 23', board 0 '\"acked\":1', frame CRC matches (pending-ci)"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "In solution.py replace `if seq < state[\"expected\"]:` with `if False:` (variant no-dedupe) and rerun on the faulty link.",
+        "predict": "Retransmitted copies are delivered again.",
+        "expected": "Observed (stub): delivered 20/20, missing none, duplicates 19, in order False | sender retx 22 gave_up 0 | receiver gap -19"
+      },
+      {
+        "task": "Set MAX_TRIES = 2 (variant max-tries-2) on the same faulty link.",
+        "predict": "Some readings are lost.",
+        "expected": "Observed (stub): delivered 20/20, missing none, duplicates 0, in order True | sender retx 13 gave_up 4 | receiver gap 0 - the sender gave up on frames whose ACKS were lost; the data had arrived."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Everything is delivered twice",
+        "action": "The receiver delivers before checking seq < expected; move the duplicate check first."
+      },
+      {
+        "symptom": "The sender hangs on one frame",
+        "action": "Bound the retries (MAX_TRIES) and move on with gave_up += 1."
+      },
+      {
+        "symptom": "Frames longer than 32 bytes arrive cut and fail the CRC",
+        "action": "Keep frames short or radio.config(length=...) on both boards."
+      }
+    ],
+    "equivalents": [
+      "TCP: sequence numbers, acks, retransmission timer with backoff (RFC 6298).",
+      "MQTT QoS 1: at-least-once with PUBACK; the receiver must deduplicate.",
+      "MakeCode: radio.sendString + your own seq/ack in strings."
+    ],
+    "inRealSystems": [
+      "Zigbee/802.15.4 MAC and BLE link layers ack and retransmit frames.",
+      "Message queues are at-least-once; consumers deduplicate by message id."
+    ],
+    "useWhen": "Every reading matters between nearby boards at low rates; not for secrets (no encryption) or bulk data.",
+    "caution": "The CRC detects accidents, not attackers: anyone on the group can forge a valid frame. Never send secrets over the micro:bit radio.",
+    "simulatorVsReal": "Stub: seeded loss/dup/reorder/corrupt, instant delivery, 10 ms polling. Two bridged simulators: a clean link (no faults). Real boards: interference, range and timing decide the loss rate; the seeded numbers will differ.",
+    "checkpoint": "Pass if test_fault shows 14/20, BUILD_FILE=main.py fails, and solution.py delivers r1..r20 exactly once on seeds 1-5 and 12.",
+    "checkYourself": [
+      {
+        "q": "Why must the receiver ack a duplicate?",
+        "a": "The duplicate exists because the first ack was probably lost; without a new ack the sender retries until it gives up."
+      },
+      {
+        "q": "Does gave_up mean the reading is lost?",
+        "a": "No: the sender cannot tell lost data from a lost ack (tryIt 2: 4 give-ups, 0 missing)."
+      },
+      {
+        "q": "What does the CRC protect against, and what not?",
+        "a": "Random bit errors (1 in 65,536 slip through); not deliberate forgery."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: Radio",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/radio.html"
+      },
+      {
+        "title": "CRC RevEng catalogue: CRC-16/IBM-3740 (alias CRC-16/CCITT-FALSE), check 0x29B1",
+        "url": "https://reveng.sourceforge.io/crc-catalogue/16.htm"
+      },
+      {
+        "title": "RFC 6298: Computing TCP's Retransmission Timer (back off the timer: RTO * 2)",
+        "url": "https://www.rfc-editor.org/rfc/rfc6298"
+      },
+      {
+        "title": "MicroPython docs: microbit module (running_time, sleep, run_every)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/microbit.html"
+      },
+      {
+        "title": "micropython-microbit-v2-simulator README (radio_output / radio_input, set_value)",
+        "url": "https://github.com/microbit-foundation/micropython-microbit-v2-simulator"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran python -m unittest -v in labs/L300/12-reliable-radio: 13 tests OK on labs/sim_stub (CPython 3.12.15, Linux): test_fault (symptom), test_build_task (solution.py 4 OK; BUILD_FILE=main.py FAILED failures=2 errors=2), test_try_it (both tryIt results). Outputs pasted in the README. Not MicroPython, not a simulator, not a board.",
+      "pendingCi": [
+        "harness/simulator-l300.spec.js '12-reliable-radio solution' (two bridged MicroPython simulators; clean link only)",
+        "CI matrix macos-latest (arm64) + windows-latest",
+        "Radio faults on real boards (no hardware in this track)"
+      ]
+    },
+    "next": "L300 #13 Non-blocking firmware structure: a scheduler on running_time() so the link, the buttons and the sensors all keep running",
+    "conceptNote": "content/concepts/L300/12-reliable-radio.md",
+    "conceptSummary": "Number and checksum every frame, ack every copy, retransmit on timeout with backoff, bound the retries and deduplicate by sequence number: the radio then delivers each reading once, and the counters tell you when it could not.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "micropython-microbit-v2-simulator (standalone)",
+        "role": "CHECK",
+        "exercise": "Load solution.py into demo.html and inject one radio_input string 'D:1:r1:<CRC>' with a correct CRC, then the same with the last hex digit changed.",
+        "expected": "Pending a manual run (no browser here). Should match the lab: the good frame prints 'rx 1 r1' and the board answers with an 'A:1:...' radio_output; the bad one prints nothing (counted as bad). Compute the CRC with python -c \"import binascii;print('%04X'%binascii.crc_hqx(b'D:1:r1',0xFFFF))\".",
+        "mac": "Build/serve demo.html locally in a browser (repo README); hosted: open https://python-simulator.usermbit.org/v/0.1/demo.html",
+        "windows": "Same, or Start-Process https://python-simulator.usermbit.org/v/0.1/demo.html",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microbit-foundation/micropython-microbit-v2-simulator"
+      },
+      {
+        "name": "Microsoft MakeCode for micro:bit",
+        "role": "SEE",
+        "exercise": "Build the ack in blocks: on received string -> if it starts with 'D:' send 'A:' + the number back; the simulator shows two boards exchanging both messages.",
+        "expected": "Pending a manual run. You should see each data message followed by an ack on the other board, as in the stub run's rx/acked counters.",
+        "mac": "Browser: open https://makecode.microbit.org/",
+        "windows": "Browser: Start-Process https://makecode.microbit.org/",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microsoft/pxt-microbit"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L200 #8 At-least-once messaging: ack, visibility timeout, redelivery, dead letters: the same ack/redeliver/dedupe pattern between services (the idempotent consumer)",
+      "distributed-systems L100 #4 Retries with exponential backoff, jitter and a retry budget: the backoff and bounded retries used by pump()"
+    ]
+  },
+  {
+    "id": "nonblocking-scheduler",
+    "number": 13,
+    "level": "L300",
+    "title": "Non-blocking firmware structure",
+    "phase": "Harden it",
+    "category": "firmware structure",
+    "description": "Replace a sleep()-paced loop with a cooperative scheduler on running_time(): task periods and budgets, no sleep in the main loop, overrun and late detection, error containment and a safe state.",
+    "outcome": "You can show quick button taps being missed by a blocking loop, restructure the program as scheduled tasks, and prove every tap counts while overruns and failures are logged.",
+    "environment": "Python 3.12 + labs/sim_stub (L300: input timeline microbit._at / _advance). Simulator: Python Editor v3; CI harness (Node 24 + Playwright 1.64.1). No new packages.",
+    "estimatedTime": "60-90 minutes",
+    "overview": [
+      "A loop that sleeps cannot see what happens while it sleeps; a scheduler that only asks 'what is due now?' can, and it can measure itself."
+    ],
+    "prerequisites": [
+      "L100 #3 Buttons",
+      "L200 #11 A game as a state machine (running_time)"
+    ],
+    "glossary": [
+      {
+        "term": "Cooperative scheduler",
+        "meaning": "A loop that runs due tasks one after another; each task must return quickly."
+      },
+      {
+        "term": "Period / budget",
+        "meaning": "How often a task runs / how long one run may take."
+      },
+      {
+        "term": "Overrun",
+        "meaning": "A task run that took longer than its budget."
+      },
+      {
+        "term": "Safe state",
+        "meaning": "Outputs off and a clear indication, entered when the system cannot continue correctly."
+      }
+    ],
+    "concepts": [
+      "Polling only sees 'now'.",
+      "Time-driven tasks on running_time(), never sleep() in the loop.",
+      "Measure every task; contain errors; fail safe."
+    ],
+    "steps": [
+      {
+        "title": "Run the blocking loop",
+        "detail": "In the Python Editor paste main.py: hold A for about 1.5 s, then click quickly 3 times. On the PC run tap_sim.py.",
+        "expected": "Simulator: a held press prints 'tap 1'; quick clicks are mostly missed. Stub: 'main.py (sleep 1000): counted 1 of 8'.",
+        "ifNot": "The quick clicks must be shorter than the 1 s sleep.",
+        "mac": "cd labs/L300/13-nonblocking-scheduler && python3 tap_sim.py",
+        "windows": "cd labs\\L300\\13-nonblocking-scheduler; py tap_sim.py"
+      },
+      {
+        "title": "Pin the symptom",
+        "detail": "test_fault.py: 8 seeded taps of 150 ms at 932 ... 7744 ms; only the one covering t = 1000 is seen.",
+        "expected": "1 test OK (state['taps'] == 1).",
+        "ifNot": "Check the tap times printed by tap_sim.py.",
+        "mac": "python3 -m unittest -v test_main test_fault",
+        "windows": "py -m unittest -v test_main test_fault"
+      },
+      {
+        "title": "Build task: the scheduler",
+        "detail": "Restructure into tasks (button 20 ms, sensor 1000 ms, display 100 ms) run by run_once() with no sleep. Prove fail-before, pass-after.",
+        "expected": "BUILD_FILE=main.py: FAILED (failures=1, errors=5); solution.py: 6 tests OK.",
+        "ifNot": "Compare with solution.py; due times must advance past running_time() after each run.",
+        "mac": "BUILD_FILE=main.py python3 -m unittest -v test_build_task; python3 -m unittest -v test_build_task",
+        "windows": "$env:BUILD_FILE=\"main.py\"; py -m unittest -v test_build_task; Remove-Item Env:BUILD_FILE; py -m unittest -v test_build_task"
+      },
+      {
+        "title": "Overrun and late detection",
+        "detail": "test_overrun_is_logged replaces the sensor task with one that sleeps 300 ms.",
+        "expected": "JSON line {\"t\":0,\"event\":\"overrun\",\"task\":\"sensor\",\"budget\":20,\"ms\":300}.",
+        "ifNot": "Time the task from its own start, after earlier tasks ran."
+      },
+      {
+        "title": "Errors and the safe state",
+        "detail": "test_failing_task_leads_to_safe_state makes the sensor raise OSError(19) every time.",
+        "expected": "3 error lines, then one safe_state line; pin0 = 0, display shows Image.NO, scheduler stops.",
+        "ifNot": "Reset the error count after a successful run; disable the task at MAX_ERRORS."
+      },
+      {
+        "title": "Try it",
+        "detail": "Run try_it.py (two edits to solution.py).",
+        "expected": "See tryIt.",
+        "ifNot": "try_it.json edits must match exactly once.",
+        "mac": "python3 try_it.py",
+        "windows": "py try_it.py"
+      }
+    ],
+    "code": "# Lab 13 - tap counter + temperature reporter (BEFORE: a blocking loop).\n# A press shorter than 3 s counts; holding A for 3 s or more clears the count.\n# The loop polls the button, reads the sensor, then sleep()s for 1 s. It works\n# when you press deliberately (hold ~1.5 s), but a quick 150 ms tap that starts\n# and ends during the sleep is never seen: is_pressed() only looks at \"now\".\nfrom microbit import *\n\nSENSOR_MS = 1000           # one temperature line per second\nLONG_PRESS_MS = 3000       # hold this long to clear the count\n\n\ndef new_state():\n    return {\"taps\": 0, \"down_since\": None, \"temp\": None}\n\n\ndef poll_button(state, now):\n    # edge detection on is_pressed(): we need the press DURATION, so polling\n    # (not was_pressed) - and polling only works if it runs often enough\n    down = button_a.is_pressed()\n    if down and state[\"down_since\"] is None:\n        state[\"down_since\"] = now                     # press started\n    elif not down and state[\"down_since\"] is not None:\n        held = now - state[\"down_since\"]\n        state[\"down_since\"] = None                    # press ended\n        if held >= LONG_PRESS_MS:\n            state[\"taps\"] = 0\n            print(\"clear\")\n        else:\n            state[\"taps\"] += 1\n            print(\"tap\", state[\"taps\"])\n\n\ndef read_sensor(state, now):\n    state[\"temp\"] = temperature()\n    print('{\"t\":%d,\"temp\":%d,\"taps\":%d}' % (now, state[\"temp\"], state[\"taps\"]))\n\n\ndef loop_once(state):\n    now = running_time()\n    poll_button(state, now)\n    read_sensor(state, now)\n    display.show(min(state[\"taps\"], 9), wait=False)\n    sleep(SENSOR_MS)       # BLOCKING: nothing else runs for 1 s\n\n\ndef main():\n    print(\"tap counter ready\")\n    state = new_state()\n    while True:\n        loop_once(state)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "poll_button(): edge detection on is_pressed()",
+        "detail": "Records when the press starts and ends; the length decides tap (< 3 s) or clear (>= 3 s). It only works if it runs more often than the shortest press."
+      },
+      {
+        "title": "loop_once(): sleep(SENSOR_MS)",
+        "detail": "The blocking line in main.py: for 1 s nothing polls the button. A 150 ms tap inside it is never seen; no error is raised."
+      },
+      {
+        "title": "solution.py task()/new_scheduler()",
+        "detail": "Each task is data: name, period, function, budget, next due time, error count, enabled flag."
+      },
+      {
+        "title": "solution.py run_once()",
+        "detail": "For each task: skip if not due; log 'late' with missed periods if a whole period passed; run it inside try/except; time it; log 'overrun' if over budget; set the next due time in the future (missed periods skipped)."
+      },
+      {
+        "title": "solution.py safe_state()",
+        "detail": "Entered once after MAX_ERRORS consecutive failures: pin0 low, Image.NO, a JSON line naming the task; the scheduler then runs nothing."
+      },
+      {
+        "title": "main(): while True: run_once()",
+        "detail": "No sleep in the loop: it only asks what is due. On the stub the test moves the clock 1 ms per pass."
+      }
+    ],
+    "buildTask": {
+      "task": "Restructure main.py as a cooperative scheduler: tasks with period and budget run from run_once() using running_time(); no sleep() in the loop; log overruns, late runs and errors as JSON lines; after 3 consecutive errors disable the task and enter a safe state.",
+      "hints": [
+        "Keep poll_button/read_sensor unchanged; only the loop changes.",
+        "Read running_time() per task, after the previous task ran.",
+        "Skip missed periods instead of running them in a burst."
+      ],
+      "solution": "labs/L300/13-nonblocking-scheduler/solution.py",
+      "check": "labs/L300/13-nonblocking-scheduler/test_build_task.py (6 tests; BUILD_FILE=main.py fails)"
+    },
+    "failureLab": {
+      "fault": "Seeded quick taps on the stub's input timeline: 8 presses of 150 ms at 932, 1680, 2630, 3695, 4645, 5655, 6689, 7744 ms (tap_sim.taps(seed=13)).",
+      "symptom": "main.py with sleep(1000) counts 1 of 8 taps (only 932-1082 ms covers the sample at t = 1000); no error, no log.",
+      "fix": "Cooperative scheduler: button task every 20 ms, sensor 1000 ms, display 100 ms; no sleep in the main loop; overrun/late/error JSON lines; safe state after 3 errors.",
+      "proof": "labs/L300/13-nonblocking-scheduler/test_build_task.py: BUILD_FILE=main.py -> FAILED (failures=1, errors=5; 'AssertionError: 1 != 8'); solution.py -> 6 tests OK (8 of 8 taps, 610 runs, 0 overruns)."
+    },
+    "tradeOffs": [
+      {
+        "option": "sleep()-paced loop",
+        "gains": "Shortest code; low CPU use",
+        "costs": "Blind while sleeping; one slow step delays everything",
+        "chooseWhen": "One job, inputs that last longer than the loop period"
+      },
+      {
+        "option": "Cooperative scheduler (this lab)",
+        "gains": "Each job at its own rate; self-measuring; one place to contain errors",
+        "costs": "Every task must return quickly; busy loop keeps the CPU awake",
+        "chooseWhen": "Several periodic jobs plus responsive inputs"
+      },
+      {
+        "option": "run_every / interrupts / an RTOS",
+        "gains": "Runtime does the timing; preemption (RTOS) for hard deadlines",
+        "costs": "Shared data needs care (lesson 16); less visibility in MicroPython",
+        "chooseWhen": "Strict timing or many independent activities"
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L300/13-nonblocking-scheduler/main.py",
+        "purpose": "BEFORE: blocking loop"
+      },
+      {
+        "path": "labs/L300/13-nonblocking-scheduler/solution.py",
+        "purpose": "AFTER: scheduler (build task solution)"
+      },
+      {
+        "path": "labs/L300/13-nonblocking-scheduler/tap_sim.py",
+        "purpose": "Seeded taps on the stub timeline; runs either design"
+      },
+      {
+        "path": "labs/L300/13-nonblocking-scheduler/test_main.py",
+        "purpose": "Happy path of main.py"
+      },
+      {
+        "path": "labs/L300/13-nonblocking-scheduler/test_fault.py",
+        "purpose": "failureLab symptom"
+      },
+      {
+        "path": "labs/L300/13-nonblocking-scheduler/test_build_task.py",
+        "purpose": "Proof: fails before, passes after"
+      },
+      {
+        "path": "labs/L300/13-nonblocking-scheduler/try_it.py",
+        "purpose": "tryIt runner (edits solution.py)"
+      },
+      {
+        "path": "labs/L300/13-nonblocking-scheduler/README.md",
+        "purpose": "Commands and observed output"
+      },
+      {
+        "path": "labs/sim_stub/microbit/__init__.py",
+        "purpose": "Stub with input timeline (_at, _advance)"
+      }
+    ],
+    "expectedResults": [
+      "Blocking loop: 1 of 8 quick taps.",
+      "Scheduler: 8 of 8; JSON overrun/late/error/safe_state lines when a task misbehaves."
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v (lab folder)",
+        "expected": "12 tests OK"
+      },
+      {
+        "action": "BUILD_FILE=main.py python -m unittest test_build_task",
+        "expected": "FAILED (failures=1, errors=5)"
+      },
+      {
+        "action": "CI: harness/simulator-l300.spec.js '13-nonblocking-scheduler'",
+        "expected": "solution: 'tap 3' after three 150 ms clicks; main.py: count recorded (pending-ci)"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Poll the button every 200 ms instead of 20 ms (variant button-200ms).",
+        "predict": "Some 150 ms taps fall between two polls.",
+        "expected": "Observed (stub): counted 6 of 8 | stats {'runs': 160, 'overruns': 0, 'missed': 0, 'errors': 0} | events none"
+      },
+      {
+        "task": "Add sleep(300) inside read_sensor() (variant slow-sensor).",
+        "predict": "Overruns are logged; taps may be missed.",
+        "expected": "Observed (stub): counted 8 of 8 | stats {'runs': 440, 'overruns': 10, 'missed': 170, 'errors': 0} | events ['late', 'overrun'] - no tap happened to fall inside a 300 ms block this time, but the log names the slow task."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Tasks run in a burst after a pause",
+        "action": "Advance the due time past running_time(), skipping missed periods."
+      },
+      {
+        "symptom": "Overruns blamed on the wrong task",
+        "action": "Read running_time() at the start of each task, not once per pass."
+      },
+      {
+        "symptom": "Board looks frozen with a cross",
+        "action": "It is the safe state: read the JSON error lines on serial."
+      }
+    ],
+    "equivalents": [
+      "MicroPython run_every (V2) and asyncio-style schedulers in other ports.",
+      "Arduino 'blink without delay' with millis().",
+      "RTOS tasks (FreeRTOS, Zephyr) with priorities and watchdogs."
+    ],
+    "inRealSystems": [
+      "Bare-metal products use a super-loop scheduler with timing statistics.",
+      "Safety systems define a safe state and enter it on repeated faults (often with a watchdog)."
+    ],
+    "useWhen": "Several periodic jobs plus inputs that must not be missed; switch to interrupts or an RTOS for hard deadlines.",
+    "caution": "The safe state here is a demonstration: real actuators (motors, heaters) also need hardware protection and a watchdog, not only code.",
+    "simulatorVsReal": "Stub: the clock moves 1 ms per scheduler pass; taps come from a timeline. Simulator/board: the loop spins as fast as MicroPython runs and button timing is real; was_pressed latches presses in the runtime. Overrun times depend on the board.",
+    "checkpoint": "Pass if test_fault shows 1 of 8, BUILD_FILE=main.py fails and solution.py counts 8 of 8 with overrun and safe-state JSON lines in the tests.",
+    "checkYourself": [
+      {
+        "q": "Why not just use was_pressed()?",
+        "a": "It latches one press but loses the count and the press length, and the reaction still waits for the sleep to end."
+      },
+      {
+        "q": "What does a cooperative scheduler NOT protect you from?",
+        "a": "A task that blocks: everyone waits; the overrun log only tells you who."
+      },
+      {
+        "q": "Why skip missed periods?",
+        "a": "Catching up runs the task many times in a row and repeats the stall."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: microbit module (running_time, sleep, run_every)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/microbit.html"
+      },
+      {
+        "title": "MicroPython docs: Buttons (is_pressed, was_pressed, get_presses)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/button.html"
+      },
+      {
+        "title": "micropython-microbit-v2-simulator README (radio_output / radio_input, set_value)",
+        "url": "https://github.com/microbit-foundation/micropython-microbit-v2-simulator"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran python -m unittest -v in labs/L300/13-nonblocking-scheduler: 12 tests OK on labs/sim_stub with the new input timeline (CPython 3.12.15, Linux); BUILD_FILE=main.py FAILED (failures=1, errors=5). Output in the README.",
+      "pendingCi": [
+        "harness/simulator-l300.spec.js '13-nonblocking-scheduler solution' and 'main.py' (MicroPython simulator, 150 ms clicks)",
+        "CI matrix macos-latest + windows-latest",
+        "Timing on a real board (no hardware)"
+      ]
+    },
+    "next": "L300 #14 Power budgeting (modelled, not measured): the busy loop and the always-on display cost current - estimate how much",
+    "conceptNote": "content/concepts/L300/13-nonblocking-scheduler.md",
+    "conceptSummary": "Never sleep in the main loop: run tasks when running_time() says they are due, measure each run against its budget, skip missed periods, contain exceptions and fall back to a safe state.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "micro:bit Python Editor v3 (with V2 simulator)",
+        "role": "CHECK",
+        "exercise": "Run main.py, click A quickly 5 times within 5 s, count the 'tap' lines; then run solution.py and repeat.",
+        "expected": "Pending a manual run. Should match the stub: the blocking loop sees few or none (stub: 1 of 8), the scheduler sees every click (stub: 8 of 8).",
+        "mac": "Browser: open https://python.microbit.org/",
+        "windows": "Browser: Start-Process https://python.microbit.org/",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microbit-foundation/python-editor-v3"
+      },
+      {
+        "name": "Microsoft MakeCode for micro:bit",
+        "role": "SEE",
+        "exercise": "Build the same counter with 'on button A pressed' plus a 'forever' block with 'pause 1000' and a sensor read; click quickly in the simulator.",
+        "expected": "Pending a manual run. Event blocks count every click even with the pause - the runtime's event system does what the lab's scheduler does in Python.",
+        "mac": "Browser: open https://makecode.microbit.org/",
+        "windows": "Browser: Start-Process https://makecode.microbit.org/",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microsoft/pxt-microbit"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L300 #16 Backpressure and load shedding: bounded queues, 503 + Retry-After, AIMD concurrency limits: the scheduler's budgets and skipped periods are the on-board form of shedding work instead of queueing a burst",
+      "simulation L300 #15 Co-simulation with FMI: master algorithm and communication step: same problem seen from the simulation side (reverse link)."
+    ]
+  },
+  {
+    "id": "power-budget-model",
+    "number": 14,
+    "level": "L300",
+    "title": "Power budgeting (modelled, not measured)",
+    "phase": "Harden it",
+    "category": "power",
+    "description": "Estimate battery life from published figures, labelled as estimates: duty cycle, awake vs Deep Sleep current, sampling-rate trade-off; then fix a logger that would flatten 2 x AAA in under two days.",
+    "outcome": "You can build a power budget whose every input has a source and a label, show that fixed 100 ms logging fails a one-month brief, and meet it with adaptive sampling and power.deep_sleep.",
+    "environment": "Python 3.12 + labs/sim_stub (L300: power stub, input timeline). No current was measured: figures come from the micro:bit tech site, the nRF52833 PS and an Energizer datasheet. No new packages.",
+    "estimatedTime": "60-90 minutes",
+    "overview": [
+      "Average current is the area under the current curve; the sampling interval and the sleep mode decide it, so model them before you deploy."
+    ],
+    "prerequisites": [
+      "L200 #8 Data logging",
+      "L300 #13 (timing without sleep)"
+    ],
+    "glossary": [
+      {
+        "term": "Duty cycle",
+        "meaning": "Share of time the board is awake."
+      },
+      {
+        "term": "Deep Sleep",
+        "meaning": "power.deep_sleep(): on-board components off, program resumes after."
+      },
+      {
+        "term": "Sleep floor",
+        "meaning": "Current while asleep; for the micro:bit board it is not published, so the lab assumes 0.05-0.5 mA."
+      },
+      {
+        "term": "Adaptive sampling",
+        "meaning": "Sample fast while the value changes, slower while it is steady."
+      }
+    ],
+    "concepts": [
+      "Every figure needs a source and a label (upper bound, assumed board floor, chip-only bound, assumption); the headline is the conservative board estimate.",
+      "sleep() is not a low-power mode; Deep Sleep is.",
+      "The sampling interval is the biggest lever."
+    ],
+    "steps": [
+      {
+        "title": "Run the logger",
+        "detail": "Paste main.py into the Python Editor: the display shows the temperature every 100 ms. On the PC, test_main.py shows the rows it logs.",
+        "expected": "Rows 'Time (milliseconds),temp', '0,20', '100,20', ...",
+        "ifNot": "log.set_labels must run before the first add.",
+        "mac": "cd labs/L300/14-power-budget && python3 -m unittest -v test_main",
+        "windows": "cd labs\\L300\\14-power-budget; py -m unittest -v test_main"
+      },
+      {
+        "title": "Run the model",
+        "detail": "budget.py runs each design for one simulated hour and prints the figures and one JSON line per design. life_h is the BOARD estimate at the conservative assumed sleep floor (0.5 mA); life_h_range spans the 0.5-0.05 mA floor; chip_only_bound_h is the nRF52833 alone and never a board figure.",
+        "expected": "main.py: avg_ma 30.0, life_h 41.7, meets_brief false; solution.py: avg_ma 0.5792, life_h 2158.3, life_h_range [2158.3, 9588.4], chip_only_bound_h 15244.7, max_delay_ms 4700, meets_brief true.",
+        "ifNot": "The trace and figures are constants at the top of budget.py.",
+        "mac": "python3 budget.py",
+        "windows": "py budget.py"
+      },
+      {
+        "title": "Pin the symptom",
+        "detail": "test_fault.py: 36,000 samples per hour at 30 mA.",
+        "expected": "1 test OK (41.7 h, brief not met).",
+        "ifNot": "Check BOARD_ON_MA and BATTERY_MAH.",
+        "mac": "python3 -m unittest -v test_fault",
+        "windows": "py -m unittest -v test_fault"
+      },
+      {
+        "title": "Build task: adaptive sampling + Deep Sleep",
+        "detail": "Change the logger so it deep-sleeps between samples and backs off while the value is steady. Prove fail-before, pass-after.",
+        "expected": "BUILD_FILE=main.py: FAILED (failures=3, errors=1); solution.py: 4 tests OK.",
+        "ifNot": "Interval sequence must be 200, 400 ... 6400, 8000 and reset to 100 on a change.",
+        "mac": "BUILD_FILE=main.py python3 -m unittest -v test_build_task; python3 -m unittest -v test_build_task",
+        "windows": "$env:BUILD_FILE=\"main.py\"; py -m unittest -v test_build_task; Remove-Item Env:BUILD_FILE; py -m unittest -v test_build_task"
+      },
+      {
+        "title": "Read the trade-off",
+        "detail": "test_tradeoff_short_spike_can_be_missed: a 1.5 s spike between two samples 8 s apart is never logged; max_delay_ms in the JSON line is the worst detection delay.",
+        "expected": "Spike not in the samples; max_delay_ms 4700 <= 10000.",
+        "ifNot": "A smaller MAX_MS catches it but costs current."
+      },
+      {
+        "title": "Try it",
+        "detail": "Run try_it.py (MAX_MS = 100; chip-only awake current).",
+        "expected": "See tryIt.",
+        "ifNot": "try_it.json edits must match exactly once.",
+        "mac": "python3 try_it.py",
+        "windows": "py try_it.py"
+      }
+    ],
+    "code": "\"\"\"Power budget MODEL for lab 14 (PC side). ESTIMATES, NOT MEASUREMENTS.\n\nRuns a logger design (main.py or solution.py) on the stub for one simulated hour\nwith a fixed temperature trace, counts how long the board is awake vs in Deep\nSleep, and turns that into average current and battery life using the figures\nbelow. Every figure has a source and a label; change them and re-run.\n\nRun:  python budget.py            (Windows: py budget.py)\n\"\"\"\nimport json\nimport os\nimport sys\n\nHERE = os.path.dirname(os.path.abspath(__file__))\nsys.path.insert(0, os.path.join(HERE, \"..\", \"..\", \"sim_stub\"))\nfrom labtest import load_lab  # noqa: E402\nimport microbit  # noqa: E402\nimport power  # noqa: E402\n\nFIGURES = {\n    # Board awake (On mode). UPPER BOUND: tech.microbit.org power-supply page,\n    # \"allow a worst case budget of 30mA for when all on-board peripherals are in use\".\n    \"BOARD_ON_MA\": 30.0,\n    # Deep Sleep floor of the whole BOARD (interface MCU, regulator, sensors powered down,\n    # pull-ups). BOARD SLEEP FLOOR, ASSUMPTION: no published figure; the model brackets it\n    # at 0.05-0.5 mA and leads with the conservative end. Replace it with a measurement.\n    \"SLEEP_MA\": 0.5,\n    \"SLEEP_MA_LOW\": 0.05,\n    # CHIP ONLY: nRF52833 PS \"1.5 uA at 3 V in System ON mode, no RAM retention, wake on\n    # RTC\". A floor the board cannot beat - never quote it as the board's battery life.\n    \"CHIP_SLEEP_MA\": 0.0015,\n    # Awake time per Deep Sleep wake-up (read + log + back to sleep). ASSUMPTION: not\n    # published, not measured here; measure it on a board before trusting the result.\n    \"ACTIVE_MS\": 20,\n    # 2 x AAA alkaline in series: Energizer E92 datasheet, 1,250 mAh rated at 25 mA to 0.8 V\n    # (older revision EBC-1103I; the current manufacturer sheet gives capacity as a chart).\n    \"BATTERY_MAH\": 1250.0,\n}\nREQUIRED_HOURS = 720           # the brief: one month on one set of batteries\nMAX_DETECT_MS = 10000          # ...and notice a 1 C change within 10 s\nHOUR_MS = 3600 * 1000\n# temperature trace (C) for one hour: (from_ms, value). Same on every run.\nTRACE = [(0, 20), (600000, 21), (610000, 22), (620000, 23), (630000, 24), (2400000, 20)]\n\n\ndef schedule_trace(trace):\n    for t, value in trace:\n        microbit._at(t, lambda v=value: microbit._inject_temperature(v))\n\n\ndef load_design(filename, source=None):\n    if source is None:\n        return load_lab(HERE, filename)\n    import types\n    microbit._reset()\n    mod = types.ModuleType(\"lab14_variant\")\n    exec(compile(source, os.path.join(HERE, filename), \"exec\"), mod.__dict__)\n    return mod\n\n\ndef run_design(filename, trace=TRACE, run_ms=HOUR_MS, source=None):\n    lab = load_design(filename, source)\n    schedule_trace(trace)\n    state, samples = lab.new_state(), []\n    while microbit.running_time() < run_ms:\n        now = microbit.running_time()\n        lab.loop_once(state)                  # the design's own loop body\n        samples.append((now, state[\"last\"]))\n    slept = sum(ms for kind, _, ms in power.log if kind == \"deep_sleep\")\n    # The last sleep can run past the window (e.g. an 8 s sleep started at 3,599,400 ms).\n    # Clip to the window so the averages use exactly run_ms; that tail belongs to the next hour.\n    overshoot = microbit.running_time() - run_ms\n    return {\"total_ms\": run_ms, \"slept_ms\": slept - max(overshoot, 0),\n            \"wakeups\": len(power.log), \"samples\": samples}\n\n\ndef detect_delays(samples, trace=TRACE):\n    \"\"\"ms from each trace change until a sample first shows the new value.\"\"\"\n    out = []\n    for t, value in trace[1:]:\n        seen = [s for s, v in samples if s >= t and v == value]\n        out.append(seen[0] - t if seen else None)\n    return out\n\n\ndef life_h(run, fig, sleep_ma):\n    if run[\"wakeups\"]:     # deep-sleep design: awake ACTIVE_MS per wake-up, asleep otherwise\n        awake = min(run[\"wakeups\"] * fig[\"ACTIVE_MS\"], run[\"total_ms\"])\n    else:                  # never sleeps: awake the whole time\n        awake = run[\"total_ms\"]\n    avg_ma = (awake * fig[\"BOARD_ON_MA\"] + (run[\"total_ms\"] - awake) * sleep_ma) / run[\"total_ms\"]\n    return awake, avg_ma, round(fig[\"BATTERY_MAH\"] / avg_ma, 1)\n\n\ndef estimate(run, fig=FIGURES):\n    # headline = BOARD estimate at the conservative sleep floor; the chip figure is only a bound\n    awake, avg_ma, life = life_h(run, fig, fig[\"SLEEP_MA\"])\n    return {\"awake_pct\": round(100.0 * awake / run[\"total_ms\"], 2), \"avg_ma\": round(avg_ma, 4),\n            \"life_h\": life, \"life_h_range\": [life, life_h(run, fig, fig[\"SLEEP_MA_LOW\"])[2]],\n            \"chip_only_bound_h\": life_h(run, fig, fig[\"CHIP_SLEEP_MA\"])[2]}\n\n\ndef report(filename, fig=FIGURES, trace=TRACE, source=None):\n    run = run_design(filename, trace, source=source)\n    est = estimate(run, fig)\n    delays = detect_delays(run[\"samples\"], trace)\n    ok = est[\"life_h\"] >= REQUIRED_HOURS and all(d is not None and d <= MAX_DETECT_MS for d in delays)\n    line = dict(design=filename, samples=len(run[\"samples\"]), wakeups=run[\"wakeups\"],\n                max_delay_ms=max(d for d in delays if d is not None), meets_brief=ok, **est)\n    return json.dumps(line)             # observability: one JSON line per design\n\n\nif __name__ == \"__main__\":\n    print(\"figures (estimates, see sources in the code):\", FIGURES)\n    print(\"life_h = BOARD estimate at the conservative sleep floor; range = 0.5-0.05 mA floor;\"\n          \" chip_only_bound_h is NOT a board figure\")\n    for name in (\"main.py\", \"solution.py\"):\n        print(report(name))\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "FIGURES",
+        "detail": "Inputs, each with source and label: 30 mA (UPPER BOUND, tech site worst-case budget), 0.5 / 0.05 mA (BOARD SLEEP FLOOR, ASSUMPTION: unpublished, conservative end first), 0.0015 mA (CHIP ONLY, nRF52833 System ON + RTC, a bound), 20 ms per wake-up (ASSUMPTION), 1,250 mAh (Energizer E92)."
+      },
+      {
+        "title": "TRACE + schedule_trace()",
+        "detail": "A fixed one-hour temperature trace injected on the stub's timeline: same input for every design, so results are comparable and repeatable."
+      },
+      {
+        "title": "run_design()",
+        "detail": "Runs the design's own loop_once() until one simulated hour has passed; power.log records every Deep Sleep, so wake-ups and slept time are counted, not guessed."
+      },
+      {
+        "title": "life_h() + estimate()",
+        "detail": "Deep-sleep design: awake = wake-ups x ACTIVE_MS; otherwise awake the whole time. avg = time-weighted current; life = mAh / avg. estimate() leads with the conservative board floor and adds the range and the chip-only bound."
+      },
+      {
+        "title": "detect_delays()",
+        "detail": "For each change in the trace, the time until a sample first shows the new value: the cost side of slow sampling."
+      },
+      {
+        "title": "report()",
+        "detail": "One JSON line per design with samples, wake-ups, awake %, avg mA, board life h + range, chip-only bound, worst delay and meets_brief (conservative life >= 720 h and <= 10 s)."
+      }
+    ],
+    "buildTask": {
+      "task": "Change the logger (solution.py) to sample adaptively (100 ms on change, x2 while steady, cap 8 s) and call power.deep_sleep(ms=interval) between samples, so the model meets 720 h with detection <= 10 s.",
+      "hints": [
+        "Keep sample() returning the reading; store the interval in state.",
+        "next_interval(interval, changed) is the whole policy.",
+        "Do not show values on the display: Deep Sleep turns it off anyway."
+      ],
+      "solution": "labs/L300/14-power-budget/solution.py",
+      "check": "labs/L300/14-power-budget/test_build_task.py (4 tests; BUILD_FILE=main.py fails)"
+    },
+    "failureLab": {
+      "fault": "Battery model, not a measurement: 2 x AAA (1,250 mAh), board awake at the 30 mA worst-case budget; main.py logs every 100 ms with sleep() (board stays On) on a fixed one-hour trace.",
+      "symptom": "budget.py: {\"design\": \"main.py\", \"samples\": 36000, \"avg_ma\": 30.0, \"life_h\": 41.7, \"meets_brief\": false} - flat in under 2 days against a 30-day brief.",
+      "fix": "Adaptive sampling (100 ms -> 8 s while steady) and power.deep_sleep(ms=interval) between samples.",
+      "proof": "labs/L300/14-power-budget/test_build_task.py: BUILD_FILE=main.py -> FAILED (failures=3, errors=1); solution.py -> 4 tests OK (483 wake-ups in exactly one hour, 0.579 mA, about 2,158 h board estimate - range 2,158-9,588 h, chip-only bound 15,245 h - worst delay 4.7 s)."
+    },
+    "tradeOffs": [
+      {
+        "option": "Fixed fast sampling, board On",
+        "gains": "Never misses a change; simplest",
+        "costs": "~30 mA (upper bound): 41.7 h on 2 x AAA",
+        "chooseWhen": "USB powered"
+      },
+      {
+        "option": "Fixed slow sampling + Deep Sleep",
+        "gains": "Predictable, low current",
+        "costs": "Coarse data during events; delay up to one interval",
+        "chooseWhen": "Slow-changing values, regular reporting"
+      },
+      {
+        "option": "Adaptive sampling + Deep Sleep (this lab)",
+        "gains": "Detail during events, low current when steady",
+        "costs": "Short events between samples are missed; noise defeats it without hysteresis",
+        "chooseWhen": "Mostly steady values with occasional events"
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L300/14-power-budget/budget.py",
+        "purpose": "The model (lesson code)"
+      },
+      {
+        "path": "labs/L300/14-power-budget/main.py",
+        "purpose": "BEFORE: 100 ms logger, board On"
+      },
+      {
+        "path": "labs/L300/14-power-budget/solution.py",
+        "purpose": "AFTER: adaptive + Deep Sleep (build task solution)"
+      },
+      {
+        "path": "labs/L300/14-power-budget/test_main.py",
+        "purpose": "Logger rows, model arithmetic, labels"
+      },
+      {
+        "path": "labs/L300/14-power-budget/test_fault.py",
+        "purpose": "failureLab symptom"
+      },
+      {
+        "path": "labs/L300/14-power-budget/test_build_task.py",
+        "purpose": "Proof + documented trade-off"
+      },
+      {
+        "path": "labs/L300/14-power-budget/try_it.py",
+        "purpose": "tryIt runner (edits solution.py / budget.py)"
+      },
+      {
+        "path": "labs/L300/14-power-budget/README.md",
+        "purpose": "Figures table, commands, observed output"
+      },
+      {
+        "path": "labs/sim_stub/power.py",
+        "purpose": "power stub (deep_sleep moves the clock)"
+      }
+    ],
+    "expectedResults": [
+      "main.py: 41.7 h (model).",
+      "Fixed 100 ms + Deep Sleep: 195.3 h (model, board floor 0.5 mA).",
+      "Adaptive + Deep Sleep: about 2,158 h board estimate (range 2,158-9,588 h across the assumed 0.5-0.05 mA floor; chip-only bound 15,245 h, not a board figure), worst delay 4.7 s."
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v (lab folder)",
+        "expected": "14 tests OK"
+      },
+      {
+        "action": "BUILD_FILE=main.py python -m unittest test_build_task",
+        "expected": "FAILED (failures=3, errors=1)"
+      },
+      {
+        "action": "CI: harness/simulator-l300.spec.js '14-power-budget'",
+        "expected": "solution.py runs with power + log; any error recorded (pending-ci)"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "In solution.py set MAX_MS = 100 (variant fixed-100ms-deep-sleep): Deep Sleep, but a fixed 100 ms rate.",
+        "predict": "Deep Sleep alone fixes it.",
+        "expected": "Observed (model): solution.py: avg 6.4 mA, life 195.3 h, meets brief False - 20 ms awake in every 120 ms slot; the rate decides."
+      },
+      {
+        "task": "In budget.py set BOARD_ON_MA = 7.9 (variant chip-only-current: CPU 3.3 mA + radio RX 4.6 mA, chip only) and rerun main.py.",
+        "predict": "With the optimistic figure the always-on logger is fine.",
+        "expected": "Observed (model): main.py: avg 7.9 mA, life 158.2 h, meets brief False - even the optimistic figure misses 720 h."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Life looks like years",
+        "action": "You are reading chip_only_bound_h (the nRF52833 alone) or the optimistic end of the range. Quote life_h, the board estimate at the conservative floor; the model also ignores self-discharge - measure."
+      },
+      {
+        "symptom": "power.deep_sleep() returns at once in the stub",
+        "action": "Pass ms= (the stub needs it); on a board, a call with no wake source and no ms is handled by CODAL."
+      },
+      {
+        "symptom": "Adaptive interval never grows",
+        "action": "The value flickers; compare with a threshold or add hysteresis."
+      }
+    ],
+    "equivalents": [
+      "CODAL uBit.power.deepSleep(ms) (C++) and MakeCode power extension.",
+      "nRF Connect SDK / Zephyr: PM states with the same duty-cycle arithmetic.",
+      "Nordic's Online Power Profiler gives chip-level estimates (vendor tool; one-line equivalent)."
+    ],
+    "inRealSystems": [
+      "Battery sensor nodes report on change plus a heartbeat and spend >99% of the time asleep.",
+      "Budgets are confirmed with a power analyser before a lifetime is promised."
+    ],
+    "useWhen": "Before running anything on batteries; replace estimates with measurements when you have the board and a meter.",
+    "caution": "These are estimates. Never promise a battery life from this model; measure the real board (sleep floor, wake time) first.",
+    "simulatorVsReal": "Stub: deep_sleep only moves the clock; current is computed from labelled figures. Simulator: whether power.deep_sleep is emulated is unverified (harness records it). Board: sleep floor, wake-up time and display/sensor currents must be measured.",
+    "checkpoint": "Pass if budget.py shows 41.7 h for main.py, BUILD_FILE=main.py fails, and solution.py meets 720 h with max delay <= 10 s in the model.",
+    "checkYourself": [
+      {
+        "q": "Which input to the model is least trustworthy, and why?",
+        "a": "The sleep floor: the board's figure is not published, so the model assumes 0.05-0.5 mA and leads with 0.5 mA; 1.5 uA is the chip alone and only bounds the result."
+      },
+      {
+        "q": "Why does a fixed 100 ms rate with Deep Sleep still fail?",
+        "a": "It is awake 20 ms of every 120 ms; average ~6 mA."
+      },
+      {
+        "q": "What does adaptive sampling give up?",
+        "a": "Events shorter than the current interval (the 1.5 s spike)."
+      }
+    ],
+    "sources": [
+      {
+        "title": "MicroPython docs: Power Management V2 (deep_sleep, off)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/power.html"
+      },
+      {
+        "title": "micro:bit Python Editor API: power",
+        "url": "https://python.microbit.org/v/3/api/power"
+      },
+      {
+        "title": "micro:bit tech site: Power supply (30 mA worst-case on-board budget)",
+        "url": "https://tech.microbit.org/hardware/power-supply/"
+      },
+      {
+        "title": "micro:bit Power Management Specification 1.0.3 (On, Deep Sleep, Off modes)",
+        "url": "https://tech.microbit.org/firmware/spec-power-management/"
+      },
+      {
+        "title": "nRF52833 Product Specification: key features (52 uA/MHz, 1.5 uA System ON + RTC, 4.9/4.6 mA TX/RX)",
+        "url": "https://docs.nordicsemi.com/r/bundle/ps_nrf52833/page/keyfeatures_html5.html"
+      },
+      {
+        "title": "Energizer E92 (AAA) product datasheet, manufacturer copy (form EBC-1103-M): capacity chart, continuous discharge to 0.8 V; the model's 1,250 mAh at 25 mA is the figure printed in the older revision EBC-1103I",
+        "url": "https://data.energizer.com/pdfs/e92.pdf"
+      },
+      {
+        "title": "MicroPython docs: Data Logging V2 (log)",
+        "url": "https://microbit-micropython.readthedocs.io/en/v2-docs/log.html"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran python budget.py and python -m unittest -v in labs/L300/14-power-budget: 14 tests OK (incl. the one-hour averaging-window test added 2026-10-30) on labs/sim_stub (CPython 3.12.15, Linux); BUILD_FILE=main.py FAILED (failures=3, errors=1). All currents are MODELLED from published figures and labelled assumptions (board sleep floor 0.05-0.5 mA assumed); nothing was measured.",
+      "pendingCi": [
+        "harness/simulator-l300.spec.js '14-power-budget solution' (power module in the simulator: unverified)",
+        "CI matrix macos-latest + windows-latest",
+        "Measurement on a real board with a power analyser (no hardware in this track)"
+      ]
+    },
+    "next": "L300 #15 A serial gateway to the PC: when the board is on USB anyway, send every reading to the PC - safely",
+    "conceptNote": "content/concepts/L300/14-power-budget.md",
+    "conceptSummary": "Battery life = capacity / time-weighted average current. Label every figure (upper bound, assumed board floor, chip-only bound), lead with the conservative board estimate, use Deep Sleep between samples, and let the sampling interval follow the data.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "Orange Data Mining",
+        "role": "SEE",
+        "exercise": "Save solution.py's logged rows (temp, interval) from the stub as CSV (python -c \"import budget,log;budget.run_design('solution.py');open('rows.csv','w').write(log._csv())\"), load in Orange, Line Plot of interval over time.",
+        "expected": "Pending a manual run. Should match the model: the interval climbs 100 -> 8000 ms while steady and drops to 100 ms at each change in the trace (600 s, 610 s ...).",
+        "mac": "Orange3-3.40.0-Python3.12.10-arm64.dmg, conda, or pip install PyQt6 PyQt6-WebEngine orange3",
+        "windows": "winget install --id UniversityofLjubljana.Orange (or Orange3-3.40.0-x86_64.exe)",
+        "licence": "GPL-3.0-or-later (OSI: yes)",
+        "url": "https://github.com/biolab/orange3"
+      },
+      {
+        "name": "micro:bit Python Editor v3 (with V2 simulator)",
+        "role": "CHECK",
+        "exercise": "Run solution.py in the simulator, open the Data logging view and move the temperature slider after 30 s.",
+        "expected": "Pending a manual run. New rows should appear about every 8 s while steady and every 100 ms right after the slider moves (interval column). Whether the simulator emulates Deep Sleep is unverified.",
+        "mac": "Browser: open https://python.microbit.org/",
+        "windows": "Browser: Start-Process https://python.microbit.org/",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microbit-foundation/python-editor-v3"
+      }
+    ],
+    "seeAlso": [
+      "simulation L200 #7 Input modelling: fit service times and check the fit: the battery model is a small simulation - check its inputs before trusting the output"
+    ]
+  },
+  {
+    "id": "serial-gateway",
+    "number": 15,
+    "level": "L300",
+    "title": "A serial gateway to the PC",
+    "phase": "Harden it",
+    "category": "serial / gateway",
+    "description": "Frame readings on the micro:bit (length + CRC-16), and build a PC gateway that validates, resynchronises after garbage and forwards MQTT-style JSON lines (Mosquitto + paho-mqtt in CI).",
+    "outcome": "You can show a naive gateway crashing (and forwarding wrong values) on a noisy serial link, harden it with framing, CRC and resync, read its metrics, and let a local model explain anomalies while code decides alarms.",
+    "environment": "Python 3.12 stdlib (gateway, tests) + labs/sim_stub (device). Optional, pending-ci: Eclipse Mosquitto 2.1.2 + paho-mqtt 2.1.0 (CI job gateway-mqtt); pyserial 3.5 for a real board; Ollama for the agent assist.",
+    "estimatedTime": "75-100 minutes",
+    "overview": [
+      "A line on a serial port is not a message: frame it, check it, resync after garbage, and count every rejection."
+    ],
+    "prerequisites": [
+      "L200 #8 Data logging (serial CSV)",
+      "L300 #12 (CRC-16)"
+    ],
+    "glossary": [
+      {
+        "term": "Frame",
+        "meaning": "$ + 3-digit length + payload + * + 4-hex CRC, then a line end."
+      },
+      {
+        "term": "Resync",
+        "meaning": "After a bad frame, drop one byte and search for the next start marker."
+      },
+      {
+        "term": "MQTT QoS 1",
+        "meaning": "At-least-once publish: the broker acknowledges (PUBACK)."
+      },
+      {
+        "term": "Topic",
+        "meaning": "MQTT address of a message, e.g. microbit/mb1/telemetry."
+      }
+    ],
+    "concepts": [
+      "Serial reads come in arbitrary chunks; never assume a line is a message.",
+      "Length then CRC; resync by one byte.",
+      "Metrics as JSON lines; code alarms, agent explains."
+    ],
+    "steps": [
+      {
+        "title": "Device frames",
+        "detail": "Paste main.py into the Python Editor and open serial; on the PC, test_main.py checks the frame format.",
+        "expected": "Frames like $0081,20,127*0B24 every 500 ms; 3 tests OK.",
+        "ifNot": "The payload must not contain $ or *.",
+        "mac": "cd labs/L300/15-serial-gateway && python3 -m unittest -v test_main",
+        "windows": "cd labs\\L300\\15-serial-gateway; py -m unittest -v test_main"
+      },
+      {
+        "title": "Happy path with the naive gateway",
+        "detail": "Write the sample transcripts, then feed the clean one to gateway.py.",
+        "expected": "200 JSON lines, first {\"payload\": {\"light\": 100, \"seq\": 1, \"temp\": 20}, \"qos\": 1, \"topic\": \"microbit/mb1/telemetry\"}.",
+        "ifNot": "Run serial_link.py first (it writes samples/).",
+        "mac": "python3 serial_link.py && python3 gateway.py --file samples/clean.txt",
+        "windows": "py serial_link.py; py gateway.py --file samples\\clean.txt"
+      },
+      {
+        "title": "The fault",
+        "detail": "Feed the noisy transcript (boot garbage, 3 dropped bytes, 5 flipped bits, 2 cut lines) and run test_fault.py.",
+        "expected": "ValueError: not enough values to unpack (expected 3, got 1) on line 1; test_fault: 2 tests OK (also shows 22 forwarded instead of 20).",
+        "ifNot": "The noisy file is samples/noisy.bin.",
+        "mac": "python3 gateway.py --file samples/noisy.bin; python3 -m unittest -v test_fault",
+        "windows": "py gateway.py --file samples\\noisy.bin; py -m unittest -v test_fault"
+      },
+      {
+        "title": "Build task: framing, CRC, resync",
+        "detail": "Make the gateway read bytes and never crash on input (see buildTask). Prove fail-before, pass-after.",
+        "expected": "BUILD_FILE=gateway.py: FAILED (errors=4, ValueError); solution.py: 4 tests OK.",
+        "ifNot": "Compare with solution.py Framer.feed().",
+        "mac": "BUILD_FILE=gateway.py python3 -m unittest -v test_build_task; python3 -m unittest -v test_build_task",
+        "windows": "$env:BUILD_FILE=\"gateway.py\"; py -m unittest -v test_build_task; Remove-Item Env:BUILD_FILE; py -m unittest -v test_build_task"
+      },
+      {
+        "title": "Metrics and agent assist",
+        "detail": "Run the hardened gateway on the demo link and read the metrics lines; then the agent assist with the fake model server.",
+        "expected": "Final metrics {\"bad_crc\": 3, \"bad_len\": 6, \"bad_payload\": 0, \"frames_ok\": 190, \"resyncs\": 9, \"skipped_bytes\": 184}; alarms LINK_NOISY=4.5, SEQ_GAP=9; check: PASS.",
+        "ifNot": "The fake server must be the vendored copy in labs/_shared/local_agent.",
+        "mac": "python3 solution.py --demo; python3 agent_assist.py --fake",
+        "windows": "py solution.py --demo; py agent_assist.py --fake"
+      },
+      {
+        "title": "To a real broker (optional, pending-ci)",
+        "detail": "Start Mosquitto on 127.0.0.1:1883, install paho-mqtt 2.1.0, publish the demo and watch with mosquitto_sub.",
+        "expected": "190 messages on microbit/mb1/telemetry and metrics on microbit/gateway/metrics (CI job gateway-mqtt asserts it).",
+        "ifNot": "Bind the broker to 127.0.0.1 only; check the port.",
+        "mac": "brew install mosquitto && brew services start mosquitto; python3 -m pip install paho-mqtt==2.1.0; python3 solution.py --demo --mqtt 127.0.0.1:1883",
+        "windows": "winget install -e --id EclipseFoundation.Mosquitto; py -m pip install paho-mqtt==2.1.0; py solution.py --demo --mqtt 127.0.0.1:1883"
+      },
+      {
+        "title": "Try it",
+        "detail": "Run try_it.py.",
+        "expected": "See tryIt.",
+        "ifNot": "try_it.json edits must match solution.py exactly once.",
+        "mac": "python3 try_it.py",
+        "windows": "py try_it.py"
+      }
+    ],
+    "code": "\"\"\"Lab 15 - serial gateway on the PC (BEFORE hardening).\n\nReads the micro:bit's serial lines, turns each into a JSON message and forwards\nit MQTT-style: one JSON line {\"topic\", \"qos\", \"payload\"} per reading. Works on a\nclean transcript. On a real serial link (boot messages, a cable pulled\nmid-line, a flipped bit) it either CRASHES on the first bad line or, worse,\nforwards a wrong value: it never checks the length or the CRC.\n\nRun:  python gateway.py --file serial.txt     (Windows: py gateway.py --file serial.txt)\n\"\"\"\nimport argparse\nimport json\nimport sys\n\nTOPIC = \"microbit/{device}/telemetry\"\n\n\nclass JsonLinesPublisher:\n    \"\"\"MQTT-style output without a broker: one JSON object per line.\"\"\"\n\n    def __init__(self, out=None):\n        self.out = out or sys.stdout\n        self.sent = []\n\n    def publish(self, topic, payload, qos=1):\n        msg = {\"topic\": topic, \"qos\": qos, \"payload\": payload}\n        self.sent.append(msg)\n        self.out.write(json.dumps(msg, sort_keys=True) + \"\\n\")\n\n\ndef parse_line(line):\n    body = line.strip()                     # \"$LLL<payload>*CCCC\"\n    payload = body[4:].split(\"*\")[0]        # trusts the format: no checks at all\n    seq, temp, light = payload.split(\",\")\n    return {\"seq\": int(seq), \"temp\": int(temp), \"light\": int(light)}\n\n\ndef run(lines, publisher, device=\"mb1\"):\n    for line in lines:\n        if not line.strip():\n            continue\n        publisher.publish(TOPIC.format(device=device), parse_line(line))\n    return publisher\n\n\ndef main(argv=None):\n    ap = argparse.ArgumentParser(description=\"naive serial -> JSON-lines gateway\")\n    ap.add_argument(\"--file\", required=True, help=\"serial transcript (text)\")\n    args = ap.parse_args(argv)\n    with open(args.file, encoding=\"utf-8\", errors=\"replace\") as f:\n        run(f, JsonLinesPublisher())\n\n\nif __name__ == \"__main__\":\n    main()\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "JsonLinesPublisher",
+        "detail": "MQTT-style output without a broker: one JSON object {topic, qos, payload} per line. solution.py and mqtt_bridge.MqttPublisher share its publish(topic, payload, qos) interface."
+      },
+      {
+        "title": "parse_line()",
+        "detail": "Slices off '$LLL', splits at '*' and ','. No length or CRC check: boot garbage raises ValueError, a flipped digit becomes a wrong value. This is what the build task replaces."
+      },
+      {
+        "title": "run() over text lines",
+        "detail": "Iterating lines assumes the port delivers whole, clean lines; one exception stops the gateway and everything behind it."
+      },
+      {
+        "title": "solution.py Framer.feed()",
+        "detail": "Appends bytes to a buffer; finds '$', reads the 3-digit length, waits for the whole frame, checks '*' and the line end at the expected place, then CRC-16. Any failure: drop one byte (resync) and count why. A generator, so metrics stay exact per frame."
+      },
+      {
+        "title": "solution.py parse_payload()",
+        "detail": "Three integers in range (seq >= 1, -40..105 C, light 0..255), else bad_payload: a valid CRC does not make a value plausible."
+      },
+      {
+        "title": "solution.py run()",
+        "detail": "Publishes readings and every 50 frames (and at the end) a metrics message on microbit/gateway/metrics."
+      },
+      {
+        "title": "mqtt_bridge.MqttPublisher",
+        "detail": "paho-mqtt 2.x: Client(CallbackAPIVersion.VERSION2), loop_start(), publish(qos=1) and wait_for_publish(timeout=5)."
+      }
+    ],
+    "buildTask": {
+      "task": "Write a byte-level framer for the gateway: find '$', check the 3-digit length, '*' and the line end, verify CRC-16/CCITT-FALSE, resync by one byte on any error, range-check the payload, and publish metrics; it must never raise on input and must give the same output for any chunk size.",
+      "hints": [
+        "Keep a bytearray buffer; a partial frame waits for more bytes.",
+        "Drop ONE byte on an error, not the buffer: the next frame may already be there.",
+        "Count bad_len, bad_crc, resyncs and skipped bytes (not line ends)."
+      ],
+      "solution": "labs/L300/15-serial-gateway/solution.py",
+      "check": "labs/L300/15-serial-gateway/test_build_task.py (4 tests; BUILD_FILE=gateway.py fails)"
+    },
+    "failureLab": {
+      "fault": "Seeded serial faults (serial_link.noisy, seed 15) on 200 device frames: boot garbage first, 3 dropped bytes, 5 flipped bits, 2 lines cut short, random chunk sizes 1-39 bytes.",
+      "symptom": "gateway.py raises ValueError: not enough values to unpack (expected 3, got 1) on the first line and forwards nothing; on a single flipped digit it forwards temp 22 instead of 20 without warning.",
+      "fix": "Framer: start marker, length, '*', line end, CRC-16, resync by one byte, payload range check, metrics JSON lines.",
+      "proof": "labs/L300/15-serial-gateway/test_build_task.py: BUILD_FILE=gateway.py -> FAILED (errors=4, all ValueError); solution.py -> 4 tests OK (190 frames forwarded, every value equals what the device sent, same result fed 1 byte at a time)."
+    },
+    "tradeOffs": [
+      {
+        "option": "Plain text lines (CSV)",
+        "gains": "Human-readable, trivial",
+        "costs": "No error detection; garbage crashes or corrupts",
+        "chooseWhen": "Bench debugging only"
+      },
+      {
+        "option": "Text frame with length + CRC (this lab)",
+        "gains": "Still readable in a serial monitor; detects errors; resyncs",
+        "costs": "~9 bytes overhead per frame; CRC in Python costs CPU on the board",
+        "chooseWhen": "Telemetry over USB serial"
+      },
+      {
+        "option": "Binary framing (COBS/SLIP + CRC) or a protocol (e.g. MQTT-SN)",
+        "gains": "Compact, robust, standard tooling",
+        "costs": "Not readable; more code on the board",
+        "chooseWhen": "High rates or production links"
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L300/15-serial-gateway/gateway.py",
+        "purpose": "BEFORE: naive gateway (lesson code)"
+      },
+      {
+        "path": "labs/L300/15-serial-gateway/solution.py",
+        "purpose": "AFTER: framer + CRC + resync (build task solution)"
+      },
+      {
+        "path": "labs/L300/15-serial-gateway/main.py",
+        "purpose": "Device: framed serial output (MicroPython)"
+      },
+      {
+        "path": "labs/L300/15-serial-gateway/serial_link.py",
+        "purpose": "Seeded serial faults; writes samples/"
+      },
+      {
+        "path": "labs/L300/15-serial-gateway/mqtt_bridge.py",
+        "purpose": "paho-mqtt 2.1.0 publisher (pending-ci)"
+      },
+      {
+        "path": "labs/L300/15-serial-gateway/agent_assist.py",
+        "purpose": "Agent explains; code decides alarms"
+      },
+      {
+        "path": "labs/L300/15-serial-gateway/test_build_task.py",
+        "purpose": "Proof: fails before, passes after"
+      },
+      {
+        "path": "labs/L300/15-serial-gateway/test_mqtt_ci.py",
+        "purpose": "Through Mosquitto (CI only)"
+      },
+      {
+        "path": "labs/L300/15-serial-gateway/README.md",
+        "purpose": "Commands and observed output"
+      },
+      {
+        "path": "labs/_shared/local_agent/fake_model_server.py",
+        "purpose": "Fake server rule [[MICROBIT-GATEWAY]]"
+      }
+    ],
+    "expectedResults": [
+      "Naive: crash on line 1.",
+      "Hardened: 190 of 200 frames, 9 resyncs (6 bad length, 3 bad CRC), 0 wrong values.",
+      "Alarms (code): LINK_NOISY=4.5, SEQ_GAP=9."
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v (lab folder)",
+        "expected": "17 tests OK (skipped=1: test_mqtt_ci needs a broker)"
+      },
+      {
+        "action": "BUILD_FILE=gateway.py python -m unittest test_build_task",
+        "expected": "FAILED (errors=4)"
+      },
+      {
+        "action": "CI job gateway-mqtt: MQTT_BROKER=127.0.0.1:1883 python -m unittest test_mqtt_ci",
+        "expected": "190 telemetry messages via Mosquitto (pending-ci)"
+      },
+      {
+        "action": "CI: harness/simulator-l300.spec.js '15-serial-gateway'",
+        "expected": "every frame's length and CRC correct in MicroPython (pending-ci)"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Remove the CRC check in solution.py (variant no-crc-check) and flip bits in 10% of frames instead of 2%.",
+        "predict": "Wrong values get through.",
+        "expected": "Observed (stub): no CRC: forwarded 181, 2 WRONG, bad_crc 0, bad_payload 9 | with CRC: forwarded 179, 0 WRONG, bad_crc 13, bad_payload 0"
+      },
+      {
+        "task": "Feed the same noisy bytes one byte at a time (a slow port).",
+        "predict": "Partial frames get lost.",
+        "expected": "Observed (stub): forwarded 190 readings, 0 wrong; metrics {'frames_ok': 190, 'bad_len': 6, 'bad_crc': 3, 'bad_payload': 0, 'resyncs': 9, 'skipped_bytes': 184} - identical to the chunked run."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Gateway stops on the first line",
+        "action": "You are parsing lines; use the framer and resync."
+      },
+      {
+        "symptom": "Metrics differ between runs on the same data",
+        "action": "Logic depends on chunk size; emit per frame (generator), as in solution.py."
+      },
+      {
+        "symptom": "paho-mqtt: Unsupported callback API version",
+        "action": "paho-mqtt 2.x needs Client(CallbackAPIVersion.VERSION2, ...)."
+      },
+      {
+        "symptom": "Nothing arrives at the broker",
+        "action": "Is mosquitto running on 127.0.0.1:1883? Watch with mosquitto_sub -t 'microbit/#' -v."
+      }
+    ],
+    "equivalents": [
+      "NMEA 0183 sentences ($...*checksum) from GPS receivers.",
+      "SLIP/COBS framing + CRC in binary protocols.",
+      "Node-RED or Telegraf as an off-the-shelf serial-to-MQTT bridge."
+    ],
+    "inRealSystems": [
+      "Industrial gateways frame serial data (Modbus RTU uses a CRC-16) and resync on gaps.",
+      "Gateways publish health metrics next to the data so dashboards can alarm on the link itself."
+    ],
+    "useWhen": "A board on USB serial feeds a PC or Raspberry Pi; the gateway is the trust boundary - validate there.",
+    "caution": "Bind brokers to 127.0.0.1 or a trusted network with authentication; never expose an open Mosquitto to the internet. The agent never raises or clears alarms and never sees secrets.",
+    "simulatorVsReal": "Stub: device frames from labs/sim_stub, faults injected by serial_link.py (seeded). Simulator: frames observed in its serial output (harness, pending-ci) but not piped to a PC program; save a transcript to replay. Board: USB serial via pyserial 3.5 (not run).",
+    "checkpoint": "Pass if gateway.py crashes on samples/noisy.bin, BUILD_FILE=gateway.py fails, solution.py forwards 190 correct readings with metrics, and agent_assist --fake prints check: PASS.",
+    "checkYourself": [
+      {
+        "q": "Why drop only one byte when a frame is bad?",
+        "a": "The next valid frame may already be in the buffer right after the bad start marker."
+      },
+      {
+        "q": "What does the length field catch that the CRC also would - and what does it add?",
+        "a": "Both catch a dropped byte; the length tells the framer when the frame is complete, so it can wait for a partial frame instead of guessing."
+      },
+      {
+        "q": "Who decides LINK_NOISY?",
+        "a": "decide_alarms() in code (damaged > 2%); the model only explains, and its text is checked."
+      }
+    ],
+    "sources": [
+      {
+        "title": "CRC RevEng catalogue: CRC-16/IBM-3740 (alias CRC-16/CCITT-FALSE), check 0x29B1",
+        "url": "https://reveng.sourceforge.io/crc-catalogue/16.htm"
+      },
+      {
+        "title": "paho-mqtt 2.1.0 on PyPI (Client, CallbackAPIVersion.VERSION2, publish/wait_for_publish)",
+        "url": "https://pypi.org/project/paho-mqtt/"
+      },
+      {
+        "title": "Eclipse Mosquitto download (2.1.2; brew, Windows installer, apt)",
+        "url": "https://mosquitto.org/download/"
+      },
+      {
+        "title": "pyserial 3.5 on PyPI",
+        "url": "https://pypi.org/project/pyserial/"
+      },
+      {
+        "title": "micropython-microbit-v2-simulator README (radio_output / radio_input, set_value)",
+        "url": "https://github.com/microbit-foundation/micropython-microbit-v2-simulator"
+      },
+      {
+        "title": "Ollama OpenAI compatibility (local model endpoint)",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran python -m unittest -v in labs/L300/15-serial-gateway: 17 tests OK, 1 skipped (test_mqtt_ci: no broker) on CPython 3.12.15 (Linux); BUILD_FILE=gateway.py FAILED (errors=4); agent_assist.py --fake check PASS against the vendored fake model server. Device frames came from labs/sim_stub, not MicroPython.",
+      "pendingCi": [
+        "CI job gateway-mqtt: Mosquitto + paho-mqtt 2.1.0 on ubuntu/macos/windows (test_mqtt_ci.py)",
+        "harness/simulator-l300.spec.js '15-serial-gateway main.py' (frame length/CRC in MicroPython)",
+        "Real board over USB serial with pyserial 3.5 (no hardware)",
+        "Agent assist with a real local model (Ollama, qwen2.5:1.5b)",
+        "CI matrix macos-latest + windows-latest for the stub tests"
+      ]
+    },
+    "next": "L300 #16 Close-sibling low-level code: below MicroPython - a timer interrupt in Rust/Embassy, and the race it can hide",
+    "conceptNote": "content/concepts/L300/15-serial-gateway.md",
+    "conceptSummary": "Frame every reading (start marker, length, CRC), parse bytes not lines, resync by one byte, range-check values, publish metrics next to data, and keep alarms in code.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "agentAssist": {
+      "task": "A local model explains gateway telemetry anomalies (counters + alarms); code computes the counters and decides every alarm, and checks the explanation.",
+      "prompt": "system: explain micro:bit serial-gateway telemetry in 3-4 plain sentences; quote only numbers given; name only alarms listed as raised; no invented causes, no commands. | user: [[MICROBIT-GATEWAY]] Explain these gateway counters and alarms: <gateway>{metrics, alarms, missing}</gateway>",
+      "check": "decide_alarms() raises LINK_NOISY (damaged > 2%), SEQ_GAP (missing sequence numbers), TEMP_HIGH (>= 30 C). check_explanation() rejects any number not in the counters/alarms/percentage, any alarm name the code did not raise, and any raised alarm left unnamed. Failed check or server down -> the code's alarms only.",
+      "expected": "Observed with the fake server: metrics: {\"bad_crc\": 3, \"bad_len\": 6, \"bad_payload\": 0, \"frames_ok\": 190, \"resyncs\": 9, \"skipped_bytes\": 184} / alarms (decided by code): LINK_NOISY=4.5, SEQ_GAP=9 / agent explanation (checked): The gateway accepted 190 of 199 frames. 3 frames failed the CRC check and 6 had the wrong length, so 4.5% of frames were damaged on the serial link, which looks like noise or a loose cable rather than a sensor fault. It resynchronised 9 times and kept running. 9 readings are missing from the sequence. Alarms raised by the gateway code: LINK_NOISY, SEQ_GAP. / check: PASS (numbers from the metrics; alarm names match the code's alarms)",
+      "realModelNote": "Same setup as lab 05 (Ollama, qwen2.5:1.5b, LOCAL_MODEL_URL / LOCAL_MODEL). Not run with a real model here; a small model may quote a wrong number - then the check rejects it and the alarms stand."
+    },
+    "learningTools": [
+      {
+        "name": "Orange Data Mining",
+        "role": "SEE",
+        "exercise": "Save the hardened gateway's telemetry as CSV (python solution.py --demo, keep the telemetry lines, write seq,temp,light), load it in Orange and plot temp and light against seq.",
+        "expected": "Pending a manual run. Should match the lab: 190 points, temp in steps 20 -> 23 every 50 readings, light cycling 100-109, and visible gaps at the 9-10 missing sequence numbers.",
+        "mac": "Orange3-3.40.0-Python3.12.10-arm64.dmg, conda, or pip install PyQt6 PyQt6-WebEngine orange3",
+        "windows": "winget install --id UniversityofLjubljana.Orange (or Orange3-3.40.0-x86_64.exe)",
+        "licence": "GPL-3.0-or-later (OSI: yes)",
+        "url": "https://github.com/biolab/orange3"
+      },
+      {
+        "name": "Apache Superset",
+        "role": "SEE",
+        "exercise": "Upload the same CSV (Settings > Data > Upload CSV; allow file uploads on the database) and chart temp over seq; add the four metrics snapshots as a second table.",
+        "expected": "Pending a manual run. frames_ok 50/100/150/190 against resyncs 5/6/8/9, as printed by solution.py --demo.",
+        "mac": "docker compose -f docker-compose-image-tag.yml up (http://localhost:8088) or pip install apache_superset",
+        "windows": "Partial: no official Windows support - Docker Desktop (unofficial)",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://github.com/apache/superset/releases"
+      }
+    ],
+    "seeAlso": [
+      "application-architecture L200 #9 Event-driven integration: outbox, bus and AsyncAPI: the gateway is a producer onto a bus; topics and payload contracts are the same idea"
+    ]
+  },
+  {
+    "id": "interrupt-race-rust-embassy",
+    "number": 16,
+    "level": "L300",
+    "title": "Close-sibling low-level code: a timer interrupt race in Rust",
+    "phase": "Harden it",
+    "category": "interrupts / Rust",
+    "description": "Rust + Embassy firmware for the micro:bit V2's nRF52833: a TIMER1 interrupt shares a counter with the main loop; show the lost-update race deterministically on the host, fix it with a critical section, and run the build under Renode's nRF52840 model as a close sibling (pending-ci).",
+    "outcome": "You can explain and prove a read-modify-write race between an ISR and main code, fix it with a critical section, and state exactly what an emulator run on a sibling chip does and does not show.",
+    "environment": "Local: Python 3.12 host model + static checks. pending-ci: Rust stable + thumbv7em-none-eabihf, embassy-executor 0.10.0, embassy-time 0.5.1, embassy-nrf 0.11.0 (feature nrf52833), cortex-m 0.7.6, Renode 1.17.0 (nRF52840 model).",
+    "estimatedTime": "90-120 minutes (Rust/Renode install extra)",
+    "overview": [
+      "Below MicroPython, interrupts and main code share memory; a read-work-write that an interrupt can split loses data unless it is a critical section."
+    ],
+    "prerequisites": [
+      "L300 #13 (scheduling, budgets)",
+      "Reading basic Rust syntax"
+    ],
+    "glossary": [
+      {
+        "term": "ISR",
+        "meaning": "Interrupt service routine: code the hardware runs when an interrupt fires."
+      },
+      {
+        "term": "Critical section",
+        "meaning": "Code run with interrupts masked, so it cannot be split."
+      },
+      {
+        "term": "Lost update",
+        "meaning": "A write that overwrites a change made between our read and our write."
+      },
+      {
+        "term": "Close sibling",
+        "meaning": "A different chip of the same family used for emulation; not the target."
+      }
+    ],
+    "concepts": [
+      "Atomic types do not make read-then-write atomic.",
+      "Mask interrupts around shared read-modify-write; keep it short.",
+      "Emulation on a sibling checks the build and logic, not the board."
+    ],
+    "steps": [
+      {
+        "title": "Show the race on the host",
+        "detail": "Run test_fault.py: the Python mirror of take() in main.rs with an IRQ placed in the read/write window, and a seeded soak.",
+        "expected": "IRQ in window: isr 1, consumed 0, pending 0, lost 1; soak: 1316 IRQs, 1000 consumed, 316 lost.",
+        "ifNot": "host_sim.py holds the rules; race_model.py mirrors main.rs.",
+        "mac": "cd labs/L300/16-interrupt-race && python3 -m unittest -v test_fault",
+        "windows": "cd labs\\L300\\16-interrupt-race; py -m unittest -v test_fault"
+      },
+      {
+        "title": "Build task: critical section",
+        "detail": "Wrap read-work-write in critical_section::with (fixed.rs) / mask..unmask (solution_model.py). Prove fail-before, pass-after.",
+        "expected": "BUILD_FILE=race_model.py: FAILED (failures=3); solution_model.py: 3 tests OK.",
+        "ifNot": "The held IRQ must run after the write (unmask), not before.",
+        "mac": "BUILD_FILE=race_model.py python3 -m unittest -v test_build_task; python3 -m unittest -v test_build_task",
+        "windows": "$env:BUILD_FILE=\"race_model.py\"; py -m unittest -v test_build_task; Remove-Item Env:BUILD_FILE; py -m unittest -v test_build_task"
+      },
+      {
+        "title": "Check the registers against the datasheet",
+        "detail": "test_main.py compares the TIMER1/UART0 addresses and values in main.rs and the memory.x layout with the nRF52833 PS, and checks main.rs and fixed.rs differ only in take().",
+        "expected": "6 tests OK.",
+        "ifNot": "Compare with the PS TIMER/UART register tables (sources).",
+        "mac": "python3 -m unittest -v test_main",
+        "windows": "py -m unittest -v test_main"
+      },
+      {
+        "title": "Build and unit-test the Rust code (pending-ci)",
+        "detail": "Install rustup and the target, run cargo test in logic/, cargo build --release --bins in firmware/.",
+        "expected": "4 logic tests pass; ELFs microbit-v2-interrupt-race and fixed under firmware/target/thumbv7em-none-eabihf/release (CI job rust-firmware).",
+        "ifNot": "Embassy API changes between versions: keep the pinned versions in Cargo.toml.",
+        "mac": "brew install rustup && export PATH=\"$(brew --prefix rustup)/bin:$PATH\" && rustup default stable && rustup target add thumbv7em-none-eabihf && (cd logic && cargo test) && (cd firmware && cargo build --release --bins)",
+        "windows": "winget install -e --id Rustlang.Rustup; rustup target add thumbv7em-none-eabihf; cd logic; cargo test; cd ..\\firmware; cargo build --release --bins"
+      },
+      {
+        "title": "Run on the close sibling in Renode (pending-ci)",
+        "detail": "Install Renode 1.17.0 (release assets), open the script, then run the robot test.",
+        "expected": "uart0 analyzer: 'round=N isr=... consumed=... pending=... lost=0' for 20 rounds and 'done lost_total=0' (fixed build); renode-test passes (CI job renode).",
+        "ifNot": "Use microbit-v2-sibling.repl (legacy UART, easyDMA false); the stock repl hangs legacy-UART firmware.",
+        "mac": "Install renode-1.17.0.osx-arm64-portable.dmg; renode renode/microbit-v2-sibling.resc; renode-test renode/interrupt_race.robot",
+        "windows": "Install renode-1.17.0.setup.exe; renode renode\\microbit-v2-sibling.resc; renode-test renode\\interrupt_race.robot"
+      },
+      {
+        "title": "Try it",
+        "detail": "Run try_it.py (shorter window; section longer than the timer period).",
+        "expected": "See tryIt.",
+        "ifNot": "try_it.json edits must match exactly once.",
+        "mac": "python3 try_it.py",
+        "windows": "py try_it.py"
+      }
+    ],
+    "code": "// Lab 16 - a timer interrupt and the main loop share a counter (BEFORE: racy).\n// Target: nRF52833 (micro:bit V2), Rust + Embassy. Runs under Renode's nRF52840\n// model as a CLOSE SIBLING (same TIMER1/UART0 addresses and IRQ numbers; NOT\n// the micro:bit board) - see ../README.md \"What differs from real V2 hardware\".\n//\n// TIMER1 fires every 100 us and adds 1 to PENDING. The main loop \"takes\" the\n// pending ticks: read PENDING, do some work, write 0. If the interrupt fires\n// between the read and the write, its tick is wiped out: a lost update.\n// AtomicU32 does not help - two separate atomic operations are not one.\n#![no_std]\n#![no_main]\n\nuse core::fmt::Write;\nuse core::sync::atomic::{AtomicU32, Ordering::Relaxed};\nuse embassy_executor::Spawner;\nuse embassy_nrf::interrupt;\nuse embassy_nrf::interrupt::{InterruptExt, Priority};\nuse embassy_time::Timer;\nuse panic_halt as _;\n\n// nRF52833 Product Specification: TIMER1 base 0x40009000, UART0 base 0x40002000\nconst TIMER1_BASE: usize = 0x4000_9000;\nconst UART0_BASE: usize = 0x4000_2000;\n\nfn reg_write(base: usize, offset: usize, value: u32) {\n    unsafe { core::ptr::write_volatile((base + offset) as *mut u32, value) }\n}\n\nfn reg_read(base: usize, offset: usize) -> u32 {\n    unsafe { core::ptr::read_volatile((base + offset) as *const u32) }\n}\n\nstatic PENDING: AtomicU32 = AtomicU32::new(0); // shared: ISR adds, main takes\nstatic ISR_TOTAL: AtomicU32 = AtomicU32::new(0); // written only by the ISR\n\n#[interrupt]\nunsafe fn TIMER1() {\n    reg_write(TIMER1_BASE, 0x140, 0); // EVENTS_COMPARE[0] = 0, or the IRQ fires again at once\n    PENDING.store(PENDING.load(Relaxed) + 1, Relaxed); // safe here: main cannot preempt an ISR\n    ISR_TOTAL.fetch_add(1, Relaxed);\n}\n\n// RACE: read ... window ... write. A tick added inside the window is lost.\nfn take() -> u32 {\n    let n = PENDING.load(Relaxed);\n    cortex_m::asm::delay(2_000); // \"work\" between read and write widens the window\n    PENDING.store(0, Relaxed);\n    n\n}\n\nfn start_timer1() {\n    reg_write(TIMER1_BASE, 0x504, 0); // MODE = Timer\n    reg_write(TIMER1_BASE, 0x508, 3); // BITMODE = 32 bit\n    reg_write(TIMER1_BASE, 0x510, 4); // PRESCALER = 4: 16 MHz / 2^4 = 1 MHz\n    reg_write(TIMER1_BASE, 0x540, 100); // CC[0] = 100 ticks = 100 us\n    reg_write(TIMER1_BASE, 0x200, 1); // SHORTS: COMPARE0 -> CLEAR (periodic)\n    reg_write(TIMER1_BASE, 0x304, 1 << 16); // INTENSET: COMPARE[0]\n    interrupt::TIMER1.set_priority(Priority::P2);\n    unsafe { interrupt::TIMER1.enable() };\n    reg_write(TIMER1_BASE, 0x00C, 1); // TASKS_CLEAR\n    reg_write(TIMER1_BASE, 0x000, 1); // TASKS_START\n}\n\n// Legacy UART0 TX on P0.06 (micro:bit V2: target TX to the interface MCU), 115200 baud.\nstruct Uart;\n\nimpl Uart {\n    fn init() -> Self {\n        reg_write(UART0_BASE, 0x50C, 6); // PSEL.TXD = P0.06, connected\n        reg_write(UART0_BASE, 0x524, 0x01D7_E000); // BAUDRATE = 115200\n        reg_write(UART0_BASE, 0x500, 4); // ENABLE = UART\n        reg_write(UART0_BASE, 0x008, 1); // TASKS_STARTTX\n        Uart\n    }\n}\n\nimpl Write for Uart {\n    fn write_str(&mut self, s: &str) -> core::fmt::Result {\n        for b in s.bytes() {\n            reg_write(UART0_BASE, 0x11C, 0); // clear EVENTS_TXDRDY\n            reg_write(UART0_BASE, 0x51C, b as u32); // TXD\n            while reg_read(UART0_BASE, 0x11C) == 0 {}\n        }\n        Ok(())\n    }\n}\n\n#[embassy_executor::main]\nasync fn main(_spawner: Spawner) {\n    let _p = embassy_nrf::init(Default::default()); // clocks + RTC1 time driver\n    let mut uart = Uart::init();\n    start_timer1();\n    let mut consumed: u32 = 0;\n    let mut lost_total: u32 = 0;\n    for round in 1..=20u32 {\n        for _ in 0..50 {\n            consumed += take();\n            Timer::after_micros(500).await;\n        }\n        // observability: a consistent snapshot (interrupts masked while we read both)\n        let (isr, pending) = critical_section::with(|_| (ISR_TOTAL.load(Relaxed), PENDING.load(Relaxed)));\n        let lost = isr - consumed - pending; // invariant: isr == consumed + pending + lost\n        lost_total = lost;\n        let _ = write!(uart, \"round={} isr={} consumed={} pending={} lost={}\\r\\n\", round, isr, consumed, pending, lost);\n    }\n    let _ = write!(uart, \"done lost_total={}\\r\\n\", lost_total);\n    loop {\n        Timer::after_secs(1).await;\n    }\n}\n",
+    "codeLanguage": "rust",
+    "codeWalkthrough": [
+      {
+        "title": "TIMER1_BASE / reg_write()",
+        "detail": "Raw volatile register access at the nRF52833 PS addresses (TIMER1 0x40009000). The same addresses exist on the nRF52840 that Renode models."
+      },
+      {
+        "title": "PENDING and ISR_TOTAL",
+        "detail": "PENDING is shared (ISR adds, main takes); ISR_TOTAL has a single writer (the ISR), so the report can check isr == consumed + pending + lost."
+      },
+      {
+        "title": "#[interrupt] unsafe fn TIMER1()",
+        "detail": "Clears EVENTS_COMPARE[0] (else the IRQ re-fires at once), then adds 1. Inside the ISR load+store is safe: main code cannot preempt it."
+      },
+      {
+        "title": "take(): the race",
+        "detail": "load, 2,000-cycle delay (~31 us at 64 MHz), store 0. A timer tick (every 100 us) inside the delay is overwritten. Two atomic operations are not one."
+      },
+      {
+        "title": "start_timer1()",
+        "detail": "MODE timer, 32-bit, PRESCALER 4 (1 MHz), CC[0] 100 (100 us), SHORTS COMPARE0->CLEAR, INTENSET COMPARE0, NVIC priority 2 and enable, CLEAR + START."
+      },
+      {
+        "title": "Uart (legacy UART0, P0.06)",
+        "detail": "ENABLE=4, PSEL.TXD=6, 115200 baud, byte by byte on EVENTS_TXDRDY - simple, and the mode Renode's model supports with easyDMA false."
+      },
+      {
+        "title": "main(): snapshot in a critical section",
+        "detail": "Every 50 takes it reads ISR_TOTAL and PENDING together with interrupts masked and prints round/isr/consumed/pending/lost. fixed.rs changes only take()."
+      }
+    ],
+    "buildTask": {
+      "task": "Fix take(): make read-work-write one critical section (critical_section::with in fixed.rs; mask/unmask in solution_model.py) so a tick that arrives meanwhile is deferred, not lost.",
+      "hints": [
+        "Masking delays the ISR; it runs right after the section ends.",
+        "Keep the section shorter than the timer period.",
+        "PENDING.swap(0, Relaxed) also works on this core (LDREX/STREX)."
+      ],
+      "solution": "labs/L300/16-interrupt-race/firmware/src/bin/fixed.rs",
+      "solutionMirror": "labs/L300/16-interrupt-race/solution_model.py",
+      "check": "labs/L300/16-interrupt-race/test_build_task.py (3 tests; BUILD_FILE=race_model.py fails); pending-ci: logic cargo test, renode/interrupt_race.robot"
+    },
+    "failureLab": {
+      "fault": "Deterministic host model of main.rs: an interrupt placed between the read and the write of PENDING in take(); plus a seeded soak (1000 takes, IRQ in the window with p = 0.3, seed 16).",
+      "symptom": "One IRQ in the window: isr 1, consumed 0, pending 0, lost 1. Soak: 1316 interrupts, 1000 consumed, 316 lost (24%) - no crash, the count is just wrong.",
+      "fix": "critical_section::with around load-work-store (fixed.rs); the held interrupt runs after the write.",
+      "proof": "labs/L300/16-interrupt-race/test_build_task.py: BUILD_FILE=race_model.py -> FAILED (failures=3; window IRQ lost, soak 316 lost, seed 1: 280 lost); solution_model.py -> 3 tests OK (every interleaving and 11 seeds: 0 lost). Rust: logic/src/lib.rs tests and the Renode robot test (fixed build lost=0) are pending-ci."
+    },
+    "tradeOffs": [
+      {
+        "option": "Critical section (this lab)",
+        "gains": "Simple, correct for any read-modify-write",
+        "costs": "Adds interrupt latency; too long merges interrupts",
+        "chooseWhen": "Short updates of shared data on a single core"
+      },
+      {
+        "option": "Atomic read-modify-write (swap / fetch_sub)",
+        "gains": "No masking, no added latency",
+        "costs": "Only for one variable; ARMv6-M (micro:bit V1) lacks these instructions",
+        "chooseWhen": "A single counter or flag on ARMv7-M"
+      },
+      {
+        "option": "Message passing (queue/channel from ISR to task)",
+        "gains": "No shared mutable state; scales to complex data",
+        "costs": "Memory for the queue; overflow policy needed",
+        "chooseWhen": "ISR produces events/data for a task (Embassy channels, RTOS queues)"
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L300/16-interrupt-race/firmware/src/main.rs",
+        "purpose": "BEFORE: racy firmware (lesson code)"
+      },
+      {
+        "path": "labs/L300/16-interrupt-race/firmware/src/bin/fixed.rs",
+        "purpose": "AFTER: critical section (build task solution)"
+      },
+      {
+        "path": "labs/L300/16-interrupt-race/firmware/Cargo.toml",
+        "purpose": "Pinned Embassy/cortex-m versions; target thumbv7em-none-eabihf"
+      },
+      {
+        "path": "labs/L300/16-interrupt-race/firmware/memory.x",
+        "purpose": "nRF52833 layout: 512K flash, 128K RAM"
+      },
+      {
+        "path": "labs/L300/16-interrupt-race/logic/src/lib.rs",
+        "purpose": "Pure logic + host tests (cargo test)"
+      },
+      {
+        "path": "labs/L300/16-interrupt-race/host_sim.py",
+        "purpose": "Python copy of the logic (runs here)"
+      },
+      {
+        "path": "labs/L300/16-interrupt-race/race_model.py",
+        "purpose": "Python mirror of take() before"
+      },
+      {
+        "path": "labs/L300/16-interrupt-race/solution_model.py",
+        "purpose": "Python mirror of take() after"
+      },
+      {
+        "path": "labs/L300/16-interrupt-race/renode/microbit-v2-sibling.repl",
+        "purpose": "nRF52840 model, legacy UART0"
+      },
+      {
+        "path": "labs/L300/16-interrupt-race/renode/interrupt_race.robot",
+        "purpose": "renode-test: fixed build lost=0"
+      },
+      {
+        "path": "labs/L300/16-interrupt-race/README.md",
+        "purpose": "What differs from real V2 hardware; commands; observed output"
+      }
+    ],
+    "expectedResults": [
+      "Host: racy loses exactly the IRQs that land in the window; fixed loses none.",
+      "Renode (pending-ci): fixed build prints lost=0 for 20 rounds."
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v (lab folder)",
+        "expected": "14 tests OK"
+      },
+      {
+        "action": "BUILD_FILE=race_model.py python -m unittest test_build_task",
+        "expected": "FAILED (failures=3)"
+      },
+      {
+        "action": "CI rust-firmware: cargo test (logic) + cargo build --release --bins (firmware)",
+        "expected": "4 tests pass; 2 ELFs (pending-ci)"
+      },
+      {
+        "action": "CI renode: renode-test renode/interrupt_race.robot",
+        "expected": "fixed: 'done lost_total=0'; racy: line recorded (pending-ci)"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Make the window 10x shorter: delay(200) instead of delay(2_000) - in the model p_window 0.03 (variant short-window in host_sim.py).",
+        "predict": "The race disappears.",
+        "expected": "Observed (host model): racy, short window: irqs 1039, isr runs 1039, consumed 1000, pending 0, lost 39 - rarer, so it is more likely to pass a quick test, but still wrong."
+      },
+      {
+        "task": "Fixed take(), but the critical section spans two timer periods (variant long-section: work called twice).",
+        "predict": "Still no loss.",
+        "expected": "Observed (host model): fixed, long section: irqs 1632, isr runs 1316, consumed 1316, pending 0, lost 0 - the counter balances, but 316 timer interrupts merged in the single NVIC pending bit: the ticks never happened."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Renode: firmware hangs on the first UART byte",
+        "action": "Use renode/microbit-v2-sibling.repl (uart0 easyDMA: false); the stock repl is EasyDMA-only (renode issue #1014)."
+      },
+      {
+        "symptom": "Interrupt fires continuously",
+        "action": "Clear EVENTS_COMPARE[0] in the handler."
+      },
+      {
+        "symptom": "cargo build: unknown feature or API changed",
+        "action": "Keep the pinned versions; Embassy evolves quickly (spawn/Uarte signatures changed across releases)."
+      }
+    ],
+    "equivalents": [
+      "C/C++ (CODAL, Zephyr): __disable_irq()/__enable_irq() or irq_lock(); C11 atomics for single variables.",
+      "RTIC (Rust): shared resources locked by priority ceiling.",
+      "MicroPython: micropython.schedule() / disable_irq() on ports that expose them."
+    ],
+    "inRealSystems": [
+      "Drivers keep ISR work minimal and hand data to tasks through lock-free queues.",
+      "Races are found with deterministic replay/models and stress tests, because they rarely show on demand."
+    ],
+    "useWhen": "Any data written by an ISR and read-modified-written elsewhere; prefer an atomic swap or a queue when it fits.",
+    "caution": "This firmware is for the emulator and study. Flashing raw-register code to a real micro:bit V2 replaces MicroPython; reflash a .hex from python.microbit.org afterwards. Never run it on hardware that drives anything dangerous.",
+    "simulatorVsReal": "Close sibling, not the target: Renode 1.17.0 has no nRF52833 platform, so the nRF52833 build runs on the nRF52840 model (same Cortex-M4F core and TIMER1/UART0/IRQ map, more flash/RAM, no micro:bit board: no LED matrix, buttons, sensors or interface MCU). Renode timing is virtual and block-based; the race is proven on the host. Nothing ran on a real micro:bit V2.",
+    "checkpoint": "Pass if test_fault shows 1 lost tick for an IRQ in the window, BUILD_FILE=race_model.py fails, solution_model.py loses none, and you can list three differences between Renode's nRF52840 and a micro:bit V2.",
+    "checkYourself": [
+      {
+        "q": "Why does AtomicU32 not prevent this race?",
+        "a": "load and store are each atomic, but the ISR can run between them; the read-modify-write as a whole is not."
+      },
+      {
+        "q": "Why is a Renode run on the nRF52840 not a test of the micro:bit?",
+        "a": "Different chip (memory, peripherals), no board hardware, virtual timing."
+      },
+      {
+        "q": "What is the cost of the critical section?",
+        "a": "Interrupt latency for its length; longer than the timer period, interrupts merge."
+      }
+    ],
+    "sources": [
+      {
+        "title": "nRF52833 PS: TIMER (TIMER1 0x40009000, register offsets)",
+        "url": "https://docs.nordicsemi.com/r/bundle/ps_nrf52833/page/timer.html"
+      },
+      {
+        "title": "nRF52833 PS: UART (UART0 0x40002000, ENABLE=4, BAUDRATE 115200 = 0x01D7E000)",
+        "url": "https://docs.nordicsemi.com/r/bundle/ps_nrf52833/page/uart.html"
+      },
+      {
+        "title": "nRF52833 PS: Memory (512 kB flash, 128 kB RAM, instantiation table)",
+        "url": "https://docs.nordicsemi.com/r/bundle/ps_nrf52833/page/memory.html"
+      },
+      {
+        "title": "nRF52833 Product Specification: key features (52 uA/MHz, 1.5 uA System ON + RTC, 4.9/4.6 mA TX/RX)",
+        "url": "https://docs.nordicsemi.com/r/bundle/ps_nrf52833/page/keyfeatures_html5.html"
+      },
+      {
+        "title": "micro:bit tech site: Schematic / V2 pinmap (target TX P0.06, RX P1.08)",
+        "url": "https://tech.microbit.org/hardware/schematic/"
+      },
+      {
+        "title": "embassy-nrf 0.11.0 (docs.rs): nRF HAL, time-driver-rtc1",
+        "url": "https://docs.rs/crate/embassy-nrf/latest"
+      },
+      {
+        "title": "Embassy example nrf52840 multiprio.rs (#[interrupt], InterruptExt, Priority)",
+        "url": "https://github.com/embassy-rs/embassy/blob/main/examples/nrf52840/src/bin/multiprio.rs"
+      },
+      {
+        "title": "Renode releases (1.17.0, 2026-09-07: Linux/macOS arm64/Windows assets)",
+        "url": "https://github.com/renode/renode/releases"
+      },
+      {
+        "title": "Renode platforms/cpus/nrf52840.repl (the only nRF52 CPU model)",
+        "url": "https://github.com/renode/renode/blob/master/platforms/cpus/nrf52840.repl"
+      },
+      {
+        "title": "Renode tests/platforms/NRF52840.robot (keywords; uart0 easyDMA override)",
+        "url": "https://github.com/renode/renode/blob/master/tests/platforms/NRF52840.robot"
+      },
+      {
+        "title": "Renode issue #1014: stock nrf52840.repl UART is EasyDMA-only; legacy UART hangs",
+        "url": "https://github.com/renode/renode/issues/1014"
+      }
+    ],
+    "validation": {
+      "status": "validated-stub",
+      "how": "Ran python -m unittest -v in labs/L300/16-interrupt-race: 14 tests OK on CPython 3.12.15 (Linux): the host model (Python copy of logic/src/lib.rs), the race and the fix, and static checks of main.rs/fixed.rs/memory.x against the nRF52833 PS. BUILD_FILE=race_model.py FAILED (failures=3). The Rust code was NOT compiled and Renode was NOT run here (no toolchain, no internet).",
+      "pendingCi": [
+        "CI job rust-firmware: cargo test in logic/ (4 tests) and cargo build --release --bins in firmware/ (ubuntu/macos/windows)",
+        "CI job renode: Renode 1.17.0 linux-portable, renode-test renode/interrupt_race.robot (fixed build lost=0; racy build recorded)",
+        "Real micro:bit V2 hardware (not part of this track)"
+      ]
+    },
+    "next": "L400 #17 Edge-to-cloud architecture: from sensor boards to a dashboard: from one board's low-level code to designing the whole classroom system (firmware internals and hardware-in-the-loop CI stay L400 candidates in KNOWN-GAPS)",
+    "conceptNote": "content/concepts/L300/16-interrupt-race.md",
+    "conceptSummary": "When an ISR and main code share data, a read-modify-write must not be split: use a short critical section (or an atomic swap, or a queue). Prove races with a deterministic model; an emulator on a sibling chip checks the build, not the board.",
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "learningTools": [
+      {
+        "name": "Renode",
+        "role": "CHECK",
+        "exercise": "After cargo build --release --bins in firmware/, run renode renode/microbit-v2-sibling.resc (fixed build) and read the uart0 analyzer; then load the racy build with renode -e '$bin=@firmware/target/thumbv7em-none-eabihf/release/microbit-v2-interrupt-race; include @renode/microbit-v2-sibling.resc' and compare the lost counters; optionally try renode --ui (web interface).",
+        "expected": "Pending a manual run (no Rust toolchain or Renode here). The fixed build should end 'done lost_total=0', what interrupt_race.robot asserts. Racy build: record what the analyzer shows - loss in emulation is not asserted (virtual time, block execution); the deterministic proof is the host model in the lab README (soak: (1316, 316) - 316 of 1,316 ticks lost; fixed: 0).",
+        "mac": "renode-1.17.0.osx-arm64-portable.dmg (or the Antmicro Homebrew tap)",
+        "windows": "renode-1.17.0.setup.exe or windows-portable.zip",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/renode/renode"
+      }
+    ],
+    "seeAlso": [
+      "distributed-systems L300 #13 Network partitions and fault injection: proxy toxics, split brain, fencing and linearizability checking: the same lost update between machines - a stale read-modify-write wins unless the storage enforces order, and a checker explores the interleavings"
+    ]
+  }
+]

@@ -1,0 +1,728 @@
+[
+  {
+    "id": "sim-L400-001",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "In the lesson's twin, the Kalman filter keeps the state on track and CUSUM watches standardised innovations. What is CUSUM for?",
+    "options": [
+      "Detecting that the model, not just the state, is wrong",
+      "Smoothing sensor noise so the filter can use a smaller gain",
+      "Rejecting single glitch readings before they reach the filter",
+      "Choosing the refit window length after every recalibration"
+    ],
+    "answer": 0,
+    "explanation": "The filter corrects the state every reading; persistent one-sided surprises mean the physics changed, which CUSUM accumulates and alarms on. Single glitches are the innovation gate's job.",
+    "source": "Lesson 17 concepts"
+  },
+  {
+    "id": "sim-L400-002",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A scalar Kalman update has prior variance P = 0.09 C^2 and measurement noise variance R = 0.01 C^2. What is the Kalman gain K = P / (P + R)?",
+    "options": [
+      "0.10",
+      "0.11",
+      "0.90",
+      "9.00"
+    ],
+    "answer": 2,
+    "explanation": "0.09 / 0.10 = 0.90: the prior is uncertain relative to the sensor, so the update moves 90% of the way to the reading. 0.10 is R/(P + R), the weight left on the prediction.",
+    "source": "Lesson 17 concepts"
+  },
+  {
+    "id": "sim-L400-003",
+    "level": "L400",
+    "lesson": 17,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "The twin predicts 21.3 C with innovation variance S = 0.16 C^2 when the sensor reports a glitch of 85.0 C. What is the standardised innovation |nu| / sqrt(S) that the 5-sigma gate checks?",
+    "options": [
+      "398.1",
+      "63.7",
+      "5.0",
+      "159.2"
+    ],
+    "answer": 3,
+    "explanation": "nu = 85.0 - 21.3 = 63.7 and sqrt(0.16) = 0.4, so z = 159.2, far beyond 5: the reading is rejected. Dividing by S instead of its square root gives 398.1.",
+    "source": "Lesson 17 failureLab"
+  },
+  {
+    "id": "sim-L400-004",
+    "level": "L400",
+    "lesson": 17,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A tabular CUSUM with k = 0.5 and h = 8 runs over standardised innovations. What does this print?",
+    "code": "z = [0.3, 2.0, 2.5, 3.0, 2.5, 2.0]\nk, h, s_hi = 0.5, 8.0, 0.0\nalarm = None\nfor i, zi in enumerate(z):\n    s_hi = max(0.0, s_hi + zi - k)\n    if s_hi > h and alarm is None:\n        alarm = i\nprint(f'alarm at {alarm}' if alarm is not None else 'no alarm')",
+    "options": [
+      "alarm at 5",
+      "alarm at 4",
+      "alarm at 3",
+      "no alarm"
+    ],
+    "answer": 0,
+    "explanation": "The sum is 0, 1.5, 3.5, 6.0, 8.0, 9.5; it must exceed h = 8, which first happens at index 5. Using >= would alarm one reading early at index 4.",
+    "source": "Lesson 17 concepts"
+  },
+  {
+    "id": "sim-L400-005",
+    "level": "L400",
+    "lesson": 17,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Right after every recalibration the twin raises another drift alarm. What is missing from refit()?",
+    "code": "def refit(self, history):\n    a, b = least_squares(history[-48:])\n    self.a = min(max(a, 0.005), 0.2)\n    self.b = min(max(b, 0.05), 1.0)\n    self.refit_pending = False",
+    "options": [
+      "Clipping a and b to their physical limits after the fit",
+      "Increasing the CUSUM threshold h after each refit",
+      "Refitting on every reading instead of a 48-reading window",
+      "Resetting s_hi and s_lo after the new parameters are set"
+    ],
+    "answer": 3,
+    "explanation": "Sums accumulated while the refit was pending still exceed h, so they fire immediately with the new model. A fresh CUSUM after each refit is one of the lesson's guards.",
+    "source": "Lesson 17 troubleshooting"
+  },
+  {
+    "id": "sim-L400-006",
+    "level": "L400",
+    "lesson": 17,
+    "type": "design",
+    "difficulty": 3,
+    "question": "Forecasts from a building twin will drive heating decisions, and facilities staff need to know what changed when the plant drifts. Which option fits?",
+    "options": [
+      "Open-loop model, since it is immune to sensor faults",
+      "Kalman filter only, since it tracks the measured temperature",
+      "Kalman filter + CUSUM + post-alarm refit, with a gate",
+      "Refit the model on a rolling window every hour, no detection"
+    ],
+    "answer": 2,
+    "explanation": "Option C had the best last-day forecast (0.127 C) and named the change (a 0.020 -> 0.033). A filter alone tracks reality (0.194 C) but hides model error in g, so it cannot say what changed.",
+    "source": "Lesson 17 options"
+  },
+  {
+    "id": "sim-L400-007",
+    "level": "L400",
+    "lesson": 17,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The twin's log shows a burst of 'rejected' readings in a row. How should it be treated?",
+    "options": [
+      "As normal operation: the gate is doing its job on noisy data",
+      "As proof of a sensor fault, so the sensor should be replaced",
+      "As a cue to tighten the gate from 5 sigma to 3 sigma",
+      "As an alarm: sensor failure or a model that no longer fits"
+    ],
+    "answer": 3,
+    "explanation": "The gate cannot tell a broken sensor from a changed plant; if reality moved, rejecting it locks the twin out. Tightening the gate makes the lockout worse.",
+    "source": "Lesson 17 checkYourself"
+  },
+  {
+    "id": "sim-L400-008",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why is the winning design's search-phase mean cost biased low?",
+    "options": [
+      "The minimum of many noisy means tends to have negative noise",
+      "The search phase uses fewer replications for the best designs",
+      "Common random numbers bias every design's mean downwards",
+      "The optimiser stops early, before the costs have converged"
+    ],
+    "answer": 0,
+    "explanation": "Selecting the minimum picks the design and its lucky noise together (the winner's curse): -0.472 per day for the grid. CRN does not bias individual means.",
+    "source": "Lesson 18 checkYourself"
+  },
+  {
+    "id": "sim-L400-009",
+    "level": "L400",
+    "lesson": 18,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "81 designs have the same true cost, and each search-phase mean has independent noise with standard deviation 0.10 per day. What is the expected noise of the design with the lowest mean?",
+    "options": [
+      "+0.00 per day",
+      "-0.10 per day",
+      "-0.24 per day",
+      "-0.45 per day"
+    ],
+    "answer": 2,
+    "explanation": "The expected minimum of 81 standard normals is about -2.4, so the winner looks about 0.24 per day cheaper than it is. Zero would hold only if you did not pick by the same noisy means.",
+    "source": "Lesson 18 failureLab"
+  },
+  {
+    "id": "sim-L400-010",
+    "level": "L400",
+    "lesson": 18,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "The fixed pick() re-runs the finalists on fresh streams (index 500+). Why do those fresh runs still use common random numbers across finalists?",
+    "options": [
+      "CRN is needed to keep the fresh runs unbiased",
+      "CRN sharpens finalist differences; freshness removes the curse",
+      "Fresh streams must match the search streams exactly",
+      "CRN lowers the total number of runs the budget allows"
+    ],
+    "answer": 1,
+    "explanation": "Sharing random numbers between finalists cancels common noise in their differences, which is the selection decision; using streams the search never saw removes the selection bias.",
+    "source": "Lesson 18 checkYourself"
+  },
+  {
+    "id": "sim-L400-011",
+    "level": "L400",
+    "lesson": 18,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Over 12 macro-replications the reported cost of the chosen design is 0.394 per day lower than truth. What should pick() do instead?",
+    "code": "RESERVE = 0\n\ndef pick(means):\n    best = min(means, key=means.get)\n    return best, means[best]  # report the search-phase mean",
+    "options": [
+      "Re-run finalists on fresh CRN and report that mean",
+      "Report the search mean plus one standard error as a safety margin",
+      "Re-run only the winner once on the same streams used in the search",
+      "Pick the design with the smallest variance instead of mean"
+    ],
+    "answer": 0,
+    "explanation": "The fix reserves 60 runs, re-runs the top 5 on fresh common random numbers with OCBA and reports the fresh mean (bias -0.143, within the referee's own SE). Same-stream re-runs reproduce the curse.",
+    "source": "Lesson 18 failureLab"
+  },
+  {
+    "id": "sim-L400-012",
+    "level": "L400",
+    "lesson": 18,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A new problem has 5 decision parameters with 9 levels each and a budget of 324 runs. Which search approach fits?",
+    "options": [
+      "Grid search, since it was best on the lesson's two-parameter case",
+      "Grid search with one replication for each of the designs",
+      "Surrogate or evolution search, keeping the OCBA selection stage",
+      "No search: run every design once and report the lowest mean"
+    ],
+    "answer": 2,
+    "explanation": "9^5 = 59,049 designs far exceed budget/3, so a grid is impossible. Model-based or evolutionary search can explore, but the fresh-run selection stage is still needed.",
+    "source": "Lesson 18 scalingLimits"
+  },
+  {
+    "id": "sim-L400-013",
+    "level": "L400",
+    "lesson": 18,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A vendor shows its optimiser beat yours, but it used 600 runs and its own random numbers while yours used 324. What should you insist on?",
+    "options": [
+      "Same budget and random numbers, judged by a referee",
+      "Nothing: more runs is the vendor's legitimate advantage",
+      "Same budget only; random numbers do not affect the comparison",
+      "Compare the optimisers' own reported costs at the end"
+    ],
+    "answer": 0,
+    "explanation": "Unequal budgets and streams make the comparison meaningless (evolution looked good only with twice the budget), and optimisers' self-reported costs carry the winner's curse.",
+    "source": "Lesson 18 caution"
+  },
+  {
+    "id": "sim-L400-014",
+    "level": "L400",
+    "lesson": 18,
+    "type": "code-reading",
+    "difficulty": 2,
+    "question": "Every optimiser draws from a shared Budget object. What does this print?",
+    "code": "class Budget:\n    def __init__(self, total):\n        self.total, self.used = total, 0\n    def run(self, n):\n        if self.used + n > self.total:\n            raise RuntimeError('simulation budget exhausted')\n        self.used += n\n\nb = Budget(324)\nfor design in range(81):\n    b.run(3)\ntry:\n    b.run(100)\nexcept RuntimeError as e:\n    print(b.used, e)",
+    "options": [
+      "343 simulation budget exhausted",
+      "324 simulation budget exhausted",
+      "243 simulation budget exhausted",
+      "243"
+    ],
+    "answer": 2,
+    "explanation": "81 designs x 3 runs use 243 runs; asking for 100 more would reach 343 > 324, so the call raises before anything is counted. The used count stays at 243.",
+    "source": "Lesson 18 troubleshooting"
+  },
+  {
+    "id": "sim-L400-015",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Surrogates score holdout RMSE 0.037, 0.042 and 0.049 against a simulation noise floor of 0.033. What is the right reading?",
+    "options": [
+      "All three sit near the noise floor; 20 runs cannot rank them",
+      "The polynomial is clearly best because 0.037 is the lowest",
+      "All three fail because none reaches an RMSE of zero",
+      "Random features are best because they have the most terms"
+    ],
+    "answer": 0,
+    "explanation": "The simulation's own noise limits how small holdout error can be, and 20 holdout runs cannot separate errors this close. Error must be compared with the noise floor, not zero.",
+    "source": "Lesson 19 checkYourself"
+  },
+  {
+    "id": "sim-L400-016",
+    "level": "L400",
+    "lesson": 19,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Exact GP fitting costs grow as O(n^3). Going from 300 to 3,000 training runs multiplies the fitting cost by about how much?",
+    "options": [
+      "10x",
+      "1,000x",
+      "100x",
+      "30x"
+    ],
+    "answer": 1,
+    "explanation": "(3,000 / 300)^3 = 1,000x. That is why the lesson switches to random features or sparse GPs at a few thousand runs.",
+    "source": "Lesson 19 scalingLimits"
+  },
+  {
+    "id": "sim-L400-017",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "At rho = 0.95, far outside the training box, the GP predicts 0.877 with sd 0.178 while the truth is 6.015. Why didn't the sd flag it?",
+    "options": [
+      "The nugget was too large, so all variances were shrunk",
+      "Far from data its sd only reverts to the prior scale",
+      "The sd is only computed for inputs inside the training box",
+      "The GP's length-scales were too short to see that region"
+    ],
+    "answer": 1,
+    "explanation": "Away from data the predictive sd grows only to the prior scale (about 0.18 here), which says nothing about how wrong the mean can be. Extrapolation needs an explicit envelope check.",
+    "source": "Lesson 19 checkYourself"
+  },
+  {
+    "id": "sim-L400-018",
+    "level": "L400",
+    "lesson": 19,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The envelope guard answers from the surrogate only inside the training box and when sd <= 0.10. What does this print?",
+    "code": "LO, HI = (1.0, 0.5), (2.4, 0.9)  # (lam, rho) training box\n\ndef what_if(lam, rho, sd):\n    inside = all(lo <= x <= hi for x, lo, hi in zip((lam, rho), LO, HI))\n    return 'surrogate' if inside and sd <= 0.10 else 'simulation'\n\nprint(what_if(2.2, 0.85, 0.04), what_if(2.42, 0.85, 0.04), what_if(2.0, 0.7, 0.18))",
+    "options": [
+      "surrogate surrogate simulation",
+      "surrogate simulation surrogate",
+      "surrogate simulation simulation",
+      "simulation simulation simulation"
+    ],
+    "answer": 2,
+    "explanation": "(2.2, 0.85) is inside with a small sd; lam 2.42 is outside the box; the third point is inside but its sd 0.18 is too large. Only the first uses the surrogate.",
+    "source": "Lesson 19 failureLab"
+  },
+  {
+    "id": "sim-L400-019",
+    "level": "L400",
+    "lesson": 19,
+    "type": "concept",
+    "difficulty": 2,
+    "question": "What does a Latin hypercube design of n training runs guarantee?",
+    "options": [
+      "Every pair of runs is at least a fixed distance apart",
+      "Each input's range has n strata with one run in each",
+      "The runs cover every corner of the input box",
+      "The design gives the lowest possible holdout error"
+    ],
+    "answer": 1,
+    "explanation": "LHS stratifies every input's marginal so no region of any single input is missed. It does not guarantee space-filling in all dimensions or corners.",
+    "source": "Lesson 19 concepts"
+  },
+  {
+    "id": "sim-L400-020",
+    "level": "L400",
+    "lesson": 19,
+    "type": "design",
+    "difficulty": 3,
+    "question": "You have 30 expensive simulation runs, users ask what-ifs, and they want an error bar. Which surrogate setup fits?",
+    "options": [
+      "A GP behind an envelope guard, simulating outside it",
+      "A quadratic polynomial, used for every question asked",
+      "Random Fourier features, since they scale to many runs",
+      "A GP used everywhere, trusting its sd to flag doubt"
+    ],
+    "answer": 0,
+    "explanation": "The GP gives a predictive sd (85% coverage) with few runs, and the guard sends out-of-box questions to the simulation. Its sd alone does not detect extrapolation.",
+    "source": "Lesson 19 options"
+  },
+  {
+    "id": "sim-L400-021",
+    "level": "L400",
+    "lesson": 19,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "The what-if service tells a manager that 10% more arrivals raises waits only slightly, but lam 2.42 is outside the trained range. What is the fix?",
+    "code": "def what_if(lam, rho):\n    mean, sd = gp.predict([[lam, rho]])\n    return {'wq': mean, 'sd': sd, 'source': 'surrogate'}",
+    "options": [
+      "Answer from the surrogate only inside the envelope; else simulate",
+      "Retrain the surrogate with a longer length-scale for wider reach",
+      "Add the GP's sd to the prediction to make the answer conservative",
+      "Clip lam to 2.4 so the surrogate always stays inside its box"
+    ],
+    "answer": 0,
+    "explanation": "The shipped function answered every question from the surrogate (-23% at lam 2.42). The guard returns labelled simulation results outside [LO, HI]; clipping answers a different question.",
+    "source": "Lesson 19 failureLab"
+  },
+  {
+    "id": "sim-L400-022",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why was L300's 'spawn one child per replication' fix not enough once runs could crash and resume?",
+    "options": [
+      "SeedSequence children cannot be recreated after a crash",
+      "It tied streams to list positions, which a resume changes",
+      "Spawned streams overlap when more than 40 tasks are created",
+      "Children spawned on different machines give different numbers"
+    ],
+    "answer": 1,
+    "explanation": "After a resume the pending list is shorter, so task (7, 2) inherited stream [14] instead of its own: a different checksum with no error. Keying on (scenario, rep) fixes it.",
+    "source": "Lesson 20 checkYourself"
+  },
+  {
+    "id": "sim-L400-023",
+    "level": "L400",
+    "lesson": 20,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "A sweep's serial fraction is f = 0.10. By Amdahl's law, 1 / (f + (1 - f) / p), what speed-up do 8 workers give?",
+    "options": [
+      "8.00x",
+      "10.00x",
+      "7.20x",
+      "4.71x"
+    ],
+    "answer": 3,
+    "explanation": "1 / (0.10 + 0.90 / 8) = 4.71x, and no number of workers can exceed 1/f = 10x. Linear 8x ignores the serial part.",
+    "source": "Lesson 20 scalingLimits"
+  },
+  {
+    "id": "sim-L400-024",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why do results go into SQLite with a primary key on (scenario, rep) and INSERT OR IGNORE?",
+    "options": [
+      "Primary keys make SQLite write faster than appending to a CSV",
+      "A resume may redo tasks; the key makes repeats a no-op",
+      "INSERT OR IGNORE skips rows whose values look like outliers",
+      "The key lets several worker processes write at the same time"
+    ],
+    "answer": 1,
+    "explanation": "Tasks computed but not committed before a crash run again; with the key, the second insert is ignored instead of duplicating a row. SQLite still has a single writer.",
+    "source": "Lesson 20 checkYourself"
+  },
+  {
+    "id": "sim-L400-025",
+    "level": "L400",
+    "lesson": 20,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "Six tasks (scenario, rep); after a crash the resume re-plans only the last two. What does this print?",
+    "code": "import numpy as np\n\ndef by_position(tasks):\n    kids = np.random.SeedSequence(20).spawn(len(tasks))\n    return {t: np.random.default_rng(k).random() for t, k in zip(tasks, kids)}\n\ndef by_identity(task):\n    return np.random.default_rng(np.random.SeedSequence(20, spawn_key=task)).random()\n\ntasks = [(s, r) for s in range(3) for r in range(2)]\nclean, resumed = by_position(tasks), by_position(tasks[4:])\nprint(clean[(2, 0)] == resumed[(2, 0)], by_identity((2, 0)) == by_identity((2, 0)))",
+    "options": [
+      "True True",
+      "False False",
+      "True False",
+      "False True"
+    ],
+    "answer": 3,
+    "explanation": "Position-keyed streams give task (2, 0) a different child after the resume, so the first comparison is False; the identity-keyed stream depends only on (2, 0), so it always matches.",
+    "source": "Lesson 20 failureLab"
+  },
+  {
+    "id": "sim-L400-026",
+    "level": "L400",
+    "lesson": 20,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Per-row commits took 22.8 s for 5,000 rows, batches of 8 took 4.0 s and one commit 0.06 s. What does the batch size trade?",
+    "options": [
+      "Write speed against the accuracy of the stored results",
+      "Write overhead against how much work a crash forces you to redo",
+      "Disk space against the number of worker processes allowed",
+      "Commit speed against the randomness of each replication"
+    ],
+    "answer": 1,
+    "explanation": "Bigger batches amortise commit cost but lose more uncommitted results in a crash (they are re-run on resume). Results and streams are unaffected by batch size.",
+    "source": "Lesson 20 scalingLimits"
+  },
+  {
+    "id": "sim-L400-027",
+    "level": "L400",
+    "lesson": 20,
+    "type": "design",
+    "difficulty": 3,
+    "question": "A long one-machine parameter sweep must survive crashes, and analysts later want typed, compressed result files. Which storage design fits?",
+    "options": [
+      "SQLite batches as checkpoint, Parquet as export",
+      "Parquet written at the end, since it is typed and compressed",
+      "CSV append only, since it gives the fastest writes here",
+      "One SQLite database per worker on a shared network drive"
+    ],
+    "answer": 0,
+    "explanation": "Parquet is written whole, so a crash before the end loses everything; CSV has no transactions (a torn line swallowed a row). WAL mode does not work over network file systems.",
+    "source": "Lesson 20 tradeOffs"
+  },
+  {
+    "id": "sim-L400-028",
+    "level": "L400",
+    "lesson": 20,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "Workers write their own results straight into results.db in a synced cloud folder and fail with 'database is locked'. What is the fix?",
+    "code": "def one_task(task):\n    value = simulate(task)\n    db = sqlite3.connect('~/CloudDrive/results.db')\n    with db:\n        db.execute('INSERT INTO r VALUES (?, ?, ?)', (*task, value))",
+    "options": [
+      "Give every worker a longer timeout and retry the write",
+      "Only the parent writes, to a database on local disk",
+      "Switch off WAL mode so several writers can share the file",
+      "Write each result twice so a lost write is recovered"
+    ],
+    "answer": 1,
+    "explanation": "SQLite serialises writes, and WAL needs a local file system; worker processes should return results to the parent, which commits in batches. Retries only hide contention.",
+    "source": "Lesson 20 troubleshooting"
+  },
+  {
+    "id": "sim-L400-029",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why must the accuracy requirement (e.g. error and CI half-width within 10%) be fixed before the validation runs?",
+    "options": [
+      "The requirement controls the random seed used for the runs",
+      "Otherwise it can be tuned to fit whatever came out",
+      "Requirements set later cannot be stored in a model card",
+      "A fixed requirement makes the simulation itself run faster"
+    ],
+    "answer": 1,
+    "explanation": "The validated envelope is computed from evidence against a pre-set requirement; choosing the threshold after seeing results turns validation into a label.",
+    "source": "Lesson 21 concepts"
+  },
+  {
+    "id": "sim-L400-030",
+    "level": "L400",
+    "lesson": 21,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "At rho = 0.90, ten replications give mean wait 2.10 min with standard deviation 0.35 min. What is the 95% CI half-width relative to the mean (t = 2.262)?",
+    "options": [
+      "5.3%",
+      "10.3%",
+      "11.9%",
+      "16.7%"
+    ],
+    "answer": 2,
+    "explanation": "2.262 x 0.35 / sqrt(10) / 2.10 = 11.9%, above the 10% requirement, so the point fails validation even if its error is small. 10.3% uses 1.96 instead of the t quantile.",
+    "source": "Lesson 21 checkYourself"
+  },
+  {
+    "id": "sim-L400-031",
+    "level": "L400",
+    "lesson": 21,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does the model card pin the SHA-256 of the input data as well as the code?",
+    "options": [
+      "Hashing data compresses it so the card stays small",
+      "Hashing data hides personal information from reviewers",
+      "Validation on one data file says nothing about another",
+      "Only the data hash is checked; the code hash is optional"
+    ],
+    "answer": 2,
+    "explanation": "Any change to the data makes the card stale at once (one appended row is enough), forcing the evidence to be regenerated. Hashes neither compress nor anonymise.",
+    "source": "Lesson 21 checkYourself"
+  },
+  {
+    "id": "sim-L400-032",
+    "level": "L400",
+    "lesson": 21,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "A minimal claim check compares a draft card with measured evidence. What does this print?",
+    "code": "evidence = {'envelope_util': 0.85, 'max_error_pct': 5.5, 'key_input': 'mu'}\ncard = {'envelope_util': 0.95, 'max_error_pct': 2.0, 'key_input': 'mu'}\nfindings = []\nif card['envelope_util'] > evidence['envelope_util']:\n    findings.append('envelope')\nif card['max_error_pct'] < evidence['max_error_pct']:\n    findings.append('error')\nif card['key_input'] != evidence['key_input']:\n    findings.append('key input')\nprint(findings)",
+    "options": [
+      "['envelope', 'error', 'key input']",
+      "[]",
+      "['envelope', 'error']",
+      "['envelope']"
+    ],
+    "answer": 2,
+    "explanation": "The card claims a wider envelope (0.95 > 0.85) and a smaller error (2.0 < 5.5) than the evidence supports, so both are findings; the key input matches.",
+    "source": "Lesson 21 failureLab"
+  },
+  {
+    "id": "sim-L400-033",
+    "level": "L400",
+    "lesson": 21,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "Card hashes normalise line endings before hashing. What does this print?",
+    "code": "import hashlib\n\ndef sha(text):\n    return hashlib.sha256(text.replace('\\r\\n', '\\n').encode()).hexdigest()[:12]\n\nlf, crlf = 'lam,mu\\n2.4,1.0\\n', 'lam,mu\\r\\n2.4,1.0\\r\\n'\nprint(sha(lf) == sha(crlf), sha(lf) == sha(lf + '2.5,1.0\\n'))",
+    "options": [
+      "False False",
+      "True True",
+      "False True",
+      "True False"
+    ],
+    "answer": 3,
+    "explanation": "CRLF and LF versions of the same data hash identically after normalisation, so a Windows checkout does not stale the card; an appended row changes the content and the hash.",
+    "source": "Lesson 21 troubleshooting"
+  },
+  {
+    "id": "sim-L400-034",
+    "level": "L400",
+    "lesson": 21,
+    "type": "debugging",
+    "difficulty": 3,
+    "question": "A draft card claiming utilisation <= 0.95 and error 2.0% prints PUBLISHABLE although evidence says 0.85 and 5.5%. What is wrong with this gate?",
+    "code": "REQUIRED = ['purpose', 'envelope', 'validation', 'limits', 'versions']\n\ndef check_card(card, evidence):\n    return [f'missing {s}' for s in REQUIRED if s not in card]",
+    "options": [
+      "It must also require the draft to be signed by the agent",
+      "It should reject any card whose claims use percentages",
+      "It must sort the sections before checking they exist",
+      "It checks headings only, never claims against evidence"
+    ],
+    "answer": 3,
+    "explanation": "A heading check passes any well-formatted card; the fixed check_card() diffs claims against regenerated evidence and found 4 overclaims. An agent never signs off.",
+    "source": "Lesson 21 failureLab"
+  },
+  {
+    "id": "sim-L400-035",
+    "level": "L400",
+    "lesson": 21,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A model will set safety-relevant limits in a regulated medical device process. Is a CI-checked model card enough governance?",
+    "options": [
+      "Yes: machine-checked claims are stricter than any human review",
+      "Yes, provided the card's code and data hashes are up to date",
+      "No: add a risk-informed credibility assessment (e.g. ASME V&V 40)",
+      "No: such models should be documented in free-text prose instead"
+    ],
+    "answer": 2,
+    "explanation": "The structured card suits advisory models; safety-relevant or regulated decisions need rigour scaled to consequence (NASA-STD-7009B, FDA 2023 / ASME V&V 40), with the card's checks still useful inside it.",
+    "source": "Lesson 21 tradeOffs"
+  },
+  {
+    "id": "sim-L400-036",
+    "level": "L400",
+    "lesson": 22,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "Calls arrive at 2.0 per minute with a mean handling time of 3 minutes. What is the fewest agents giving at least 80% of calls answered within 20 s (Erlang C service level)?",
+    "options": [
+      "6 agents",
+      "9 agents",
+      "7 agents",
+      "12 agents"
+    ],
+    "answer": 1,
+    "explanation": "The offered load is 6 Erlangs, so 6 agents are unstable and 7-8 still miss 80% within 20 s; 9 is the first to meet it. Staffing at the offered load ignores queueing.",
+    "source": "Lesson 22 expectedResults"
+  },
+  {
+    "id": "sim-L400-037",
+    "level": "L400",
+    "lesson": 22,
+    "type": "calculation",
+    "difficulty": 3,
+    "question": "In the capstone's sensitivity check, raising peak demand by 10% (5.0 -> 5.5 calls/min) moves the peak service level from 0.800 to 0.749. What is the elasticity of SL to demand?",
+    "options": [
+      "-0.06",
+      "-0.51",
+      "-0.80",
+      "-0.64"
+    ],
+    "answer": 3,
+    "explanation": "Elasticity = relative change in SL / relative change in demand = (-0.051 / 0.800) / 0.10 = -0.64. -0.51 divides the absolute SL change by 0.10, forgetting to make it relative.",
+    "source": "Lesson 22 checkYourself"
+  },
+  {
+    "id": "sim-L400-038",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Patience is only known to lie between 3.0 and 5.5 minutes. Why can the staffing plan still be trusted?",
+    "options": [
+      "Its effect on the plan is shown to be tiny (-0.01 vs -0.64)",
+      "The calibration fixed patience at its most likely value, 4.25 min",
+      "Abandonment is excluded from the model, so patience is unused",
+      "Patience was fitted on holdout days, which makes it identified"
+    ],
+    "answer": 0,
+    "explanation": "A weakly identified input is acceptable if the decision does not depend on it, and that must be demonstrated: SL's elasticity to patience is -0.01 against -0.64 for demand.",
+    "source": "Lesson 22 checkYourself"
+  },
+  {
+    "id": "sim-L400-039",
+    "level": "L400",
+    "lesson": 22,
+    "type": "concept",
+    "difficulty": 3,
+    "question": "Why does the simulation-based plan use 221 agent-hours when Erlang C suggests 219?",
+    "options": [
+      "Simulation always adds a fixed safety margin of two agent-hours",
+      "It needs 95% confidence per hour and models abandonment",
+      "Erlang C counts agent-hours differently, so the two cannot match",
+      "The simulation's random noise inflates every hourly estimate"
+    ],
+    "answer": 1,
+    "explanation": "Erlang C's plan fails the confidence bound in 2 hours and cannot model abandonment; the simulation plan meets both constraints every hour.",
+    "source": "Lesson 22 checkYourself"
+  },
+  {
+    "id": "sim-L400-040",
+    "level": "L400",
+    "lesson": 22,
+    "type": "scenario",
+    "difficulty": 3,
+    "question": "A live surge makes the twin re-plan for 6.16 calls per minute, but the model was validated only up to 5.6. What happens to that plan?",
+    "options": [
+      "Code computes it, but it carries a review flag",
+      "The plan is blocked and the previous day's plan is reused",
+      "The agent assistant decides whether the plan is acceptable",
+      "The rate is clipped to 5.6 so the plan stays in the envelope"
+    ],
+    "answer": 0,
+    "explanation": "Out-of-envelope plans are still produced by code but flagged so a duty manager reviews them. Clipping the rate would plan for the wrong demand; the agent never decides.",
+    "source": "Lesson 22 checkYourself"
+  },
+  {
+    "id": "sim-L400-041",
+    "level": "L400",
+    "lesson": 22,
+    "type": "design",
+    "difficulty": 3,
+    "question": "In the capstone, where does the local language model sit in the decision pipeline?",
+    "options": [
+      "It proposes the staffing plan, which code then optimises further",
+      "It reviews the model card and signs off when no findings remain",
+      "It reads the call logs and writes a summary for the duty manager",
+      "It explains; unverifiable numbers it adds block publication"
+    ],
+    "answer": 3,
+    "explanation": "The agent only receives the facts table and writes an explanation; its quoted numbers are checked, and unverified ones set agent_publish to false. It never sees raw logs or signs off.",
+    "source": "Lesson 22 rubric"
+  },
+  {
+    "id": "sim-L400-042",
+    "level": "L400",
+    "lesson": 22,
+    "type": "code-reading",
+    "difficulty": 3,
+    "question": "The pipeline checks every number the agent quotes against the facts table. What does this print?",
+    "code": "import re\n\nfacts = {221, 219, 0.036}\ntext = \"The plan needs 221 agent-hours, 2 more than Erlang C's 219, with 3.6% abandonment.\"\nquoted = {float(x) for x in re.findall(r'\\d+(?:\\.\\d+)?', text)}\nunverified = sorted(q for q in quoted if q not in facts)\nprint(unverified, 'publish' if not unverified else 'blocked')",
+    "options": [
+      "[] publish",
+      "[2.0, 219.0] blocked",
+      "[0.036, 3.6] blocked",
+      "[2.0, 3.6] blocked"
+    ],
+    "answer": 3,
+    "explanation": "221 and 219 match facts, but '2' (a derived difference) and '3.6' (the 0.036 rate written as a percent) are not in the table, so both are unverified and publication is blocked.",
+    "source": "Lesson 22 agentAssist"
+  }
+]

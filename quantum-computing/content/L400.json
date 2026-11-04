@@ -1,0 +1,2420 @@
+[
+  {
+    "id": "hybrid-architecture",
+    "number": 17,
+    "level": "L400",
+    "title": "Hybrid quantum-classical architecture: orchestrator, job queue and backend adapter",
+    "phase": "Design",
+    "category": "hybrid architecture",
+    "description": "Design the loop around a variational algorithm: an orchestrator with a job queue policy, a transpile cache and retries, behind a backend adapter; compare sync, batched and session execution on a fake clock.",
+    "outcome": "You can separate optimiser, orchestrator and backend; choose an execution mode from measured wall time, billed time and job counts; key a transpile cache correctly; make retries idempotent; and keep the decision true with a fitness test.",
+    "environment": "Mac mini or Windows 11; Python 3.12 venv (lesson 1); numpy 2.5.3 (+ cryptography 50.0.2 for lesson 21) from labs/L400/requirements.txt; shared numpy simulators in labs/_shared (qsim, qopt). SDK path: qiskit 2.6.1 StatevectorSampler with a PUB parameter array per step + generate_preset_pass_manager on GenericBackendV2 (sampler_qiskit.py) (pending CI).",
+    "estimatedTime": "60-90 minutes",
+    "overview": [
+      "The circuit is the easy part: on shared devices the queue, the compiler and failed jobs decide how long a variational run takes and what it costs."
+    ],
+    "prerequisites": [
+      "Lesson 14 (QAOA on MaxCut)",
+      "Lesson 15 (SPSA under shot noise)",
+      "Lesson 11 (transpiling to a device)",
+      "distributed-systems L100 #4 retries and L300 #16 backpressure (helpful, not required)"
+    ],
+    "glossary": [
+      {
+        "term": "orchestrator",
+        "meaning": "Code between optimiser and backend that owns batching, caching and retries."
+      },
+      {
+        "term": "backend adapter",
+        "meaning": "A small interface (transpile, run, open/close session) that hides a simulator or provider."
+      },
+      {
+        "term": "batched job",
+        "meaning": "One submission that carries every circuit of one optimiser step (Qiskit: one PUB with a parameter array)."
+      },
+      {
+        "term": "session",
+        "meaning": "A reserved device window: later jobs skip the queue, the whole window is billed, an interactive TTL ends it."
+      },
+      {
+        "term": "idempotent retry",
+        "meaning": "Re-running a failed job gives exactly the same result because each circuit carries its seed."
+      },
+      {
+        "term": "FakeClock",
+        "meaning": "A modelled clock that the code advances; tests stay deterministic and never sleep."
+      }
+    ],
+    "concepts": [
+      "Execution mode is an architecture decision with measurable cost.",
+      "Cache compiled circuits by structure and target, never by angle.",
+      "Retries must not change the answer.",
+      "Fitness tests keep the decision true as code changes."
+    ],
+    "designBrief": {
+      "context": "A multi-start SPSA QAOA loop (4 starts x 30 iterations = 240 circuits of one template) must run on a shared backend with a 2 s queue per job, 0.5 s per transpile and occasional transient job failures.",
+      "constraints": [
+        "modelled wall time <= 90 s for the reference workload",
+        "billed device time <= 5 s",
+        "<= 1 job per optimiser step",
+        "exactly 1 transpile per template and target",
+        "a transient failure must not change the result"
+      ],
+      "question": "Which execution mode (sync loop, batched jobs, session) and which cache/retry policy should the service use by default?"
+    },
+    "options": [
+      {
+        "name": "Synchronous loop (one job per circuit)",
+        "description": "Submit each circuit as soon as the optimiser asks for it.",
+        "evidence": "486.8 s modelled wall, 4.8 s billed, 240 jobs (with the structural cache); 7206.8 s with a 30 s queue.",
+        "verdict": "Rejected: queue-dominated."
+      },
+      {
+        "name": "Batched jobs (one job per optimiser step)",
+        "description": "Submit all circuits of an SPSA step together; structural transpile cache; idempotent retries.",
+        "evidence": "66.8 s wall, 4.8 s billed, 30 jobs, 1 transpile; 3 seeded failures add 10.0 s and leave best_ratio 0.6922 unchanged.",
+        "verdict": "Chosen (ADR 0001)."
+      },
+      {
+        "name": "Session + batches",
+        "description": "Reserve the device; jobs after the first skip the queue; billed for the window.",
+        "evidence": "11.7 s wall but 11.7 s billed (2.4x); with a 70 s classical step the TTL expires and billing reaches 2165.3 s for the same wall time as batched.",
+        "verdict": "Opt-in for interactive work only."
+      }
+    ],
+    "decisionRecord": "labs/L400/17-hybrid-architecture/docs/adr/0001-batched-jobs.md",
+    "fitnessFunction": {
+      "what": "The default mode stays 'batched'; one job per optimiser step; one transpile per template; wall and billing within budget.",
+      "test": "labs/L400/17-hybrid-architecture/test_fitness.py",
+      "threshold": "jobs <= 30, transpiles == 1, modelled wall <= 90 s, billed <= 5 s for the reference workload"
+    },
+    "scalingLimits": [
+      "Queue-dominated wall time: when jobs x queue >> execution (signal: wall_s >> billed_s), batch more per job or consider sessions.",
+      "Provider batch limits (max_circuits): the adapter raises ValueError; chunking adds one queue wait per chunk.",
+      "Adaptive ansaetze create new templates each step: cache hit rate falls below ~0.99 and transpile time returns."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "python orchestrator.py  (shipped code: naive cache key)",
+        "expected": "sync wall 606.3 s, batched 186.3 s, session 131.2 s; transpiles 240 in every mode; best_ratio 0.6922 everywhere.",
+        "ifNot": "ModuleNotFoundError qopt: run from the lab folder so labs/_shared is on the path."
+      },
+      {
+        "title": "Read the JSON lines",
+        "detail": "Compare wall_s, billed_s, jobs and transpiles per mode.",
+        "expected": "Jobs 240 vs 30 vs 30; billed 4.8 s for sync/batched but the whole window (131.2 s) for the session.",
+        "ifNot": "Different numbers: check Costs() (queue 2 s, 0.02 s per circuit, transpile 0.5 s, session gap 0.1 s)."
+      },
+      {
+        "title": "See the fault",
+        "detail": "transpiles = 240 = circuits: the cache key contains the bound angles, so nothing is reused.",
+        "expected": "cache_hits 0 in every line; the last line shows 3 retries for seeded failures and the same best_ratio 0.6922.",
+        "ifNot": "cache_hits > 0: you already changed cache_key."
+      },
+      {
+        "title": "Run the decided design",
+        "detail": "python solution_cache_key.py",
+        "expected": "sync 486.8 s, batched 66.8 s, session 11.7 s (billed 11.7 s); 1 transpile, 239 cache hits.",
+        "ifNot": "Still 240 transpiles: the key must ignore params and include target and optimisation level."
+      },
+      {
+        "title": "Try it",
+        "detail": "python try_it.py",
+        "expected": "busy queue: batched 906.8 s vs session 39.7 s; 70 s classical step: session billed 2165.3 s for no wall-time gain.",
+        "ifNot": "Compare with the tryIt predictions."
+      },
+      {
+        "title": "Build task: make the design decision true, then prove it",
+        "detail": "Write my_cache_key.py (see buildTask), run the build-task and fitness tests against it, then against the shipped lab module (orchestrator), which must fail.",
+        "expected": "Your file / solution: Ran 7 tests ... OK. Shipped orchestrator: FAILED (failures=4) - 240 != 1 transpiles, angles in the key, wall 186.3 > 90.",
+        "ifNot": "A different backend target must give a different key (no stale reuse).",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v; BUILD_TASK_MODULE=orchestrator python -m unittest test_build_task test_fitness -v",
+        "windows": "$env:BUILD_TARGET = \"mine\"; python -m unittest test_build_task test_fitness -v; Remove-Item Env:BUILD_TARGET; $env:BUILD_TASK_MODULE = \"orchestrator\"; python -m unittest test_build_task test_fitness -v; Remove-Item Env:BUILD_TASK_MODULE"
+      },
+      {
+        "title": "Run all tests (and the Qiskit path in CI)",
+        "detail": "python -m unittest -v; SDK: python sampler_qiskit.py",
+        "expected": "Ran 16 tests ... OK (skipped=1 Qiskit test). CI: batched = 1 transpile and 5 jobs for 5 steps; sync = 40 jobs.",
+        "ifNot": "Qiskit import errors: install labs/L400/requirements-sdk.txt (Python 3.11+).",
+        "mac": "python -m pip install -r labs/L400/requirements-sdk.txt && python labs/L400/17-hybrid-architecture/sampler_qiskit.py",
+        "windows": "python -m pip install -r labs\\L400\\requirements-sdk.txt; python labs\\L400\\17-hybrid-architecture\\sampler_qiskit.py"
+      }
+    ],
+    "code": "\"\"\"Lab 17 - hybrid quantum-classical architecture: orchestrator + job queue + backend adapter.\n\nRun:  python orchestrator.py      (numpy simulator behind the adapter; modelled time on a FakeClock)\nWorkload: multi-start SPSA on QAOA p=1 for an 8-node 3-regular graph (4 starts x 2 circuits per iteration).\nCompares three execution designs - sync loop, batched jobs, session + batches - by modelled wall time,\nbilled seconds, jobs, circuits and transpiles. Prints one JSON line per design.\nSDK path (Qiskit StatevectorSampler, one PUB list per iteration): python sampler_qiskit.py   (CI)\n\"\"\"\nimport json\nimport time\n\nimport numpy as np\n\nfrom backend import Circuit, FakeClock, SimulatorBackend, Template, TransientBackendError, mc\n\nGRAPH = mc.regular_graph(8, 3, seed=7)\nTEMPLATE = Template(\"qaoa-maxcut\", 8, tuple(GRAPH), 1)\nDEFAULT_MODE = \"batched\"          # the decision recorded in docs/adr/0001-batched-jobs.md\nWORKLOAD = {\"starts\": 4, \"iters\": 30, \"shots\": 512, \"seed\": 2026, \"classical_s\": 0.05}\n\n\ndef cache_key(template, params, backend, opt_level=1):\n    \"\"\"NAIVE: the bound parameter values are part of the key, so every new angle misses the cache.\"\"\"\n    return (template, tuple(np.round(params, 12)), backend.target, opt_level)\n\n\nclass Orchestrator:\n    def __init__(self, backend, clock, mode=DEFAULT_MODE, key=cache_key, max_attempts=4, backoff_s=1.0):\n        self.backend, self.clock, self.mode, self.key = backend, clock, mode, key\n        self.max_attempts, self.backoff_s = max_attempts, backoff_s\n        self.cache, self.hits, self.retries = {}, 0, 0\n\n    def compiled(self, circuit):\n        k = self.key(circuit.template, circuit.params, self.backend)\n        if k in self.cache:\n            self.hits += 1                                     # transpile cache: compile once per structure\n        else:\n            self.cache[k] = self.backend.transpile(circuit.template)\n        return self.cache[k]\n\n    def submit(self, circuits, shots):\n        \"\"\"One job with retries: exponential backoff on the fake clock; same seeds -> same samples (idempotent).\"\"\"\n        compiled = [self.compiled(c) for c in circuits][0]\n        for attempt in range(1, self.max_attempts + 1):\n            try:\n                return self.backend.run(compiled, circuits, shots)\n            except TransientBackendError:\n                if attempt == self.max_attempts:\n                    raise\n                self.retries += 1\n                self.clock.sleep(self.backoff_s * 2 ** (attempt - 1))\n\n    def evaluate(self, circuits, shots):\n        \"\"\"Job-queue policy: 'sync' = one job per circuit; 'batched'/'session' = one job per optimizer step.\"\"\"\n        if self.mode == \"sync\":\n            samples = [s for c in circuits for s in self.submit([c], shots)]\n        else:\n            samples = self.submit(circuits, shots)\n        t = circuits[0].template\n        cuts = mc.cut_values(t.n, t.edges)\n        return [float(cuts[s].mean()) for s in samples]\n\n\ndef spsa_multistart(orch, w=WORKLOAD, a=0.2, c=0.15, template=TEMPLATE):\n    \"\"\"Classical side: SPSA ascent on <C> from several seeded starts; the orchestrator hides execution.\"\"\"\n    rng = np.random.default_rng(w[\"seed\"])\n    x = rng.uniform(0.1, 1.5, size=(w[\"starts\"], 2))\n    for k in range(w[\"iters\"]):\n        ak, ck = a / (k + 1 + 3) ** 0.602, c / (k + 1) ** 0.101          # Spall's gain exponents\n        delta = rng.choice([-1.0, 1.0], size=x.shape)\n        circuits = [Circuit(template, tuple(x[i] + sgn * ck * delta[i]), seed=w[\"seed\"] + 1000 * k + 2 * i + (sgn > 0))\n                    for i in range(w[\"starts\"]) for sgn in (+1, -1)]\n        values = orch.evaluate(circuits, w[\"shots\"])\n        for i in range(w[\"starts\"]):\n            x[i] += ak * (values[2 * i] - values[2 * i + 1]) / (2 * ck) * delta[i]\n        orch.clock.sleep(w[\"classical_s\"])                                  # classical update time\n    return x\n\n\ndef run(mode, key=cache_key, fail_jobs=(), w=WORKLOAD):\n    clock = FakeClock()\n    backend = SimulatorBackend(clock, fail_jobs=fail_jobs)\n    orch = Orchestrator(backend, clock, mode, key)\n    t0 = time.perf_counter()\n    if mode == \"session\":\n        backend.open_session()\n    x = spsa_multistart(orch, w)\n    billed = backend.close_session() if mode == \"session\" else backend.qpu_s\n    cuts = mc.cut_values(TEMPLATE.n, TEMPLATE.edges)\n    best = max(mc.expectation(TEMPLATE.n, cuts, xi) for xi in x) / cuts.max()\n    return {\"mode\": mode, \"wall_s\": round(clock.now, 2), \"billed_s\": round(billed, 2), \"jobs\": backend.jobs,\n            \"circuits\": w[\"iters\"] * 2 * w[\"starts\"], \"transpiles\": backend.transpiles, \"cache_hits\": orch.hits,\n            \"retries\": orch.retries, \"best_ratio\": round(best, 4), \"local_cpu_s\": round(time.perf_counter() - t0, 2)}\n\n\nif __name__ == \"__main__\":\n    for mode in (\"sync\", \"batched\", \"session\"):\n        print(json.dumps(run(mode)))\n    print(json.dumps({**run(\"batched\", fail_jobs=(3, 4, 17)), \"note\": \"seeded transient failures on attempts 3, 4, 17\"}))\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "Template / Circuit (backend.py)",
+        "detail": "A Template is circuit STRUCTURE (graph, depth p); a Circuit binds angles and carries its own seed - the seed is what makes a retry reproduce the same samples."
+      },
+      {
+        "title": "SimulatorBackend.run",
+        "detail": "One job = a list of circuits. It advances the FakeClock by a queue wait (or the session gap) plus 0.02 s per circuit, enforces max_circuits and raises TransientBackendError on seeded attempts."
+      },
+      {
+        "title": "Orchestrator.compiled + cache_key",
+        "detail": "The transpile cache. The shipped key includes the bound params, so 240 circuits cause 240 transpiles; the build task keys on structure + target + level."
+      },
+      {
+        "title": "Orchestrator.submit",
+        "detail": "Retries up to 4 attempts with exponential backoff (1, 2, 4 s on the fake clock). Same seeds -> same samples, so a retry never changes the optimiser's path."
+      },
+      {
+        "title": "Orchestrator.evaluate",
+        "detail": "The job-queue policy: 'sync' submits one job per circuit, 'batched'/'session' one job per optimiser step."
+      },
+      {
+        "title": "spsa_multistart",
+        "detail": "The classical side only ever asks for values of 8 circuits per step (4 starts x +/- perturbation) - it cannot tell which execution mode ran them."
+      },
+      {
+        "title": "run(mode, ...)",
+        "detail": "Opens/closes a session when asked and reports wall_s, billed_s (QPU seconds or the session window), jobs, transpiles, hits and retries as one JSON line."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/17-hybrid-architecture/orchestrator.py",
+        "purpose": "main lab: orchestrator, job-queue policy, naive cache key, retries, SPSA workload"
+      },
+      {
+        "path": "labs/L400/17-hybrid-architecture/backend.py",
+        "purpose": "adapter interface: FakeClock, Template/Circuit, SimulatorBackend (seeded faults, sessions, max_circuits)"
+      },
+      {
+        "path": "labs/L400/17-hybrid-architecture/solution_cache_key.py",
+        "purpose": "buildTask reference: structural cache key"
+      },
+      {
+        "path": "labs/L400/17-hybrid-architecture/buildtarget.py",
+        "purpose": "BUILD_TARGET=mine / BUILD_TASK_MODULE switch"
+      },
+      {
+        "path": "labs/L400/17-hybrid-architecture/test_build_task.py",
+        "purpose": "buildTask + failureLab proof"
+      },
+      {
+        "path": "labs/L400/17-hybrid-architecture/test_fitness.py",
+        "purpose": "fitness function for ADR 0001"
+      },
+      {
+        "path": "labs/L400/17-hybrid-architecture/test_orchestrator.py",
+        "purpose": "modes, retries, batch limit"
+      },
+      {
+        "path": "labs/L400/17-hybrid-architecture/sampler_qiskit.py",
+        "purpose": "SDK path: Qiskit primitives (CI)"
+      },
+      {
+        "path": "labs/L400/17-hybrid-architecture/docs/adr/0001-batched-jobs.md",
+        "purpose": "decision record"
+      },
+      {
+        "path": "labs/L400/17-hybrid-architecture/README.md",
+        "purpose": "run commands and observed output"
+      },
+      {
+        "path": "labs/_shared/qopt/maxcut.py",
+        "purpose": "shared MaxCut + vectorised QAOA (self-tested)"
+      },
+      {
+        "path": "labs/L400/17-hybrid-architecture/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L400/17-hybrid-architecture/test_try_it.py",
+        "purpose": "tryIt tests"
+      }
+    ],
+    "failureLab": {
+      "fault": "The transpile-cache key includes the bound parameter values (the shipped orchestrator.cache_key).",
+      "symptom": "transpiles = 240 = circuits and cache_hits = 0 in every mode; batched wall 186.3 s instead of 66.8 s; the fitness test fails (240 != 1, 186.3 > 90).",
+      "fix": "Key the cache on template structure + backend target + optimisation level, never on params (solution_cache_key.py).",
+      "proof": "BUILD_TASK_MODULE=orchestrator python -m unittest test_build_task test_fitness -> FAILED (failures=4); default (solution) and BUILD_TARGET=mine -> Ran 7 tests OK."
+    },
+    "tradeOffs": [
+      {
+        "option": "Sync loop",
+        "gains": "Simplest code; matches tutorials; easy to debug one circuit at a time",
+        "costs": "Pays the queue per circuit (486.8 s)",
+        "chooseWhen": "Local simulators and tiny experiments"
+      },
+      {
+        "option": "Batched jobs",
+        "gains": "One queue wait per step; billed only for execution",
+        "costs": "Needs an optimiser that produces several circuits per step; batch-size limits",
+        "chooseWhen": "Default for shared devices (ADR 0001)"
+      },
+      {
+        "option": "Session",
+        "gains": "Lowest wall time (11.7 s) and predictable access",
+        "costs": "Billed for the window, plan restrictions, interactive TTL expiry",
+        "chooseWhen": "Interactive work with fast classical steps"
+      }
+    ],
+    "buildTask": {
+      "task": "Write cache_key(template, params, backend, opt_level=1) so one parameterised template is compiled once per target and level, and any change of structure, target or level misses the cache.",
+      "hints": [
+        "The key must not contain params at all.",
+        "Include backend.target: a cached circuit for another device is wrong.",
+        "Include template.p: a deeper circuit is a different structure."
+      ],
+      "solution": "labs/L400/17-hybrid-architecture/solution_cache_key.py",
+      "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (7 tests; numpy, runs locally)"
+    },
+    "expectedResults": [
+      "Same best_ratio 0.6922 in every mode and with injected failures",
+      "Batched 66.8 s / 4.8 s billed / 30 jobs / 1 transpile",
+      "Session 11.7 s wall but billed for the whole window"
+    ],
+    "testCases": [
+      {
+        "action": "run('batched', key=solution) with fail_jobs=(3, 4, 17)",
+        "expected": "3 retries, +10.0 s, identical best_ratio"
+      },
+      {
+        "action": "Orchestrator.submit with 6 circuits on max_circuits=5",
+        "expected": "ValueError before submission"
+      },
+      {
+        "action": "sampler_qiskit.run('batched', iters=5) (CI)",
+        "expected": "1 transpile, 5 jobs"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Raise the queue to 30 s per job (try_it.busy_queue).",
+        "predict": "Does batching still beat a session?",
+        "expected": "No: sync 7206.8 s, batched 906.8 s, session 39.7 s (billed 39.7 s). Long queues push toward sessions."
+      },
+      {
+        "task": "Make the classical step 70 s (> the 60 s interactive TTL) (try_it.slow_classical_step).",
+        "predict": "What happens to the session?",
+        "expected": "Every job re-queues: session wall 2165.3 s = batched, but billed 2165.3 s vs 4.8 s."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "best_ratio differs between modes",
+        "action": "A circuit seed depends on the attempt or the mode; derive it from (run seed, iteration, start, sign) only."
+      },
+      {
+        "symptom": "TransientBackendError escapes",
+        "action": "Four consecutive failures exhaust max_attempts; that is the intended give-up - raise it to the caller."
+      }
+    ],
+    "equivalents": [
+      "Qiskit Runtime: mode=backend (job), mode=batch / Batch context, mode=session / Session context (execution-modes guide).",
+      "Qiskit primitives: one PUB with a parameter array = one batched job; transpile once with Parameter objects, bind per run.",
+      "Any job queue (Celery, cloud task queues) with idempotency keys gives the same retry semantics."
+    ],
+    "inRealSystems": [
+      "Cloud QPUs queue jobs for seconds to hours; providers expose batch and session modes for exactly this trade-off.",
+      "Production loops cache ISA circuits per backend calibration and bind parameters late."
+    ],
+    "useWhen": "Use an orchestrator + adapter as soon as circuits leave your laptop; avoid sessions unless wall time matters more than the billed window.",
+    "simulatorVsReal": "Numpy QAOA sampler behind the adapter; time is modelled with a FakeClock using illustrative costs (2 s queue, 0.5 s transpile). Real queues vary by hours and providers bill differently.",
+    "checkpoint": "PASS if you can explain the three modes' wall vs billed numbers, your cache key passes test_build_task and test_fitness, and the shipped key fails them.",
+    "checkYourself": [
+      {
+        "q": "Why are billed seconds equal for sync and batched?",
+        "a": "Both pay only execution (240 x 0.02 s); the difference is queue waiting, which is wall time, not device time."
+      },
+      {
+        "q": "What makes a retry safe here?",
+        "a": "Each circuit carries a seed chosen by the orchestrator, so re-running gives identical samples."
+      },
+      {
+        "q": "Why include the target in the cache key?",
+        "a": "A circuit compiled for one device is invalid on another; a key without it would reuse the wrong ISA circuit."
+      }
+    ],
+    "learningTools": [
+      {
+        "name": "marimo",
+        "role": "SEE",
+        "exercise": "Create a notebook with `marimo edit`: sliders for queue_s (0.5-60), classical_s (0.01-90) and a cell calling try_it.compare(backend.Costs(queue_s=...), classical_s=...).",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Default costs reproduce batched (66.8, 4.8) and session (11.7, 11.7); queue 30 s gives (906.8, 4.8) vs (39.7, 39.7); classical 70 s makes session billing 2165.3 s.",
+        "mac": "pip install marimo (marimo tutorial intro)",
+        "windows": "pip install marimo (marimo tutorial intro)",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://pypi.org/project/marimo/"
+      },
+      {
+        "name": "JupyterLab (+ JupyterLab Desktop)",
+        "role": "CHECK",
+        "exercise": "Load the JSON lines of solution_cache_key.py into a notebook and plot wall_s and billed_s per mode as grouped bars.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Bars: sync 486.8/4.8, batched 66.8/4.8, session 11.7/11.7 (the lab README output).",
+        "mac": "pip install jupyterlab, or Desktop arm64 installer",
+        "windows": "pip install jupyterlab, or Desktop x64 installer / winget install jupyterlab",
+        "licence": "BSD-3-Clause (OSI: yes)",
+        "url": "https://pypi.org/project/jupyterlab/"
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "distributed-systems L100 #4 Retries with exponential backoff, jitter and a retry budget: the orchestrator's retry policy, here with idempotent per-circuit seeds.",
+      "application-architecture L300 #13 Resilience patterns: timeouts, circuit breaker, bulkhead, fallback: the backend adapter is the place for these patterns.",
+      "quantum-computing L400 #22 Capstone: an end-to-end quantum optimisation service: reuses this orchestrator and cache key unchanged."
+    ],
+    "sources": [
+      {
+        "title": "Introduction to Quantum Compute execution modes (job, batch, session)",
+        "url": "https://quantum.cloud.ibm.com/docs/en/guides/execution-modes"
+      },
+      {
+        "title": "StatevectorSampler API",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.primitives.StatevectorSampler"
+      },
+      {
+        "title": "Spall (1998), Implementation of the Simultaneous Perturbation Algorithm for Stochastic Optimization (author's copy)",
+        "url": "https://www.jhuapl.edu/SPSA/PDF-SPSA/Spall_Implementation_of_the_Simultaneous.PDF"
+      },
+      {
+        "title": "qiskit.compiler.transpile API (layout_method, routing_method, seed_transpiler)",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/compiler"
+      }
+    ],
+    "next": "L400 #18 Benchmarking honestly against classical solvers: once execution is cheap and reliable, find out whether the quantum solver is worth running at all.",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran locally (Python 3.12.15, numpy 2.5.3, cryptography 50.0.2, no quantum SDKs in the authoring sandbox): `python orchestrator.py`, `python solution_cache_key.py`, `python try_it.py` (outputs in README); `python -m unittest` -> 16 tests OK, 1 Qiskit test skipped; fail-before proof with BUILD_TASK_MODULE=orchestrator observed (4 failures). tryIt 1: local: try_it.py (observed). tryIt 2: local: try_it.py (observed). Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable, 127.0.0.1 and a FakeClock instead of wall-clock assertions; CI runs tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "sampler_qiskit.py (Qiskit StatevectorSampler + generate_preset_pass_manager on GenericBackendV2)",
+        "test_try_it.py QiskitPath (1 test)",
+        "learningTools: marimo exercise (manual run)",
+        "learningTools: JupyterLab (+ JupyterLab Desktop) exercise (manual run)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/17-hybrid-architecture.md",
+    "conceptSummary": "Separate optimiser, orchestrator and backend adapter. Measure execution modes on a fake clock: batched jobs cut wall time 7x versus a sync loop at the same billed time; sessions are fastest but bill the window. Cache compiled circuits by structure and target, make retries idempotent with per-circuit seeds, and guard the decision with a fitness test."
+  },
+  {
+    "id": "benchmark-vs-classical",
+    "number": 18,
+    "level": "L400",
+    "title": "Benchmarking honestly against classical solvers",
+    "phase": "Design",
+    "category": "benchmarking",
+    "description": "Compare QAOA with exact, greedy and simulated-annealing MaxCut solvers at sizes the simulator handles; fix a biased comparison method and guard it with a fitness test.",
+    "outcome": "You can design a fair benchmark (same budget, same seeds, medians, enforced budgets), compute quality and time-to-solution, let code pick the winner, and explain when quantum is not the right tool.",
+    "environment": "Mac mini or Windows 11; Python 3.12 venv (lesson 1); numpy 2.5.3 (+ cryptography 50.0.2 for lesson 21) from labs/L400/requirements.txt; shared numpy simulators in labs/_shared (qsim, qopt). SDK path: qiskit 2.6.1 StatevectorSampler sampling the same QAOA circuit (bench_qiskit.py) (pending CI).",
+    "estimatedTime": "60-90 minutes",
+    "overview": [
+      "A benchmark is an experiment: hold the instance, seeds and budget fixed, vary only the solver, and report distributions - otherwise a 'quantum win' is an artefact of the method."
+    ],
+    "prerequisites": [
+      "Lesson 14 (QAOA on MaxCut)",
+      "Lesson 16 (classifier vs a classical baseline)",
+      "Lesson 17 (what a job costs)"
+    ],
+    "glossary": [
+      {
+        "term": "sample",
+        "meaning": "One candidate bitstring evaluated: a classical flip evaluation or one quantum shot - the budget unit."
+      },
+      {
+        "term": "approximation ratio",
+        "meaning": "Best cut found / exact optimum (1.0 = optimal)."
+      },
+      {
+        "term": "success rate",
+        "meaning": "Fraction of seeds whose run found the exact optimum."
+      },
+      {
+        "term": "TTS99",
+        "meaning": "Samples needed for 99 % confidence of seeing the optimum at least once: budget x ln(0.01) / ln(1 - success)."
+      },
+      {
+        "term": "simulated annealing",
+        "meaning": "Metropolis single flips with a temperature that falls on a schedule (Kirkpatrick et al. 1983)."
+      }
+    ],
+    "concepts": [
+      "Same budget, same seeds, medians: the method is what you defend.",
+      "Exact enumeration is the reference at simulator sizes.",
+      "One instance proves nothing; check other instances.",
+      "Code decides the winner with a rule written in advance."
+    ],
+    "designBrief": {
+      "context": "Product wants to know whether the optimisation service should offer QAOA for MaxCut on 3-regular graphs up to the sizes our simulator handles (n <= 16).",
+      "constraints": [
+        "every solver gets the same sample budget (200) and the same 10 seeds",
+        "no run may spend more than its budget",
+        "results are medians and success rates, never a best run",
+        "the winner rule is fixed before results are seen"
+      ],
+      "question": "Which solver should the service use for these sizes, and how do we keep future comparisons honest?"
+    },
+    "options": [
+      {
+        "name": "Exact enumeration",
+        "description": "Brute force 2^n; proves optimality.",
+        "evidence": "n = 12 in 4096 evaluations; n = 16 in 65,536 (0.094 s locally).",
+        "verdict": "Use up to n = 20 (ADR 0001)."
+      },
+      {
+        "name": "Classical heuristics (greedy, annealing)",
+        "description": "Cheap local search with restarts / cooling.",
+        "evidence": "Fair harness, budget 200: n = 8 both 10/10; n = 12 success 0.4 / 0.3; n = 16 success 0.9 / 0.8 (greedy wins).",
+        "verdict": "Default above exact range; tie-break winner."
+      },
+      {
+        "name": "QAOA p = 1 (noiseless simulator)",
+        "description": "Grid-tuned angles, best sampled cut.",
+        "evidence": "n = 12 wins on graph 0 (0.9667, success 0.5) but 1 of 5 on other graphs; n = 16 success 0.6; 1.69 s simulator time per run at n = 16.",
+        "verdict": "Research option only."
+      }
+    ],
+    "decisionRecord": "labs/L400/18-benchmark-vs-classical/docs/adr/0001-fair-benchmark.md",
+    "fitnessFunction": {
+      "what": "The comparison method: one budget, >= 10 identical seeds, used <= budget, classical baseline and exact optimum present, reproducible report.",
+      "test": "labs/L400/18-benchmark-vs-classical/test_fitness.py",
+      "threshold": "budget equality across solvers; runs == 10 per solver; recomputed report identical (excluding local_s)"
+    },
+    "scalingLimits": [
+      "Exact enumeration stops near n = 30 (2^n time and 16·2^n bytes of statevector for QAOA): signal = local_s doubling per added node.",
+      "Ten seeds cannot separate success 0.3 from 0.5: add seeds (cost linear) before claiming a ranking.",
+      "A sample budget ignores wall time and noise; at hardware scale queueing (lesson 17) and noise (lesson 12) dominate."
+    ],
+    "steps": [
+      {
+        "title": "Run the biased benchmark",
+        "detail": "python bench_lab.py",
+        "expected": "n = 12: QAOA ratio 1.0 vs greedy 0.8 and annealing 0.8667 -> {\"winner\": \"qaoa\"}.",
+        "ifNot": "Different numbers: check SIZES (8, 12, 16), SEEDS 0-9, BUDGET 200."
+      },
+      {
+        "title": "Find the bias",
+        "detail": "Read compare(): BOOST, seeds[:1], max(results).",
+        "expected": "QAOA got 800 samples and its best of 10 seeds; the baselines got 50 samples and one seed; every row still claims budget 200.",
+        "ifNot": "If you cannot see it, print the 'used' field of each result."
+      },
+      {
+        "title": "Run the fair harness",
+        "detail": "python solution_fair.py",
+        "expected": "n = 8 annealing; n = 12 qaoa (0.9667, success 0.5, TTS99 1329 vs greedy 0.9333, 0.4, 1803); n = 16 greedy (success 0.9 vs QAOA 0.6).",
+        "ifNot": "QAOA local_s grows fast with n: that is the 2^n simulator, not hardware."
+      },
+      {
+        "title": "Try it",
+        "detail": "python try_it.py",
+        "expected": "QAOA wins 1 of 5 other 12-node graphs; with 4096 samples all four solvers incl. exact succeed and greedy wins.",
+        "ifNot": "Compare with the tryIt predictions."
+      },
+      {
+        "title": "Build task: make the design decision true, then prove it",
+        "detail": "Write my_fair.py (see buildTask), run the build-task and fitness tests against it, then against the shipped lab module (bench_lab), which must fail.",
+        "expected": "Your file / solution: Ran 6 tests ... OK. Shipped bench_lab: FAILED (failures=4) - unequal budgets [(25, 1)], no BudgetViolation, runs 1 instead of 4/10.",
+        "ifNot": "Over-budget runs must raise (BudgetViolation is a RuntimeError).",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v; BUILD_TASK_MODULE=bench_lab python -m unittest test_build_task test_fitness -v",
+        "windows": "$env:BUILD_TARGET = \"mine\"; python -m unittest test_build_task test_fitness -v; Remove-Item Env:BUILD_TARGET; $env:BUILD_TASK_MODULE = \"bench_lab\"; python -m unittest test_build_task test_fitness -v; Remove-Item Env:BUILD_TASK_MODULE"
+      },
+      {
+        "title": "Run all tests (and the Qiskit path in CI)",
+        "detail": "python -m unittest -v; SDK: python bench_qiskit.py",
+        "expected": "Ran 15 tests ... OK (skipped=1). CI: Qiskit's sampled cut distribution within TVD 0.05 of numpy.",
+        "ifNot": "Qiskit import errors: install labs/L400/requirements-sdk.txt.",
+        "mac": "python -m pip install -r labs/L400/requirements-sdk.txt && python labs/L400/18-benchmark-vs-classical/bench_qiskit.py",
+        "windows": "python -m pip install -r labs\\L400\\requirements-sdk.txt; python labs\\L400\\18-benchmark-vs-classical\\bench_qiskit.py"
+      }
+    ],
+    "code": "\"\"\"Lab 18 - benchmarking QAOA honestly against classical MaxCut solvers (simulator only).\n\nRun:  python bench_lab.py          (numpy only; JSON lines)   Fair version: python solution_fair.py\nSolvers (solvers.py): exact brute force (the reference), greedy local search, simulated annealing, QAOA p=1.\nQuality = approximation ratio (best cut / exact optimum). Time-to-solution = samples until the best cut was\nfirst seen, and TTS99 = budget x ln(0.01)/ln(1 - success rate). Local seconds are printed but never judged:\nsimulator time says nothing about hardware time.\nThe FAULT is this file's compare(): QAOA gets 4x the budget and its best of 10 seeds, the classical baselines\nrun once at a quarter budget, and nobody checks what a solver spent - the classic way a benchmark \"shows\" a quantum win.\nSDK path (QAOA sampled with Qiskit StatevectorSampler): python bench_qiskit.py   (CI)\n\"\"\"\nimport json\nimport math\nimport time\n\nimport numpy as np\n\nimport solvers as S\n\nSIZES, SEEDS, BUDGET = (8, 12, 16), tuple(range(10)), 200\nCLASSICAL = (\"greedy\", \"annealing\")\n\n\ndef instance(n, seed=0):\n    edges = S.mc.regular_graph(n, 3, seed=100 + seed)\n    return edges, S.exact(n, edges)[\"cut\"]\n\n\ndef tts99(success_rate, samples_per_run):\n    \"\"\"Samples for 99 % confidence of seeing the optimum at least once (repeat-until-success).\"\"\"\n    if success_rate == 0:\n        return None                     # never found: no finite time-to-solution\n    if success_rate == 1:\n        return samples_per_run\n    return round(samples_per_run * math.log(0.01) / math.log(1 - success_rate))\n\n\ndef summarise(n, name, results, opt, budget, seconds):\n    ratios = [r[\"cut\"] / opt for r in results]\n    rate = float(np.mean([r[\"cut\"] == opt for r in results]))\n    return {\"n\": n, \"solver\": name, \"budget\": budget, \"runs\": len(results),\n            \"median_ratio\": round(float(np.median(ratios)), 4), \"success\": rate,\n            \"median_first_best\": int(np.median([r[\"first_best\"] for r in results])),\n            \"tts99_samples\": tts99(rate, budget), \"local_s\": round(seconds, 3)}\n\n\ndef decide(rows):\n    \"\"\"Code decides the winner: quality, then reliability, then speed; a tie goes to the classical baseline.\"\"\"\n    key = lambda r: (r[\"median_ratio\"], r[\"success\"], -r[\"median_first_best\"], r[\"solver\"] in CLASSICAL)  # noqa: E731\n    return max(rows, key=key)[\"solver\"]\n\n\nBOOST = {\"qaoa\": 4, \"greedy\": 0.25, \"annealing\": 0.25}   # FAULT 1: QAOA tuned with 4x shots, baselines left at 50\n\n\ndef compare(n, solvers=S.BUDGETED, budget=BUDGET, seeds=SEEDS):\n    edges, opt = instance(n)\n    rows = []\n    for name, solve in solvers.items():\n        t = time.perf_counter()\n        runs = seeds if name not in CLASSICAL else seeds[:1]     # FAULT 2: the baseline is run once\n        results = [solve(n, edges, int(budget * BOOST.get(name, 1)), s) for s in runs]\n        best = max(results, key=lambda r: r[\"cut\"])              # FAULT 3: best seed reported as \"the\" result\n        rows.append(summarise(n, name, [best], opt, budget, (time.perf_counter() - t) / len(runs)))\n    return rows, decide(rows)                                    # FAULT 4: nobody checks r[\"used\"] <= budget\n\n\nif __name__ == \"__main__\":\n    for n in SIZES:\n        rows, winner = compare(n)\n        for r in rows:\n            print(json.dumps(r))\n        print(json.dumps({\"n\": n, \"winner\": winner, \"method\": \"naive (unequal budget, best seed)\"}))\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "solvers.py: the sample budget",
+        "detail": "Every budgeted solver returns {cut, used, first_best}; greedy pays n samples per sweep, annealing one per proposed flip, QAOA one per shot."
+      },
+      {
+        "title": "solvers.qaoa",
+        "detail": "Charged like hardware: half the shots estimate <C> on a 5x5 angle grid, the other half sample answers; the answer is the best sampled cut."
+      },
+      {
+        "title": "exact()",
+        "detail": "Brute force over 2**n bitstrings - not budgeted, it is the reference that turns cuts into ratios."
+      },
+      {
+        "title": "summarise() and tts99()",
+        "detail": "Medians and success over all runs; TTS99 converts a success rate into samples for 99 % confidence (None if never found)."
+      },
+      {
+        "title": "decide()",
+        "detail": "The rule written before the results: median ratio, then success, then samples to the best cut; a tie goes to the classical baseline."
+      },
+      {
+        "title": "compare() - the fault",
+        "detail": "BOOST gives QAOA 4x and the baselines 1/4 budget, baselines run one seed, the best result is reported, 'used' is never checked."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/bench_lab.py",
+        "purpose": "main lab: metrics, decide(), the biased compare()"
+      },
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/solvers.py",
+        "purpose": "exact, greedy, annealing, QAOA with sample accounting"
+      },
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/solution_fair.py",
+        "purpose": "buildTask reference: fair harness with BudgetViolation"
+      },
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/buildtarget.py",
+        "purpose": "BUILD_TARGET=mine / BUILD_TASK_MODULE switch"
+      },
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/test_build_task.py",
+        "purpose": "buildTask + failureLab proof"
+      },
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/test_fitness.py",
+        "purpose": "fitness function for the comparison method"
+      },
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/test_bench.py",
+        "purpose": "solver and metric tests, observed tables"
+      },
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/bench_qiskit.py",
+        "purpose": "SDK path (CI)"
+      },
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/docs/adr/0001-fair-benchmark.md",
+        "purpose": "decision record"
+      },
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/README.md",
+        "purpose": "run commands and observed output"
+      },
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L400/18-benchmark-vs-classical/test_try_it.py",
+        "purpose": "tryIt tests"
+      }
+    ],
+    "failureLab": {
+      "fault": "The shipped compare(): QAOA gets 4x budget and its best of 10 seeds; greedy and annealing run once at a quarter budget; nobody checks 'used'.",
+      "symptom": "At n = 12 the report says winner 'qaoa' (ratio 1.0 vs 0.8 / 0.8667) while every row claims budget 200.",
+      "fix": "A fair harness: same budget and seeds for all, medians over all runs, BudgetViolation for over-spending (solution_fair.py).",
+      "proof": "BUILD_TASK_MODULE=bench_lab python -m unittest test_build_task test_fitness -> FAILED (failures=4); solution / BUILD_TARGET=mine -> Ran 6 tests OK."
+    },
+    "tradeOffs": [
+      {
+        "option": "Equal sample budget",
+        "gains": "Hardware-neutral, easy to audit",
+        "costs": "Ignores wall time and queueing",
+        "chooseWhen": "Comparing algorithms"
+      },
+      {
+        "option": "Equal wall-clock budget",
+        "gains": "What users feel",
+        "costs": "Depends on machine, simulator and queue; hard to reproduce",
+        "chooseWhen": "Comparing deployed services"
+      },
+      {
+        "option": "Best-of-N reporting",
+        "gains": "Shows what is possible",
+        "costs": "Hides reliability; easy to cherry-pick",
+        "chooseWhen": "Only alongside medians and the same N for every solver"
+      }
+    ],
+    "buildTask": {
+      "task": "Write compare(n, solvers, budget, seeds, edges=None) -> (rows, winner) that gives every solver the same budget and seeds, summarises all runs, and raises a RuntimeError subclass for any run with used > budget.",
+      "hints": [
+        "Call each solver exactly once per seed with the same budget.",
+        "Use lab.summarise(...) over ALL results, then lab.decide(rows).",
+        "Check r['used'] <= budget before summarising."
+      ],
+      "solution": "labs/L400/18-benchmark-vs-classical/solution_fair.py",
+      "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (6 tests; numpy, runs locally)"
+    },
+    "expectedResults": [
+      "Biased method claims a QAOA win at n = 12",
+      "Fair method: annealing (n = 8), qaoa (n = 12, one instance), greedy (n = 16)",
+      "QAOA wins only 1 of 5 other 12-node graphs"
+    ],
+    "testCases": [
+      {
+        "action": "spy solvers through compare(8, ..., budget=100, seeds=(1, 2, 3))",
+        "expected": "every solver called with (100, 1), (100, 2), (100, 3)"
+      },
+      {
+        "action": "a solver that spends 2x the budget",
+        "expected": "RuntimeError (BudgetViolation)"
+      },
+      {
+        "action": "bench_qiskit.compare_distributions() (CI)",
+        "expected": "TVD < 0.05 between Qiskit and numpy cut distributions"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Re-run the fair comparison on five other 12-node graphs (try_it.other_instances).",
+        "predict": "Does QAOA keep winning?",
+        "expected": "No: {1: annealing, 2: greedy, 3: qaoa, 4: annealing, 5: annealing} - 1 of 5."
+      },
+      {
+        "task": "Give every solver - including exact enumeration - 2^12 = 4096 samples (try_it.exact_in_budget).",
+        "predict": "Who wins now?",
+        "expected": "All four succeed (1.0); greedy wins on samples to the best cut; exact also proves optimality."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "tts99_samples is null",
+        "action": "Success rate 0: the solver never found the optimum in any run - no finite time-to-solution."
+      },
+      {
+        "symptom": "Results change between runs",
+        "action": "A solver uses an unseeded RNG; every random choice must come from default_rng(seed)."
+      }
+    ],
+    "equivalents": [
+      "Qiskit: sample the QAOA circuit with StatevectorSampler / SamplerV2 (bench_qiskit.py); scipy.optimize.dual_annealing is a continuous-domain annealer.",
+      "Abbas et al. (2024) propose benchmarking metrics for quantum optimisation (time-to-solution, approximation ratio, comparisons with tuned classical solvers).",
+      "Classical MaxCut at scale: Goemans-Williamson SDP rounding or industrial MIP solvers."
+    ],
+    "inRealSystems": [
+      "Vendor 'advantage' claims are judged against the strongest tuned classical baseline on the same instances.",
+      "Benchmark harnesses pin seeds, budgets and instance generators in version control and fail CI on method drift."
+    ],
+    "useWhen": "Use a fair harness before any 'quantum vs classical' statement; avoid single-instance or best-seed claims entirely.",
+    "simulatorVsReal": "Noiseless numpy QAOA (labs/_shared/qopt); shots are free and exact. Hardware adds gate/readout noise and queue time, which lower QAOA's success further.",
+    "checkpoint": "PASS if the biased method's 'qaoa' claim at n = 12 is explained, your harness passes test_build_task and test_fitness, and bench_lab fails them.",
+    "checkYourself": [
+      {
+        "q": "Why is the n = 12 QAOA win not a reason to ship QAOA?",
+        "a": "One instance at a sample budget on a noiseless simulator; it won 1 of 5 other graphs and exact enumeration needs only 4096 evaluations."
+      },
+      {
+        "q": "What does TTS99 = 1329 mean?",
+        "a": "At success 0.5 per 200-sample run, about 1329 samples give 99 % confidence of seeing the optimum."
+      },
+      {
+        "q": "Why do ties go to the classical solver?",
+        "a": "It is cheaper to run and operate; a quantum solver must win outright to justify its cost."
+      }
+    ],
+    "learningTools": [
+      {
+        "name": "marimo",
+        "role": "SEE",
+        "exercise": "`marimo edit`: sliders for n (8/12/16), budget (50-2000) and number of seeds; one cell runs solution_fair.compare(n, budget=..., seeds=range(k)).",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Budget 200 / 10 seeds reproduces winners annealing, qaoa, greedy; raising the budget to 2000 makes all three succeed at n = 8-16.",
+        "mac": "pip install marimo (marimo tutorial intro)",
+        "windows": "pip install marimo (marimo tutorial intro)",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://pypi.org/project/marimo/"
+      },
+      {
+        "name": "JupyterLab (+ JupyterLab Desktop)",
+        "role": "CHECK",
+        "exercise": "Plot success rate vs budget (100, 200, 400) per solver for n = 12 and n = 16 from repeated compare() calls.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). At budget 200: n = 12 greedy 0.4, annealing 0.3, QAOA 0.5; n = 16 0.9 / 0.8 / 0.6 (the lab README output).",
+        "mac": "pip install jupyterlab, or Desktop arm64 installer",
+        "windows": "pip install jupyterlab, or Desktop x64 installer / winget install jupyterlab",
+        "licence": "BSD-3-Clause (OSI: yes)",
+        "url": "https://pypi.org/project/jupyterlab/"
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "simulation L300 #12 Variance reduction: same precision, fewer runs: comparing methods at equal cost and with common random numbers.",
+      "simulation L200 #10 Warm-up, replications and confidence: report a spread over seeds, not one run.",
+      "quantum-computing L400 #22 Capstone: an end-to-end quantum optimisation service: the service's winner comes from this harness."
+    ],
+    "sources": [
+      {
+        "title": "Farhi, Goldstone, Gutmann (2014), A Quantum Approximate Optimization Algorithm, arXiv:1411.4028",
+        "url": "https://arxiv.org/abs/1411.4028"
+      },
+      {
+        "title": "Kirkpatrick, Gelatt, Vecchi (1983), Optimization by simulated annealing, Science 220 (PubMed record)",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/17813860/"
+      },
+      {
+        "title": "Abbas et al. (2024), Challenges and Opportunities in Quantum Optimization, Nat Rev Phys, arXiv:2312.02279",
+        "url": "https://arxiv.org/abs/2312.02279"
+      },
+      {
+        "title": "scipy.optimize.dual_annealing (SciPy 1.18.0)",
+        "url": "https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.dual_annealing.html"
+      }
+    ],
+    "next": "L400 #19 Resource estimation: logical vs physical qubits and feasibility: what it would take for QAOA (or Shor) to run at sizes where classical solvers struggle.",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran locally (Python 3.12.15, numpy 2.5.3, cryptography 50.0.2, no quantum SDKs in the authoring sandbox): `python bench_lab.py`, `python solution_fair.py`, `python try_it.py` (outputs in README); `python -m unittest` -> 15 tests OK, 1 Qiskit test skipped; fail-before proof with BUILD_TASK_MODULE=bench_lab observed (4 failures). tryIt 1: local: try_it.py (observed). tryIt 2: local: try_it.py (observed). Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable, 127.0.0.1 and a FakeClock instead of wall-clock assertions; CI runs tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "bench_qiskit.py (Qiskit StatevectorSampler sampling of the QAOA circuit)",
+        "test_try_it.py QiskitPath (1 test)",
+        "learningTools: marimo exercise (manual run)",
+        "learningTools: JupyterLab (+ JupyterLab Desktop) exercise (manual run)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/18-benchmark-vs-classical.md",
+    "conceptSummary": "Hold instance, seeds and budget fixed and report medians and success; exact enumeration is the reference. The biased method fabricated a QAOA win; the fair one shows a single-instance QAOA win at n = 12 that does not generalise, and classical solvers win elsewhere. Code decides; ties go classical."
+  },
+  {
+    "id": "resource-estimation",
+    "number": 19,
+    "level": "L400",
+    "title": "Resource estimation: logical vs physical qubits and feasibility",
+    "phase": "Design",
+    "category": "resource estimation",
+    "description": "Estimate qubits, depth, CX and T counts for growing QAOA and Shor workloads, convert logical to physical qubits with a surface-code model and an error budget, and decide feasibility thresholds.",
+    "outcome": "You can derive logical counts (validated against counted circuits), choose a code distance from an error budget, refuse estimates above threshold, classify workloads (simulate / NISQ / fault-tolerant / infeasible) and cross-check with the QDK estimator.",
+    "environment": "Mac mini or Windows 11; Python 3.12 venv (lesson 1); numpy 2.5.3 (+ cryptography 50.0.2 for lesson 21) from labs/L400/requirements.txt; shared numpy simulators in labs/_shared (qsim, qopt). SDK path: Microsoft QDK qdk 1.33.1 qdk.qre estimator (estimate_qdk.py, CI job l400-qdk) and Qiskit 2.6.1 transpile counts (count_qiskit.py) (pending CI).",
+    "estimatedTime": "60-90 minutes",
+    "overview": [
+      "Algorithms count logical qubits; machines are built from physical ones. The surface-code distance, chosen from an error budget, turns one into the other - and decides what is feasible."
+    ],
+    "prerequisites": [
+      "Lesson 11 (transpiling: CX counts and depth)",
+      "Lesson 12 (gate error rates)",
+      "Lesson 14 (QAOA circuit structure)"
+    ],
+    "glossary": [
+      {
+        "term": "logical qubit",
+        "meaning": "An error-corrected qubit encoded in many physical qubits."
+      },
+      {
+        "term": "code distance d",
+        "meaning": "Surface-code size; errors are suppressed as (p / p_th)^((d+1)/2); about 2d^2 physical qubits per logical qubit."
+      },
+      {
+        "term": "T-count",
+        "meaning": "Number of non-Clifford T gates; dominates fault-tolerant cost (magic-state factories)."
+      },
+      {
+        "term": "logical cycle",
+        "meaning": "One logical time step, lasting d surface-code cycles (1 us each here)."
+      },
+      {
+        "term": "error budget",
+        "meaning": "Allowed total failure probability for the whole run (1 % here)."
+      },
+      {
+        "term": "threshold p_th",
+        "meaning": "Physical error rate (1 %) above which a larger code makes things worse."
+      }
+    ],
+    "concepts": [
+      "Logical counts first, then a code model, then a policy threshold.",
+      "Distance comes from the budget, not from habit.",
+      "Estimates include assumptions; say which overheads are left out.",
+      "Validate formulas against counted circuits."
+    ],
+    "designBrief": {
+      "context": "Before running any request, the service must say whether it can be simulated, tried on a noisy device, needs a fault-tolerant machine, or is out of reach - and security asks when RSA-2048 becomes breakable.",
+      "constraints": [
+        "total failure probability <= 1 %",
+        "p = 1e-3 physical error, 1 us code cycles (stated assumptions)",
+        "fault-tolerant-feasible means <= 1,000,000 physical qubits and <= 1 day",
+        "formulas must match counted circuits where both exist"
+      ],
+      "question": "How do we estimate resources and where do we draw the feasibility lines?"
+    },
+    "options": [
+      {
+        "name": "Count a built circuit",
+        "description": "Exact gate counts and depth from the circuit itself.",
+        "evidence": "Equals the formulas for n = 6-12, p = 1-3 (CX, rotations); depth 40 at n = 12, p = 3.",
+        "verdict": "Validation only (cannot build RSA-2048)."
+      },
+      {
+        "name": "Analytic model with an error-budget distance",
+        "description": "Formulas + surface-code model, distance from the budget.",
+        "evidence": "RSA-2048 d 27, 9,025,020 physical, 16.1 h; QAOA n=100 p=4 d 11, 24,200; all p_fail <= 0.01.",
+        "verdict": "Chosen as the gate (ADR 0001)."
+      },
+      {
+        "name": "Full estimator (QDK qdk.qre)",
+        "description": "Models factories, layout and Pareto trade-offs.",
+        "evidence": "Pending CI; expected at or above our data-only bound (3240 physical for QAOA n=20 p=1).",
+        "verdict": "Cross-check in CI."
+      }
+    ],
+    "decisionRecord": "labs/L400/19-resource-estimation/docs/adr/0001-feasibility-gate.md",
+    "fitnessFunction": {
+      "what": "No estimate exceeds the error budget; 'feasible' respects the thresholds; the pinned decision table for the six reference workloads does not change.",
+      "test": "labs/L400/19-resource-estimation/test_fitness.py",
+      "threshold": "p_fail <= 0.01 for all rows; FT-feasible <= 1,000,000 physical and <= 86,400 s; classes = simulate, nisq, FT, FT, infeasible, infeasible"
+    },
+    "scalingLimits": [
+      "Near threshold the distance explodes (d 37 at p = 0.005; nothing <= 101 at 0.009): signal = distance jumps for a small change in p.",
+      "Data-only model: factories, routing and decoding are missing; if QDK's numbers exceed ours by > 30x a model assumption is wrong.",
+      "Thresholds are policy: a new device budget or runtime limit changes the decision table and needs a new ADR."
+    ],
+    "steps": [
+      {
+        "title": "Run the shipped estimator",
+        "detail": "python estimate_lab.py",
+        "expected": "RSA-2048: 6190 logical qubits, 1.84e10 T gates, distance 3, 111,420 physical qubits, 6430 s - class fault-tolerant-feasible, p_fail 1.0.",
+        "ifNot": "ModuleNotFoundError: run from the lab folder (counting.py and labs/_shared are imported)."
+      },
+      {
+        "title": "See the fault",
+        "detail": "Compare 'class' with 'p_fail' on every line.",
+        "expected": "Every workload has p_fail 1.0 (certain failure) yet four are called feasible: d = 3 for everything.",
+        "ifNot": "If p_fail < budget you changed choose_distance already."
+      },
+      {
+        "title": "Run the decided estimator",
+        "detail": "python solution_distance.py",
+        "expected": "QAOA n=100 p=4: d 11, 24,200 qubits, 13.8 ms (FT-feasible); RSA-2048: d 27, 9,025,020 qubits, 57,870 s (infeasible); every p_fail <= 0.01.",
+        "ifNot": "A distance that never satisfies the budget: check logical_cycles, not depth, is used."
+      },
+      {
+        "title": "Check the counts",
+        "detail": "python -m unittest test_estimate -v",
+        "expected": "Formulas = counted circuits for n = 6-12, p = 1-3 (CX, rotations; depth is an upper bound, tight with 4 colours); Toffoli = 7 T, unitary exact.",
+        "ifNot": "Depth mismatch: greedy edge colouring used 5 colours for that graph - the formula assumes the colour count you pass."
+      },
+      {
+        "title": "Try it",
+        "detail": "python try_it.py",
+        "expected": "p = 1e-4: RSA-2048 d 13, 2,092,220 qubits, 27,860 s; QAOA near threshold: d 37 at p = 0.005, no d <= 101 at 0.009, refused at 0.011.",
+        "ifNot": "Compare with the tryIt predictions."
+      },
+      {
+        "title": "Build task: make the design decision true, then prove it",
+        "detail": "Write my_distance.py (see buildTask), run the build-task and fitness tests against it, then against the shipped lab module (estimate_lab), which must fail.",
+        "expected": "Your file / solution: Ran 7 tests ... OK. Shipped estimate_lab: FAILED (failures=5) - d 3 != 27, budget not met, no refusal, decision table differs.",
+        "ifNot": "Above the threshold raise ValueError instead of looping or returning a number.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v; BUILD_TASK_MODULE=estimate_lab python -m unittest test_build_task test_fitness -v",
+        "windows": "$env:BUILD_TARGET = \"mine\"; python -m unittest test_build_task test_fitness -v; Remove-Item Env:BUILD_TARGET; $env:BUILD_TASK_MODULE = \"estimate_lab\"; python -m unittest test_build_task test_fitness -v; Remove-Item Env:BUILD_TASK_MODULE"
+      },
+      {
+        "title": "QDK and Qiskit cross-checks (CI)",
+        "detail": "Separate venv: python estimate_qdk.py; SDK venv: python count_qiskit.py",
+        "expected": "CI: QDK physical qubits within 0.3-30x of our data-only bound (it adds factories); Qiskit CX and depth equal the counted circuit.",
+        "ifNot": "qdk.qre import errors: install labs/L400/requirements-qdk.txt; set QDK_PYTHON_TELEMETRY=none to opt out of telemetry.",
+        "mac": "python3.12 -m venv .venv-qdk && source .venv-qdk/bin/activate && python -m pip install -r labs/L400/requirements-qdk.txt && QDK_PYTHON_TELEMETRY=none python labs/L400/19-resource-estimation/estimate_qdk.py",
+        "windows": "py -3.12 -m venv .venv-qdk; .venv-qdk\\Scripts\\Activate.ps1; python -m pip install -r labs\\L400\\requirements-qdk.txt; $env:QDK_PYTHON_TELEMETRY = \"none\"; python labs\\L400\\19-resource-estimation\\estimate_qdk.py"
+      }
+    ],
+    "code": "\"\"\"Lab 19 - resource estimation: from problem size to logical and physical qubits, depth, CX and T counts.\n\nRun:  python estimate_lab.py     (numpy/stdlib only; prints JSON lines)\n1. Logical counts for QAOA MaxCut on 3-regular graphs (formulas, validated against counted circuits for n <= 12).\n2. Shor/RSA logical counts from Gidney & Ekera (2021, arXiv:1905.09749) abstract formulas.\n3. Surface-code overhead: p_L(d) = 0.03 (p / 0.01)^((d+1)/2) per logical qubit per logical cycle (Fowler et al.\n   2012 Eq. 11; the defaults of qdk.qre's SurfaceCode), about 2 d^2 physical qubits per logical qubit\n   (d^2 data + d^2 - 1 measure). Data blocks only: no magic-state factories, no routing -> a LOWER bound.\n4. A feasibility class per workload. The FAULT: choose_distance() below uses a fixed d = 3 (\"17 physical per logical\").\nQDK path (qdk.qre estimator on the same QAOA program): python estimate_qdk.py   (CI job l400-qdk)\n\"\"\"\nimport json\nimport math\n\nfrom counting import t_per_rotation\n\nP_PHYS, CYCLE_S, BUDGET = 1e-3, 1e-6, 0.01        # gate error, surface-code cycle (1 us), total failure budget\nTHRESHOLDS = {\"sim_qubits\": 30, \"nisq_esp\": 0.5, \"max_physical\": 1_000_000, \"max_runtime_s\": 86_400}\n\n\ndef qaoa_logical(n, p, colours=4, eps_total=1e-3):\n    edges = 3 * n // 2\n    rotations = p * (edges + n)\n    t_rot = t_per_rotation(eps_total / rotations)                   # synthesis error shared by all rotations\n    depth = 1 + p * (3 * colours + 1)                                # colour groups of RZZ run in parallel\n    return {\"workload\": f\"qaoa n={n} p={p}\", \"logical_qubits\": n, \"cx\": 2 * edges * p, \"rotations\": rotations,\n            \"depth\": depth, \"t_count\": rotations * t_rot,\n            \"logical_cycles\": depth + p * (colours + 1) * t_rot}       # each rotation layer = t_rot T steps\n\n\ndef rsa_logical(bits):\n    lg = math.log2(bits)\n    toffoli = 0.3 * bits ** 3 + 0.0005 * bits ** 3 * lg\n    out = {\"workload\": f\"rsa-{bits}\", \"logical_qubits\": math.ceil(3 * bits + 0.002 * bits * lg),\n            \"toffoli\": round(toffoli), \"t_count\": 7 * round(toffoli),      # 7 T per Toffoli (counting.toffoli_ok)\n            \"depth\": round(500 * bits ** 2 + bits ** 2 * lg)}              # measurement depth\n    out[\"logical_cycles\"] = out[\"depth\"]\n    return out\n\n\ndef logical_error(d, p=P_PHYS, a=0.03, p_th=0.01):\n    return a * (p / p_th) ** ((d + 1) / 2)\n\n\ndef choose_distance(p, logical_qubits, cycles, budget=BUDGET):\n    \"\"\"NAIVE: one fixed code distance for every workload ('a logical qubit is 17 physical qubits').\"\"\"\n    return 3\n\n\ndef physical(est, p=P_PHYS, choose=choose_distance):\n    cycles = est[\"logical_cycles\"]\n    d = choose(p, est[\"logical_qubits\"], cycles)\n    fail = min(1.0, est[\"logical_qubits\"] * cycles * logical_error(d, p))\n    return {**est, \"distance\": d, \"physical_qubits\": est[\"logical_qubits\"] * 2 * d * d,\n            \"runtime_s\": float(f\"{cycles * d * CYCLE_S:.4g}\"), \"p_fail\": float(f\"{fail:.3g}\")}\n\n\ndef classify(est):\n    \"\"\"Code decides: run where the estimate says it can run.\"\"\"\n    esp = (1 - P_PHYS) ** est.get(\"cx\", math.inf)\n    if est[\"logical_qubits\"] <= THRESHOLDS[\"sim_qubits\"]:\n        return \"simulate\"\n    if esp >= THRESHOLDS[\"nisq_esp\"]:\n        return \"nisq-candidate\"\n    if est[\"physical_qubits\"] <= THRESHOLDS[\"max_physical\"] and est[\"runtime_s\"] <= THRESHOLDS[\"max_runtime_s\"]:\n        return \"fault-tolerant-feasible\"\n    return \"infeasible (assumptions above)\"\n\n\nWORKLOADS = [qaoa_logical(20, 1), qaoa_logical(100, 1), qaoa_logical(100, 4), qaoa_logical(1000, 10),\n             rsa_logical(1024), rsa_logical(2048)]\n\nif __name__ == \"__main__\":\n    for est in WORKLOADS:\n        row = physical(est)\n        print(json.dumps({**row, \"class\": classify(row)}))\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "counting.qaoa_ops / count",
+        "detail": "Builds the QAOA circuit as explicit ops (RZZ = CX RZ CX, edges grouped by colour) and counts CX, rotations and ASAP depth - the ground truth for small n."
+      },
+      {
+        "title": "counting.toffoli_ok",
+        "detail": "Checks the textbook 7-T Toffoli decomposition against the exact Toffoli unitary: the 7 T per Toffoli used for Shor is verified, not assumed."
+      },
+      {
+        "title": "qaoa_logical",
+        "detail": "Formulas that scale to any n: CX = 2|E|p, rotations = p(|E| + n), depth = 1 + p(3c + 1), T = rotations x 3 log2(1/eps) (Ross-Selinger), logical cycles include T-limited rotation layers."
+      },
+      {
+        "title": "rsa_logical",
+        "detail": "Gidney & Ekera's abstract formulas: 3n + 0.002 n lg n logical qubits, 0.3n^3 + 0.0005 n^3 lg n Toffolis, 500n^2 + n^2 lg n measurement depth."
+      },
+      {
+        "title": "logical_error / physical",
+        "detail": "p_L(d) = 0.03 (p/0.01)^((d+1)/2) (Fowler Eq. 11, QDK SurfaceCode defaults); physical = logical x 2d^2; runtime = cycles x d x 1 us; p_fail = qubits x cycles x p_L."
+      },
+      {
+        "title": "choose_distance (the fault)",
+        "detail": "Shipped: always 3. The build task chooses the smallest odd d that meets the 1 % budget and refuses at or above the threshold."
+      },
+      {
+        "title": "classify",
+        "detail": "Policy: simulate (<= 30 qubits), NISQ candidate ((1-1e-3)^CX >= 0.5), fault-tolerant-feasible (<= 1e6 physical, <= 1 day), else infeasible."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/19-resource-estimation/estimate_lab.py",
+        "purpose": "main lab: logical counts, surface-code model, fixed-distance fault, classification"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/counting.py",
+        "purpose": "helper: explicit QAOA ops, counts, edge colouring, 7-T Toffoli check"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/solution_distance.py",
+        "purpose": "buildTask reference: budget-derived distance with threshold refusal"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/buildtarget.py",
+        "purpose": "BUILD_TARGET=mine / BUILD_TASK_MODULE switch"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/test_build_task.py",
+        "purpose": "buildTask + failureLab proof"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/test_fitness.py",
+        "purpose": "fitness function: budget, thresholds, pinned decision table"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/test_estimate.py",
+        "purpose": "formulas vs counts; SDK/QDK in CI"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/estimate_qdk.py",
+        "purpose": "QDK resource estimator path (CI job l400-qdk)"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/count_qiskit.py",
+        "purpose": "Qiskit counting path (CI)"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/docs/adr/0001-feasibility-gate.md",
+        "purpose": "decision record"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/README.md",
+        "purpose": "run commands and observed output"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L400/19-resource-estimation/test_try_it.py",
+        "purpose": "tryIt tests"
+      }
+    ],
+    "failureLab": {
+      "fault": "choose_distance() returns 3 for every workload ('a logical qubit is 17 physical qubits').",
+      "symptom": "RSA-2048 reported fault-tolerant-feasible with 111,420 physical qubits and 6430 s while its own p_fail is 1.0; every row has p_fail 1.0.",
+      "fix": "Smallest odd d with qubits x cycles x p_L(d) <= budget; ValueError at or above the 1 % threshold (solution_distance.py).",
+      "proof": "BUILD_TASK_MODULE=estimate_lab python -m unittest test_build_task test_fitness -> FAILED (failures=5); solution / BUILD_TARGET=mine -> Ran 7 tests OK."
+    },
+    "tradeOffs": [
+      {
+        "option": "Fixed overhead factor",
+        "gains": "One multiplication",
+        "costs": "Ignores runtime and budget; can claim feasibility with certain failure",
+        "chooseWhen": "Never for decisions"
+      },
+      {
+        "option": "Budget-derived distance (data blocks)",
+        "gains": "Transparent, fast, testable lower bound",
+        "costs": "Omits factories and routing",
+        "chooseWhen": "Gating requests and teaching"
+      },
+      {
+        "option": "Full estimator (QDK)",
+        "gains": "Factories, layouts, Pareto frontier",
+        "costs": "Separate environment, API in flux",
+        "chooseWhen": "Hardware planning and cross-checks"
+      }
+    ],
+    "buildTask": {
+      "task": "Write choose_distance(p, logical_qubits, cycles, budget=0.01) returning the smallest odd d >= 3 with logical_qubits x cycles x p_L(d) <= budget, and raising ValueError when p >= 0.01.",
+      "hints": [
+        "Loop d = 3, 5, 7, ... up to a cap (101).",
+        "Use lab.logical_error(d, p).",
+        "Above threshold p_L grows with d - refuse instead of looping."
+      ],
+      "solution": "labs/L400/19-resource-estimation/solution_distance.py",
+      "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (7 tests; stdlib, runs locally)"
+    },
+    "expectedResults": [
+      "Counted CX/rotations equal the formulas; Toffoli = 7 T (exact unitary)",
+      "RSA-2048: d 27, 9,025,020 physical qubits, 16.1 h (data only)",
+      "Decision table: simulate, nisq-candidate, FT-feasible x2, infeasible x2"
+    ],
+    "testCases": [
+      {
+        "action": "rsa_logical(2048)",
+        "expected": "6190 logical qubits, 2,624,225,018 Toffolis, depth 2,143,289,344"
+      },
+      {
+        "action": "choose_distance(0.011, 100, 1000)",
+        "expected": "ValueError (above threshold)"
+      },
+      {
+        "action": "count_qiskit.check() (CI)",
+        "expected": "Qiskit CX == analytic CX; Qiskit depth == counted depth"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Physical error 1e-4 instead of 1e-3 for RSA-2048 (try_it.better_hardware).",
+        "predict": "How far do distance and qubits drop?",
+        "expected": "d 27 -> 13; 9,025,020 -> 2,092,220 physical qubits; 57,870 s -> 27,860 s. Still above 1e6: infeasible under our policy."
+      },
+      {
+        "task": "QAOA n=100 p=4 at p = 0.001, 0.005, 0.009, 0.011 (try_it.near_threshold).",
+        "predict": "Smooth growth or a cliff?",
+        "expected": "(11, 24,200), (37, 273,800), then 'no distance <= 101 meets budget 0.01', then refused above threshold."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Runtime looks absurdly short",
+        "action": "You used circuit depth as logical cycles; T-limited rotation layers add p(c+1) x T-per-rotation cycles."
+      },
+      {
+        "symptom": "QDK numbers far above ours",
+        "action": "Expected up to ~10x (factories, routing); beyond 30x check the error rate, budget and gate times passed to GateBased."
+      }
+    ],
+    "equivalents": [
+      "Microsoft QDK: qdk.qre estimate(app, GateBased(...), SurfaceCode.q() * RoundBasedFactory.q(), max_error=0.01) (estimate_qdk.py).",
+      "Qiskit: count_ops() / depth() on a transpiled circuit; transpile to a Clifford+T basis for T-counts (clifford_t_pass_manager).",
+      "Beverland et al. (2022) describe the layered estimation framework the QDK estimator implements."
+    ],
+    "inRealSystems": [
+      "Hardware roadmaps and PQC timelines are argued from resource estimates; published RSA-2048 numbers moved from 20 million to under one million qubits between 2019 and 2025.",
+      "Teams gate expensive hardware runs on an estimate checked into the repository."
+    ],
+    "useWhen": "Use an estimate before every hardware or roadmap decision; avoid quoting logical qubits as machine sizes.",
+    "simulatorVsReal": "No simulation: an analytic model with stated assumptions (p = 1e-3, 1 us cycles, data blocks only). Real machines add factories, routing, decoding latency and correlated errors.",
+    "checkpoint": "PASS if the shipped estimator's p_fail = 1.0 'feasible' rows are explained, your choose_distance passes test_build_task and test_fitness, and estimate_lab fails them.",
+    "checkYourself": [
+      {
+        "q": "Why is d = 27 needed for RSA-2048 but d = 9 for QAOA n = 20?",
+        "a": "p_fail scales with qubits x cycles; RSA-2048 has 2.1e9 cycles and 6190 qubits, so p_L must be ~1e-15."
+      },
+      {
+        "q": "What does 'data blocks only' leave out?",
+        "a": "Magic-state factories, routing space and decoding - so 9,025,020 is a lower bound."
+      },
+      {
+        "q": "Why refuse above threshold?",
+        "a": "For p >= p_th, p_L grows with d: no code distance can meet any budget."
+      }
+    ],
+    "learningTools": [
+      {
+        "name": "Microsoft Quantum Development Kit (qdk + VS Code extension)",
+        "role": "CHECK",
+        "exercise": "In the l400-qdk venv run estimate_qdk.py; then change GateBased(error_rate=1e-4) and compare the Pareto table with try_it.better_hardware().",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). QDK's minimum physical qubits for QAOA n=20 p=1 should be at or above our data-only 3240 (d 9); lowering the error rate should shrink both.",
+        "mac": "pip install qdk ; VS Code extension 'Microsoft Quantum Development Kit (QDK)' (or vscode.dev/quantum/playground)",
+        "windows": "pip install qdk ; same VS Code extension",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://pypi.org/project/qdk/"
+      },
+      {
+        "name": "JupyterLab (+ JupyterLab Desktop)",
+        "role": "CHECK",
+        "exercise": "Plot physical qubits (log scale) against physical error p in 1e-4..9e-3 for QAOA n=100 p=4 and RSA-2048 using solution_distance.choose_distance.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Curves pass through (1e-3: 24,200 and 9,025,020) and (5e-3: 273,800 for QAOA) and end where no distance <= 101 exists.",
+        "mac": "pip install jupyterlab, or Desktop arm64 installer",
+        "windows": "pip install jupyterlab, or Desktop x64 installer / winget install jupyterlab",
+        "licence": "BSD-3-Clause (OSI: yes)",
+        "url": "https://pypi.org/project/jupyterlab/"
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "quantum-computing L400 #21 Quantum and post-quantum: crypto inventory and migration plan: reuses this estimator for Shor's RSA-2048 in context.",
+      "quantum-computing L400 #20 Error-aware compilation: layout, routing and a depth budget: the near-term counterpart - ESP instead of code distance.",
+      "quantum-computing L400 #22 Capstone: an end-to-end quantum optimisation service: this estimate is the service's feasibility gate.",
+      "simulation L100 #6 Is the model right? Verification vs validation: the formulas are verified against counted circuits before anyone trusts them."
+    ],
+    "sources": [
+      {
+        "title": "Fowler et al. (2012), Surface codes: Towards practical large-scale quantum computation, arXiv:1208.0928",
+        "url": "https://arxiv.org/abs/1208.0928"
+      },
+      {
+        "title": "qdk.qre.models.qec.SurfaceCode (crossing_prefactor 0.03, error_correction_threshold 0.01)",
+        "url": "https://learn.microsoft.com/en-us/python/qdk/qdk.qre.models.qec.surfacecode?view=qsharp-py"
+      },
+      {
+        "title": "Gidney & Ekera (2021), How to factor 2048 bit RSA integers in 8 hours using 20 million noisy qubits, Quantum 5, 433",
+        "url": "https://arxiv.org/abs/1905.09749"
+      },
+      {
+        "title": "Gidney (2025), How to factor 2048 bit RSA integers with less than a million noisy qubits, arXiv:2505.15917",
+        "url": "https://arxiv.org/abs/2505.15917"
+      },
+      {
+        "title": "Ross & Selinger (2016), Optimal ancilla-free Clifford+T approximation of z-rotations, arXiv:1403.2975",
+        "url": "https://arxiv.org/abs/1403.2975"
+      },
+      {
+        "title": "Amy, Maslov, Mosca, Roetteler (2013), A meet-in-the-middle algorithm for fast synthesis of depth-optimal quantum circuits, arXiv:1206.0758",
+        "url": "https://arxiv.org/abs/1206.0758"
+      },
+      {
+        "title": "Beverland et al. (2022), Assessing requirements to scale to practical quantum advantage, arXiv:2211.07629",
+        "url": "https://arxiv.org/abs/2211.07629"
+      },
+      {
+        "title": "How to install and use the Microsoft Quantum resource estimator (qdk.qre)",
+        "url": "https://learn.microsoft.com/en-us/azure/quantum/install-run-resource-estimator"
+      },
+      {
+        "title": "What is the Microsoft Quantum resource estimator?",
+        "url": "https://learn.microsoft.com/en-us/azure/quantum/intro-to-resource-estimation"
+      },
+      {
+        "title": "qdk on PyPI (1.33.1)",
+        "url": "https://pypi.org/project/qdk/"
+      }
+    ],
+    "next": "L400 #20 Error-aware compilation: layout, routing and a depth budget: the near-term side - squeezing fidelity out of the noisy device you do have.",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran locally (Python 3.12.15, numpy 2.5.3, cryptography 50.0.2, no quantum SDKs in the authoring sandbox): `python estimate_lab.py`, `python solution_distance.py`, `python try_it.py` (outputs in README); `python -m unittest` -> 17 tests OK, 2 SDK tests skipped (Qiskit, QDK); fail-before proof with BUILD_TASK_MODULE=estimate_lab observed (5 failures). tryIt 1: local: try_it.py (observed). tryIt 2: local: try_it.py (observed). Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable, 127.0.0.1 and a FakeClock instead of wall-clock assertions; CI runs tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "estimate_qdk.py (qdk 1.33.1 qdk.qre: OpenQASMApplication, GateBased, SurfaceCode x RoundBasedFactory)",
+        "count_qiskit.py (Qiskit transpile counts)",
+        "test_estimate.py QiskitAgrees + QdkEstimator (2 tests)",
+        "learningTools: Microsoft Quantum Development Kit (qdk + VS Code extension) exercise (manual run)",
+        "learningTools: JupyterLab (+ JupyterLab Desktop) exercise (manual run)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/19-resource-estimation.md",
+    "conceptSummary": "Count logical resources with formulas validated against built circuits, then pick the surface-code distance from an error budget (p_L = 0.03 (p/0.01)^((d+1)/2), ~2d^2 physical per logical) and classify workloads by policy thresholds. A fixed d = 3 made RSA-2048 look feasible with certain failure; the budget-derived model gives 9.0 million physical qubits, between published whole-machine estimates."
+  },
+  {
+    "id": "error-aware-compilation",
+    "number": 20,
+    "level": "L400",
+    "title": "Error-aware compilation: layout, routing and a depth budget",
+    "phase": "Design",
+    "category": "compilation",
+    "description": "Compile lesson 14's QAOA circuit onto a fake 8-qubit ladder with per-edge error rates: compare trivial, connectivity-based and noise-aware layout/routing by expected fidelity and depth, and keep the result within a depth budget.",
+    "outcome": "You can score compilations by ESP, CX count and depth, prove routed circuits equivalent, choose a noise-aware layout that survives calibration drift, and enforce a depth budget with a fitness test.",
+    "environment": "Mac mini or Windows 11; Python 3.12 venv (lesson 1); numpy 2.5.3 (+ cryptography 50.0.2 for lesson 21) from labs/L400/requirements.txt; shared numpy simulators in labs/_shared (qsim, qopt). SDK path: qiskit 2.6.1 transpile(optimization_level 0-3, seed_transpiler) against a Target carrying the same error map (compile_qiskit.py) (pending CI).",
+    "estimatedTime": "60-90 minutes",
+    "overview": [
+      "Devices are uneven and drift daily; where you place qubits and how you route SWAPs can matter more than any other compiler choice."
+    ],
+    "prerequisites": [
+      "Lesson 11 (transpiling to a device layout)",
+      "Lesson 12 (noise models)",
+      "Lesson 14 (the 5-node QAOA circuit)"
+    ],
+    "glossary": [
+      {
+        "term": "layout",
+        "meaning": "Which physical qubit hosts each logical qubit."
+      },
+      {
+        "term": "routing",
+        "meaning": "Inserting SWAPs (3 CX each) so every two-qubit gate acts on a coupled pair."
+      },
+      {
+        "term": "ESP",
+        "meaning": "Estimated success probability: product of (1 - error) over all gates and measurements (Nishio et al.)."
+      },
+      {
+        "term": "reliable path",
+        "meaning": "Shortest path with edge weight -log(1 - CX error) instead of hop count."
+      },
+      {
+        "term": "calibration drift",
+        "meaning": "Error rates changing between calibrations; here edge (1,2) degrades to 15 %."
+      },
+      {
+        "term": "depth budget",
+        "meaning": "Maximum allowed circuit depth (22 = logical 17 + room for one SWAP)."
+      }
+    ],
+    "concepts": [
+      "Score compilations, don't just count gates.",
+      "Noise-aware layout routes around bad couplers.",
+      "Prove equivalence before trusting any score.",
+      "A depth budget makes trade-offs explicit and testable."
+    ],
+    "designBrief": {
+      "context": "The service compiles a 5-qubit QAOA circuit (12 CX, depth 17) for an 8-qubit ladder whose calibration changes daily; today one coupler drifted to 15 % error.",
+      "constraints": [
+        "depth <= 22 after routing",
+        "ESP >= 0.75 on both the calibrated and the drifted device",
+        "<= 20 CX",
+        "noiseless output identical to the logical circuit"
+      ],
+      "question": "Which layout/routing/optimisation strategy should the compiler use, and how is its output checked?"
+    },
+    "options": [
+      {
+        "name": "A trivial layout + hop routing",
+        "description": "Level-0 style.",
+        "evidence": "Calibrated ESP 0.5763, 27 CX, depth 32; drifted 0.2084; simulated fidelity 0.8959.",
+        "verdict": "Rejected."
+      },
+      {
+        "name": "B degree-based layout + hop routing + CX cancellation",
+        "description": "Level 1-2 style, error-blind.",
+        "evidence": "Calibrated 0.7315 / 19 / 24; drifted 0.3059 / 19 / 24.",
+        "verdict": "Rejected (depth and drift)."
+      },
+      {
+        "name": "C noise-aware layout + reliable routing + cancellation",
+        "description": "Level-3 / VF2PostLayout idea, brute force here.",
+        "evidence": "Calibrated 0.7925 / 13 / 18; drifted 0.7835 / 19 / 21; simulated fidelity 0.9878.",
+        "verdict": "Chosen (ADR 0001)."
+      }
+    ],
+    "decisionRecord": "labs/L400/20-error-aware-compilation/docs/adr/0001-noise-aware-compile.md",
+    "fitnessFunction": {
+      "what": "The compiled circuit stays within the depth budget with enough expected fidelity and the same noiseless output, on both device states.",
+      "test": "labs/L400/20-error-aware-compilation/test_fitness.py",
+      "threshold": "depth <= 22, ESP >= 0.75, CX <= 20, noiseless TVD < 1e-9 (calibrated and drifted)"
+    },
+    "scalingLimits": [
+      "Brute-force layout search grows as nPk (6720 here; 8! = 40,320 for 8 of 8): switch to VF2 / SABRE or sampled candidates (the capstone samples 200).",
+      "Stale calibration: ESP computed on yesterday's map; signal = ESP drops on today's map with no code change - recompile per calibration.",
+      "Crosstalk and leakage are not in a per-gate product; ESP may mis-rank options - validate against measured results."
+    ],
+    "steps": [
+      {
+        "title": "Run the shipped compiler",
+        "detail": "python compile_lab.py",
+        "expected": "Drifted device: trivial ESP 0.2084 (27 CX, depth 32); degree-based + cancel 0.3059 (19 CX, depth 24); both outside the depth budget 22.",
+        "ifNot": "ModuleNotFoundError: run from the lab folder."
+      },
+      {
+        "title": "Read the device",
+        "detail": "device.py: ladder 0-1-2-3 / 4-5-6-7 with rungs; seeded CX 0.5-2 %, readout 1-4 %; DRIFT sets (1,2) to 15 %.",
+        "expected": "The logical circuit has a triangle (0,1,2), so every ladder layout needs at least one SWAP.",
+        "ifNot": "Check make_device(seed=5)."
+      },
+      {
+        "title": "Run the noise-aware layout",
+        "detail": "python solution_layout.py",
+        "expected": "Calibrated: layout [2, 3, 6, 1, 5], ESP 0.7925, 13 CX, depth 18; drifted: [5, 1, 6, 2, 3], ESP 0.7835, 19 CX, depth 21 - within budget.",
+        "ifNot": "Slow: 6720 layouts are routed; the path table is cached per device."
+      },
+      {
+        "title": "Check equivalence and fidelity",
+        "detail": "python -m unittest test_compile -v",
+        "expected": "All options reproduce the logical distribution (TVD < 1e-9); simulated fidelity 0.8959 (trivial) vs 0.9878 (noise-aware) ranks like ESP.",
+        "ifNot": "Equivalence failure = a SWAP bookkeeping bug in route()."
+      },
+      {
+        "title": "Try it",
+        "detail": "python try_it.py",
+        "expected": "drift on (5,6): new layout [1, 2, 5, 0, 4], ESP 0.7503, avoids the edge; budget 17: best is depth 21, reported as outside the budget.",
+        "ifNot": "Compare with the tryIt predictions."
+      },
+      {
+        "title": "Build task: make the design decision true, then prove it",
+        "detail": "Write my_layout.py (see buildTask), run the build-task and fitness tests against it, then against the shipped lab module (compile_lab), which must fail.",
+        "expected": "Your file / solution: Ran 5 tests ... OK. Shipped compile_lab: FAILED (failures=3) - ESP 0.2084 < 0.75, depth 32 > 22 on both devices.",
+        "ifNot": "Score = (depth within budget, ESP, -depth) and route with weighted=True.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v; BUILD_TASK_MODULE=compile_lab python -m unittest test_build_task test_fitness -v",
+        "windows": "$env:BUILD_TARGET = \"mine\"; python -m unittest test_build_task test_fitness -v; Remove-Item Env:BUILD_TARGET; $env:BUILD_TASK_MODULE = \"compile_lab\"; python -m unittest test_build_task test_fitness -v; Remove-Item Env:BUILD_TASK_MODULE"
+      },
+      {
+        "title": "Run all tests (and the Qiskit levels in CI)",
+        "detail": "python -m unittest -v; SDK: python compile_qiskit.py",
+        "expected": "Ran 13 tests ... OK (skipped=1). CI: level 3 ESP >= level 0 ESP on the same Target error map.",
+        "ifNot": "Qiskit import errors: install labs/L400/requirements-sdk.txt.",
+        "mac": "python -m pip install -r labs/L400/requirements-sdk.txt && python labs/L400/20-error-aware-compilation/compile_qiskit.py",
+        "windows": "python -m pip install -r labs\\L400\\requirements-sdk.txt; python labs\\L400\\20-error-aware-compilation\\compile_qiskit.py"
+      }
+    ],
+    "code": "\"\"\"Lab 20 - error-aware compilation: layout, routing and optimisation on a fake 8-qubit ladder device.\n\nRun:  python compile_lab.py      (pure Python + numpy; prints JSON lines)\nCircuit: lesson 14's 5-node QAOA p=1 (a triangle, so it never fits a ladder without SWAPs).\nOptions compared by expected fidelity ESP = product of (1 - error) over every gate and measurement\n(Nishio et al. 2020's estimated success probability), CX count and depth; noisy_check.py confirms that ESP\ntracks the simulated output fidelity. The FAULT: choose_layout() is trivial and blind to today's drifted edge.\nQiskit path (same error map in a Target, optimization_level 0-3): python compile_qiskit.py   (CI)\n\"\"\"\nimport itertools\nimport json\n\nimport device as D\n\nGRAPH = [(0, 1), (0, 2), (0, 4), (1, 2), (2, 3), (3, 4)]\nGAMMA, BETA, NQ = 0.6283, 0.3927, 5\nDEPTH_BUDGET = 22                      # the fitness threshold (logical depth 17 + room for one SWAP)\n\n\ndef logical_ops():\n    ops = [(\"h\", (q,), None) for q in range(NQ)]\n    for a, b in GRAPH:\n        ops += [(\"cx\", (a, b), None), (\"rz\", (b,), -GAMMA), (\"cx\", (a, b), None)]   # RZZ(-gamma) per edge\n    return ops + [(\"rx\", (q,), 2 * BETA) for q in range(NQ)]\n\n\ndef route(ops, layout, dev, weighted):\n    \"\"\"Insert SWAPs (3 CX each) along the shortest - or most reliable - path until both qubits are adjacent.\"\"\"\n    _, nxt = D.all_pairs(dev, weighted)\n    phys, out = dict(enumerate(layout)), []\n    for name, qs, arg in ops:\n        if name == \"cx\":\n            a, b = phys[qs[0]], phys[qs[1]]\n            hops = D.path(nxt, a, b)\n            for u, v in zip(hops, hops[1:-1]):                           # move a next to b\n                out += [(\"cx\", (u, v), None), (\"cx\", (v, u), None), (\"cx\", (u, v), None)]\n                inv = {p: l for l, p in phys.items()}\n                lu, lv = inv.get(u), inv.get(v)\n                phys[lu] = v\n                if lv is not None:\n                    phys[lv] = u\n            out.append((\"cx\", (phys[qs[0]], phys[qs[1]]), None))\n        else:\n            out.append((name, tuple(phys[q] for q in qs), arg))\n    return out, [phys[q] for q in range(len(layout))]\n\n\ndef cancel(ops):\n    \"\"\"Optimisation: drop back-to-back identical CX pairs (CX.CX = I) on the same qubits.\"\"\"\n    out = []\n    for op in ops:\n        if op[0] == \"cx\" and out:\n            last = next((i for i in range(len(out) - 1, -1, -1) if set(out[i][1]) & set(op[1])), None)\n            if last is not None and out[last] == op:\n                out.pop(last)\n                continue\n        out.append(op)\n    return out\n\n\ndef metrics(ops, final, dev):\n    esp, level = 1.0, [0] * dev[\"n\"]\n    for name, qs, _ in ops:\n        esp *= 1 - (D.cx_error(dev, *qs) if name == \"cx\" else dev[\"sq\"][qs[0]] if name in (\"h\", \"rx\") else 0.0)\n        start = max(level[q] for q in qs) + 1\n        for q in qs:\n            level[q] = start\n    for q in final:\n        esp *= 1 - dev[\"ro\"][q]                                          # readout of the measured qubits\n    return {\"esp\": round(esp, 4), \"cx\": sum(o[0] == \"cx\" for o in ops), \"depth\": max(level)}\n\n\ndef choose_layout(dev):\n    \"\"\"NAIVE: logical qubit i -> physical qubit i, whatever today's calibration says.\"\"\"\n    return list(range(NQ))\n\n\ndef compile_circuit(dev, layout, weighted=False, optimise=False):\n    ops, final = route(logical_ops(), layout, dev, weighted)\n    ops = cancel(ops) if optimise else ops\n    return ops, final, metrics(ops, final, dev)\n\n\ndef dense_layout(dev):\n    \"\"\"Degree-based: map the busiest logical qubits to the best-connected physical ones (no error data).\"\"\"\n    deg = {q: sum(q in e for e in D.EDGES) for q in range(dev[\"n\"])}\n    ldeg = sorted(range(NQ), key=lambda q: -sum(q in e for e in GRAPH))\n    phys = sorted(range(1, 7), key=lambda q: -deg[q]) + [0, 7]\n    layout = [0] * NQ\n    for lq, pq in zip(ldeg, phys):\n        layout[lq] = pq\n    return layout\n\n\nif __name__ == \"__main__\":\n    for label, dev in ((\"calibrated\", D.make_device()), (\"drifted (1,2) = 15%\", D.make_device(drift=D.DRIFT))):\n        for option, layout, weighted, opt in ((\"A trivial + hop routing\", choose_layout(dev), False, False),\n                                              (\"B dense + hop routing + cancel\", dense_layout(dev), False, True)):\n            _, final, m = compile_circuit(dev, layout, weighted, opt)\n            print(json.dumps({\"device\": label, \"option\": option, \"layout\": layout, **m,\n                              \"within_depth_budget\": m[\"depth\"] <= DEPTH_BUDGET}))\n    print(\"logical circuit:\", metrics(logical_ops(), range(NQ), {\"n\": NQ, \"cx\": {e: 0 for e in itertools.combinations(range(NQ), 2)},\n                                                                    \"sq\": [0] * NQ, \"ro\": [0] * NQ}))\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "device.make_device / DRIFT",
+        "detail": "Seeded error map per edge and qubit; DRIFT models today's calibration with one bad coupler."
+      },
+      {
+        "title": "device.all_pairs (Floyd-Warshall)",
+        "detail": "Hop counts, or -log(1 - error) weights so the 'shortest' path is the most reliable one; cached per error map."
+      },
+      {
+        "title": "route()",
+        "detail": "For each CX on non-adjacent qubits, SWAP the control along the path (3 CX each) and update the logical->physical map; returns the final layout for measurement."
+      },
+      {
+        "title": "cancel()",
+        "detail": "Optimisation pass: removes back-to-back identical CX on the same qubits (CX.CX = I); a SWAP followed by the RZZ's first CX saves 2 CX."
+      },
+      {
+        "title": "metrics()",
+        "detail": "ESP over gates and readout of the final qubits, CX count and ASAP depth - the three numbers every option is judged by."
+      },
+      {
+        "title": "choose_layout (the fault) / dense_layout",
+        "detail": "Trivial i -> i ignores errors; degree-based uses connectivity only. The build task searches placements by ESP within the depth budget."
+      },
+      {
+        "title": "noisy_check.equivalent / noisy_fidelity",
+        "detail": "Independent density-matrix simulation: noiseless output must equal the logical circuit; with depolarizing noise at the device's rates it confirms ESP's ranking."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/20-error-aware-compilation/compile_lab.py",
+        "purpose": "main lab: logical circuit, routing, cancellation, ESP/depth, trivial and degree layouts"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/device.py",
+        "purpose": "fake ladder device, drift, reliable shortest paths"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/noisy_check.py",
+        "purpose": "independent density-matrix equivalence and fidelity"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/solution_layout.py",
+        "purpose": "buildTask reference: noise-aware layout search"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/buildtarget.py",
+        "purpose": "BUILD_TARGET=mine / BUILD_TASK_MODULE switch"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/test_build_task.py",
+        "purpose": "buildTask + failureLab proof"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/test_fitness.py",
+        "purpose": "fitness function: depth budget, ESP, CX, equivalence"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/test_compile.py",
+        "purpose": "routing correctness, metrics, noise model"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/compile_qiskit.py",
+        "purpose": "SDK path: Qiskit Target + levels (CI)"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/docs/adr/0001-noise-aware-compile.md",
+        "purpose": "decision record"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/README.md",
+        "purpose": "run commands and observed output"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L400/20-error-aware-compilation/test_try_it.py",
+        "purpose": "tryIt tests"
+      }
+    ],
+    "failureLab": {
+      "fault": "choose_layout() is trivial (logical i -> physical i) and routing counts hops, on a device whose (1,2) coupler drifted to 15 %.",
+      "symptom": "ESP 0.2084 with 27 CX and depth 32 (> budget 22); simulated output fidelity 0.8959.",
+      "fix": "Search placements by ESP within the depth budget, route along the most reliable path, cancel CX pairs (solution_layout.py).",
+      "proof": "BUILD_TASK_MODULE=compile_lab python -m unittest test_build_task test_fitness -> FAILED (failures=3); solution / BUILD_TARGET=mine -> Ran 5 tests OK."
+    },
+    "tradeOffs": [
+      {
+        "option": "Error-blind fast compile",
+        "gains": "Milliseconds, deterministic",
+        "costs": "Can land on the worst coupler (ESP 0.2084)",
+        "chooseWhen": "Simulators and uniform devices"
+      },
+      {
+        "option": "Noise-aware search",
+        "gains": "ESP 0.7835 under drift",
+        "costs": "Compile time grows combinatorially; needs fresh calibration",
+        "chooseWhen": "Any real device run"
+      },
+      {
+        "option": "Strict depth budget",
+        "gains": "Predictable coherence use; testable",
+        "costs": "May be infeasible (17 on a ladder)",
+        "chooseWhen": "Always, with a loud failure when it cannot be met"
+      }
+    ],
+    "buildTask": {
+      "task": "Write choose_layout(dev, budget=22) returning 5 physical qubits that maximise ESP among layouts whose routed (weighted, cancelled) depth fits the budget.",
+      "hints": [
+        "itertools.permutations(range(8), 5) gives all 6720 placements.",
+        "Use lab.compile_circuit(dev, layout, weighted=True, optimise=True).",
+        "Rank by (depth <= budget, esp, -depth)."
+      ],
+      "solution": "labs/L400/20-error-aware-compilation/solution_layout.py",
+      "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (5 tests; numpy, runs locally)"
+    },
+    "expectedResults": [
+      "Noise-aware ESP 0.7835 vs trivial 0.2084 on the drifted device",
+      "Depth 21 <= 22 and 19 CX after cancellation",
+      "ESP ranking matches simulated fidelity (0.8959 vs 0.9878)"
+    ],
+    "testCases": [
+      {
+        "action": "compile every option and run noisy_check.equivalent",
+        "expected": "True for all (routing preserves the answer)"
+      },
+      {
+        "action": "depolarize() vs qsim density depolarizing_kraus on 3 qubits",
+        "expected": "allclose"
+      },
+      {
+        "action": "compile_qiskit.run() (CI)",
+        "expected": "level 3 ESP >= level 0 ESP on the same error map"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Drift a different coupler, (5,6) to 15 % (try_it.other_drift).",
+        "predict": "Does the layout move away from it?",
+        "expected": "Yes: layout [1, 2, 5, 0, 4], ESP 0.7503, 13 CX, depth 18, uses_drifted_edge False, simulated fidelity 0.9855."
+      },
+      {
+        "task": "Demand depth 17, the logical depth (try_it.tight_budget).",
+        "predict": "Can any layout meet it?",
+        "expected": "No: best is ESP 0.7835 at depth 21 and within_budget False - a triangle needs a SWAP on a ladder."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Equivalence check fails after routing",
+        "action": "The logical->physical map was not swapped for both qubits; route() must update the occupant of the target qubit too."
+      },
+      {
+        "symptom": "solution_layout.py takes minutes",
+        "action": "all_pairs must be cached per error map; 6720 Floyd-Warshall runs are the slow part."
+      }
+    ],
+    "equivalents": [
+      "Qiskit: transpile(..., target=Target with InstructionProperties(error=...), optimization_level=3, seed_transpiler=7); VF2PostLayout rescoring (compile_qiskit.py).",
+      "Qiskit visualization: plot_circuit_layout / plot_error_map to see the chosen qubits on the device.",
+      "tket and other compilers offer noise-aware placement passes with the same goal."
+    ],
+    "inRealSystems": [
+      "Production pipelines recompile per calibration cycle and pick layouts with error-aware scoring (VF2PostLayout).",
+      "Circuits that cannot meet their depth budget are rejected or re-designed rather than run."
+    ],
+    "useWhen": "Use error-aware layout for any run on real hardware; avoid caching compiled circuits across calibrations.",
+    "simulatorVsReal": "Pure-Python compiler and a fake device with illustrative seeded error rates; independent numpy density-matrix check with depolarizing noise. Real devices add crosstalk, leakage and direction constraints.",
+    "checkpoint": "PASS if you can explain the three options' ESP/depth, your layout passes test_build_task and test_fitness, and the trivial layout fails them.",
+    "checkYourself": [
+      {
+        "q": "Why can depth 21 beat depth 18?",
+        "a": "The drifted layout avoids the 15 % coupler: ESP 0.7835 with depth 21 vs layouts that use it."
+      },
+      {
+        "q": "Why prove equivalence before scoring?",
+        "a": "A routing bug yields a plausible, wrong circuit whose ESP looks fine."
+      },
+      {
+        "q": "Why is ESP below the simulated fidelity?",
+        "a": "ESP treats every error as fatal; many errors barely change the output distribution - only the ranking matters."
+      }
+    ],
+    "learningTools": [
+      {
+        "name": "Qiskit visualization (qiskit.visualization)",
+        "role": "SEE",
+        "exercise": "Build the Target from compile_qiskit.target(make_device(drift=DRIFT)), transpile at level 0 and 3, and call plot_circuit_layout(tqc, backend-like) / plot_error_map for both.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Level 0 places qubits 0-4 and uses the red (1,2) edge; the lab's noise-aware layout [5, 1, 6, 2, 3] avoids it (ESP 0.7835 vs 0.2084 in the README).",
+        "mac": "pip install 'qiskit[visualization]'",
+        "windows": "pip install \"qiskit[visualization]\"",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/visualization"
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "quantum-computing L400 #19 Resource estimation: logical vs physical qubits and feasibility: the fault-tolerant alternative to squeezing noisy devices.",
+      "quantum-computing L400 #22 Capstone: an end-to-end quantum optimisation service: samples 200 layouts with this router for 8-qubit requests."
+    ],
+    "sources": [
+      {
+        "title": "Nishio et al. (2020), Extracting Success from IBM's 20-Qubit Machines Using Error-Aware Compilation, arXiv:1903.10963",
+        "url": "https://arxiv.org/abs/1903.10963"
+      },
+      {
+        "title": "Qiskit preset pass managers: optimization levels 0-3",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/transpiler_preset"
+      },
+      {
+        "title": "qiskit.compiler.transpile API (layout_method, routing_method, seed_transpiler)",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/compiler"
+      },
+      {
+        "title": "VF2PostLayout API (error-rate scoring of layouts)",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.transpiler.passes.VF2PostLayout"
+      },
+      {
+        "title": "GenericBackendV2 API",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.providers.fake_provider.GenericBackendV2"
+      }
+    ],
+    "next": "L400 #21 Quantum and post-quantum: crypto inventory and migration plan: what fault-tolerant machines would break, and what your code must do now.",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran locally (Python 3.12.15, numpy 2.5.3, cryptography 50.0.2, no quantum SDKs in the authoring sandbox): `python compile_lab.py`, `python solution_layout.py`, `python try_it.py` (outputs in README); `python -m unittest` -> 13 tests OK, 1 Qiskit test skipped; fail-before proof with BUILD_TASK_MODULE=compile_lab observed (3 failures). tryIt 1: local: try_it.py (observed). tryIt 2: local: try_it.py (observed). Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable, 127.0.0.1 and a FakeClock instead of wall-clock assertions; CI runs tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "compile_qiskit.py (Qiskit Target with the lab's error map, optimization_level 0-3)",
+        "test_compile.py QiskitLevels (1 test)",
+        "learningTools: Qiskit visualization (qiskit.visualization) exercise (manual run)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/20-error-aware-compilation.md",
+    "conceptSummary": "Score every compilation by ESP (product of gate and readout fidelities), CX count and depth on today's calibration, and prove equivalence first. A trivial layout on a drifted coupler gave ESP 0.2084 at depth 32; a noise-aware layout with reliability-weighted routing gave 0.7835 at depth 21, within the 22-layer budget the fitness test enforces."
+  },
+  {
+    "id": "post-quantum-migration",
+    "number": 21,
+    "level": "L400",
+    "title": "Quantum and post-quantum: crypto inventory and migration plan",
+    "phase": "Design",
+    "category": "post-quantum cryptography",
+    "description": "Put Shor's resource estimates in context, inventory a toy codebase's RSA/ECDH/ECDSA use with an AST scanner, prioritise by harvest-now-decrypt-later risk, and design crypto agility with a hybrid X25519 + ML-KEM-768 that runs locally.",
+    "outcome": "You can explain what quantum computing changes for software, build a tested crypto inventory, compute migration priorities with Mosca's inequality, put key establishment behind an agile interface with ML-KEM-768, and check an agent's migration notes against the facts.",
+    "environment": "Mac mini or Windows 11; Python 3.12 venv (lesson 1); numpy 2.5.3 (+ cryptography 50.0.2 for lesson 21) from labs/L400/requirements.txt; shared numpy simulators in labs/_shared (qsim, qopt). SDK path: none needed: cryptography 50.0.2 provides ML-KEM-768 (FIPS 203) locally (pending CI).",
+    "estimatedTime": "60-90 minutes",
+    "overview": [
+      "The quantum threat to today's software is a migration problem: find every public-key use, move long-lived key establishment first, and make the next algorithm swap a configuration change."
+    ],
+    "prerequisites": [
+      "Lesson 19 (resource estimation)",
+      "cryptography L200 #8 Key exchange and hybrid encryption (X25519 + HKDF + AEAD)",
+      "cryptography L200 #7 Digital signatures with Ed25519"
+    ],
+    "glossary": [
+      {
+        "term": "harvest now, decrypt later",
+        "meaning": "Recording encrypted traffic today to decrypt it once a quantum computer exists (NIST IR 8547)."
+      },
+      {
+        "term": "Mosca's inequality",
+        "meaning": "If secrecy years X + migration years Y > years to a quantum computer Z, the data is already at risk."
+      },
+      {
+        "term": "ML-KEM-768",
+        "meaning": "FIPS 203 lattice key-encapsulation mechanism; 1184-byte public key, 1088-byte ciphertext."
+      },
+      {
+        "term": "hybrid KEM",
+        "meaning": "Classical + post-quantum secrets combined in a KDF; secure if either part holds."
+      },
+      {
+        "term": "crypto agility",
+        "meaning": "Replacing algorithms by configuration through one interface, with algorithm names carried in data."
+      },
+      {
+        "term": "ratchet test",
+        "meaning": "A test that allows the list of known issues to shrink but never to grow."
+      }
+    ],
+    "concepts": [
+      "Shor breaks RSA/ECC, not AES-256/SHA-256.",
+      "Inventory by parsing code, not grepping words.",
+      "Prioritise key establishment for long-lived data.",
+      "Agility: one interface, algorithm by name, receivers first."
+    ],
+    "designBrief": {
+      "context": "A legacy app uses RSA-OAEP for archived card tokens, ECDH for replication, X25519 for a partner API, ECDSA for session tokens and RSA/ECDHE in its TLS config. NIST IR 8547 deprecates these after 2030 and disallows them after 2035.",
+      "constraints": [
+        "inventory recall and precision = 1.0 against a hand-checked ground truth",
+        "priorities computed by code from data lifetimes",
+        "the next algorithm swap must be a configuration change",
+        "no new quantum-vulnerable use may be added (ratchet)",
+        "agent output never decides; it is checked fact by fact"
+      ],
+      "question": "How do we find every quantum-vulnerable use, in what order do we migrate, and how do we keep the code agile?"
+    },
+    "options": [
+      {
+        "name": "A replace at each call site",
+        "description": "Swap X25519/ECDH/RSA for ML-KEM-768 where they are used.",
+        "evidence": "4 key-establishment sites now (and again next time); 1184/1088 B; no fallback.",
+        "verdict": "Rejected."
+      },
+      {
+        "name": "B agile interface + hybrid X25519+ML-KEM-768",
+        "description": "establish()/accept() by name from a registry; envelopes carry 'kem'.",
+        "evidence": "1216/1120 B; round-trips locally with cryptography 50.0.2; next swap = 1 config line.",
+        "verdict": "Chosen (ADR 0001)."
+      },
+      {
+        "name": "C wait until 2030",
+        "description": "No change now.",
+        "evidence": "P1 data (10 and 7 years) recorded today stays exposed beyond Z = 9 years.",
+        "verdict": "Rejected."
+      }
+    ],
+    "decisionRecord": "labs/L400/21-post-quantum-migration/docs/adr/0001-crypto-agility.md",
+    "fitnessFunction": {
+      "what": "Inventory matches ground truth; no new quantum-vulnerable use outside migration_baseline.json; the configured KEM is hybrid or post-quantum.",
+      "test": "labs/L400/21-post-quantum-migration/test_fitness.py",
+      "threshold": "recall = precision = 1.0; 0 findings outside the baseline (an injected ec.ECDH() is caught); CONFIG['kem'] in {x25519+ml-kem-768, ml-kem-768}"
+    },
+    "scalingLimits": [
+      "Other languages, vendored libraries and binaries escape a Python AST scanner: measure recall on a hand-checked sample per repository.",
+      "~1.1 kB extra per handshake breaks MTU-bound or constrained-device protocols: signal = fragmentation or handshake timeouts.",
+      "Flag-day upgrades fail: senders that switch before receivers produce 'unknown kem' rejections - upgrade receivers first."
+    ],
+    "steps": [
+      {
+        "title": "Run the lab",
+        "detail": "python pqc_lab.py",
+        "expected": "Shor context: RSA-2048 6190 logical / 9,025,020 physical qubits / 57,870 s (lesson 19), ECC P-256 2330 logical; grep inventory: 5 findings, 0 P1.",
+        "ifNot": "ImportError estimate_lab: lesson 19's folder must exist next to this one."
+      },
+      {
+        "title": "See the fault",
+        "detail": "Read the grep findings.",
+        "expected": "toy_app/auth.py:1 is a docstring ('RSA was removed'); X25519, ECDH P-384 and ECDSA are missing; usage 'unknown', so no P1.",
+        "ifNot": "If you see 8 findings you are running the solution."
+      },
+      {
+        "title": "Run the AST inventory",
+        "detail": "python solution_scanner.py",
+        "expected": "8 findings; P1 = billing.py:7 RSA-3072 (OAEP, 10 years) and sync.py:7 ECDH P-384 (7 years); AES-GCM kept.",
+        "ifNot": "Missing sync.py: resolve 'from ...asymmetric.ec import ECDH' imports too."
+      },
+      {
+        "title": "Measure agility options",
+        "detail": "Read the last three lines of pqc_lab.py.",
+        "expected": "x25519 32/32 B, ml-kem-768 1184/1088 B, hybrid 1216/1120 B; ms per exchange varies by machine.",
+        "ifNot": "UnsupportedAlgorithm: cryptography < 47 or a backend without ML-KEM; install labs/L400/requirements.txt."
+      },
+      {
+        "title": "Try it",
+        "detail": "python try_it.py",
+        "expected": "8-year API secrecy adds api_client.py:11 to P1; an X25519-only receiver rejects the hybrid envelope ('unknown kem').",
+        "ifNot": "Compare with the tryIt predictions."
+      },
+      {
+        "title": "Build task: make the design decision true, then prove it",
+        "detail": "Write my_scanner.py (see buildTask), run the build-task and fitness tests against it, then against the shipped lab module (pqc_lab), which must fail.",
+        "expected": "Your file / solution: Ran 7 tests ... OK. Shipped pqc_lab (grep): FAILED (failures=6) - inventory differs, docstring flagged, aliases missed, ratchet and recall fail.",
+        "ifNot": "Track aliases: 'from ...asymmetric import ec as curves' makes curves.ECDSA an ECDSA call.",
+        "mac": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v; BUILD_TASK_MODULE=pqc_lab python -m unittest test_build_task test_fitness -v",
+        "windows": "$env:BUILD_TARGET = \"mine\"; python -m unittest test_build_task test_fitness -v; Remove-Item Env:BUILD_TARGET; $env:BUILD_TASK_MODULE = \"pqc_lab\"; python -m unittest test_build_task test_fitness -v; Remove-Item Env:BUILD_TASK_MODULE"
+      },
+      {
+        "title": "Agent assist (fake model) and all tests",
+        "detail": "python agent_assist.py --fake; python -m unittest -v",
+        "expected": "draft ACCEPT; summarise REJECT (AES replaced, P1 sync.py missing); creative REJECT (invented file, ECDSA->ML-KEM, 2029). Ran 19 tests ... OK.",
+        "ifNot": "Real model: start Ollama and set LOCAL_MODEL_URL / LOCAL_MODEL; tests always use the fake server.",
+        "mac": "export LOCAL_MODEL_URL=http://localhost:11434/v1 LOCAL_MODEL=qwen2.5:1.5b && python agent_assist.py --show",
+        "windows": "$env:LOCAL_MODEL_URL=\"http://localhost:11434/v1\"; $env:LOCAL_MODEL=\"qwen2.5:1.5b\"; python agent_assist.py --show"
+      }
+    ],
+    "code": "\"\"\"Lab 21 - quantum and post-quantum: inventory a codebase's crypto and plan the migration.\n\nRun:  python pqc_lab.py      (stdlib + cryptography 50.0.2; ML-KEM-768 runs locally)\n1. Shor in context: what breaking RSA-2048 / P-256 needs (lesson 19's model + published estimates).\n2. Inventory toy_app/: every public-key use, its purpose, and the data's secrecy lifetime.\n3. Plan: replacement per NIST IR 8547 (ML-KEM for key establishment, ML-DSA for signatures, keep AES-256),\n   priority by Mosca's inequality X + Y > Z (\"harvest now, decrypt later\").\n4. Crypto agility: X25519 vs ML-KEM-768 vs the hybrid, behind one interface (agility.py).\nThe FAULT: scan() below is a grep for \"RSA\". Fix it in the build task (solution_scanner.py).\n\"\"\"\nimport json\nimport re\nfrom pathlib import Path\n\nimport agility\nimport shor_context\n\nHERE = Path(__file__).resolve().parent\nAPP = HERE / \"toy_app\"\nMIGRATION_YEARS, YEARS_TO_CRQC = 3, 9          # Y and Z in Mosca's inequality: planning assumptions, not forecasts\nREPLACEMENT = {\"key-establishment\": \"ML-KEM-768 (FIPS 203); hybrid X25519+ML-KEM-768 during transition\",\n               \"signature\": \"ML-DSA-65 (FIPS 204)\", \"symmetric\": \"keep (AES-256 / SHA-256 not broken by Shor)\"}\n\n\ndef scan(root=APP):\n    \"\"\"NAIVE: grep every file for 'rsa'. Finds words, not uses: misses X25519/ECDH/ECDSA, flags a docstring.\"\"\"\n    found = []\n    for path in sorted(p for p in root.rglob(\"*\") if p.suffix in (\".py\", \".toml\")):\n        for no, text in enumerate(path.read_text(encoding=\"utf-8\").splitlines(), 1):\n            m = re.search(r\"rsa[-_]?(\\d+)?\", text, re.I)\n            if m:\n                found.append({\"file\": path.relative_to(HERE).as_posix(), \"line\": no,\n                              \"algorithm\": f\"RSA-{m.group(1)}\" if m.group(1) else \"RSA\", \"usage\": \"unknown\"})\n    return found\n\n\ndef plan(inventory, classification=None):\n    \"\"\"Code decides priority: P1 if key establishment protects data that must outlive Z - Y years (HNDL).\"\"\"\n    classification = classification or json.loads((APP / \"data_classification.json\").read_text(encoding=\"utf-8\"))\n    steps = []\n    for item in inventory:\n        years = classification.get(item[\"file\"], {}).get(\"secrecy_years\", 0)\n        if item[\"usage\"] == \"key-establishment\" and years + MIGRATION_YEARS > YEARS_TO_CRQC:\n            prio = \"P1 now (harvest now, decrypt later)\"\n        elif item[\"usage\"] in (\"key-establishment\", \"signature\", \"unknown\"):\n            prio = \"P2 before 2030 (deprecated after 2030, disallowed after 2035)\"\n        else:\n            prio = \"none\"\n        steps.append({**item, \"secrecy_years\": years, \"priority\": prio,\n                      \"replacement\": REPLACEMENT.get(item[\"usage\"], \"review manually\")})\n    return sorted(steps, key=lambda s: (s[\"priority\"], s[\"file\"], s[\"line\"]))\n\n\nif __name__ == \"__main__\":\n    print(json.dumps({\"shor_model\": shor_context.our_model(), \"ecc\": shor_context.ecc_logical(256)}))\n    for cited in shor_context.CITED:\n        print(json.dumps(cited))\n    inventory = scan()\n    print(json.dumps({\"scanner\": \"grep\", \"findings\": len(inventory)}))\n    for step in plan(inventory):\n        print(json.dumps(step))\n    for name in agility.REGISTRY:\n        print(json.dumps(agility.measure(name)))\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "shor_context.py",
+        "detail": "Reuses lesson 19's estimator for RSA-2048 and adds Roetteler et al.'s ECC bound (9n + 2 ceil(log2 n) + 10 logical qubits): 2330 for P-256."
+      },
+      {
+        "title": "pqc_lab.scan (the fault)",
+        "detail": "A regex for 'rsa' over files: finds words, not uses - a docstring is flagged, X25519/ECDH/ECDSA are invisible, usage is unknown."
+      },
+      {
+        "title": "pqc_lab.plan",
+        "detail": "Code decides priority: key establishment with secrecy X + 3 > 9 is P1 (HNDL); other public-key use P2 before 2030; symmetric is kept."
+      },
+      {
+        "title": "solution_scanner.aliases / dotted",
+        "detail": "Resolves 'ec as curves' and 'from ...ec import ECDH' to canonical names, so calls are matched by meaning, not spelling."
+      },
+      {
+        "title": "solution_scanner.RULES",
+        "detail": "Canonical call -> (algorithm, purpose); RSA's purpose comes from OAEP vs PSS in the same file, the curve from SECPxxxR1."
+      },
+      {
+        "title": "agility.Hybrid + REGISTRY + CONFIG",
+        "detail": "One KEM interface; the hybrid HKDFs ML-KEM-768 and X25519 secrets (IR 8547's composite form); envelopes name the algorithm."
+      },
+      {
+        "title": "agent_assist.check",
+        "detail": "Every note line is checked against the inventory: location, algorithm, replacement, priority, missing P1 items and dates."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/21-post-quantum-migration/pqc_lab.py",
+        "purpose": "main lab: Shor context, grep inventory (fault), Mosca plan, agility measurements"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/shor_context.py",
+        "purpose": "reuses lesson 19's estimator; ECC bound"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/agility.py",
+        "purpose": "KEM registry: X25519, ML-KEM-768, hybrid; envelopes"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/toy_app",
+        "purpose": "the codebase to inventory (+ config/tls.toml, data_classification.json)"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/EXPECTED_INVENTORY.json",
+        "purpose": "hand-checked ground truth"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/migration_baseline.json",
+        "purpose": "ratchet baseline (may only shrink)"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/solution_scanner.py",
+        "purpose": "buildTask reference: AST inventory"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/buildtarget.py",
+        "purpose": "BUILD_TARGET=mine / BUILD_TASK_MODULE switch"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/test_build_task.py",
+        "purpose": "buildTask + failureLab proof"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/test_fitness.py",
+        "purpose": "fitness: recall/precision, ratchet, configured KEM"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/test_pqc.py",
+        "purpose": "Shor context, priorities, agility"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/agent_assist.py",
+        "purpose": "agent drafts notes, code checks them"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/fake_pqc_rule.py",
+        "purpose": "deterministic fake-model rule"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/test_agent_assist.py",
+        "purpose": "agent assist tests (fake server)"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/docs/adr/0001-crypto-agility.md",
+        "purpose": "decision record"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/README.md",
+        "purpose": "run commands and observed output"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L400/21-post-quantum-migration/test_try_it.py",
+        "purpose": "tryIt tests"
+      }
+    ],
+    "failureLab": {
+      "fault": "The shipped scan() greps for 'rsa' in .py and .toml files.",
+      "symptom": "5 findings (1 docstring false positive, duplicates), usage 'unknown', 0 P1 items; X25519, ECDH P-384 (P1!) and ECDSA are missing.",
+      "fix": "An AST scanner that resolves imports and aliases and classifies calls by purpose, plus comment-aware config rules (solution_scanner.py).",
+      "proof": "BUILD_TASK_MODULE=pqc_lab python -m unittest test_build_task test_fitness -> FAILED (failures=6); solution / BUILD_TARGET=mine -> Ran 7 tests OK."
+    },
+    "tradeOffs": [
+      {
+        "option": "Hybrid KEM",
+        "gains": "Secure if either component holds; compliant composite",
+        "costs": "Larger messages, two implementations, a second migration later",
+        "chooseWhen": "Transition period (now)"
+      },
+      {
+        "option": "Pure ML-KEM",
+        "gains": "Smaller than hybrid, one algorithm",
+        "costs": "No classical fallback if an implementation flaw appears",
+        "chooseWhen": "Once implementations are mature and mandated"
+      },
+      {
+        "option": "Grep inventory",
+        "gains": "Instant, any language",
+        "costs": "False positives and misses (recall 3/8 here)",
+        "chooseWhen": "A first rough count only"
+      }
+    ],
+    "buildTask": {
+      "task": "Write scan(root=APP) returning the sorted inventory [{file, line, algorithm, usage}] of toy_app: resolve cryptography imports and aliases with ast, classify calls (key-establishment, signature, symmetric), parse configs without comments.",
+      "hints": [
+        "ast.ImportFrom gives module and asname; map local names to 'ec', 'ec.ECDH', ...",
+        "Walk ast.Call and rebuild dotted names from Attribute/Name nodes.",
+        "RSA purpose: padding.OAEP in the same file -> key-establishment, else signature."
+      ],
+      "solution": "labs/L400/21-post-quantum-migration/solution_scanner.py",
+      "check": "BUILD_TARGET=mine python -m unittest test_build_task test_fitness -v (7 tests; stdlib + cryptography, runs locally)"
+    },
+    "expectedResults": [
+      "AST inventory = EXPECTED_INVENTORY.json (8 items)",
+      "P1: billing.py:7 RSA-3072 and sync.py:7 ECDH P-384",
+      "Hybrid X25519+ML-KEM-768 round-trips; 1216/1120 bytes"
+    ],
+    "testCases": [
+      {
+        "action": "scan a copy of toy_app with one new ec.ECDH() file",
+        "expected": "exactly 1 finding outside the baseline (ratchet fails)"
+      },
+      {
+        "action": "hybrid.combine with one secret changed",
+        "expected": "a different key (both secrets matter)"
+      },
+      {
+        "action": "agent_assist.check('No idea.', plan)",
+        "expected": "REJECT with 2 missing P1 items"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Legal extends partner-API secrecy to 8 years (try_it.longer_secrecy).",
+        "predict": "Which items become P1?",
+        "expected": "api_client.py:11 joins billing.py:7 and sync.py:7 (8 + 3 > 9)."
+      },
+      {
+        "task": "Sender uses the hybrid; a receiver only knows X25519 (try_it.old_receiver).",
+        "predict": "Silent downgrade or failure?",
+        "expected": "Failure: \"receiver rejects envelope: unknown kem 'x25519+ml-kem-768'\" - upgrade receivers first."
+      }
+    ],
+    "agentAssist": {
+      "task": "A local model drafts migration notes (one line per vulnerable item: file:line | algorithm | replacement | priority) from the inventory facts.",
+      "prompt": "[[PQC-NOTES]] Draft the migration notes. Inventory: [{file, line, algorithm, usage, secrecy_years} ...]",
+      "check": "Code rejects any line whose file:line is not in the inventory, whose algorithm, replacement (ML-KEM-768 / ML-DSA-65) or priority differs from the plan, any symmetric item marked for replacement, any missing P1 item, and any year other than 2030/2035.",
+      "expected": "draft ACCEPT; summarise REJECT (storage.py:10 is symmetric; P1 item missing: toy_app/sync.py:7); creative REJECT (toy_app/payments.py:12 not in inventory; auth.py:11 'ML-KEM-768' != 'ML-DSA-65'; year 2029).",
+      "realModelNote": "Only paths, line numbers and algorithm names are sent - never keys or code. Small models often invent files or map signatures to KEMs; the check is the point."
+    },
+    "troubleshooting": [
+      {
+        "symptom": "UnsupportedAlgorithm for ML-KEM",
+        "action": "cryptography >= 47 with an OpenSSL backend that supports ML-KEM is needed; the lab pins 50.0.2."
+      },
+      {
+        "symptom": "Leftover tmp* folder in the lab",
+        "action": "test_fitness copies toy_app into a temp folder; on some network mounts cleanup fails - delete it (it is git-ignored)."
+      }
+    ],
+    "equivalents": [
+      "OpenSSL 3.5+ and BoringSSL offer ML-KEM and the X25519MLKEM768 TLS group; liboqs / Open Quantum Safe for other PQC algorithms.",
+      "Inventory tools: CodeQL or Semgrep rules for crypto API calls; CycloneDX CBOM to record a cryptographic bill of materials.",
+      "Signatures: ML-DSA (FIPS 204) and SLH-DSA (FIPS 205) replace RSA/ECDSA/EdDSA."
+    ],
+    "inRealSystems": [
+      "Organisations start with cryptographic inventories (NIST IR 8547 and the NCCoE project) and migrate TLS key exchange first.",
+      "Browsers and CDNs already negotiate hybrid X25519+ML-KEM-768 key exchange."
+    ],
+    "useWhen": "Use an AST-based inventory plus an agile KEM interface for any codebase with long-lived confidential data; avoid one-off call-site rewrites.",
+    "simulatorVsReal": "No quantum simulation: real ML-KEM-768 and X25519 from cryptography 50.0.2 run locally. Shor numbers are estimates (lesson 19 and the cited papers), not a demonstration.",
+    "caution": "Never send keys, tokens or source code to a model; the agent sees only inventory facts. The agent never decides priorities or replacements - code does. Do not use the toy app's crypto choices as a production design.",
+    "checkpoint": "PASS if the grep inventory's misses are explained, your scanner passes test_build_task and test_fitness, the hybrid KEM round-trips, and the agent's bad notes are rejected by code.",
+    "checkYourself": [
+      {
+        "q": "Why is sync.py P1 but auth.py not?",
+        "a": "sync.py establishes keys for 7-year data (7 + 3 > 9 -> harvestable); auth.py signs session tokens: signatures are not exposed to harvest-now-decrypt-later."
+      },
+      {
+        "q": "Why keep AES-256-GCM?",
+        "a": "Shor does not break symmetric crypto; IR 8547 does not expect to transition AES-256 or SHA-256."
+      },
+      {
+        "q": "Why does the envelope carry the algorithm name?",
+        "a": "Receivers pick the algorithm from data, so senders can switch by config and old receivers fail loudly."
+      }
+    ],
+    "learningTools": [
+      {
+        "name": "JupyterLab (+ JupyterLab Desktop)",
+        "role": "CHECK",
+        "exercise": "Plot a Mosca timeline per inventory item: bars for X (secrecy years) + Y = 3 against Z = 9, coloured by the plan's priority.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Two bars cross Z: billing.py (10 + 3) and sync.py (7 + 3); with 8-year API secrecy api_client.py (8 + 3) crosses too (try it 1).",
+        "mac": "pip install jupyterlab, or Desktop arm64 installer",
+        "windows": "pip install jupyterlab, or Desktop x64 installer / winget install jupyterlab",
+        "licence": "BSD-3-Clause (OSI: yes)",
+        "url": "https://pypi.org/project/jupyterlab/"
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "cryptography L200 #8 Key exchange and hybrid encryption (X25519 + HKDF + AEAD): the X25519 + HKDF pattern this lesson makes hybrid with ML-KEM-768.",
+      "cryptography L300 #12 Envelope encryption and key rotation: versioned envelopes that name their algorithm are what makes rotation and migration possible.",
+      "cryptography L400 #17 Crypto agility: versioned envelopes, negotiation and dual signing: the cryptography topic's full agility design (negotiation, dual signing) behind this lesson's KEM registry.",
+      "cryptography L400 #18 Post-quantum cryptography in practice: ML-KEM, ML-DSA and hybrids: ML-DSA signatures and hybrid details this lesson only names as phase 2.",
+      "quantum-computing L400 #19 Resource estimation: logical vs physical qubits and feasibility: the RSA-2048 numbers used here."
+    ],
+    "sources": [
+      {
+        "title": "NIST IR 8547 (final, October 2026), Transition to Post-Quantum Cryptography Standards",
+        "url": "https://nvlpubs.nist.gov/nistpubs/ir/2026/NIST.IR.8547.pdf"
+      },
+      {
+        "title": "FIPS 203, Module-Lattice-Based Key-Encapsulation Mechanism Standard (ML-KEM)",
+        "url": "https://csrc.nist.gov/pubs/fips/203/final"
+      },
+      {
+        "title": "Gidney & Ekera (2021), How to factor 2048 bit RSA integers in 8 hours using 20 million noisy qubits, Quantum 5, 433",
+        "url": "https://arxiv.org/abs/1905.09749"
+      },
+      {
+        "title": "Gidney (2025), How to factor 2048 bit RSA integers with less than a million noisy qubits, arXiv:2505.15917",
+        "url": "https://arxiv.org/abs/2505.15917"
+      },
+      {
+        "title": "Roetteler et al. (2017), Quantum resource estimates for computing elliptic curve discrete logarithms, arXiv:1706.06752",
+        "url": "https://arxiv.org/abs/1706.06752"
+      },
+      {
+        "title": "cryptography: ML-KEM key encapsulation (MLKEM768PrivateKey, added in 47.0.0)",
+        "url": "https://cryptography.io/en/latest/hazmat/primitives/asymmetric/mlkem/"
+      },
+      {
+        "title": "NIST CSWP 39, Considerations for Achieving Cryptographic Agility (2025; superseded by CSWP 39upd1)",
+        "url": "https://csrc.nist.gov/pubs/cswp/39/considerations-for-achieving-cryptographic-agility/final"
+      },
+      {
+        "title": "Ollama: OpenAI compatibility (/v1/chat/completions)",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      }
+    ],
+    "next": "Capstone #22 Capstone: an end-to-end quantum optimisation service: put lessons 12-20 together behind one API.",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran locally (Python 3.12.15, numpy 2.5.3, cryptography 50.0.2, no quantum SDKs in the authoring sandbox): `python pqc_lab.py`, `python solution_scanner.py`, `python try_it.py`, `python agent_assist.py --fake` (outputs in README); `python -m unittest` -> 19 tests OK (ML-KEM-768 ran locally); fail-before proof with BUILD_TASK_MODULE=pqc_lab observed (6 failures). tryIt 1: local: try_it.py (observed). tryIt 2: local: try_it.py (observed). agentAssist: local: agent_assist.py --fake and test_agent_assist.py (4 tests) against the deterministic fake server. Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable, 127.0.0.1 and a FakeClock instead of wall-clock assertions; CI runs tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "learningTools: JupyterLab (+ JupyterLab Desktop) exercise (manual run)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/21-post-quantum-migration.md",
+    "conceptSummary": "Shor breaks RSA and ECC (RSA-2048: 20 million qubits in 2019, under a million in 2025; 9.0 million in lesson 19's data-only model), and recorded traffic is at risk now. Inventory crypto by parsing code, prioritise key establishment by Mosca's X + Y > Z, and put it behind an agile interface with a hybrid X25519 + ML-KEM-768 - the next swap is a config line."
+  },
+  {
+    "id": "capstone-quantum-optimisation-service",
+    "number": 22,
+    "level": "Capstone",
+    "title": "Capstone: an end-to-end quantum optimisation service",
+    "phase": "Capstone",
+    "category": "capstone",
+    "description": "An HTTP service that gates each MaxCut request on a resource estimate, runs noisy QAOA through the lesson 17 orchestrator on a compiled fake device, mitigates readout error, benchmarks it fairly against classical solvers, lets code pick the winner and has a local model explain the report.",
+    "outcome": "You can assemble the topic's labs into one service with explicit decisions (four ADRs), prove each milestone with tests, and print a scorecard where code - not the agent - decides which solver wins under the budget.",
+    "environment": "Mac mini or Windows 11; Python 3.12 venv (lesson 1); numpy 2.5.3 (+ cryptography 50.0.2 for lesson 21) from labs/L400/requirements.txt; shared numpy simulators in labs/_shared (qsim, qopt). SDK path: optional: swap NoisyBackend for a Qiskit Aer adapter and the mitigation for Mitiq REM (not built; see KNOWN-GAPS) (pending CI).",
+    "estimatedTime": "2-4 hours",
+    "overview": [
+      "One request, every lesson: feasibility gate (19), orchestrated noisy QAOA (17, 12, 20), mitigation (13), fair benchmark (18), code decides, agent explains."
+    ],
+    "prerequisites": [
+      "L400 #17-#21",
+      "L300 #12 and #13 (noise, mitigation)",
+      "L100 #5 agent assist pattern (model proposes, code decides)"
+    ],
+    "designBrief": {
+      "context": "Clients post MaxCut instances (4-16 nodes) and want the best cut and an honest answer to 'should we use the quantum solver?'. The only device is a fake 8-qubit ladder with a drifted coupler; backend jobs fail transiently.",
+      "constraints": [
+        "every solver gets the same sample budget and seeds",
+        "a request the device cannot hold never reaches the quantum path",
+        "modelled wall time per request <= 60 s, one transpile per request",
+        "transient job failures do not change results",
+        "the agent only explains; code decides; nothing binds beyond 127.0.0.1"
+      ],
+      "question": "What does the service run for each request, and who decides which solver's answer wins?"
+    },
+    "architecture": {
+      "diagram": "labs/L400/22-capstone/architecture.mmd",
+      "summary": "service.py validates POST /solve and calls pipeline.solve: a lesson-19 feasibility gate decides whether a quantum path exists; if so, lesson 17's Orchestrator (batched jobs, structural cache, retries) drives SPSA-trained QAOA on a NoisyBackend adapter that compiles with lesson 20's router (ESP, depth budget) and samples a white-noise + readout model checked against a density-matrix simulation; lesson 13's constrained mitigation corrects the readout bias of <C>; lesson 18's fair harness runs greedy, annealing and QAOA at the same budget and seeds and decide() picks the winner; agent_assist.py asks a local model to explain the report and code rejects explanations whose winner, numbers or claims disagree."
+    },
+    "milestones": [
+      {
+        "title": "M1 API and validation",
+        "deliverable": "service.py: POST /solve, GET /health on 127.0.0.1; invalid input -> HTTP 400",
+        "test": "labs/L400/22-capstone/test_milestones.py::M1Api"
+      },
+      {
+        "title": "M2 Orchestrated quantum path",
+        "deliverable": "Batched jobs, 1 transpile, idempotent retries through lesson 17's Orchestrator",
+        "test": "labs/L400/22-capstone/test_milestones.py::M2Orchestration"
+      },
+      {
+        "title": "M3 Compile + noise model",
+        "deliverable": "noisy_backend.py: lesson 20 routing within a 60-layer budget; white-noise model within TVD 0.03 of the density matrix",
+        "test": "labs/L400/22-capstone/test_milestones.py::M3CompileAndNoise"
+      },
+      {
+        "title": "M4 Readout mitigation",
+        "deliverable": "Tensored calibration + lesson 13 constrained mitigation of <C>",
+        "test": "labs/L400/22-capstone/test_milestones.py::M4Mitigation"
+      },
+      {
+        "title": "M5 Fair benchmark + code decides",
+        "deliverable": "Lesson 18 harness with the request's budget and seeds; decide(); feasibility refusal for n > 8",
+        "test": "labs/L400/22-capstone/test_milestones.py::M5BenchmarkAndDecision"
+      },
+      {
+        "title": "M6 Agent explains, code checks",
+        "deliverable": "agent_assist.py: explanation accepted only if winner, numbers and claims match the report",
+        "test": "labs/L400/22-capstone/test_milestones.py::M6AgentExplains"
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "correctness",
+        "measure": "winner's median approximation ratio",
+        "pass": ">= 0.95 (observed 1.0)"
+      },
+      {
+        "criterion": "fairness",
+        "measure": "budget and seed list per solver",
+        "pass": "identical for every solver (2000 samples, 5 seeds)"
+      },
+      {
+        "criterion": "reliability",
+        "measure": "benchmark rows with 2 injected job failures vs none",
+        "pass": "identical (2 retries)"
+      },
+      {
+        "criterion": "cost",
+        "measure": "modelled wall time and jobs per request",
+        "pass": "<= 60 s (observed 28.8 s, 10 jobs)"
+      },
+      {
+        "criterion": "honesty",
+        "measure": "12-node request on the 8-qubit device",
+        "pass": "quantum path refused with a reason; classical answer returned"
+      },
+      {
+        "criterion": "safety",
+        "measure": "agent 'pitch' claiming a QAOA win / quantum advantage; server bind address",
+        "pass": "rejected by code; 127.0.0.1 only"
+      }
+    ],
+    "fitnessFunctions": [
+      {
+        "what": "Execution budget: modelled wall <= 60 s and exactly 1 transpile per request (ADR 0001)",
+        "test": "labs/L400/22-capstone/test_fitness.py::test_execution_budget",
+        "threshold": "wall_s <= 60; transpiles == 1"
+      },
+      {
+        "what": "Code decides and ties go classical (ADR 0002)",
+        "test": "labs/L400/22-capstone/test_fitness.py::test_code_decides_and_ties_go_classical",
+        "threshold": "winner == decide(rows); tie -> greedy/annealing"
+      },
+      {
+        "what": "Mitigation helps (ADR 0003)",
+        "test": "labs/L400/22-capstone/test_fitness.py::test_mitigation_helps",
+        "threshold": "|mitigated - gate-only| < |raw - gate-only|"
+      },
+      {
+        "what": "Feasibility gate (ADR 0004)",
+        "test": "labs/L400/22-capstone/test_fitness.py::test_feasibility_gate",
+        "threshold": "n = 12 never reaches qaoa-noisy"
+      },
+      {
+        "what": "Rubric",
+        "test": "labs/L400/22-capstone/test_fitness.py::test_rubric",
+        "threshold": "6/6 rubric lines pass"
+      }
+    ],
+    "decisionRecords": [
+      "labs/L400/22-capstone/docs/adr/0001-service-execution.md",
+      "labs/L400/22-capstone/docs/adr/0002-code-decides-winner.md",
+      "labs/L400/22-capstone/docs/adr/0003-readout-mitigation-only.md",
+      "labs/L400/22-capstone/docs/adr/0004-feasibility-gate-first.md"
+    ],
+    "steps": [
+      {
+        "title": "Run the scorecard",
+        "detail": "python run_capstone.py",
+        "expected": "6 milestone lines and 6 rubric lines, all pass; final {\"scorecard\": \"6/6 milestones, 6/6 rubric\", \"winner\": \"annealing\", \"decided_by\": \"code\"}.",
+        "ifNot": "ModuleNotFoundError: the capstone imports labs 13 and 17-20 from their folders; keep the repository layout."
+      },
+      {
+        "title": "Read the report",
+        "detail": "python pipeline.py  (one default request, report as JSON)",
+        "expected": "optimum 10; greedy/annealing/qaoa-noisy all ratio 1.0, success 1.0; samples to best 32 / 13 / 1013 -> winner annealing; execution 10 jobs, 2 retries, 1 transpile, 28.8 s.",
+        "ifNot": "A different winner: check budget 2000, seeds 5, graph_seed 3."
+      },
+      {
+        "title": "Call the API yourself",
+        "detail": "python service.py --port 8765, then POST a request from another terminal.",
+        "expected": "200 with the report for {\"n\": 8}; 400 'n must be an integer in [4, 16]' for {\"n\": 30}; {\"n\": 12} -> quantum path refused, annealing answers.",
+        "ifNot": "Connection refused: the server binds 127.0.0.1 only.",
+        "mac": "python service.py --port 8765 &  curl -s -X POST 127.0.0.1:8765/solve -d '{\"n\": 12}'",
+        "windows": "Start-Process python 'service.py --port 8765'; Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8765/solve -Body '{\"n\": 12}'"
+      },
+      {
+        "title": "Agent explanation (fake model)",
+        "detail": "python agent_assist.py --fake",
+        "expected": "explain ACCEPT; pitch REJECT (claims qaoa-noisy wins; quantum advantage; 99.9 not in the report); brief REJECT (no winner stated).",
+        "ifNot": "Real model: start Ollama and set LOCAL_MODEL_URL / LOCAL_MODEL; tests always use the fake server."
+      },
+      {
+        "title": "Try it",
+        "detail": "python try_it.py",
+        "expected": "budget 400: annealing still wins, all three succeed; no drift: ESP 0.5103 (vs 0.5072 drifted), 47 CX, depth 48.",
+        "ifNot": "Compare with the tryIt predictions."
+      },
+      {
+        "title": "Run every milestone test",
+        "detail": "python -m unittest -v",
+        "expected": "Ran 13 tests ... OK (6 milestone + 5 fitness + 2 tryIt).",
+        "ifNot": "One test per milestone; a failing milestone names the measure that broke."
+      }
+    ],
+    "code": "\"\"\"Capstone runner: drive the service end to end and print a scorecard as JSON lines.\n\nRun: python run_capstone.py      (numpy + stdlib; the agent uses the deterministic fake model server)\nSeeded faults: transient backend failures on job attempts 3 and 4, and the drifted CX edge (1, 2) on the device.\nEvery milestone and rubric line is decided by code; the agent's explanation is only checked, never trusted.\n\"\"\"\nimport functools\nimport json\nimport urllib.error\nimport urllib.request\n\nimport agent_assist\nimport fake_explain_rule\nimport noisy_backend as nb\nimport pipeline\nimport service\nfrom reuse import l18_bench\n\nIGNORE = (\"local_s\",)\n\n\ndef call(url, path, body=None):\n    req = urllib.request.Request(url + path, data=None if body is None else json.dumps(body).encode(\"utf-8\"),\n                                 headers={\"Content-Type\": \"application/json\"})\n    try:\n        with urllib.request.urlopen(req, timeout=600) as r:\n            return r.status, json.loads(r.read())\n    except urllib.error.HTTPError as e:\n        with e:\n            return e.code, json.loads(e.read())\n\n\ndef rows(report):\n    return [{k: v for k, v in r.items() if k not in IGNORE} for r in report[\"benchmark\"]]\n\n\n@functools.lru_cache(maxsize=1)\ndef collect():\n    server, url = service.start()\n    try:\n        out = {\"health\": call(url, \"/health\"), \"default\": call(url, \"/solve\", {}), \"bad\": call(url, \"/solve\", {\"n\": 30}),\n               \"large\": call(url, \"/solve\", {\"n\": 12})}\n    finally:\n        server.shutdown()\n    out[\"no_faults\"] = pipeline.solve({\"faults\": []})\n    out[\"white_noise\"] = nb.white_noise_check()\n    from local_agent import fake_model_server\n    fake_explain_rule.register(fake_model_server)\n    fake, fake_url = fake_model_server.start_in_thread()\n    try:\n        out[\"agent\"] = agent_assist.run(out[\"default\"][1], fake_url)\n    finally:\n        fake.shutdown()\n    return out\n\n\ndef milestones(o):\n    rep, large = o[\"default\"][1], o[\"large\"][1]\n    ex, cp, mt = rep[\"execution\"], rep[\"compile\"], rep[\"mitigation\"]\n    return [\n        (\"M1 API and validation\", o[\"health\"][0] == 200 and o[\"default\"][0] == 200 and o[\"bad\"][0] == 400 and o[\"large\"][0] == 200,\n         {\"health\": o[\"health\"][0], \"solve\": o[\"default\"][0], \"bad_request\": o[\"bad\"][0], \"bad_reason\": o[\"bad\"][1][\"error\"]}),\n        (\"M2 orchestrated quantum path (batched, cached, retried)\",\n         ex[\"mode\"] == \"batched\" and ex[\"transpiles\"] == 1 and ex[\"jobs\"] <= 10 and ex[\"retries\"] == 2 and rows(rep) == rows(o[\"no_faults\"]), ex),\n        (\"M3 compile + noise model\", cp[\"within_depth_budget\"] and o[\"white_noise\"][\"tvd_model\"] <= 0.03 < o[\"white_noise\"][\"tvd_ideal\"],\n         {**{k: cp[k] for k in (\"esp\", \"cx\", \"depth\", \"gate_fidelity\")}, **o[\"white_noise\"]}),\n        (\"M4 readout mitigation\", abs(mt[\"mitigated\"] - mt[\"gate_noise_only\"]) < abs(mt[\"raw\"] - mt[\"gate_noise_only\"]), mt),\n        (\"M5 fair benchmark + code decides\", len({r[\"budget\"] for r in rep[\"benchmark\"]}) == 1\n         and {r[\"runs\"] for r in rep[\"benchmark\"]} == {rep[\"request\"][\"seeds\"]} and rep[\"winner\"] == l18_bench.decide(rep[\"benchmark\"])\n         and not large[\"feasibility\"][\"quantum_path\"], {\"winner\": rep[\"winner\"], \"n12_winner\": large[\"winner\"],\n                                                         \"n12_reason\": large[\"feasibility\"][\"reason\"]}),\n        (\"M6 agent explains, code checks\", [o[\"agent\"][k][0] for k in (\"explain\", \"pitch\", \"brief\")] == [\"ACCEPT\", \"REJECT\", \"REJECT\"],\n         {k: (v[0], v[1]) for k, v in o[\"agent\"].items()}),\n    ]\n\n\ndef rubric(o):\n    rep = o[\"default\"][1]\n    best = next(r for r in rep[\"benchmark\"] if r[\"solver\"] == rep[\"winner\"])\n    return [\n        (\"correctness\", f\"winner median ratio {best['median_ratio']}\", best[\"median_ratio\"] >= 0.95),\n        (\"fairness\", \"one budget and one seed list for every solver\", len({(r[\"budget\"], r[\"runs\"]) for r in rep[\"benchmark\"]}) == 1),\n        (\"reliability\", \"2 injected job failures retried; results identical to a fault-free run\", rows(rep) == rows(o[\"no_faults\"])),\n        (\"cost\", f\"modelled wall {rep['execution']['wall_s']} s, {rep['execution']['jobs']} jobs (budget 60 s)\", rep[\"execution\"][\"wall_s\"] <= 60),\n        (\"honesty\", \"n = 12 refused for the 8-qubit device; classical answer returned\", not o[\"large\"][1][\"feasibility\"][\"quantum_path\"]),\n        (\"safety\", \"agent cannot change the winner; server binds 127.0.0.1\", o[\"agent\"][\"pitch\"][0] == \"REJECT\"),\n    ]\n\n\nif __name__ == \"__main__\":\n    o = collect()\n    ms = milestones(o)\n    for name, ok, measure in ms:\n        print(json.dumps({\"milestone\": name, \"pass\": bool(ok), \"measure\": measure}))\n    rb = rubric(o)\n    for criterion, measure, ok in rb:\n        print(json.dumps({\"rubric\": criterion, \"measure\": measure, \"pass\": bool(ok)}))\n    print(json.dumps({\"scorecard\": f\"{sum(bool(m[1]) for m in ms)}/{len(ms)} milestones, {sum(bool(r[2]) for r in rb)}/{len(rb)} rubric\",\n                      \"winner\": o[\"default\"][1][\"winner\"], \"decided_by\": \"code\"}))\n",
+    "codeLanguage": "python",
+    "codeWalkthrough": [
+      {
+        "title": "reuse.py",
+        "detail": "Appends the earlier lab folders to sys.path (module names are unique) and imports them - the capstone reuses, never copies."
+      },
+      {
+        "title": "pipeline.validate / feasibility",
+        "detail": "Rejects out-of-range requests before work; lesson 19's estimate + the 8-qubit device size decide whether a quantum path exists."
+      },
+      {
+        "title": "pipeline.qaoa_solver",
+        "detail": "A lesson-18-compatible solver: half the budget trains angles via lesson 17's Orchestrator (SPSA, batched, cached, retried), half samples answers."
+      },
+      {
+        "title": "noisy_backend.NoisyBackend",
+        "detail": "Overrides transpile() (lesson 20 routing, ESP, layout search) and sample() (white-noise F x ideal + (1 - F) uniform, then per-qubit readout flips)."
+      },
+      {
+        "title": "pipeline.mitigation",
+        "detail": "Per-qubit calibration -> tensored assignment matrix -> lesson 13 constrained mitigation of the measured distribution; compares raw, mitigated, gate-only and ideal <C>."
+      },
+      {
+        "title": "pipeline.solve -> l18_fair.compare + decide",
+        "detail": "Same budget, same seeds, medians; code's decide() names the winner; ties go classical."
+      },
+      {
+        "title": "run_capstone.collect / milestones / rubric",
+        "detail": "Real HTTP calls on 127.0.0.1, a fault-free re-run for idempotency, the white-noise check and the fake-model explanation, turned into JSON scorecard lines."
+      }
+    ],
+    "projectFiles": [
+      {
+        "path": "labs/L400/22-capstone/run_capstone.py",
+        "purpose": "main: end-to-end run and scorecard (JSON lines)"
+      },
+      {
+        "path": "labs/L400/22-capstone/pipeline.py",
+        "purpose": "the service logic: gate, orchestrate, mitigate, benchmark, decide"
+      },
+      {
+        "path": "labs/L400/22-capstone/service.py",
+        "purpose": "HTTP API on 127.0.0.1"
+      },
+      {
+        "path": "labs/L400/22-capstone/noisy_backend.py",
+        "purpose": "backend adapter: compile + noise model + white-noise check"
+      },
+      {
+        "path": "labs/L400/22-capstone/reuse.py",
+        "purpose": "imports labs 13 and 17-20"
+      },
+      {
+        "path": "labs/L400/22-capstone/agent_assist.py",
+        "purpose": "local model explains; code checks"
+      },
+      {
+        "path": "labs/L400/22-capstone/fake_explain_rule.py",
+        "purpose": "deterministic fake-model rule"
+      },
+      {
+        "path": "labs/L400/22-capstone/architecture.mmd",
+        "purpose": "Mermaid architecture diagram"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_milestones.py",
+        "purpose": "one test per milestone"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_fitness.py",
+        "purpose": "capstone fitness functions"
+      },
+      {
+        "path": "labs/L400/22-capstone/docs/adr",
+        "purpose": "ADRs 0001-0004"
+      },
+      {
+        "path": "labs/L400/22-capstone/README.md",
+        "purpose": "run commands and observed output"
+      },
+      {
+        "path": "labs/L400/22-capstone/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L400/22-capstone/test_try_it.py",
+        "purpose": "tryIt tests"
+      }
+    ],
+    "expectedResults": [
+      "Scorecard 6/6 milestones, 6/6 rubric; winner annealing decided by code",
+      "Mitigation: raw 6.774 -> mitigated 6.8549 vs gate-only 6.8418",
+      "n = 12 refused for the quantum path with a reason"
+    ],
+    "testCases": [
+      {
+        "action": "POST {\"n\": 30}",
+        "expected": "HTTP 400, pipeline not run"
+      },
+      {
+        "action": "solve({'faults': []}) vs default (faults [3, 4])",
+        "expected": "identical benchmark rows (excluding local_s)"
+      },
+      {
+        "action": "agent 'pitch' explanation",
+        "expected": "REJECT: wrong winner, quantum-advantage claim, invented 99.9"
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Cut the budget to 400 samples (try_it.small_budget).",
+        "predict": "Does QAOA catch up when samples are scarce?",
+        "expected": "No change in winner: annealing; all three still succeed at n = 8."
+      },
+      {
+        "task": "Remove the calibration drift (try_it.calibrated_device).",
+        "predict": "How much fidelity did the drift cost after noise-aware layout?",
+        "expected": "Little: ESP 0.5103 vs 0.5072, gate fidelity 0.6262 vs 0.6224 - the layout search already routes around the bad coupler."
+      }
+    ],
+    "agentAssist": {
+      "task": "A local model explains the benchmark report to an engineer in 2-4 sentences.",
+      "prompt": "[[QOPT-REPORT]] Explain the result. Report: {winner, optimum, benchmark rows, feasibility, mitigation, execution}",
+      "check": "Code rejects an explanation that names a different winner than decide(), quotes any number not present in the report, or claims a quantum advantage/speed-up; it never changes the winner.",
+      "expected": "explain ACCEPT; pitch REJECT (claims qaoa-noisy wins; quantum advantage; 99.9 not in the report); brief REJECT (no winner stated).",
+      "realModelNote": "Only report numbers and solver names are sent. Expect real small models to round numbers or add superlatives; the checker will reject those - tighten the prompt, never the check."
+    },
+    "troubleshooting": [
+      {
+        "symptom": "The run takes minutes",
+        "action": "Each solve trains QAOA for 5 seeds; run_capstone does 3 solves (default, n = 12, fault-free). Lower seeds in the request to iterate faster."
+      },
+      {
+        "symptom": "M2 fails on 'rows identical'",
+        "action": "A retry changed samples: circuit seeds must not depend on attempts."
+      }
+    ],
+    "equivalents": [
+      "Qiskit Runtime batch/session + SamplerV2 behind the same adapter interface; Qiskit Aer NoiseModel instead of the white-noise model.",
+      "Mitiq REM (inverse confusion matrix) as the mitigation step; Microsoft QDK estimator as the feasibility gate.",
+      "Any web framework (FastAPI, Flask) instead of http.server; the pipeline is framework-free."
+    ],
+    "inRealSystems": [
+      "Quantum cloud offerings wrap optimisation in a service that routes to classical solvers when they win.",
+      "Decision logic stays in reviewed code; LLM assistants summarise reports for people."
+    ],
+    "useWhen": "Use this shape (gate -> orchestrate -> benchmark -> decide -> explain) for any 'quantum or classical?' service; avoid letting a model or a single run choose the solver.",
+    "simulatorVsReal": "All quantum execution is the numpy simulator behind an adapter, with a white-noise + readout model (TVD 0.0213 from a density-matrix simulation) and modelled queue time. A real backend changes timings, noise and costs, not the architecture.",
+    "caution": "The service binds 127.0.0.1 only. Never expose it or a local model beyond a trusted network, and never send credentials or customer data to a model; the agent sees report numbers only.",
+    "checkpoint": "PASS if run_capstone.py prints 6/6 milestones and 6/6 rubric, you can trace each number to its lesson, and changing the winner requires changing code, not the model.",
+    "checkYourself": [
+      {
+        "q": "Who decided that annealing wins?",
+        "a": "decide() in lesson 18's code: equal ratio and success, fewest samples to the best cut (13). The agent only explained it."
+      },
+      {
+        "q": "Why is mitigated <C> (6.8549) still below ideal (7.3525)?",
+        "a": "Readout mitigation removes readout bias only; gate noise (fidelity 0.6224) remains."
+      },
+      {
+        "q": "Why does n = 12 still get an answer?",
+        "a": "The feasibility gate refuses the quantum path for an 8-qubit device; classical solvers answer with the same harness."
+      }
+    ],
+    "learningTools": [
+      {
+        "name": "JupyterLab (+ JupyterLab Desktop)",
+        "role": "CHECK",
+        "exercise": "Call pipeline.solve({}) in a notebook and plot raw / mitigated / gate-only / ideal <C> as bars, plus samples-to-best per solver.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Bars 6.774 / 6.8549 / 6.8418 / 7.3525; samples to best greedy 32, annealing 13, qaoa-noisy 1013 (README output).",
+        "mac": "pip install jupyterlab, or Desktop arm64 installer",
+        "windows": "pip install jupyterlab, or Desktop x64 installer / winget install jupyterlab",
+        "licence": "BSD-3-Clause (OSI: yes)",
+        "url": "https://pypi.org/project/jupyterlab/"
+      },
+      {
+        "name": "marimo",
+        "role": "SEE",
+        "exercise": "`marimo edit`: sliders for budget (200-4000), seeds (3-10) and drift on/off; a cell shows pipeline.solve(...)['winner'] and the benchmark rows.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Default (2000, 5, drift) -> annealing; 400 samples -> annealing; no drift -> ESP 0.5103.",
+        "mac": "pip install marimo (marimo tutorial intro)",
+        "windows": "pip install marimo (marimo tutorial intro)",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://pypi.org/project/marimo/"
+      },
+      {
+        "name": "Mitiq",
+        "role": "CHECK",
+        "exercise": "Build Mitiq's inverse confusion matrix (REM guide) from the report's per-qubit readout rates and apply it to the same raw distribution; compare <C> with the lab's constrained 6.8549.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Should land close to 6.8549 for <C> (the plain inverse may give small negative probabilities that the lab's constrained method avoids).",
+        "mac": "pip install mitiq (Python >=3.11,<3.13; Cirq is a core dependency; add mitiq[qiskit] for Qiskit circuits)",
+        "windows": "pip install mitiq (same Python range; PyPI classifiers list macOS and Windows)",
+        "licence": "GPL-3.0 (OSI: yes)",
+        "url": "https://pypi.org/project/mitiq/"
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "seeAlso": [
+      "quantum-computing L400 #17 Hybrid quantum-classical architecture: orchestrator, job queue and backend adapter: the orchestrator and cache key used unchanged.",
+      "quantum-computing L400 #18 Benchmarking honestly against classical solvers: the fair harness and decide() that pick the winner.",
+      "quantum-computing L400 #19 Resource estimation: logical vs physical qubits and feasibility: the feasibility gate.",
+      "quantum-computing L400 #20 Error-aware compilation: layout, routing and a depth budget: the router and ESP inside the noisy backend.",
+      "application-architecture L300 #16 Performance and architecture fitness functions in CI: the same 'fitness function keeps the decision true' idea at service level."
+    ],
+    "sources": [
+      {
+        "title": "Introduction to Quantum Compute execution modes (job, batch, session)",
+        "url": "https://quantum.cloud.ibm.com/docs/en/guides/execution-modes"
+      },
+      {
+        "title": "Farhi, Goldstone, Gutmann (2014), A Quantum Approximate Optimization Algorithm, arXiv:1411.4028",
+        "url": "https://arxiv.org/abs/1411.4028"
+      },
+      {
+        "title": "Nishio et al. (2020), Extracting Success from IBM's 20-Qubit Machines Using Error-Aware Compilation, arXiv:1903.10963",
+        "url": "https://arxiv.org/abs/1903.10963"
+      },
+      {
+        "title": "Fowler et al. (2012), Surface codes: Towards practical large-scale quantum computation, arXiv:1208.0928",
+        "url": "https://arxiv.org/abs/1208.0928"
+      },
+      {
+        "title": "Mitiq 1.1.0: How do I use REM?",
+        "url": "https://mitiq.readthedocs.io/en/stable/guide/rem-1-intro.html"
+      },
+      {
+        "title": "Abbas et al. (2024), Challenges and Opportunities in Quantum Optimization, Nat Rev Phys, arXiv:2312.02279",
+        "url": "https://arxiv.org/abs/2312.02279"
+      },
+      {
+        "title": "Ollama: OpenAI compatibility (/v1/chat/completions)",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      }
+    ],
+    "next": "Done: see the L400 candidates in KNOWN-GAPS for further study.",
+    "validation": {
+      "status": "validated-local",
+      "how": "Ran locally (Python 3.12.15, numpy 2.5.3, cryptography 50.0.2, no quantum SDKs in the authoring sandbox): `python run_capstone.py` (scorecard 6/6 + 6/6), `python pipeline.py`, `python agent_assist.py --fake`, `python try_it.py` (outputs in README); `python -m unittest` -> 13 tests OK (real HTTP on 127.0.0.1, fake model server). tryIt 1: local: try_it.py (observed). tryIt 2: local: try_it.py (observed). agentAssist: local: agent_assist.py --fake and test_milestones M6 against the deterministic fake server. Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable, 127.0.0.1 and a FakeClock instead of wall-clock assertions; CI runs tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "learningTools: JupyterLab (+ JupyterLab Desktop) exercise (manual run)",
+        "learningTools: marimo exercise (manual run)",
+        "learningTools: Mitiq exercise (manual run)"
+      ]
+    },
+    "conceptNote": "content/concepts/L400/22-capstone.md",
+    "conceptSummary": "One service, every lesson: a resource-estimate gate, an orchestrator with batched jobs and idempotent retries, a noise-aware compiled backend with a validated noise model, readout mitigation, a fair benchmark and a code-made decision. For simulator-sized MaxCut the classical solver wins, and the service says so with evidence; a local model may explain, but code checks every claim."
+  }
+]

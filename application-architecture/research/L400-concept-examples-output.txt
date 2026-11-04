@@ -1,0 +1,26 @@
+== 17 strangler: big bang vs shadow (2,000 seeded requests)
+base    : big-bang would charge 108 of 2000 wrong; shadow found 108 mismatches, members saw 0; cutover ready False ['mismatch rate 5.40% > 0.10%']
+solution: big-bang would charge 0 of 2000 wrong; shadow found 0 mismatches, members saw 0; cutover ready True []
+mismatching (type, days late), first 6: [('student', 3), ('student', 7), ('student', 11), ('student', 15), ('student', 19), ('student', 23)]
+
+== 18 tenancy: 50 libraries x 40 loans, shipped repository
+{"layout": "shared-schema", "isolation": {"rows": 700, "leaked": 686, "guard_violations": 1}, "noisy_neighbour": {"attempts": 20, "blocked": 20}, "migration": {"ddl_statements": 1, "files": 1, "ms": 13.9}}
+{"layout": "schema-per-tenant", "isolation": {"rows": 14, "leaked": 0, "guard_violations": 1}, "noisy_neighbour": {"attempts": 20, "blocked": 20}, "migration": {"ddl_statements": 50, "files": 1, "ms": 9073.6}}
+{"layout": "db-per-tenant", "isolation": {"rows": 14, "leaked": 0, "guard_violations": 1}, "noisy_neighbour": {"attempts": 20, "blocked": 0}, "migration": {"ddl_statements": 50, "files": 50, "ms": 734.2}}
+
+== 19 policy: RBAC vs ABAC on 14 cases
+policy solution/loans.rego (revision 2cbda4fd0af3): 14/14 requirement cases
+RBAC role table            : 7/14 requirement cases
+== 20 migrations: plans with the shipped and the fixed guard
+base    : try contract: dropped name with fleet v2v2v2v2 -> 62 failed requests of 700; first: v2: table members has no column named name
+solution: try contract: refused (instances on v2 still use members.name) with fleet v2v2v2v2 -> 0 failed requests of 700
+big bang: schema changed in one step -> 36 failed requests of 100; first: v1: no such column: name
+
+== 21 capacity: options (solution sizing)
+load model : {'avg_rps': 40.0, 'peak_rps': 120.0, 'mix': {'GET /books': 0.449, 'GET /loans': 0.351, 'POST /loans': 0.2}, 'mean_service_ms': 45.2}
+Little's law: 120.0 req/s x 45.2 ms = 5.4 requests in flight at peak; emails 3.6 in flight -> 5 sender slots
+{"option": "sync email", "mean_service_ms": 75.1, "capacity_rps": 35, "instances": 6, "p99_at_peak_ms": 230.8, "p99_one_down_ms": 239.1, "cost_per_million_usd": 4.17}
+{"option": "async email", "mean_service_ms": 45.2, "capacity_rps": 75, "instances": 3, "p99_at_peak_ms": 102.4, "p99_one_down_ms": 130.4, "cost_per_million_usd": 2.08}
+{"option": "async email + cache", "mean_service_ms": 32.6, "capacity_rps": 105, "instances": 3, "p99_at_peak_ms": 94.7, "p99_one_down_ms": 100.5, "cost_per_million_usd": 2.08}
+
+{"note": "timings in 18 (ms) vary with the disk; everything else is seeded"}

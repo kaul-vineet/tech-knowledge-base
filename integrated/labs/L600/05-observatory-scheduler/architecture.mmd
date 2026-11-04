@@ -1,0 +1,32 @@
+flowchart LR
+  subgraph astronomy["astronomy (reused)"]
+    E["ephem.py<br/>USNO Sun + GMST, Schlyter Moon"]
+    K["plan.py airmass()<br/>Kasten & Young 1989"]
+    T["timescales.py<br/>GAST (Wallace & Capitaine 2006)"]
+  end
+  subgraph core["deterministic core (this lab)"]
+    TU["timeutil.UtcInstant<br/>typed UTC seam"]
+    SK["sky.py<br/>slots + feasibility matrix"]
+    SC["scheduler.py<br/>greedy | local search"]
+    V["validator.py<br/>independent route, 5-min samples"]
+  end
+  subgraph simulation["simulation (reused idea + ci())"]
+    W["weather.py<br/>2-state Markov clouds, 1000 runs, CRN"]
+  end
+  subgraph agents["ai-agents (edge)"]
+    A["local model (fake / Ollama)<br/>PROPOSES plan, EXPLAINS"]
+    G["agent_plan.py<br/>parse + gate"]
+  end
+  TU --> SK
+  E --> SK
+  K --> SK
+  SK --> SC
+  SC -->|blocks| V
+  T --> V
+  W -->|"p_complete = promise"| SC
+  SC -->|plans| W
+  A -->|PLAN lines| G
+  G -->|UtcInstant rows| V
+  V -->|"violations / OK"| D{"code decides<br/>adopt plan"}
+  SC --> D
+  D --> R["run_project.py scorecard (JSON lines)"]

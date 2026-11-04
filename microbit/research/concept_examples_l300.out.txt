@@ -1,0 +1,33 @@
+== 12 reliable radio: 20 readings, loss 0.2 dup 0.1 reorder 0.1 corrupt 0.05 seed 12
+before: delivered 14/20, missing ['r2', 'r8', 'r11', 'r13', 'r14', 'r20'], duplicates 2, in order False | air {'sent': 20, 'lost': 5, 'duplicated': 2, 'reordered': 2, 'corrupted': 1}
+after:  delivered 20/20, missing none, duplicates 0, in order True | sender {'t': 6000, 'tx': 42, 'retx': 22, 'acked': 20, 'gave_up': 0, 'rx': 31, 'bad': 1, 'dup': 0, 'gap': 0, 'delivered': 0}
+receiver dup suppressed: 19
+loss only: P(data and ack both arrive) = 0.64, expected tries 1.56, P(8 tries all fail) = 2.8e-04
+give-up time: sum of timeouts 100+200+400+800*5 = 4700 ms
+
+== 13 scheduler: 8 quick taps (150 ms), blocking sleep(1000) vs 20 ms button task
+taps at: [932, 1680, 2630, 3695, 4645, 5655, 6689, 7744]
+chance a 150 ms tap covers one 1000 ms sample: 15%
+blocking loop counted: 1 of 8
+scheduler counted: 8 of 8; stats {'runs': 610, 'overruns': 0, 'missed': 0, 'errors': 0}
+
+== 14 power budget (MODEL, estimates)
+figures: {'BOARD_ON_MA': 30.0, 'SLEEP_MA': 0.5, 'SLEEP_MA_LOW': 0.05, 'CHIP_SLEEP_MA': 0.0015, 'ACTIVE_MS': 20, 'BATTERY_MAH': 1250.0}
+{"design": "main.py", "samples": 36000, "wakeups": 0, "max_delay_ms": 0, "meets_brief": false, "awake_pct": 100.0, "avg_ma": 30.0, "life_h": 41.7, "life_h_range": [41.7, 41.7], "chip_only_bound_h": 41.7}
+{"design": "solution.py", "samples": 483, "wakeups": 483, "max_delay_ms": 4700, "meets_brief": true, "awake_pct": 0.27, "avg_ma": 0.5792, "life_h": 2158.3, "life_h_range": [2158.3, 9588.4], "chip_only_bound_h": 15244.7}
+fixed 100 ms + deep sleep, board floor 0.5 mA (conservative, assumed): 0.2 x 30 + 0.8 x 0.5 -> 6.4000 mA -> 195.3 h
+fixed 100 ms + deep sleep, board floor 0.05 mA (assumed): 0.2 x 30 + 0.8 x 0.05 -> 6.0400 mA -> 207.0 h
+fixed 100 ms + deep sleep, chip-only 1.5 uA (bound): 0.2 x 30 + 0.8 x 0.0015 -> 6.0012 mA -> 208.3 h
+chip-only awake 3.328 + 4.6 = 7.9 mA -> 158.2 h
+
+== 15 serial gateway: 200 frames, drop 2% flip 2% cut 1% seed 15
+faults injected: {'dropped': 3, 'flipped': 5, 'cut': 2} | bytes 4099 in 207 chunks
+naive gateway: ValueError on the first line: not enough values to unpack (expected 3, got 1)
+hardened: {'frames_ok': 190, 'bad_len': 6, 'bad_crc': 3, 'bad_payload': 0, 'resyncs': 9, 'skipped_bytes': 184} | damaged 4.5%
+frame for 1,20,100: $0081,20,100*1DA1
+random corruption passing a 16-bit CRC: 1 in 65536
+
+== 16 interrupt race (host model)
+window: 2000 cycles at 64 MHz = 31.25 us; timer period 100 us -> 31% of takes overlap
+racy: IRQ in window -> lost 1 | soak 1000 takes p=0.3 seed 16: isr 1316 consumed 1000 pending 0 lost 316 (24%)
+fixed: IRQ in window -> lost 0 | soak 1000 takes p=0.3 seed 16: isr 1316 consumed 1316 pending 0 lost 0 (0%)

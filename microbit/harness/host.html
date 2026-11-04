@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>micro:bit simulator test host</title>
+  <style>iframe { width: 400px; height: 320px; border: 0; } pre { display: inline-block; vertical-align: top; }</style>
+</head>
+<body>
+  <!-- Embeds 1..N MicroPython micro:bit V2 simulators and exposes window.sims (window.sim = board 0)
+       for Playwright. Message kinds follow the simulator README (embedding API is not yet stable).
+       ?boards=2 adds a second simulator; radio_output of one board is forwarded as radio_input
+       to the others (the "radio bridge"), like the Python Editor forwards its radio chat. -->
+  <div id="boards"></div>
+  <script>
+    const DEFAULT_URL = "https://python-simulator.usermbit.org/v/0.1/simulator.html";
+    const params = new URLSearchParams(location.search);
+    const url = params.get("sim") || DEFAULT_URL;
+    const boards = Math.max(1, Math.min(4, Number(params.get("boards") || 1)));
+    // Exact simulator origin (e.g. "https://python-simulator.usermbit.org"), never "*":
+    // messages go only to that origin and only its replies are accepted.
+    const SIM_ORIGIN = new URL(url).origin;
+    const sims = [];
+
+    // README: radio_input "is assumed to be sent to the currently configured radio group",
+    // so the simulator does not filter by group on input. The bridge filters instead, using
+    // the radio group each board reports in its state (state.radio.group, as on demo.html).
+    function groupOf(s) {
+      const r = s.state && s.state.radio;
+      return r && typeof r.group === "number" ? r.group : null;
+    }
+
+    function makeSim(index) {
+      const iframe = document.createElement("iframe");
+      iframe.allow = "autoplay;microphone";
+      iframe.sandbox = "allow-scripts allow-same-origin";
+      iframe.title = "board " + index;
+      const serialEl = document.createElement("pre");
+      document.getElementById("boards").append(iframe, serialEl);
+      const sim = {
+        index, url, origin: SIM_ORIGIN, ready: false, state: null, serial: "", errors: [],
+        lastCode: null, radioOut: [], radioIn: [], logOutput: [], logDeletes: 0, bridge: true,
+        post(msg) { iframe.contentWindow.postMessage(msg, SIM_ORIGIN); },
+        flash(code) {
+          sim.lastCode = code;
+          sim.serial = "";
+          serialEl.textContent = "";
+          sim.post({ kind: "flash", filesystem: { "main.py": new TextEncoder().encode(code) } });
+        },
+        set(id, value) { sim.post({ kind: "set_value", id, value }); },
+        radioInput(bytes) { sim.radioIn.push(Array.from(bytes)); sim.post({ kind: "radio_input", data: new Uint8Array(bytes) }); },
+        stop() { sim.post({ kind: "stop" }); },
+        mute() { sim.post({ kind: "mute" }); },
+      };
+      window.addEventListener("message", (e) => {
+        if (e.origin !== SIM_ORIGIN || e.source !== iframe.contentWindow || !e.data || !e.data.kind) return;
+        const d = e.data;
+        switch (d.kind) {
+          case "ready": sim.ready = true; sim.state = d.state; break;
+          case "state_change": sim.state = Object.assign({}, sim.state, d.change); break;
+          case "serial_output": sim.serial += d.data; serialEl.textContent = sim.serial; break;
+          // README: the embedder must answer request_flash with a flash message.
+          case "request_flash": if (sim.lastCode !== null) sim.flash(sim.lastCode); break;
+          case "radio_output": {
+            const bytes = Array.from(d.data || []);
+            sim.radioOut.push(bytes);
+            for (const other of sims) {
+              if (other === sim || !sim.bridge || !other.ready) continue;
+              const g1 = groupOf(sim), g2 = groupOf(other);
+              if (g1 !== null && g2 !== null && g1 !== g2) continue;   // different group: not heard
+              other.radioInput(bytes);
+            }
+            break;
+          }
+          // Not in the simulator README; the Python Editor handles these (secondary source).
+          // Recorded only, never required by a test: see KNOWN-GAPS.
+          case "log_output": sim.logOutput.push({ headings: d.headings || null, data: d.data || null }); break;
+          case "log_delete": sim.logDeletes += 1; break;
+          case "internal_error": sim.errors.push(String(d.error)); break;
+        }
+      });
+      iframe.src = url;
+      return sim;
+    }
+
+    for (let i = 0; i < boards; i++) sims.push(makeSim(i));
+    window.sims = sims;
+    window.sim = sims[0];          // L100 tests use one board
+  </script>
+</body>
+</html>

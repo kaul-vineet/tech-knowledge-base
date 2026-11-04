@@ -1,0 +1,1639 @@
+[
+ {
+  "id": "variance-reduction",
+  "number": 12,
+  "level": "L300",
+  "title": "Variance reduction: same precision, fewer runs",
+  "phase": "Harden",
+  "category": "output-analysis",
+  "description": "Expected overtime of a warehouse picking shift: antithetic variates, a control variate and CRN, each with its variance ratio measured - and the stream bug that silently cancels the gain.",
+  "outcome": "You can apply antithetic variates and control variates, measure their gain at equal cost, and detect broken pairing from logged correlations.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; SciPy 1.18.1 check of the exact formula in CI",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "Same unbiased answer, smaller variance per run - if the random streams are paired correctly."
+  ],
+  "prerequisites": [
+   "Lessons 2 and 10 (confidence intervals, replications)",
+   "Lesson 11 (common random numbers)"
+  ],
+  "glossary": [
+   {
+    "term": "antithetic variates",
+    "meaning": "Evaluate f(u) and f(1-u) as a pair; errors cancel when they anti-correlate."
+   },
+   {
+    "term": "control variate",
+    "meaning": "An output C with exactly known mean; subtract beta (C - E[C]) to remove its noise."
+   },
+   {
+    "term": "variance ratio",
+    "meaning": "Plain variance per evaluation / method variance per evaluation: plain runs one method run is worth."
+   }
+  ],
+  "concepts": [
+   "Compare methods at equal cost.",
+   "Antithetic pairs need one stream per pair.",
+   "Control variate gain = 1/(1 - r^2).",
+   "A pilot decides; never assume."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python variance_reduction.py`",
+    "mac": "cd labs/L300/12-variance-reduction\npython variance_reduction.py",
+    "windows": "cd labs\\L300\\12-variance-reduction\npython variance_reduction.py",
+    "expected": "exact expected overtime: 0.9196 h per shift (Erlang formula), then a 4-row table.",
+    "ifNot": "Needs numpy only; run from the lab folder."
+   },
+   {
+    "title": "Antithetic pairs",
+    "detail": "antithetic(): u and 1-u from one draw; the CI is computed from pair averages.",
+    "expected": "antithetic 0.9208, rho=-0.32, variance ratio 1.46x (theory 1/(1+rho) = 1.48).",
+    "ifNot": "Ratio ~1: check that both halves use the same u."
+   },
+   {
+    "title": "Control variate",
+    "detail": "control_variate(): C = total task time, E[C] = 12 x 0.6 = 7.2 h, beta fitted.",
+    "expected": "control variate 0.9203, beta=0.609, ratio 5.40x (r = 0.90).",
+    "ifNot": "Ratio < 1: beta sign or E[C] wrong."
+   },
+   {
+    "title": "Failure lab: reseeding inside the loop",
+    "detail": "The shipped antithetic_loop() - the loop form a once-per-run simulator forces - creates a fresh stream for every evaluation, so the mirror 1-u belongs to another u. Compare its rho with the vectorised antithetic().",
+    "expected": "antithetic (loop) 0.8999, rho=-0.00, 1.01x (no gain, no error) vs antithetic rho=-0.32, 1.46x.",
+    "ifNot": "Read the rho column: ~0 means the pairs are not mirrors."
+   },
+   {
+    "title": "CRN recap",
+    "detail": "Overtime saved by a 7.5 h shift, with independent vs common random numbers.",
+    "expected": "independent 0.2120 +/- 0.0259, common 0.2237 +/- 0.0033 h.",
+    "ifNot": "Same width: the second design is drawing new numbers."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L300/12-variance-reduction\npython -m unittest -v",
+    "windows": "cd labs\\L300\\12-variance-reduction\npython -m unittest -v",
+    "expected": "Ran 14 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the SciPy check of exact_overtime() (pending-ci)."
+   },
+   {
+    "title": "Build: fix the loop",
+    "detail": "Fix antithetic_loop() in variance_reduction.py: one stream per PAIR, f(u) and f(1-u) from the same u. Check YOUR file with BUILD_TARGET=mine.",
+    "mac": "cd labs/L300/12-variance-reduction\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L300\\12-variance-reduction\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task -v",
+    "expected": "Before the fix: Ran 3 tests ... FAILED (failures=2). After: OK, and the table row reads antithetic (loop) 0.9091, rho=-0.33, 1.50x (python solution/variance_reduction.py).",
+    "ifNot": "rho still ~0: the mirror is still drawn from a second stream."
+   },
+   {
+    "title": "Stretch: pilot-based choice",
+    "detail": "`python solution/pick_estimator.py`, then `python -m unittest test_stretch -v` (BUILD_TARGET=mine checks your own file).",
+    "mac": "cd labs/L300/12-variance-reduction\npython solution/pick_estimator.py\npython -m unittest test_stretch -v",
+    "windows": "cd labs\\L300\\12-variance-reduction\npython solution/pick_estimator.py\npython -m unittest test_stretch -v",
+    "expected": "overtime -> control variate (5.47x); symmetric model -> plain (rho 1.0); monotone model -> antithetic (15.17x); Ran 4 tests ... OK.",
+    "ifNot": "Antithetic chosen with rho >= 0 means the guard is missing."
+   }
+  ],
+  "code": "\"\"\"L300 variance reduction: expected overtime of a warehouse picking shift, with fewer runs for the same precision.\n\nA shift has 12 picking tasks, each ~ exponential(mean 0.6 h); overtime = max(0, total - 7 h).\nThe exact answer is known (Erlang formula), so every estimator can be checked against it.\npython variance_reduction.py\n\"\"\"\nimport math\n\nimport numpy as np\n\nN_TASKS, MEAN_H, SHIFT_H, SEED = 12, 0.6, 7.0, 2026\n\n\ndef overtime(u, shift=SHIFT_H):\n    \"\"\"Model: uniforms (n, 12) -> overtime hours. Inverse transform t = -mean*ln(1-u) is monotone in every u.\"\"\"\n    t = -MEAN_H * np.log1p(-u)\n    return np.maximum(t.sum(axis=1) - shift, 0.0), t.sum(axis=1)\n\n\ndef exact_overtime(k=N_TASKS, mean=MEAN_H, s=SHIFT_H):\n    \"\"\"E[(T - s)+] for T ~ Erlang(k, rate 1/mean) = k*mean*P(Erlang(k+1) > s) - s*P(Erlang(k) > s).\"\"\"\n    tail = lambda m: sum(math.exp(-s / mean) * (s / mean) ** j / math.factorial(j) for j in range(m))\n    return k * mean * tail(k + 1) - s * tail(k)\n\n\ndef summary(y, evals):\n    \"\"\"Mean, standard error and per-evaluation variance (the cost-fair number to compare methods by).\"\"\"\n    se = float(np.std(y, ddof=1) / math.sqrt(len(y)))\n    return {\"mean\": float(np.mean(y)), \"se\": se, \"var_per_eval\": se ** 2 * evals}\n\n\ndef plain(n, seed=SEED):\n    y, _ = overtime(np.random.default_rng(seed).random((n, N_TASKS)))\n    return summary(y, n)\n\n\ndef antithetic(n, seed=SEED):\n    \"\"\"One stream per PAIR: f(u) and f(1-u) share the same u, so their errors cancel (Owen 8.2).\"\"\"\n    u = np.random.default_rng(seed).random((n // 2, N_TASKS))\n    a, b = overtime(u)[0], overtime(1.0 - u)[0]\n    out = summary((a + b) / 2, n)  # analyse PAIR averages: the two halves of a pair are not independent\n    return out | {\"rho\": float(np.corrcoef(a, b)[0, 1])}\n\n\ndef antithetic_loop(n, seed=SEED):\n    \"\"\"Loop version, as when a simulator is called once per run: evaluate f(u) and its mirror f(1-u) per pair.\"\"\"\n    a, b = np.empty(n // 2), np.empty(n // 2)\n    for i in range(n // 2):\n        a[i] = overtime(np.random.default_rng([2 * i, seed]).random((1, N_TASKS)))[0][0]  # a fresh stream per call\n        b[i] = overtime(1.0 - np.random.default_rng([2 * i + 1, seed]).random((1, N_TASKS)))[0][0]\n    return summary((a + b) / 2, n) | {\"rho\": float(np.corrcoef(a, b)[0, 1])}\n\n\ndef control_variate(n, seed=SEED):\n    \"\"\"Y - beta*(C - E[C]) with C = total task time, whose mean 12*0.6 = 7.2 h is known exactly.\"\"\"\n    y, c = overtime(np.random.default_rng(seed).random((n, N_TASKS)))\n    beta = np.cov(y, c)[0, 1] / np.var(c, ddof=1)  # optimal beta = Cov(Y, C) / Var(C)\n    return summary(y - beta * (c - N_TASKS * MEAN_H), n) | {\"beta\": float(beta)}\n\n\ndef crn_difference(n, seed=SEED, crn=True):\n    \"\"\"Recap (L200 #11): overtime saved by a 30-minute longer shift, same vs independent random numbers.\"\"\"\n    rng = np.random.default_rng(seed)\n    u7 = rng.random((n, N_TASKS))\n    u75 = u7 if crn else rng.random((n, N_TASKS))\n    return summary(overtime(u7)[0] - overtime(u75, shift=7.5)[0], n)\n\n\ndef main(n=20_000):\n    print(f\"exact expected overtime: {exact_overtime():.4f} h per shift (Erlang formula)\")\n    base = plain(n)\n    print(f\"{n:,} model evaluations per method:\")\n    print(\"  method              estimate   std.err   variance ratio vs plain\")\n    rows = [(\"plain Monte Carlo\", base), (\"antithetic\", antithetic(n)), (\"control variate\", control_variate(n)),\n            (\"antithetic (loop)\", antithetic_loop(n))]\n    for name, r in rows:\n        extra = f\"  rho={r['rho']:+.2f}\" if \"rho\" in r else f\"  beta={r['beta']:.3f}\" if \"beta\" in r else \"\"\n        print(f\"  {name:18s}  {r['mean']:.4f}    {r['se']:.5f}   {base['var_per_eval'] / r['var_per_eval']:5.2f}x{extra}\")\n    ind, com = crn_difference(n, crn=False), crn_difference(n)\n    print(f\"CRN recap, overtime saved by a 7.5 h shift: independent {ind['mean']:.4f} +/- {1.96 * ind['se']:.4f}, \"\n          f\"common {com['mean']:.4f} +/- {1.96 * com['se']:.4f} h\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "overtime(u)",
+    "detail": "Inverse transform -mean*ln(1-u): every task time increases with its u, so the output is monotone - Owen's condition for rho < 0."
+   },
+   {
+    "title": "exact_overtime()",
+    "detail": "Closed-form E[(T-s)+] for an Erlang total: every estimator is checked against 0.9196, not against another estimate."
+   },
+   {
+    "title": "summary(y, evals)",
+    "detail": "Returns variance PER EVALUATION (se^2 x evaluations), the cost-fair number the ratio column uses."
+   },
+   {
+    "title": "antithetic()",
+    "detail": "One draw u, two evaluations; analyses the n/2 pair averages because the two halves of a pair are dependent."
+   },
+   {
+    "title": "antithetic_loop()",
+    "detail": "The loop form a per-run simulator forces. The shipped version creates a stream per evaluation (the fault); the fix creates one per pair - the only change in solution/variance_reduction.py."
+   },
+   {
+    "title": "control_variate()",
+    "detail": "beta = Cov(Y, C)/Var(C), then Y - beta(C - 7.2); unbiased because E[C] is known exactly."
+   },
+   {
+    "title": "crn_difference()",
+    "detail": "Same u for both shift lengths, so shared noise cancels in the difference (L200 #11)."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped antithetic_loop() reseeds per evaluation: default_rng([2i, seed]) for f(u) and default_rng([2i+1, seed]) for the 'mirror' f(1-u').",
+   "symptom": "No error and an unbiased estimate (0.8999 vs exact 0.9196), but rho = -0.00 and variance ratio 1.01x: the method silently does nothing (the vectorised antithetic() shows 1.46x).",
+   "fix": "Your build task: one stream per PAIR, u and 1-u from the same draw (solution/variance_reduction.py): rho = -0.33, ratio 1.50x.",
+   "proof": "test_build_task.py: BUILD_TARGET=mine on the shipped file -> FAILED (failures=2 of 3 tests); default (solution/variance_reduction.py) -> Ran 3 tests OK. TestFailureLab in test_variance_reduction.py keeps the fault reproducible (|rho| < 0.03, ratio < 1.15). research/failure_proofs_L300.py: shipped FAIL, solution PASS."
+  },
+  "tradeOffs": [
+   {
+    "option": "Antithetic variates",
+    "gains": "Free to add; 1.46x here, large for near-linear models",
+    "costs": "Needs paired streams; can DOUBLE variance for symmetric models (0.49x in tryIt 1)",
+    "chooseWhen": "Output is monotone in the inputs and you control the uniforms"
+   },
+   {
+    "option": "Control variate",
+    "gains": "5.40x here; works with any sampler",
+    "costs": "Needs an output with an exactly known mean; beta estimation adds small bias",
+    "chooseWhen": "A correlated quantity with known mean exists (total work, arrivals)"
+   },
+   {
+    "option": "More plain runs",
+    "gains": "No assumptions, nothing to break",
+    "costs": "Error only falls like 1/sqrt(n)",
+    "chooseWhen": "Runs are cheap or the code must stay simple"
+   }
+  ],
+  "buildTask": {
+   "task": "Fix antithetic_loop() in variance_reduction.py: one random stream per PAIR, evaluate f(u) and f(1-u) from the same u, so its rho and variance ratio match the vectorised antithetic().",
+   "hints": [
+    "np.random.default_rng([i, seed]) gives pair i its own reproducible stream.",
+    "Draw u once, then evaluate overtime(u) and overtime(1 - u).",
+    "Keep analysing pair averages: the two halves of a pair are not independent."
+   ],
+   "solution": "labs/L300/12-variance-reduction/solution/variance_reduction.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped file: Ran 3 tests ... FAILED (failures=2); after your fix: OK. Without the variable it checks the solution (Ran 3 tests ... OK).",
+   "stretch": {
+    "task": "Add pick_estimator(f, dims, control_mean): a 2,000-run pilot measures the antithetic pair correlation and the control-variate gain, refuses antithetic sampling when rho >= 0, picks the best method and logs the decision as one JSON line.",
+    "hints": [
+     "Owen 8.2: Var = sigma^2 (1 + rho)/n, so rho >= 0 means no gain or a loss.",
+     "Compare per-evaluation variances so the methods are judged at equal cost.",
+     "Return the evidence (rho, ratios) with the decision."
+    ],
+    "solution": "labs/L300/12-variance-reduction/solution/pick_estimator.py",
+    "check": "python -m unittest test_stretch -v  (Ran 4 tests ... OK); BUILD_TARGET=mine checks your own pick_estimator.py in the lab folder"
+   }
+  },
+  "observability": {
+   "emits": "The main table prints rho for each antithetic variant; the stretch solution/pick_estimator.py logs one JSON line per decision: {event, pilot, rho, ratios, method}.",
+   "read": "rho >= 0 or a ratio near 1.0 is the signature of a symmetric model or broken pairing."
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L300/12-variance-reduction/variance_reduction.py",
+    "purpose": "main lab code (ships the unfixed antithetic_loop())"
+   },
+   {
+    "path": "labs/L300/12-variance-reduction/solution/variance_reduction.py",
+    "purpose": "buildTask solution (the fix)"
+   },
+   {
+    "path": "labs/L300/12-variance-reduction/solution/pick_estimator.py",
+    "purpose": "stretch solution"
+   },
+   {
+    "path": "labs/L300/12-variance-reduction/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L300/12-variance-reduction/test_variance_reduction.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L300/12-variance-reduction/test_build_task.py",
+    "purpose": "buildTask check (BUILD_TARGET=mine checks your file)"
+   },
+   {
+    "path": "labs/L300/12-variance-reduction/test_stretch.py",
+    "purpose": "stretch check"
+   }
+  ],
+  "expectedResults": [
+   "All estimators within 3 standard errors of 0.9196",
+   "Antithetic 1.46x, control variate 5.40x",
+   "Shipped loop (stream per evaluation) 1.01x; fixed loop (stream per pair) 1.50x"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 14 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task (shipped file)",
+    "expected": "FAILED (failures=2): rho -0.00, ratio 1.01x"
+   },
+   {
+    "action": "200 repeats of antithetic(2,000)",
+    "expected": "Spread of the means matches the pair-average standard error within 25%"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Variance ratio ~1.0 for antithetic",
+    "action": "Log rho: ~0 means broken pairing; > 0 means a symmetric model."
+   },
+   {
+    "symptom": "Control-variate estimate biased",
+    "action": "E[C] must be exact (7.2 h), not estimated from the same runs."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Use antithetic sampling on a symmetric model y = (sum(u) - 6)^2.",
+    "predict": "Does it still help?",
+    "expected": "symmetric model: rho=+1.00, variance ratio antithetic vs plain = 0.49x"
+   },
+   {
+    "task": "Fix beta at 1.0 or 1.5 instead of the fitted 0.609.",
+    "predict": "Better or worse than plain Monte Carlo?",
+    "expected": "control variate beta=0.609: variance ratio 5.40x | control variate beta=1.0: variance ratio 1.92x | control variate beta=1.5: variance ratio 0.52x"
+   }
+  ],
+  "equivalents": [
+   "Stratified sampling and Latin hypercube (Owen ch. 8/10); scipy.stats.qmc.LatinHypercube.",
+   "Quasi-Monte Carlo (Sobol' sequences) - see lesson 14's SALib sampler.",
+   "Commercial DES tools: CRN via fixed stream numbers per source."
+  ],
+  "learningTools": [
+   {
+    "name": "marimo",
+    "role": "CHECK",
+    "exercise": "In a marimo notebook in this lab folder, import variance_reduction; put SHIFT_H and n in cells and the plain/antithetic/control-variate table below. Change SHIFT_H from 7.0 to 8.0.",
+    "expected": "At 7.0 h the cells must show exact 0.9196, antithetic 1.46x and control variate 5.40x (the lab's own output). At 8.0 h the antithetic gain should shrink (more zero-overtime shifts, less linear). Pending a manual run in marimo.",
+    "mac": "pip install marimo (catalog version 0.25.2), then marimo tutorial intro to learn the UI",
+    "windows": "pip install marimo (catalog version 0.25.2), then marimo tutorial intro",
+    "licence": "Apache-2.0 (OSI: yes)",
+    "url": "https://pypi.org/project/marimo/"
+   }
+  ],
+  "inRealSystems": [
+   "Capacity studies with slow models use CRN and control variates to cut replication counts.",
+   "Risk engines (insurance, energy) use antithetic sampling for near-linear payoffs."
+  ],
+  "useWhen": "Use when runs are expensive and you can control the random streams; skip when runs are cheap or the code must stay simple.",
+  "caution": "Variance reduction never fixes a biased model; a wrong pairing or beta can increase variance, so always report the measured ratio.",
+  "checkpoint": "PASS: the shipped loop shows ~1.0x; after your fix test_build_task passes with BUILD_TARGET=mine (rho < -0.25, > 1.3x); control variate > 4x; stretch pilot test passes.",
+  "checkYourself": [
+   {
+    "q": "rho = -0.32 for the pairs. What gain do you expect per evaluation?",
+    "a": "1/(1 + rho) = 1.48x; the lab measures 1.46x."
+   },
+   {
+    "q": "Why analyse pair averages, not all 2n values?",
+    "a": "The two halves of a pair are dependent; the iid formula misstates the standard error."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Owen, Monte Carlo theory, methods and examples, ch. 8 Variance reduction",
+    "url": "https://artowen.su.domains/mc/Ch-var-basic.pdf"
+   },
+   {
+    "title": "NumPy v2.5 manual: Parallel random number generation",
+    "url": "https://numpy.org/doc/stable/reference/random/parallel.html"
+   },
+   {
+    "title": "NumPy v2.5 manual: Random Generator",
+    "url": "https://numpy.org/doc/stable/reference/random/generator.html"
+   }
+  ],
+  "next": "L300 #13 Calibration: fit to data, validate on data you did not fit (variance reduction makes runs cheap; calibration decides whether the model they run is right)",
+  "validation": {
+   "status": "validated-local",
+   "how": "variance_reduction.py, solution/variance_reduction.py, try_it.py, solution/pick_estimator.py and unittests (Ran 14 tests ... OK (skipped=1)) ran locally on Python 3.12.15 + numpy 2.5.3; outputs pasted; BUILD_TARGET=mine on the shipped file fails 2 of 3 build-task tests; failure_proofs_L300.py: shipped FAIL / solution PASS. The SciPy check of exact_overtime() is pending-ci.",
+   "pendingCi": [
+    "test_variance_reduction.py: test_exact_overtime_by_numerical_integration (SciPy)",
+    "macOS and Windows runs of the whole lab"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L300/12-variance-reduction.md",
+  "conceptSummary": "Variance reduction keeps the estimate unbiased but lowers its variance per run: antithetic pairs cancel errors when rho < 0, a control variate removes noise explained by a quantity with known mean, CRN cancels shared noise in differences. The gain must be measured, and stream handling decides whether it exists.",
+  "seeAlso": [
+   "simulation L300 #16 Performance and scale: vectorise, parallelise, keep streams independent: the same stream discipline at scale - one SeedSequence child per replication, never one seed per worker or per call.",
+   "quantum-computing L300 #15 A hybrid variational loop (VQE) under shot noise: shot noise is Monte Carlo error (~1/sqrt(shots)); that lesson compares optimizers at equal shot cost, as this one compares estimators at equal evaluations."
+  ]
+ },
+ {
+  "id": "calibration",
+  "number": 13,
+  "level": "L300",
+  "title": "Calibration: fit to data, validate on data you did not fit",
+  "phase": "Harden",
+  "category": "calibration",
+  "description": "An office cools down overnight: least-squares calibration of three candidate models, a time-ordered holdout, and an identifiability check on the parameters.",
+  "outcome": "You can calibrate model parameters by least squares, pick a model with a holdout, and tell a good fit from identified parameters.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; SciPy 1.18.1 least_squares equivalent in CI",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "Fit on one period, judge on the next: a model that only fits the data it was tuned on cannot forecast."
+  ],
+  "prerequisites": [
+   "Lesson 6 (verification vs validation)",
+   "Lesson 7 (fitting input data)"
+  ],
+  "glossary": [
+   {
+    "term": "calibration",
+    "meaning": "Choosing parameter values so model output matches measured data."
+   },
+   {
+    "term": "holdout",
+    "meaning": "Data kept out of fitting and used only to score the model; for time series, the most recent period."
+   },
+   {
+    "term": "identifiable",
+    "meaning": "The data pin each parameter down; no trade-off between parameters leaves the fit unchanged."
+   }
+  ],
+  "concepts": [
+   "Least squares by Gauss-Newton/LM.",
+   "In-sample error always favours more parameters.",
+   "Time-ordered holdout catches failed extrapolation.",
+   "Good fit is not identified parameters."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python calibrate.py`",
+    "mac": "cd labs/L300/13-calibration\npython calibrate.py",
+    "windows": "cd labs\\L300\\13-calibration\npython calibrate.py",
+    "expected": "73 readings, 49 for calibration (0-8 h), 24 held out (8-12 h); then a 3-row table and one 'select() picks' line.",
+    "ifNot": "Needs numpy only."
+   },
+   {
+    "title": "Least squares on 0-8 h",
+    "detail": "gauss_newton() minimises the sum of squared residuals with damped (Levenberg-Marquardt) steps; the polynomial uses numpy.linalg.lstsq.",
+    "expected": "Calibration RMSE: one-exp 0.175, two-exp 0.152, poly-6 0.148 C - more parameters, smaller error.",
+    "ifNot": "A fit far above 0.2 C: check the starting values."
+   },
+   {
+    "title": "Failure lab: validate on the same data",
+    "detail": "The shipped select() scores each model on the data it was fitted to (scores(models, y, CAL)).",
+    "expected": "select() picks poly-6 (7 p); its holdout RMSE is 12.517 C; it forecasts -19.60 C at 12 h (measured 13.33).",
+    "ifNot": "If poly-6 is not picked, check that select() scores on CAL."
+   },
+   {
+    "title": "Fix: time-ordered holdout (build task)",
+    "detail": "Make select() score on ~CAL, the unseen 8-12 h. Check YOUR file with BUILD_TARGET=mine.",
+    "mac": "cd labs/L300/13-calibration\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L300\\13-calibration\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task -v",
+    "expected": "Before the fix: Ran 2 tests ... FAILED (failures=11, counting 10 seed subtests). After: OK; select() picks two-exp (5 p), holdout RMSE 0.161 C (sensor noise sd 0.15).",
+    "ifNot": "Holdout must be the END of the log, not random points (tryIt 2)."
+   },
+   {
+    "title": "Identifiability (stretch)",
+    "detail": "`python solution/param_report.py`: relative standard errors and the worst-correlated pair from cov = s^2 (J^T J)^-1; `python -m unittest test_stretch -v`.",
+    "mac": "cd labs/L300/13-calibration\npython solution/param_report.py\npython -m unittest test_stretch -v",
+    "windows": "cd labs\\L300\\13-calibration\npython solution/param_report.py\npython -m unittest test_stretch -v",
+    "expected": "two-exp: identifiable=False, worst pair (tau_wall, T_inf) -0.994; with T_inf fixed at 12: identifiable=True.",
+    "ifNot": "Singular J^T J: a parameter has no effect (two equal time constants) - pinv handles it."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L300/13-calibration\npython -m unittest -v",
+    "windows": "cd labs\\L300\\13-calibration\npython -m unittest -v",
+    "expected": "Ran 11 tests ... OK (skipped=1)",
+    "ifNot": "The skip is the SciPy least_squares equivalence test (pending-ci)."
+   }
+  ],
+  "code": "\"\"\"L300 calibration: fit a room cool-down model to a logged temperature curve, and validate it honestly.\n\nAn office's heating switches off at 18:00; a sensor logs the room every 10 minutes for 12 hours.\nThree candidate models are calibrated by least squares on the first 8 hours and checked on the last 4.\npython calibrate.py\n\"\"\"\nimport numpy as np\n\nSEED, NOISE = 13, 0.15\nT_HOURS = np.arange(0, 12 + 1e-9, 1 / 6)  # 73 readings, every 10 minutes\nCAL = T_HOURS <= 8.0  # calibration window; the rest (8-12 h) is the holdout\n\n\ndef observed(seed=SEED):\n    \"\"\"Synthetic 'measured' data: fast air mode (1.5 h) + slow wall mode (9 h) + sensor noise. Truth is known.\"\"\"\n    truth = 12 + 6 * np.exp(-T_HOURS / 1.5) + 4 * np.exp(-T_HOURS / 9.0)\n    return truth + np.random.default_rng(seed).normal(0, NOISE, T_HOURS.size)\n\n\ndef one_exp(t, p):  # [T_inf, A, tau]: Newton cooling, one time constant (3 parameters)\n    return p[0] + p[1] * np.exp(-t / p[2])\n\n\ndef two_exp(t, p):  # [T_inf, A, tau_air, B, tau_wall]: air + walls (5 parameters)\n    return p[0] + p[1] * np.exp(-t / p[2]) + p[3] * np.exp(-t / p[4])\n\n\ndef gauss_newton(model, t, y, p0, iters=200, lam=1e-3):\n    \"\"\"Least squares: minimise sum (model - y)^2 with damped Gauss-Newton (Levenberg-Marquardt) steps.\"\"\"\n    p = np.array(p0, float)\n    cost = lambda q: float(np.sum((model(t, q) - y) ** 2))\n    for _ in range(iters):\n        r = model(t, p) - y\n        J = np.column_stack([(model(t, p + h) - model(t, p)) / h[i]  # forward-difference Jacobian\n                             for i, h in enumerate(np.diag(1e-6 * np.maximum(1.0, np.abs(p))))])\n        step = np.linalg.solve(J.T @ J + lam * np.diag(np.diag(J.T @ J)), -J.T @ r)\n        if cost(p + step) < cost(p):\n            p, lam = p + step, lam / 3  # accept, trust the quadratic model more\n        else:\n            lam *= 5  # reject, take smaller steps\n        if np.linalg.norm(step) < 1e-10 * (1 + np.linalg.norm(p)):\n            break\n    return p, J\n\n\ndef poly(degree):\n    \"\"\"Black-box curve: polynomial in t/8 (7 parameters for degree 6) - flexible, but no physics.\"\"\"\n    def fit(t, y):\n        coef = np.linalg.lstsq(np.vander(t / 8, degree + 1), y)[0]\n        return lambda tt: np.vander(tt / 8, degree + 1) @ coef\n    return fit\n\n\ndef candidates(t, y):\n    \"\"\"Calibrate each model on (t, y); return name -> (n_params, predict function).\"\"\"\n    p1, _ = gauss_newton(one_exp, t, y, [y[-1], y[0] - y[-1], 2.0])\n    p2, _ = gauss_newton(two_exp, t, y, [y[-1], 5.0, 1.0, 5.0, 6.0])\n    return {\"one-exp (3 p)\": (3, lambda tt: one_exp(tt, p1)),\n            \"two-exp (5 p)\": (5, lambda tt: two_exp(tt, p2)),\n            \"poly-6 (7 p)\": (7, poly(6)(t, y))}\n\n\nrmse = lambda a, b: float(np.sqrt(np.mean((a - b) ** 2)))\n\n\ndef scores(models, y, mask):\n    \"\"\"RMSE of every calibrated model on the readings selected by mask.\"\"\"\n    return {name: rmse(f(T_HOURS[mask]), y[mask]) for name, (_, f) in models.items()}\n\n\ndef select(y):\n    \"\"\"Calibrate every candidate on the first 8 h, score them and return the best.\"\"\"\n    models = candidates(T_HOURS[CAL], y[CAL])\n    s = scores(models, y, CAL)  # score each model on the readings it was fitted to\n    return min(s, key=s.get), s, models\n\n\ndef main():\n    y = observed()\n    print(f\"{y.size} readings, {CAL.sum()} for calibration (0-8 h), {(~CAL).sum()} held out (8-12 h); \"\n          f\"sensor noise sd {NOISE}\")\n    best, _, models = select(y)\n    same, hold = scores(models, y, CAL), scores(models, y, ~CAL)\n    print(\"  model           RMSE on calibration data   RMSE on holdout   prediction at 12 h (measured \"\n          f\"{y[-1]:.2f})\")\n    for name, (_, f) in models.items():\n        print(f\"  {name:14s}  {same[name]:10.3f} C               {hold[name]:8.3f} C      {f(T_HOURS[-1:])[0]:8.2f} C\")\n    print(f\"select() picks {best}; its holdout RMSE is {hold[best]:.3f} C\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "observed()",
+    "detail": "Synthetic log with KNOWN truth (air 1.5 h + walls 9 h + noise 0.15): every model choice can be judged against reality."
+   },
+   {
+    "title": "one_exp / two_exp",
+    "detail": "Physical candidates with 3 and 5 parameters; parameters have meaning (T_inf, time constants)."
+   },
+   {
+    "title": "gauss_newton()",
+    "detail": "Forward-difference Jacobian, damped normal equations (J^T J + lam diag) dp = -J^T r; lam shrinks on success, grows on failure (LM)."
+   },
+   {
+    "title": "poly(degree)",
+    "detail": "Black-box curve in t/8 fitted with numpy.linalg.lstsq: flexible, no physics - extrapolates badly."
+   },
+   {
+    "title": "scores() and select()",
+    "detail": "scores() computes RMSE on any mask. select() is where the fault lives: the shipped file scores on CAL (the fitted data), the fix on ~CAL - one mask."
+   },
+   {
+    "title": "rmse()",
+    "detail": "Same metric for calibration and holdout so the two columns are comparable."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped select() scores each calibrated model on the same 0-8 h data it was fitted to (scores(models, y, CAL)), seed 13.",
+   "symptom": "The 7-parameter polynomial wins with 0.148 C, but its holdout RMSE is 12.517 C and it forecasts -19.60 C at 12 h where the sensor read 13.33 C.",
+   "fix": "Your build task: time-ordered split - calibrate on 0-8 h, score on 8-12 h only (~CAL) -> two-exp, holdout RMSE 0.161 C (solution/calibrate.py).",
+   "proof": "test_build_task.py: BUILD_TARGET=mine on the shipped file -> both tests FAIL (failures=11 with the 10 seed subtests); default (solution/calibrate.py) -> Ran 2 tests OK (two-exp < 0.2 C, never poly-6 for seeds 20-29). TestFailureLab in test_calibrate.py keeps the fault reproducible. research/failure_proofs_L300.py: shipped FAIL, solution PASS."
+  },
+  "tradeOffs": [
+   {
+    "option": "Time-ordered holdout",
+    "gains": "Tests extrapolation, the real use of a forecast",
+    "costs": "Less data for fitting; one split can be lucky",
+    "chooseWhen": "Data is a time series and the model must forecast"
+   },
+   {
+    "option": "Random / k-fold split",
+    "gains": "Uses all data, lower variance of the score",
+    "costs": "Interpolation hides extrapolation failure (tryIt 2 picks poly-6)",
+    "chooseWhen": "Observations are exchangeable (not ordered in time)"
+   },
+   {
+    "option": "Fix a parameter from a separate measurement",
+    "gains": "Restores identifiability (relative s.e. <= 17%)",
+    "costs": "Needs an extra sensor or datasheet; its error becomes model error",
+    "chooseWhen": "Two parameters trade off (|corr| near 1)"
+   }
+  ],
+  "buildTask": {
+   "task": "Fix select() in calibrate.py so it scores the candidates on the time-ordered holdout (8-12 h), not on the calibration window, and picks a model that forecasts.",
+   "hints": [
+    "scores(models, y, mask) already computes RMSE on any mask; CAL is the calibration window.",
+    "The holdout must be the END of the log: a random holdout still picks poly-6 (tryIt 2)."
+   ],
+   "solution": "labs/L300/13-calibration/solution/calibrate.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped file: Ran 2 tests ... FAILED (failures=11), 10 of them seed subtests; after your fix: OK. Without the variable it checks the solution (Ran 2 tests ... OK).",
+   "stretch": {
+    "task": "Add param_report(): standard errors and correlations from the Jacobian (cov = s^2 (J^T J)^-1), name the worst-correlated pair, and call the fit 'identifiable' only if every relative standard error is below 50%.",
+    "hints": [
+     "gauss_newton() already returns J at the solution.",
+     "s^2 = residual sum of squares / (n - k).",
+     "Name the worst-correlated pair: it tells you which extra measurement would help."
+    ],
+    "solution": "labs/L300/13-calibration/solution/param_report.py",
+    "check": "python -m unittest test_stretch -v  (Ran 3 tests ... OK); BUILD_TARGET=mine checks your own param_report.py in the lab folder"
+   }
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L300/13-calibration/calibrate.py",
+    "purpose": "main lab code (ships the unfixed select())"
+   },
+   {
+    "path": "labs/L300/13-calibration/calibrate_scipy.py",
+    "purpose": "scipy.optimize.least_squares equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L300/13-calibration/solution/calibrate.py",
+    "purpose": "buildTask solution (the fix)"
+   },
+   {
+    "path": "labs/L300/13-calibration/solution/param_report.py",
+    "purpose": "stretch solution"
+   },
+   {
+    "path": "labs/L300/13-calibration/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L300/13-calibration/test_calibrate.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L300/13-calibration/test_build_task.py",
+    "purpose": "buildTask check (BUILD_TARGET=mine checks your file)"
+   },
+   {
+    "path": "labs/L300/13-calibration/test_stretch.py",
+    "purpose": "stretch check"
+   }
+  ],
+  "expectedResults": [
+   "Calibration RMSE falls with parameter count",
+   "Shipped select() (same data) picks poly-6; fixed select() (holdout) picks two-exp",
+   "Two-exp predicts well but T_inf and tau_wall are not separately identified (stretch)"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 11 tests ... OK (skipped=1)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task (shipped file)",
+    "expected": "FAILED (failures=11): poly-6 picked"
+   },
+   {
+    "action": "Fit one_exp to noise-free data from [12, 8, 2.5]",
+    "expected": "Recovers the parameters to rtol 1e-6"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Fit returns absurd parameters with a good RMSE",
+    "action": "Non-identifiable: run param_report() (stretch), log longer or fix a parameter."
+   },
+   {
+    "symptom": "Different results from different starting values",
+    "action": "Local minima: start from physical values; compare costs."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Calibrate two-exp on the first 5 hours only.",
+    "predict": "Worse fit, or absurd parameters?",
+    "expected": "two-exp on 0-5 h: RMSE 0.170 C, T_inf=-71014 C, B=71029 C, tau_wall=326494 h"
+   },
+   {
+    "task": "Hold out every 3rd reading instead of the last 4 hours.",
+    "predict": "Does poly-6 still get caught?",
+    "expected": "random holdout RMSE: one-exp (3 p) 0.257, two-exp (5 p) 0.189, poly-6 (7 p) 0.178 -> picks poly-6 (7 p)"
+   }
+  ],
+  "equivalents": [
+   "SciPy: scipy.optimize.least_squares (trf / lm) or curve_fit (returns pcov).",
+   "Bayesian calibration (priors + MCMC) when parameter uncertainty must be propagated.",
+   "OpenModelica/OMEdit parameter estimation workflows for Modelica models."
+  ],
+  "learningTools": [
+   {
+    "name": "JupyterLab (+ JupyterLab Desktop)",
+    "role": "CHECK",
+    "exercise": "In a notebook in this lab folder: from calibrate import *; y = observed(); plot y against T_HOURS, overlay the three fitted models from candidates(T_HOURS[CAL], y[CAL]) over 0-12 h and draw a vertical line at 8 h.",
+    "expected": "Left of the line all three curves hug the data; right of it poly-6 dives to -19.60 C at 12 h while two-exp stays within ~0.16 C of the points (the lab's printed values). Pending a manual run in JupyterLab.",
+    "mac": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or the JupyterLab Desktop arm64 installer",
+    "windows": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or winget install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   }
+  ],
+  "inRealSystems": [
+   "Building energy models are calibrated to metered data and judged on a later period.",
+   "Digital twins re-calibrate on rolling windows and track holdout error as a health metric."
+  ],
+  "useWhen": "Use whenever parameters come from data; skip holdout only if the model will never be used outside the fitted range (rare).",
+  "caution": "Synthetic data with known truth; real sensors drift and have outliers. Never report fitted parameters as physical facts without their standard errors.",
+  "checkpoint": "PASS: the shipped select() picks poly-6; after your fix test_build_task passes with BUILD_TARGET=mine (two-exp, < 0.2 C); identifiability stretch test passes.",
+  "checkYourself": [
+   {
+    "q": "Why does the 7-parameter polynomial win on the calibration data?",
+    "a": "More parameters can always bend closer to the points, including the noise."
+   },
+   {
+    "q": "Two-exp forecasts well but corr(T_inf, tau_wall) = -0.994. What does that mean?",
+    "a": "The data cannot separate them; many pairs fit equally. Fix T_inf from a sensor or log longer."
+   }
+  ],
+  "sources": [
+   {
+    "title": "NIST/SEMATECH e-Handbook 4.1.4.2: Nonlinear least squares regression",
+    "url": "https://www.itl.nist.gov/div898/handbook/pmd/section1/pmd142.htm"
+   },
+   {
+    "title": "SciPy v1.18 manual: scipy.optimize.least_squares",
+    "url": "https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.least_squares.html"
+   },
+   {
+    "title": "NumPy v2.5 manual: numpy.linalg.lstsq",
+    "url": "https://numpy.org/doc/stable/reference/generated/numpy.linalg.lstsq.html"
+   }
+  ],
+  "next": "L300 #14 Global sensitivity: OAT vs Morris vs Sobol' (which inputs matter enough to calibrate, and which can be frozen)",
+  "validation": {
+   "status": "validated-local",
+   "how": "calibrate.py, solution/calibrate.py, try_it.py, solution/param_report.py and unittests (Ran 11 tests ... OK (skipped=1)) ran locally on Python 3.12.15 + numpy 2.5.3; outputs pasted; BUILD_TARGET=mine on the shipped file fails both build-task tests; failure proof shipped FAIL / solution PASS. calibrate_scipy.py and its equivalence test are pending-ci.",
+   "pendingCi": [
+    "labs/L300/13-calibration/calibrate_scipy.py",
+    "test_calibrate.py: test_least_squares_finds_the_same_one_exp_parameters",
+    "macOS and Windows runs of the whole lab"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L300/13-calibration.md",
+  "conceptSummary": "Calibration chooses parameters by least squares, but error on the fitted data always favours more parameters. Judge models on a time-ordered holdout, and check identifiability: a model can forecast well while two of its parameters trade off and are not pinned down.",
+  "seeAlso": [
+   "quantum-computing L300 #13 Error mitigation: readout correction and zero-noise extrapolation: zero-noise extrapolation fits a curve and reads it outside the measured range - the same extrapolation risk that sinks poly-6 here.",
+   "simulation L300 #14 Global sensitivity: OAT vs Morris vs Sobol': rank the inputs before you calibrate; a parameter that barely moves the output cannot be identified from data."
+  ]
+ },
+ {
+  "id": "global-sensitivity",
+  "number": 14,
+  "level": "L300",
+  "title": "Global sensitivity: OAT vs Morris vs Sobol'",
+  "phase": "Harden",
+  "category": "sensitivity-analysis",
+  "description": "Which inputs drive an office's daily cooling energy? One-at-a-time misses the window x temperature interaction; Morris flags it; Sobol' total-order indices quantify it.",
+  "outcome": "You can compute Morris and Sobol' indices (Saltelli/Jansen) in numpy, read S1 against ST, and screen inputs without losing an interaction.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3; SALib 1.6.0 equivalent in CI; optional Ollama for agent assist",
+  "estimatedTime": "50 minutes",
+  "overview": [
+   "Rank inputs by how much output variance they explain - including through interactions - not by a local wiggle."
+  ],
+  "prerequisites": [
+   "Lesson 6 (one-parameter sweep)",
+   "Lesson 12 (Monte Carlo error)"
+  ],
+  "glossary": [
+   {
+    "term": "OAT",
+    "meaning": "One-at-a-time: vary one input, others at nominal - local only."
+   },
+   {
+    "term": "Morris mu*, sigma",
+    "meaning": "Mean |elementary effect| (importance) and its spread (interaction/nonlinearity flag)."
+   },
+   {
+    "term": "Sobol' S1 / ST",
+    "meaning": "Share of output variance from an input alone / alone plus all its interactions."
+   }
+  ],
+  "concepts": [
+   "OAT is blind at a zero-derivative nominal point.",
+   "Morris screens cheaply; sigma flags interactions.",
+   "ST - S1 = interaction share.",
+   "Screen by ST, then check the reduced model."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python sensitivity.py`",
+    "mac": "cd labs/L300/14-global-sensitivity\npython sensitivity.py",
+    "windows": "cd labs\\L300\\14-global-sensitivity\npython sensitivity.py",
+    "expected": "A 4-row table (OAT swing, Morris mu*/sigma, Sobol' S1/ST), run counts, two rankings and one screen() line.",
+    "ifNot": "Needs numpy only."
+   },
+   {
+    "title": "One-at-a-time",
+    "detail": "oat(): each input over its full range, others at nominal (22 C outside = inside, windows half open).",
+    "expected": "window_open swing 0.0 kWh/day; ranking outdoor_C > occupants > lights_h > window_open.",
+    "ifNot": "Non-zero window swing: nominal outdoor is not 22 C."
+   },
+   {
+    "title": "Morris screening",
+    "detail": "morris(): 20 trajectories x 5 runs on a 4-level grid; mu* = mean |EE|, sigma = sd(EE).",
+    "expected": "window_open mu* 100.8, sigma 107.4 (interaction flag); occupants mu* 40.0, sigma 0.0 (additive).",
+    "ifNot": "sigma 0 everywhere: elementary effects not per-trajectory."
+   },
+   {
+    "title": "Sobol' indices",
+    "detail": "sobol(): A, B, AB_i with N = 8,192 (49,152 runs); S1 Saltelli 2010, ST Jansen; outputs centred first.",
+    "expected": "outdoor S1 0.804 / ST 0.971; window_open S1 0.005 / ST 0.155 (analytic 0.152); sum S1 0.844.",
+    "ifNot": "Noisy S1 (even negative): centre the outputs or raise N."
+   },
+   {
+    "title": "Failure lab: screen() by OAT",
+    "detail": "The shipped screen() keeps the top 2 inputs by OAT swing and freezes the rest at nominal; variance_kept() measures what the reduced model keeps.",
+    "expected": "screen() keeps ['outdoor_C', 'occupants']: 84.1% of the variance - although ST ranks window_open second.",
+    "ifNot": "Use the same input sample for full and reduced model."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L300/14-global-sensitivity\npython -m unittest -v",
+    "windows": "cd labs\\L300\\14-global-sensitivity\npython -m unittest -v",
+    "expected": "Ran 16 tests ... OK (skipped=2)",
+    "ifNot": "The skips are the SALib equivalence tests (pending-ci)."
+   },
+   {
+    "title": "Agent assist (optional)",
+    "detail": "`python agent_assist.py --fake` (drop --fake to use local Ollama).",
+    "mac": "cd labs/L300/14-global-sensitivity\npython agent_assist.py --fake",
+    "windows": "cd labs\\L300\\14-global-sensitivity\npython agent_assist.py --fake",
+    "expected": "Agent ranks by the OAT column; code ranks by ST and overrules positions #2-#4; the invented '30' is flagged UNVERIFIED.",
+    "ifNot": "No server: use --fake."
+   },
+   {
+    "title": "Build: screen by total-order index",
+    "detail": "Fix screen() in sensitivity.py to rank by a measure that includes interactions, then confirm with variance_kept(). Check YOUR file with BUILD_TARGET=mine.",
+    "mac": "cd labs/L300/14-global-sensitivity\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L300\\14-global-sensitivity\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task -v",
+    "expected": "Before the fix: Ran 2 tests ... FAILED (failures=2). After: OK; screen() keeps ['outdoor_C', 'window_open']: 96.1% of the variance.",
+    "ifNot": "Still 84.1%: screen() still sorts by oat_swing."
+   },
+   {
+    "title": "Stretch: bootstrap ranking",
+    "detail": "`python solution/robust_ranking.py`, then `python -m unittest test_stretch -v` (BUILD_TARGET=mine checks your own file).",
+    "mac": "cd labs/L300/14-global-sensitivity\npython solution/robust_ranking.py\npython -m unittest test_stretch -v",
+    "windows": "cd labs\\L300\\14-global-sensitivity\npython solution/robust_ranking.py\npython -m unittest test_stretch -v",
+    "expected": "N=32: outdoor_C > window_open ~ occupants > lights_h; N=8192: strict order outdoor_C > window_open > occupants > lights_h; Ran 3 tests ... OK.",
+    "ifNot": "No '~' at N=32: intervals not computed from resampled rows."
+   }
+  ],
+  "code": "\"\"\"L300 global sensitivity analysis: which inputs drive an office's daily cooling energy?\n\nE = 150 + 4*dT + 1.0*(occupants - 40) + 24*window*dT + 3*(lights_h - 8)   [kWh/day], dT = outdoor - 22 C\nOpen windows only matter when it is warmer or colder outside than inside: an INTERACTION (window x dT).\nCompares one-at-a-time (OAT), Morris screening and Sobol' indices (Saltelli/Jansen estimators).\npython sensitivity.py\n\"\"\"\nimport numpy as np\n\nNAMES = [\"outdoor_C\", \"occupants\", \"window_open\", \"lights_h\"]\nLOW = np.array([16.0, 20.0, 0.0, 6.0])\nHIGH = np.array([28.0, 60.0, 1.0, 10.0])\nNOMINAL = (LOW + HIGH) / 2  # 22 C, 40 people, windows half open, 8 h of lights\nSEED = 14\n\n\ndef energy(x):\n    \"\"\"Model: x (n, 4) in physical units -> kWh/day.\"\"\"\n    dT = x[:, 0] - 22.0\n    return 150 + 4 * dT + 1.0 * (x[:, 1] - 40) + 24 * x[:, 2] * dT + 3 * (x[:, 3] - 8)\n\n\ndef scale(u):\n    return LOW + u * (HIGH - LOW)  # unit cube -> physical ranges (inputs independent, uniform)\n\n\ndef oat(f=energy):\n    \"\"\"One-at-a-time: swing each input over its full range, the others held at NOMINAL. Local view only.\"\"\"\n    swings = []\n    for i in range(len(NAMES)):\n        lo, hi = NOMINAL.copy(), NOMINAL.copy()\n        lo[i], hi[i] = LOW[i], HIGH[i]\n        swings.append(abs(f(hi[None])[0] - f(lo[None])[0]))\n    return np.array(swings)\n\n\ndef morris(r=20, levels=4, f=energy, seed=SEED):\n    \"\"\"Morris screening: r random one-step-per-input trajectories on a grid; mu* = mean |EE|, sigma = sd(EE).\"\"\"\n    rng, d = np.random.default_rng(seed), len(NAMES)\n    delta = levels / (2 * (levels - 1))  # 2/3 for 4 levels (Morris 1991)\n    ee = np.zeros((r, d))\n    for k in range(r):\n        x = rng.integers(0, levels // 2, d) / (levels - 1)  # start where x + delta stays inside [0, 1]\n        y = f(scale(x)[None])[0]\n        for i in rng.permutation(d):  # move one input at a time, in random order\n            x[i] += delta\n            y_new = f(scale(x)[None])[0]\n            ee[k, i], y = (y_new - y) / delta, y_new  # elementary effect per full input range\n    return np.abs(ee).mean(axis=0), ee.std(axis=0, ddof=1)\n\n\ndef sobol(n=8192, f=energy, seed=SEED):\n    \"\"\"Sobol' indices from N(d+2) runs: matrices A, B and AB_i (column i of A replaced by column i of B).\"\"\"\n    rng, d = np.random.default_rng(seed), len(NAMES)\n    a, b = rng.random((n, d)), rng.random((n, d))\n    fa, fb = f(scale(a)), f(scale(b))\n    mean, var = np.mean(np.concatenate([fa, fb])), np.var(np.concatenate([fa, fb]))\n    fa, fb = fa - mean, fb - mean  # centring: same indices in expectation, much less estimator noise\n    s1, st = np.zeros(d), np.zeros(d)\n    for i in range(d):\n        ab = a.copy()\n        ab[:, i] = b[:, i]\n        fab = f(scale(ab)) - mean\n        s1[i] = np.mean(fb * (fab - fa)) / var  # first order, Saltelli et al. 2010\n        st[i] = 0.5 * np.mean((fa - fab) ** 2) / var  # total order (includes interactions), Jansen 1999\n    return s1, st\n\n\ndef table(n=8192):\n    swing, (mu_star, sigma), (s1, st) = oat(), morris(), sobol(n)\n    return [{\"input\": NAMES[i], \"oat_swing\": round(float(swing[i]), 1), \"morris_mu_star\": round(float(mu_star[i]), 1),\n             \"morris_sigma\": round(float(sigma[i]), 1), \"S1\": round(float(s1[i]), 3), \"ST\": round(float(st[i]), 3)}\n            for i in range(len(NAMES))]\n\n\ndef ranking(rows, key):\n    return [r[\"input\"] for r in sorted(rows, key=lambda r: -r[key])]\n\n\ndef screen(rows, k=2):\n    \"\"\"Screening: keep the k most important inputs; the rest get frozen at nominal. Importance = OAT swing.\"\"\"\n    return ranking(rows, \"oat_swing\")[:k]\n\n\ndef variance_kept(keep, n=50_000, f=energy, seed=SEED):\n    \"\"\"Screening test: fix every input NOT in keep at its nominal value; share of output variance still explained.\"\"\"\n    x = scale(np.random.default_rng(seed).random((n, len(NAMES))))\n    reduced = x.copy()\n    for i, name in enumerate(NAMES):\n        if name not in keep:\n            reduced[:, i] = NOMINAL[i]\n    return float(np.var(f(reduced)) / np.var(f(x)))\n\n\ndef main():\n    rows = table()\n    print(\"input         OAT swing   Morris mu*  sigma    Sobol S1    ST     (kWh/day; indices = share of variance)\")\n    for r in rows:\n        print(f\"{r['input']:12s}  {r['oat_swing']:8.1f}   {r['morris_mu_star']:8.1f}  {r['morris_sigma']:6.1f}\"\n              f\"   {r['S1']:7.3f}  {r['ST']:7.3f}\")\n    print(f\"runs: OAT {2 * len(NAMES)}, Morris {20 * (len(NAMES) + 1)}, Sobol {8192 * (len(NAMES) + 2)}\")\n    print(\"rank by OAT swing:\", \" > \".join(ranking(rows, \"oat_swing\")))\n    print(\"rank by Sobol ST: \", \" > \".join(ranking(rows, \"ST\")))\n    print(f\"sum S1 = {sum(r['S1'] for r in rows):.3f}  (1 - sum S1 = variance from interactions)\")\n    keep = screen(rows)\n    print(f\"screen() keeps {keep}: the reduced model keeps {variance_kept(keep):.1%} of the variance\")\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "energy(x)",
+    "detail": "24*window*dT is the interaction: zero whenever outdoor = indoor, whatever the window does."
+   },
+   {
+    "title": "oat()",
+    "detail": "2d runs, all through the nominal point - that is exactly why it cannot see window_open."
+   },
+   {
+    "title": "morris()",
+    "detail": "Grid trajectories with delta = 2/3; elementary effect = output change per full input range."
+   },
+   {
+    "title": "sobol(): A, B, AB_i",
+    "detail": "AB_i differs from A only in column i, so f_A - f_AB_i isolates input i with everything else varying (N(d+2) runs)."
+   },
+   {
+    "title": "S1 and ST estimators",
+    "detail": "S1 = mean(f_B (f_AB_i - f_A))/V (Saltelli 2010), ST = mean((f_A - f_AB_i)^2)/(2V) (Jansen); centring removes noise from the 150 kWh offset."
+   },
+   {
+    "title": "variance_kept()",
+    "detail": "The screening test: freeze dropped inputs at nominal and compare output variance with the full model on the same sample."
+   },
+   {
+    "title": "screen()",
+    "detail": "Where the fault lives: the shipped file ranks by oat_swing, the fix by ST - one key. variance_kept() is the check that catches it."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped screen() keeps the top 2 inputs by OAT swing (seeded sample, seed 14): window_open swings 0.0 kWh/day at the nominal point, so it is frozen at 0.5.",
+   "symptom": "The reduced model keeps only 84.1% of the output variance; the window x temperature interaction (15% of the variance) is gone, and nothing warns you.",
+   "fix": "Your build task: screen() ranks by Sobol' total-order index: window_open ST = 0.155 (S1 0.005, so almost all interaction). Keeping outdoor_C + window_open keeps 96.1% (solution/sensitivity.py).",
+   "proof": "test_build_task.py: BUILD_TARGET=mine on the shipped file -> FAILED (failures=2 of 2); default (solution/sensitivity.py) -> Ran 2 tests OK ([outdoor_C, window_open], > 95%). TestFailureLab in test_sensitivity.py keeps the fault reproducible (< 88%). research/failure_proofs_L300.py: shipped FAIL, solution PASS."
+  },
+  "tradeOffs": [
+   {
+    "option": "OAT",
+    "gains": "2d runs; easy to explain (tornado chart)",
+    "costs": "Local; misses interactions; answer depends on the nominal point (tryIt 1)",
+    "chooseWhen": "Model is known to be near-linear and additive, or only as a first look"
+   },
+   {
+    "option": "Morris",
+    "gains": "r(d+1) runs (100 here); flags interactions via sigma",
+    "costs": "Qualitative ranking, no variance shares",
+    "chooseWhen": "Many inputs (tens to hundreds) to screen before a costly analysis"
+   },
+   {
+    "option": "Sobol' (Saltelli/Jansen)",
+    "gains": "Quantitative S1 and ST, interactions included",
+    "costs": "N(d+2) runs (49,152 here); assumes independent inputs",
+    "chooseWhen": "Few inputs left after screening, decisions depend on the shares"
+   }
+  ],
+  "buildTask": {
+   "task": "Fix screen() in sensitivity.py so it keeps the inputs that carry the output variance, interactions included, and verify the reduced model with variance_kept().",
+   "hints": [
+    "The table already holds S1 and ST for every input: which one counts interactions?",
+    "Never trust a screen you have not checked: compare the reduced model's variance with the full model's."
+   ],
+   "solution": "labs/L300/14-global-sensitivity/solution/sensitivity.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped file: Ran 2 tests ... FAILED (failures=2); after your fix: OK. Without the variable it checks the solution (Ran 2 tests ... OK).",
+   "stretch": {
+    "task": "Add st_with_ci() (bootstrap 95% intervals for ST from the same runs) and robust_ranking(), which writes '~' instead of '>' between inputs whose intervals overlap.",
+    "hints": [
+     "Resample the N rows of A, B and AB_i together - no new model runs.",
+     "Use the 2.5th and 97.5th percentiles of 200 bootstrap ST values.",
+     "Compare neighbours in the sorted order only."
+    ],
+    "solution": "labs/L300/14-global-sensitivity/solution/robust_ranking.py",
+    "check": "python -m unittest test_stretch -v  (Ran 3 tests ... OK; N=32 gives 'outdoor_C > window_open ~ occupants > lights_h'); BUILD_TARGET=mine checks your own robust_ranking.py"
+   }
+  },
+  "agentAssist": {
+   "task": "A local model ranks the inputs from the sensitivity table and explains it; code ranks by ST itself, lists every disagreeing position and checks the numbers the agent quotes.",
+   "prompt": "[[SIM-RANK]] Sensitivity table ... {table}. Rank ALL inputs from most to least important for the output variance. Reply with ONE JSON object: {\"ranking\": [...], \"reason\": ...}. Then: explain which inputs matter; quote only numbers in the table.",
+   "check": "validate_ranking(): must be a permutation of the four known inputs, else rejected. check_ranking(): the decision is the ST order computed by code; every position where the agent differs is reported. check_numbers(): every quoted number must match a table value to its shown decimals, else UNVERIFIED.",
+   "expected": "2. agent ranked: outdoor_C > occupants > lights_h > window_open (window_open shows zero swing in the one-at-a-time test, so it can be ignored)\n3. code ranks by ST: outdoor_C > window_open > occupants > lights_h\n4. code verdict: OVERRULED at #2 ... #3 ... #4\n6. code checked 2 quoted numbers: 1 match; UNVERIFIED (treat as the model's guess): 30",
+   "realModelNote": "`python agent_assist.py` uses LOCAL_MODEL_URL (default http://localhost:11434/v1) and LOCAL_MODEL (default qwen2.5:1.5b). Real replies vary; a ranking that is not a permutation of the inputs is rejected. Not run here: no model in the sandbox."
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L300/14-global-sensitivity/sensitivity.py",
+    "purpose": "main lab code (ships the unfixed screen())"
+   },
+   {
+    "path": "labs/L300/14-global-sensitivity/sensitivity_salib.py",
+    "purpose": "SALib 1.6.0 equivalent (pending-ci)"
+   },
+   {
+    "path": "labs/L300/14-global-sensitivity/agent_assist.py",
+    "purpose": "optional local-model ranking, checked by code"
+   },
+   {
+    "path": "labs/L300/14-global-sensitivity/solution/sensitivity.py",
+    "purpose": "buildTask solution (the fix)"
+   },
+   {
+    "path": "labs/L300/14-global-sensitivity/solution/robust_ranking.py",
+    "purpose": "stretch solution"
+   },
+   {
+    "path": "labs/L300/14-global-sensitivity/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L300/14-global-sensitivity/test_sensitivity.py",
+    "purpose": "unit tests vs analytic indices + fault reproduction"
+   },
+   {
+    "path": "labs/L300/14-global-sensitivity/test_agent_assist.py",
+    "purpose": "agent assist tests (fake server)"
+   },
+   {
+    "path": "labs/L300/14-global-sensitivity/test_build_task.py",
+    "purpose": "buildTask check (BUILD_TARGET=mine checks your file)"
+   },
+   {
+    "path": "labs/L300/14-global-sensitivity/test_stretch.py",
+    "purpose": "stretch check"
+   }
+  ],
+  "expectedResults": [
+   "OAT swing of window_open = 0.0",
+   "Sobol' within 0.02 of analytic S1/ST",
+   "Shipped screen() (OAT) keeps 84.1%; fixed screen() (ST) keeps 96.1%"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 16 tests ... OK (skipped=2)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task (shipped file)",
+    "expected": "FAILED (failures=2): window_open dropped"
+   },
+   {
+    "action": "sobol() on an additive model 2x1 + x2",
+    "expected": "S1 equals ST within 0.02 (no interaction)"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "S1 > ST or negative S1",
+    "action": "Sampling noise: centre outputs, raise N, report bootstrap CIs."
+   },
+   {
+    "symptom": "Ranking changes between runs",
+    "action": "Intervals overlap: the order is not supported (stretch task)."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Move OAT's nominal outdoor temperature from 22 C to 26 C.",
+    "predict": "Does OAT now 'see' the window?",
+    "expected": "OAT swings at outdoor=26 C: outdoor_C 192.0, occupants 40.0, window_open 96.0, lights_h 12.0"
+   },
+   {
+    "task": "Remove the interaction (window term -> same average effect, additive).",
+    "predict": "How do S1 and ST compare now?",
+    "expected": "additive model: outdoor_C S1 0.952 ST 0.951, occupants S1 0.039 ST 0.041, window_open S1 0.000 ST 0.000, lights_h S1 0.005 ST 0.004; sum S1 = 0.995"
+   }
+  ],
+  "equivalents": [
+   "SALib 1.6.0: sample.sobol.sample + analyze.sobol.analyze; sample.morris.sample + analyze.morris.analyze.",
+   "eFAST, delta moment-independent and PAWN (SALib) for other output types.",
+   "R package 'sensitivity' (soboljansen, morris)."
+  ],
+  "learningTools": [
+   {
+    "name": "marimo",
+    "role": "SEE",
+    "exercise": "In a marimo notebook in this lab folder, import sensitivity; make the interaction coefficient (24) and NOMINAL[0] cells (rebuild energy() from them) and show oat() and sobol() in cells below. Drag the coefficient from 24 to 0.",
+    "expected": "At 24 the cells must show window_open OAT 0.0 and ST 0.155 (lab output); at nominal 26 C OAT shows 96.0 (tryIt 1). As the coefficient falls to 0, ST of window_open should fall to 0 and S1 approach ST. Pending a manual run in marimo.",
+    "mac": "pip install marimo (catalog version 0.25.2), then marimo tutorial intro to learn the UI",
+    "windows": "pip install marimo (catalog version 0.25.2), then marimo tutorial intro",
+    "licence": "Apache-2.0 (OSI: yes)",
+    "url": "https://pypi.org/project/marimo/"
+   },
+   {
+    "name": "SALib",
+    "role": "CHECK",
+    "exercise": "Run the lab's sensitivity_salib.py, then rebuild it with the ProblemSpec chain (sample -> evaluate -> analyze_sobol) and call sp.plot() to see window_open's small S1 next to its larger ST.",
+    "expected": "window_open S1 ~0.005 but ST ~0.155, matching the lab's numpy table (S1 0.005, ST 0.155); the lab's test requires SALib's ST within 0.03 of the numpy result. SALib is not installed here: pending-ci and a manual run.",
+    "mac": "pip install SALib (catalog version 1.6.0, Python >=3.10; the lab pin is in ../requirements.txt)",
+    "windows": "pip install SALib (catalog version 1.6.0; the lab pin is in ..\\requirements.txt)",
+    "licence": "MIT (OSI: yes)",
+    "url": "https://pypi.org/project/SALib/"
+   }
+  ],
+  "inRealSystems": [
+   "Building and climate models use Morris to screen dozens of inputs, then Sobol' on the survivors.",
+   "Model-governance reviews ask for total-order indices before inputs are fixed at defaults."
+  ],
+  "useWhen": "Use before simplifying a model or prioritising measurements; skip Sobol' when runs are too expensive (screen with Morris or use an emulator).",
+  "caution": "Indices assume independent inputs with the stated ranges; change the ranges and the ranking can change. Agent assist: the model sees only the table, never decides, and gets no secrets.",
+  "checkpoint": "PASS: the shipped screen() loses > 12% of the variance; after your fix test_build_task passes with BUILD_TARGET=mine (> 95% kept); bootstrap-ranking stretch test passes.",
+  "checkYourself": [
+   {
+    "q": "window_open: S1 0.005, ST 0.155. What does the gap mean?",
+    "a": "Almost all its effect is through interaction with outdoor temperature."
+   },
+   {
+    "q": "Why does OAT give exactly 0 for the window?",
+    "a": "At the nominal point outdoor = indoor, so the window term 24 w dT is 0 for any w."
+   }
+  ],
+  "sources": [
+   {
+    "title": "SALib Concise API Reference (Sobol', Morris)",
+    "url": "https://salib.readthedocs.io/en/latest/api.html"
+   },
+   {
+    "title": "PyPI: SALib 1.6.0",
+    "url": "https://pypi.org/project/SALib/"
+   },
+   {
+    "title": "Saltelli, Annoni, Azzini, Campolongo, Ratto, Tarantola (2010), Variance based sensitivity analysis of model output: design and estimator for the total sensitivity index, Computer Physics Communications 181(2) 259-270, doi:10.1016/j.cpc.2009.09.018 (JRC record)",
+    "url": "https://publications.jrc.ec.europa.eu/repository/handle/JRC52955"
+   }
+  ],
+  "next": "L300 #15 Co-simulation with FMI: master algorithm and communication step (from one model's inputs to coupling several models, where the coupling step itself becomes an input)",
+  "validation": {
+   "status": "validated-local",
+   "how": "sensitivity.py, solution/sensitivity.py, try_it.py, solution/robust_ranking.py, agent_assist.py --fake and unittests (Ran 16 tests ... OK (skipped=2)) ran locally on Python 3.12.15 + numpy 2.5.3; estimates checked against analytic indices; BUILD_TARGET=mine on the shipped file fails both build-task tests; failure proof shipped FAIL / solution PASS. SALib equivalence is pending-ci; agent assist tested against the fake server only.",
+   "pendingCi": [
+    "labs/L300/14-global-sensitivity/sensitivity_salib.py",
+    "test_sensitivity.py: TestSALibEquivalent (2 tests)",
+    "agent_assist.py against a real local model (fake server only)",
+    "macOS and Windows runs of the whole lab"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L300/14-global-sensitivity.md",
+  "conceptSummary": "OAT varies one input around a nominal point and can miss inputs that act through interactions. Morris screens cheaply and flags interactions with sigma; Sobol' indices split output variance into first-order (S1) and total-order (ST) shares. Screen by ST and verify what the reduced model keeps.",
+  "seeAlso": [
+   "simulation L300 #13 Calibration: fit to data, validate on data you did not fit: calibrate the inputs with a large ST; inputs this lesson can freeze need no calibration."
+  ]
+ },
+ {
+  "id": "cosimulation-fmi",
+  "number": 15,
+  "level": "L300",
+  "title": "Co-simulation with FMI: master algorithm and communication step",
+  "phase": "Harden",
+  "category": "co-simulation",
+  "description": "A room unit and a PI thermostat unit with an FMI-like interface, coupled by a fixed-step master that logs every exchange; too large a communication step makes the loop oscillate.",
+  "outcome": "You can explain what an FMU is, write a fixed-step master algorithm, read its JSON log to diagnose coupling instability, and choose a safe communication step.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3 (units are pure Python); FMPy 0.3.32 API check in CI; OpenModelica 1.27.1 for the manual FMU export",
+  "estimatedTime": "50 minutes",
+  "overview": [
+   "Units with their own solvers talk only every h seconds; h itself can destabilise a loop that is stable in reality."
+  ],
+  "prerequisites": [
+   "Lessons 4 and 9 (time stepping, ODE solvers)"
+  ],
+  "glossary": [
+   {
+    "term": "FMU",
+    "meaning": "Functional Mock-up Unit: ZIP with modelDescription.xml + binaries/C sources, per the FMI standard (2.0, 3.0)."
+   },
+   {
+    "term": "master algorithm",
+    "meaning": "The importer's loop: get outputs, set inputs, do_step on every unit at each communication point."
+   },
+   {
+    "term": "communication step h",
+    "meaning": "Time between data exchanges; inputs are held constant within it."
+   }
+  ],
+  "concepts": [
+   "FMI-like lifecycle and value references.",
+   "Jacobi vs Gauss-Seidel master.",
+   "Coupling delay can destabilise feedback.",
+   "Diagnose from a per-step JSON log."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python cosim.py` (shipped COMM_STEP_S), then `python cosim.py 60` (any step in seconds).",
+    "mac": "cd labs/L300/15-cosimulation-fmi\npython cosim.py\npython cosim.py 60",
+    "windows": "cd labs\\L300\\15-cosimulation-fmi\npython cosim.py\npython cosim.py 60",
+    "expected": "One JSON summary line per run (h_s 900 for the shipped default, then 60), each followed by the last 4 log lines.",
+    "ifNot": "units.py must be in the same folder."
+   },
+   {
+    "title": "Units and interface",
+    "detail": "units.py: Room (RK4 inside, <= 60 s substeps) and Thermostat (PI, anti-windup) expose instantiate, setup_experiment, enter/exit_initialization_mode, set_real/get_real by value reference, do_step(t, h), terminate.",
+    "expected": "Room alone with heater 0.5 for 30 min ends at the exact 15.787 C (unit test).",
+    "ifNot": "RK4 substeps must use the held input u."
+   },
+   {
+    "title": "Master and log",
+    "detail": "run(h): Jacobi master - read both outputs at t, exchange, step both units; one JSON line per communication step. `python cosim.py 60` runs it at 60 s.",
+    "expected": "h = 60 s: last 4 lines T_room 21.0, heater 0.667; summary swing 0.0 C, 1 flip.",
+    "ifNot": "Log t at the communication point, not after the step."
+   },
+   {
+    "title": "Failure lab: 15-minute step",
+    "detail": "`python cosim.py` runs the shipped COMM_STEP_S = 900; read cosim_log_900s.jsonl.",
+    "expected": "{\"h_s\": 900, \"last_hour_swing_C\": 6.78, \"last_hour_mean_error_C\": 2.72, \"heater_flips\": 9}; heater alternates ~0 / ~1.",
+    "ifNot": "Compare the heater column line by line: chatter = coupling instability."
+   },
+   {
+    "title": "Fix: a stable communication step (build task)",
+    "detail": "Theory: with one step of delay, stable iff (1 - e^(-h/tau)) K < 1, K = 12 -> h < 313 s. Set COMM_STEP_S in cosim.py below it and check YOUR file with BUILD_TARGET=mine; tryIt sweeps h and tries Gauss-Seidel.",
+    "mac": "cd labs/L300/15-cosimulation-fmi\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L300\\15-cosimulation-fmi\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task -v",
+    "expected": "Before the fix: Ran 2 tests ... FAILED (failures=2). After (60 s): OK. tryIt: 240 s settles (0.01 C), 300 s oscillates (1.57 C); Gauss-Seidel stable at 450 s.",
+    "ifNot": "Recompute K = Kp x Q_max x R; leave margin below 313 s."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L300/15-cosimulation-fmi\npython -m unittest -v",
+    "windows": "cd labs\\L300\\15-cosimulation-fmi\npython -m unittest -v",
+    "expected": "Ran 14 tests ... OK (skipped=2)",
+    "ifNot": "The skips need FMPy (and an exported RoomThermal.fmu): pending-ci / manual."
+   },
+   {
+    "title": "Real FMU (optional, Windows PC)",
+    "detail": "Export RoomThermal.mo with OpenModelica (`omc export_fmu.mos` or OMEdit File > Export > FMU), then `python fmpy_cosim.py RoomThermal.fmu` runs the same master with FMPy's FMU2Slave.",
+    "mac": "cd labs/L300/15-cosimulation-fmi\npython -m pip install -r ../requirements.txt\npython fmpy_cosim.py   # API check; OpenModelica on the Mac needs Docker + XQuartz",
+    "windows": "cd labs\\L300\\15-cosimulation-fmi\npython -m pip install -r ..\\requirements.txt\nomc export_fmu.mos\npython fmpy_cosim.py RoomThermal.fmu",
+    "expected": "fmpy 0.3.32: FMU2Slave API complete; with the FMU: h = 60 settles like the Python room (not run here).",
+    "ifNot": "OpenModelica's default CS solver is forward Euler with one step per communication step - expect small differences."
+   },
+   {
+    "title": "Stretch: a self-guarding master",
+    "detail": "`python solution/guarded_master.py`, then `python -m unittest test_stretch -v` (BUILD_TARGET=mine checks your own file).",
+    "mac": "cd labs/L300/15-cosimulation-fmi\npython solution/guarded_master.py\npython -m unittest test_stretch -v",
+    "windows": "cd labs\\L300\\15-cosimulation-fmi\npython solution/guarded_master.py\npython -m unittest test_stretch -v",
+    "expected": "step_halved 900 -> 450, step_halved 450 -> 225, accepted at 225 s (JSON lines); Ran 3 tests ... OK.",
+    "ifNot": "Loops forever: add the min_h 'gave_up' exit."
+   }
+  ],
+  "code": "\"\"\"L300 co-simulation: a master algorithm couples a room unit and a thermostat unit at fixed communication steps.\n\nFixed-step Jacobi master: at every communication point read outputs, set inputs, then step both units.\nEvery step is logged as one JSON line (cosim_log.jsonl) so you can diagnose the run from the log.\npython cosim.py            # runs at COMM_STEP_S\npython cosim.py 60         # any other communication step, in seconds\n\"\"\"\nimport json\nimport sys\nfrom pathlib import Path\n\nfrom units import Room, Thermostat\n\nHERE = Path(__file__).resolve().parent\nCOMM_STEP_S = 900  # 15-minute exchanges: 15x fewer than 1-minute ones, so the run is faster\n\n\ndef run(h=COMM_STEP_S, hours=6.0, log_path=None, room=None, thermostat=None):\n    \"\"\"Master algorithm. h = communication step in seconds. Returns per-step records.\"\"\"\n    room, ctrl = room or Room(), thermostat or Thermostat()\n    for unit in (room, ctrl):\n        unit.instantiate()\n        unit.setup_experiment(start_time=0.0)\n        unit.enter_initialization_mode()\n        unit.exit_initialization_mode()\n    t, records = 0.0, []\n    for _ in range(round(hours * 3600 / h)):\n        temp = room.get_real([room.vr(\"T\")])[0]  # 1. read outputs at communication point t\n        heater = ctrl.get_real([ctrl.vr(\"heater\")])[0]\n        ctrl.set_real([ctrl.vr(\"T\")], [temp])  # 2. exchange: outputs -> inputs\n        room.set_real([room.vr(\"heater\")], [heater])\n        room.do_step(t, h)  # 3. both units advance from t to t + h with inputs held constant\n        ctrl.do_step(t, h)\n        records.append({\"t_min\": round(t / 60, 2), \"h_s\": h, \"T_room\": round(temp, 3), \"heater\": round(heater, 3)})\n        t += h\n    for unit in (room, ctrl):\n        unit.terminate()\n    if log_path:\n        Path(log_path).write_text(\"\".join(json.dumps(r) + \"\\n\" for r in records), encoding=\"utf-8\")\n    return records\n\n\ndef metrics(records, setpoint=21.0):\n    \"\"\"Health metrics a monitor can compute from the log: last-hour swing, mean error, heater on/off flips.\"\"\"\n    last = [r for r in records if r[\"t_min\"] > records[-1][\"t_min\"] - 60]\n    temps = [r[\"T_room\"] for r in last]\n    flips = sum(abs(a[\"heater\"] - b[\"heater\"]) > 0.5 for a, b in zip(records, records[1:]))\n    return {\"h_s\": records[0][\"h_s\"], \"last_hour_swing_C\": round(max(temps) - min(temps), 2),\n            \"last_hour_mean_error_C\": round(sum(abs(x - setpoint) for x in temps) / len(temps), 2),\n            \"heater_flips\": flips}\n\n\ndef main(argv=sys.argv[1:]):\n    h = int(argv[0]) if argv else COMM_STEP_S\n    path = HERE / f\"cosim_log_{h}s.jsonl\"\n    records = run(h, log_path=path)\n    print(json.dumps(metrics(records)))  # structured summary line\n    print(f\"  {path.name}: {len(records)} lines; last 4:\")\n    for line in path.read_text(encoding=\"utf-8\").splitlines()[-4:]:\n        print(\"   \", line)\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "units.Unit",
+    "detail": "model_description maps names to (value reference, causality) like modelDescription.xml; the master only uses vr(), set_real, get_real, do_step."
+   },
+   {
+    "title": "Room.do_step",
+    "detail": "Integrates C dT/dt = uQ - (T - T_out)/R with RK4 substeps; u is held constant over the communication step (zero-order hold)."
+   },
+   {
+    "title": "Thermostat.do_step",
+    "detail": "PI on the temperature it was given at t; output clamped to 0..1 and held until the next step; integrates only when not saturated (anti-windup)."
+   },
+   {
+    "title": "run(): lifecycle",
+    "detail": "instantiate -> setup_experiment -> enter/exit initialization -> loop -> terminate: the same order FMPy uses for FMU2Slave."
+   },
+   {
+    "title": "run(): Jacobi exchange",
+    "detail": "Both units read values from t, then both step: the controller always acts on data one step old."
+   },
+   {
+    "title": "JSON lines + metrics()",
+    "detail": "One line per step; metrics() derives last-hour swing, mean error and heater flips - what a monitor (and the build task) reads."
+   },
+   {
+    "title": "COMM_STEP_S",
+    "detail": "The shipped default 900 s is the fault; the fix is one constant (60 s in solution/cosim.py), justified by tau ln(K/(K-1)) = 313 s."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped COMM_STEP_S = 900 s 'to run faster' (deterministic model, no random numbers).",
+   "symptom": "The log shows the heater jumping between ~0 and ~1 every 15 minutes; last-hour swing 6.78 C, mean error 2.72 C, 9 heater flips - looks like a broken controller.",
+   "fix": "Your build task: COMM_STEP_S below the 313 s stability bound; the solution uses 60 s: settles at 21.0 C, heater 0.667, swing 0.00 C (solution/cosim.py). Alternatives: Gauss-Seidel ordering (stable at 450 s) or a lower gain.",
+   "proof": "test_build_task.py: BUILD_TARGET=mine on the shipped file -> FAILED (failures=2 of 2); default (solution/cosim.py) -> Ran 2 tests OK (step < 313 s, swing < 0.2 C, <= 2 flips). TestFailureLab in test_cosim.py checks the physics at explicit steps (900 s swing > 3 C and >= 5 flips; 60 s < 0.2 C; stable at 0.75 x 313 s, oscillating at 1.15 x 313 s). research/failure_proofs_L300.py: shipped FAIL, solution PASS."
+  },
+  "tradeOffs": [
+   {
+    "option": "Smaller communication step",
+    "gains": "Works with any units; error and delay shrink with h",
+    "costs": "Cost grows as 1/h (15x more exchanges for 60 s vs 900 s)",
+    "chooseWhen": "Units are cheap to step or the loop is fast"
+   },
+   {
+    "option": "Gauss-Seidel ordering",
+    "gains": "One step less delay: bound 313 -> 601 s here",
+    "costs": "Sequential (no parallel unit stepping); order matters",
+    "chooseWhen": "One unit's output feeds the other directly"
+   },
+   {
+    "option": "Adaptive step (guarded master)",
+    "gains": "Keeps h large when safe, halves when the log shows oscillation",
+    "costs": "Re-runs or rollback needed (FMI get/set FMU state); thresholds to tune",
+    "chooseWhen": "Long runs with phases of fast and slow dynamics"
+   }
+  ],
+  "buildTask": {
+   "task": "Fix COMM_STEP_S in cosim.py: choose a communication step that keeps the coupled loop stable, and justify it with the bound tau ln(K/(K-1)).",
+   "hints": [
+    "K = Kp x Q_max x R = 0.5 x 3000 x 0.008 = 12; tau = R x C = 1 h.",
+    "Leave margin below 313 s: tryIt 1 shows 300 s already swings 1.57 C."
+   ],
+   "solution": "labs/L300/15-cosimulation-fmi/solution/cosim.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped file: Ran 2 tests ... FAILED (failures=2); after your fix: OK. Without the variable it checks the solution (Ran 2 tests ... OK).",
+   "stretch": {
+    "task": "Add run_guarded(): run, read the health metrics from the log, halve the communication step while the loop oscillates, give up below a minimum step, and log every decision as a JSON line.",
+    "hints": [
+     "metrics() already computes last_hour_swing_C and heater_flips.",
+     "Halve rather than jumping to the minimum: cost grows as 1/h.",
+     "Stop with a 'gave_up' event rather than looping forever."
+    ],
+    "solution": "labs/L300/15-cosimulation-fmi/solution/guarded_master.py",
+    "check": "python -m unittest test_stretch -v  (Ran 3 tests ... OK; 900 -> 450 -> 225 s accepted); BUILD_TARGET=mine checks your own guarded_master.py"
+   }
+  },
+  "observability": {
+   "emits": "cosim_log_<h>s.jsonl: one line per communication step {t_min, h_s, T_room, heater}; one JSON summary line per run {h_s, last_hour_swing_C, last_hour_mean_error_C, heater_flips}; the stretch guarded master logs step_halved / accepted / gave_up events.",
+   "read": "Heater alternating ~0/~1 with a multi-degree swing = coupling instability, not a controller bug."
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L300/15-cosimulation-fmi/cosim.py",
+    "purpose": "main lab code: master + JSON-lines log (ships the unfixed COMM_STEP_S = 900)"
+   },
+   {
+    "path": "labs/L300/15-cosimulation-fmi/units.py",
+    "purpose": "Room and Thermostat units, FMI-like interface"
+   },
+   {
+    "path": "labs/L300/15-cosimulation-fmi/RoomThermal.mo",
+    "purpose": "the room in Modelica, for OpenModelica FMU export"
+   },
+   {
+    "path": "labs/L300/15-cosimulation-fmi/export_fmu.mos",
+    "purpose": "OpenModelica export script (FMI 2.0, Co-Simulation)"
+   },
+   {
+    "path": "labs/L300/15-cosimulation-fmi/fmpy_cosim.py",
+    "purpose": "FMPy adapter + API check (pending-ci / manual)"
+   },
+   {
+    "path": "labs/L300/15-cosimulation-fmi/solution/cosim.py",
+    "purpose": "buildTask solution (the fix)"
+   },
+   {
+    "path": "labs/L300/15-cosimulation-fmi/solution/guarded_master.py",
+    "purpose": "stretch solution"
+   },
+   {
+    "path": "labs/L300/15-cosimulation-fmi/try_it.py",
+    "purpose": "tryIt script"
+   },
+   {
+    "path": "labs/L300/15-cosimulation-fmi/test_cosim.py",
+    "purpose": "unit tests + failure-lab physics"
+   },
+   {
+    "path": "labs/L300/15-cosimulation-fmi/test_build_task.py",
+    "purpose": "buildTask check (BUILD_TARGET=mine checks your file)"
+   },
+   {
+    "path": "labs/L300/15-cosimulation-fmi/test_stretch.py",
+    "purpose": "stretch check"
+   }
+  ],
+  "expectedResults": [
+   "h = 60 s settles at 21.0 C",
+   "h = 900 s oscillates (6.78 C swing, 9 flips)",
+   "Transition between 240 and 300 s, matching the 313 s bound"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 14 tests ... OK (skipped=2)"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task (shipped file)",
+    "expected": "FAILED (failures=2): 900 s is above the 313 s bound and oscillates"
+   },
+   {
+    "action": "Room alone, heater 0.5, 1,800 s",
+    "expected": "T = 17 - 2 e^-0.5 = 15.787 C to 6 decimals"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "Oscillation that disappears with a smaller step",
+    "action": "Coupling instability: compare h with tau ln(K/(K-1)); try Gauss-Seidel."
+   },
+   {
+    "symptom": "FMU results differ from the Python room",
+    "action": "Check the FMU's internal solver (OpenModelica default: forward Euler per communication step) and parameter values."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Sweep the communication step 180-360 s.",
+    "predict": "Where does the loop start to oscillate (theory ~313 s)?",
+    "expected": "h=180 s: last-hour swing 0.00 C, heater flips 1 | h=240 s: last-hour swing 0.01 C, heater flips 1 | h=300 s: last-hour swing 1.57 C, heater flips 1 | h=360 s: last-hour swing 2.42 C, heater flips 10"
+   },
+   {
+    "task": "Gauss-Seidel: step the room first, give the thermostat the fresh temperature.",
+    "predict": "Stable at 450 s? At 900 s?",
+    "expected": "Gauss-Seidel h=450 s: {'h_s': 450, 'last_hour_swing_C': 0.0, 'last_hour_mean_error_C': 0.0, 'heater_flips': 0} | Gauss-Seidel h=900 s: {'h_s': 900, 'last_hour_swing_C': 2.81, 'last_hour_mean_error_C': 0.92, 'heater_flips': 14}"
+   }
+  ],
+  "equivalents": [
+   "FMPy: FMU2Slave (FMI 2.0) / FMU3Slave (FMI 3.0) with the same call sequence; simulate_fmu() for single FMUs.",
+   "OMSimulator (OpenModelica) and SSP for connecting several FMUs.",
+   "FMI 3.0 adds Event Mode, early return and Intermediate Update for better co-simulation algorithms."
+  ],
+  "learningTools": [
+   {
+    "name": "OpenModelica (OMEdit)",
+    "role": "CHECK",
+    "exercise": "Open RoomThermal.mo in OMEdit, check it, then File > Export > FMU (FMI 2.0, Co-Simulation) - or run `omc export_fmu.mos`. Run `python fmpy_cosim.py RoomThermal.fmu`.",
+    "expected": "fmpy_cosim.py should print the same JSON summary format as cosim.py; at h = 60 s the loop should settle (swing <= 0.2 C) and at 900 s oscillate, close to the Python room's 0.0 C (`python cosim.py 60`) and 6.78 C (`python cosim.py`, shipped 900 s) swings (the FMU's default forward-Euler solver shifts values slightly). Best on the Windows PC. Pending a manual run.",
+    "mac": "No native Mac build since 1.16: official Linux Docker image + XQuartz (catalog version 1.27.1; https://openmodelica.org/download/download-mac/); easier on the Windows PC",
+    "windows": "Official installer (catalog version 1.27.1) from https://openmodelica.org/download/download-windows/, then open OMEdit (omc is on the installer's command line too)",
+    "licence": "OSMC-PL 1.8, public use under AGPL-3.0 (OSI: yes)",
+    "url": "https://github.com/OpenModelica/OpenModelica/releases"
+   },
+   {
+    "name": "Scilab + Xcos",
+    "role": "BUILD WITHOUT CODE",
+    "exercise": "Build the room (integrator with gain 1/C and feedback -1/R) and a PI controller in Xcos; put a sample-and-hold clocked every h seconds between room temperature and controller, and a saturation 0..1 on the heater. Simulate 6 h with h = 60 s and h = 900 s.",
+    "expected": "h = 60 s should settle at 21 C; h = 900 s should oscillate by several degrees, as the lab measured (0.00 vs 6.78 C last-hour swing). Block names and solver settings were not checked. Pending a manual run.",
+    "mac": "Native macOS ARM64 .dmg (catalog version 2027.0.0) from https://www.scilab.org/download, then type xcos in the Scilab console",
+    "windows": "64-bit Windows .exe (catalog version 2027.0.0) from https://www.scilab.org/download, then type xcos in the Scilab console",
+    "licence": "GPL-2.0 (OSI: yes)",
+    "url": "https://www.scilab.org/software/xcos"
+   }
+  ],
+  "inRealSystems": [
+   "Building-automation and vehicle teams exchange plant and controller models as FMUs and co-simulate them.",
+   "Integration tests of controllers against FMU plant models run in CI with fixed communication steps."
+  ],
+  "useWhen": "Use co-simulation when models come from different tools or teams; prefer a single model (Model Exchange or one tool) when you can, because it removes the communication-step error.",
+  "caution": "A coupling artefact can look like a controller bug - never retune a real controller from an unverified co-simulation; check the step against the fastest loop first.",
+  "checkpoint": "PASS: the shipped 900 s step oscillates as logged; after your fix test_build_task passes with BUILD_TARGET=mine (step < 313 s, settles); guarded-master stretch test passes.",
+  "checkYourself": [
+   {
+    "q": "Plant and controller are each stable. Why does the coupled run oscillate at 900 s?",
+    "a": "The controller acts on 15-minute-old data and holds its output: the delay destabilises a gain-12 loop."
+   },
+   {
+    "q": "What does an FMU contain?",
+    "a": "modelDescription.xml (variables, value references, capabilities) plus binaries and/or C sources, zipped."
+   }
+  ],
+  "sources": [
+   {
+    "title": "FMI Specification 3.0.2 (Modelica Association)",
+    "url": "https://fmi-standard.org/docs/3.0.2/"
+   },
+   {
+    "title": "Functional Mock-up Interface home (current release 3.0.2, layered standards)",
+    "url": "https://fmi-standard.org/"
+   },
+   {
+    "title": "OpenModelica User's Guide: FMI (FMI 2.0.5 supported, 3.0.2 experimental; buildModelFMU)",
+    "url": "https://openmodelica.org/doc/OpenModelicaUsersGuide/latest/fmitlm.html"
+   },
+   {
+    "title": "PyPI: FMPy 0.3.32 (FMI 1.0/2.0/3.0, Co-Simulation and Model Exchange)",
+    "url": "https://pypi.org/project/FMPy/"
+   },
+   {
+    "title": "FMPy example custom_input.py (FMU2Slave lifecycle, doStep)",
+    "url": "https://github.com/CATIA-Systems/FMPy/blob/main/src/fmpy/examples/custom_input.py"
+   },
+   {
+    "title": "Gomes et al., Co-simulation: State of the art (arXiv 1702.00686)",
+    "url": "https://arxiv.org/abs/1702.00686"
+   }
+  ],
+  "next": "L300 #16 Performance and scale: vectorise, parallelise, keep streams independent (smaller steps and more replications cost time; make the runs fast without breaking reproducibility)",
+  "validation": {
+   "status": "validated-local",
+   "how": "cosim.py (900 s and 60 s), solution/cosim.py, try_it.py, solution/guarded_master.py and unittests (Ran 14 tests ... OK (skipped=2)) ran locally on Python 3.12.15 (units are pure Python); outputs pasted; BUILD_TARGET=mine on the shipped file fails both build-task tests; failure proof shipped FAIL / solution PASS. FMPy API check is pending-ci; exporting RoomThermal.fmu with OpenModelica and running it through fmpy_cosim.py is a manual step (not run anywhere yet).",
+   "pendingCi": [
+    "labs/L300/15-cosimulation-fmi/fmpy_cosim.py (API check in CI)",
+    "test_cosim.py: TestFMPyEquivalent (FMPy import; FMU run needs a manually exported RoomThermal.fmu)",
+    "RoomThermal.mo / export_fmu.mos with OpenModelica (manual, not run)",
+    "macOS and Windows runs of the whole lab"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L300/15-cosimulation-fmi.md",
+  "conceptSummary": "An FMU packages a model with its solver behind a standard interface; a master algorithm exchanges inputs and outputs at communication points. Holding inputs over the step delays feedback, so too large a step makes a stable loop oscillate; log every exchange, check h against the loop's bound, or use Gauss-Seidel or an adaptive step.",
+  "seeAlso": [
+   "microbit L300 #13 Non-blocking firmware structure: a sleep(1000) loop samples too rarely and misses taps; here a 900 s communication step samples the room too rarely and the loop oscillates - in both, the period must come from the dynamics, not from convenience."
+  ]
+ },
+ {
+  "id": "performance-scale",
+  "number": 16,
+  "level": "L300",
+  "title": "Performance and scale: vectorise, parallelise, keep streams independent",
+  "phase": "Harden",
+  "category": "performance",
+  "description": "40 replications of a help-desk queue: a Python loop, the same recursion vectorised with numpy, and a spawn-safe process pool - whose shared seed you replace with one SeedSequence child per replication.",
+  "outcome": "You can vectorise a recursive model, time it honestly, run replications in parallel safely on Windows and macOS, and give every replication its own reproducible stream.",
+  "environment": "Python 3.12 (validated on 3.12.15, Linux x86_64) + numpy 2.5.3 (stdlib multiprocessing, spawn start method)",
+  "estimatedTime": "45 minutes",
+  "overview": [
+   "Vectorise first, parallelise second - and tie each random stream to a replication, never to a worker."
+  ],
+  "prerequisites": [
+   "Lesson 10 (replications)",
+   "Lesson 12 (stream handling)"
+  ],
+  "glossary": [
+   {
+    "term": "vectorise",
+    "meaning": "Replace a Python loop with whole-array numpy operations."
+   },
+   {
+    "term": "spawn",
+    "meaning": "Start method that launches a fresh interpreter per worker; default on Windows and macOS."
+   },
+   {
+    "term": "SeedSequence.spawn",
+    "meaning": "Derives independent child seeds from one root, reproducibly."
+   }
+  ],
+  "concepts": [
+   "Closed-form vectorisation of Lindley's recursion.",
+   "Verify equality before timing.",
+   "Spawn-safe main guard.",
+   "One child stream per replication."
+  ],
+  "steps": [
+   {
+    "title": "Run it",
+    "detail": "`python perf.py`",
+    "mac": "cd labs/L300/16-performance-scale\npython perf.py",
+    "windows": "cd labs\\L300\\16-performance-scale\npython perf.py",
+    "expected": "A header, two equality lines, a 3-row TIMING table, the CI and one 'distinct replication results' line.",
+    "ifNot": "Windows/macOS: keep the `if __name__ == \"__main__\":` guard - spawn re-imports the file."
+   },
+   {
+    "title": "Vectorise",
+    "detail": "mean_wait_vectorised(): W_n = S_n - min(0, min_k S_k) with numpy cumsum and minimum.accumulate - no Python loop.",
+    "expected": "largest difference loop vs numpy: 9.1e-14.",
+    "ifNot": "Off by one: the first ticket waits 0; use service[:-1] - gaps[1:]."
+   },
+   {
+    "title": "Timing table",
+    "detail": "time.perf_counter around the same work; numbers are machine-dependent.",
+    "expected": "numpy 7-26x faster than the loop across runs on this busy 1-CPU sandbox; 2 spawn workers slower than numpy here.",
+    "ifNot": "Workers slower everywhere: tasks too small for process start-up - see the build task."
+   },
+   {
+    "title": "Spawn-safe pool",
+    "detail": "mp.get_context(\"spawn\").Pool; the worker is a top-level function; tasks come from tasks_for(); results are written to runs.jsonl.",
+    "expected": "Runs on every OS. On the shipped file: numpy vs 2 workers: 7.7e-01 - the parallel results differ from the serial ones (step 5 shows why).",
+    "ifNot": "AttributeError/RuntimeError in children: worker not top-level or missing main guard."
+   },
+   {
+    "title": "Failure lab: shared seed",
+    "detail": "The shipped tasks_for() gives every task the integer seed 16; read runs.jsonl.",
+    "expected": "distinct replication results 1 of 40; mean wait 4.240 +/- 0.000 min; every log line has the same mean_wait and an empty spawn_key.",
+    "ifNot": "A zero-width CI is a red flag, not precision."
+   },
+   {
+    "title": "Fix: spawned children (build task)",
+    "detail": "tasks_for() returns child i of SeedSequence(16).spawn(40) with replication i. Check YOUR file with BUILD_TARGET=mine.",
+    "mac": "cd labs/L300/16-performance-scale\nBUILD_TARGET=mine python -m unittest test_build_task -v",
+    "windows": "cd labs\\L300\\16-performance-scale\n$env:BUILD_TARGET = \"mine\"\npython -m unittest test_build_task -v",
+    "expected": "Before the fix: Ran 3 tests ... FAILED (failures=2). After: OK; perf.py prints numpy vs 2 workers 0.0e+00, mean wait 4.042 +/- 0.118 min, 40 of 40 distinct; identical on 1, 2 or 3 workers (tryIt 1).",
+    "ifNot": "Results change with worker count: seeds are tied to workers."
+   },
+   {
+    "title": "Run the tests",
+    "detail": "`python -m unittest -v`",
+    "mac": "cd labs/L300/16-performance-scale\npython -m unittest -v",
+    "windows": "cd labs\\L300\\16-performance-scale\npython -m unittest -v",
+    "expected": "Ran 9 tests ... OK",
+    "ifNot": "Pools start fresh interpreters: about 2 minutes on this slow sandbox."
+   },
+   {
+    "title": "Stretch: chunked tasks",
+    "detail": "`python solution/chunked.py`, then `python -m unittest test_stretch -v` (BUILD_TARGET=mine checks your own file).",
+    "mac": "cd labs/L300/16-performance-scale\npython solution/chunked.py\npython -m unittest test_stretch -v",
+    "windows": "cd labs\\L300\\16-performance-scale\npython solution/chunked.py\npython -m unittest test_stretch -v",
+    "expected": "1 worker x 1 chunk vs 2 workers x chunks of 7: identical = True; mean wait 4.042 min; Ran 1 test ... OK.",
+    "ifNot": "Different results per chunk size: seeds are tied to chunks, not replications."
+   }
+  ],
+  "code": "\"\"\"L300 performance and scale: many replications of a help-desk queue - loop vs numpy vs worker processes.\n\nM/M/1 at 80% load, 20,000 tickets per replication, starting empty. Mean wait per replication is the output.\nThe serial benchmark spawns one SeedSequence child per replication; the parallel version gets its seeds from tasks_for().\npython perf.py\n\"\"\"\nimport json\nimport math\nimport multiprocessing as mp\nimport os\nimport time\nfrom pathlib import Path\n\nimport numpy as np\n\nLAM, MU, CUSTOMERS, SEED = 0.8, 1.0, 20_000, 16\nHERE = Path(__file__).resolve().parent\n\n\ndef draws(seed_seq, n=CUSTOMERS):\n    rng = np.random.default_rng(seed_seq)  # one independent stream per replication\n    return rng.exponential(1 / MU, n), rng.exponential(1 / LAM, n)  # service times, inter-arrival gaps\n\n\ndef mean_wait_loop(service, gaps):\n    \"\"\"Reference model: Lindley's recursion, one ticket at a time in pure Python.\"\"\"\n    w, total = 0.0, 0.0\n    for s, a in zip(service[:-1].tolist(), gaps[1:].tolist()):\n        total += w\n        w = max(0.0, w + s - a)\n    return (total + w) / len(service)\n\n\ndef mean_wait_vectorised(service, gaps):\n    \"\"\"Same recursion without a loop: W_n = S_n - min(0, min_k S_k), S = cumulative sum of (service - gap).\"\"\"\n    steps = service[..., :-1] - gaps[..., 1:]\n    s = np.concatenate([np.zeros(steps.shape[:-1] + (1,)), np.cumsum(steps, axis=-1)], axis=-1)\n    return (s - np.minimum.accumulate(np.minimum(s, 0.0), axis=-1)).mean(axis=-1)\n\n\ndef tasks_for(reps):\n    \"\"\"One task per replication: (replication index, the seed its worker draws from).\"\"\"\n    return [(rep, SEED) for rep in range(reps)]  # every task carries the run's seed\n\n\ndef one_replication(task):\n    \"\"\"Worker: top-level function (picklable for 'spawn'). task = (replication index, its seed).\"\"\"\n    rep, seed = task\n    service, gaps = draws(seed)\n    return {\"rep\": rep, \"spawn_key\": list(getattr(seed, \"spawn_key\", ())),\n            \"mean_wait\": float(mean_wait_vectorised(service, gaps)), \"pid\": os.getpid()}\n\n\ndef run_parallel(tasks, workers, worker=one_replication, log_path=None):\n    with mp.get_context(\"spawn\").Pool(workers) as pool:  # spawn: the default on Windows and macOS\n        results = pool.map(worker, tasks)\n    if log_path:  # one JSON line per replication: what ran where, with which stream\n        Path(log_path).write_text(\"\".join(json.dumps(r) + \"\\n\" for r in results), encoding=\"utf-8\")\n    return np.array([r[\"mean_wait\"] for r in results])\n\n\ndef ci(x):\n    return float(np.mean(x)), 1.96 * float(np.std(x, ddof=1)) / math.sqrt(len(x))\n\n\ndef timed(fn):\n    start = time.perf_counter()\n    out = fn()\n    return out, time.perf_counter() - start\n\n\ndef main(reps=40, workers=2):\n    children = np.random.SeedSequence(SEED).spawn(reps)\n    data = [draws(c) for c in children]\n    loop, t_loop = timed(lambda: np.array([mean_wait_loop(s, g) for s, g in data]))\n    vec, t_vec = timed(lambda: mean_wait_vectorised(np.array([s for s, _ in data]), np.array([g for _, g in data])))\n    par, t_par = timed(lambda: run_parallel(tasks_for(reps), workers, log_path=HERE / \"runs.jsonl\"))\n    print(f\"{reps} replications x {CUSTOMERS:,} tickets, M/M/1 at 80% load (true mean wait 4.0 min, from empty)\")\n    print(f\"largest difference loop vs numpy: {np.max(np.abs(loop - vec)):.1e}; numpy vs {workers} workers: \"\n          f\"{np.max(np.abs(vec - par)):.1e}\")\n    print(\"TIMING (machine-dependent):\")\n    for name, t in ((\"python loop\", t_loop), (\"numpy vectorised\", t_vec), (f\"{workers} spawn workers\", t_par)):\n        print(f\"  {name:18s} {t:8.3f} s   speed-up x{t_loop / t:6.1f}\")\n    print(\"mean wait %.3f +/- %.3f min\" % ci(par))\n    print(f\"distinct replication results {len(set(par.tolist()))} of {reps} (one line each in runs.jsonl)\")\n\nif __name__ == \"__main__\":  # required with 'spawn': children re-import this file and must not start new pools\n    main()\n",
+  "codeLanguage": "python",
+  "codeWalkthrough": [
+   {
+    "title": "draws(seed)",
+    "detail": "One Generator per replication from whatever seed the task carries: a SeedSequence child (fix) or the bare integer (fault) - the same seed always gives the same tickets."
+   },
+   {
+    "title": "mean_wait_loop()",
+    "detail": "Reference implementation: Lindley's recursion one ticket at a time - slow but obviously right."
+   },
+   {
+    "title": "mean_wait_vectorised()",
+    "detail": "Cumulative sum of (service - gap) minus its running minimum (floored at 0): the same waits, 2-D arrays allowed."
+   },
+   {
+    "title": "one_replication(task)",
+    "detail": "Top-level worker (picklable under spawn); returns rep, spawn_key (empty for an integer seed), mean_wait and pid for the JSON-lines log."
+   },
+   {
+    "title": "run_parallel(tasks, workers)",
+    "detail": "Maps the worker over the tasks it is given; Pool.map keeps order, so results depend only on the tasks, never on the worker count."
+   },
+   {
+    "title": "tasks_for()",
+    "detail": "Where the fault lives: the shipped version hands every task the integer SEED; the fix spawns one SeedSequence child per replication in the parent."
+   },
+   {
+    "title": "if __name__ == \"__main__\"",
+    "detail": "Spawned children re-import this file; without the guard each would start its own pool."
+   }
+  ],
+  "failureLab": {
+   "fault": "Shipped tasks_for() gives every worker task the same integer seed (SEED = 16).",
+   "symptom": "runs.jsonl shows the same mean_wait 4.240082576236665 on all 40 lines; the 'CI' is 4.240 +/- 0.000 min - impossible precision that looks like good news; numpy vs 2 workers differs by 7.7e-01.",
+   "fix": "Your build task: tasks_for() spawns children in the parent (SeedSequence(16).spawn(40)) and pairs child i with replication i: 40 of 40 distinct, 4.042 +/- 0.118 min, identical on 1, 2 or 3 workers (solution/perf.py).",
+   "proof": "test_build_task.py: BUILD_TARGET=mine on the shipped file -> FAILED (failures=2 of 3; the 1-vs-2-worker equality holds either way); default (solution/perf.py) -> Ran 3 tests OK. TestFailureLab in test_perf.py keeps the fault reproducible (1 distinct value, half-width 0 to 12 decimals) and checks spawned children (6 of 6 distinct, 1 vs 2 workers bit-identical). research/failure_proofs_L300.py: shipped FAIL, solution PASS."
+  },
+  "tradeOffs": [
+   {
+    "option": "Vectorise (numpy)",
+    "gains": "7-26x here, no new processes, same results",
+    "costs": "Needs an array form of the model (closed form, or loop over time only); memory grows with batch size",
+    "chooseWhen": "Always first; the model is a recursion or arithmetic over many items"
+   },
+   {
+    "option": "Process pool (spawn)",
+    "gains": "Uses all cores; independent replications scale nearly linearly when tasks are big",
+    "costs": "Interpreter start-up + pickling (slower than numpy on 1 CPU here); main guard required",
+    "chooseWhen": "Each replication takes seconds or more and cores are available"
+   },
+   {
+    "option": "Chunked tasks",
+    "gains": "Fewer, bigger tasks amortise overhead; still reproducible",
+    "costs": "Coarser load balancing",
+    "chooseWhen": "Many short replications (build task)"
+   }
+  ],
+  "buildTask": {
+   "task": "Fix tasks_for() in perf.py so each replication carries its own independent, reproducible stream, whatever worker runs it.",
+   "hints": [
+    "Spawn the children once, in the parent: np.random.SeedSequence(SEED).spawn(reps).",
+    "Tie child i to replication i (not to a worker id), so the worker count cannot change the results."
+   ],
+   "solution": "labs/L300/16-performance-scale/solution/perf.py",
+   "check": "BUILD_TARGET=mine python -m unittest test_build_task -v (PowerShell: $env:BUILD_TARGET = \"mine\") - shipped file: Ran 3 tests ... FAILED (failures=2); after your fix: OK. Without the variable it checks the solution (Ran 3 tests ... OK).",
+   "stretch": {
+    "task": "Add run_chunked(reps, workers, chunk_size): send replications in chunks (fewer pickled tasks), keep seed i tied to replication i, and prove results are identical for any worker count and chunk size.",
+    "hints": [
+     "Spawn the children once in the parent, then slice the task list.",
+     "Pool.map keeps the order of the chunks.",
+     "Compute each chunk with mean_wait_vectorised() on a 2-D array."
+    ],
+    "solution": "labs/L300/16-performance-scale/solution/chunked.py",
+    "check": "python -m unittest test_stretch -v  (Ran 1 test ... OK; 3 worker/chunk combinations equal the sequential result); BUILD_TARGET=mine checks your own chunked.py"
+   }
+  },
+  "observability": {
+   "emits": "runs.jsonl: one JSON line per replication {rep, spawn_key, mean_wait, pid}.",
+   "read": "Repeated mean_wait values or an empty spawn_key on every line = shared stream; pid shows which worker ran what."
+  },
+  "projectFiles": [
+   {
+    "path": "labs/L300/16-performance-scale/perf.py",
+    "purpose": "main lab code (ships the unfixed tasks_for())"
+   },
+   {
+    "path": "labs/L300/16-performance-scale/solution/perf.py",
+    "purpose": "buildTask solution (the fix)"
+   },
+   {
+    "path": "labs/L300/16-performance-scale/solution/chunked.py",
+    "purpose": "stretch solution"
+   },
+   {
+    "path": "labs/L300/16-performance-scale/try_it.py",
+    "purpose": "tryIt script (spawn-safe main guard)"
+   },
+   {
+    "path": "labs/L300/16-performance-scale/test_perf.py",
+    "purpose": "unit tests + fault reproduction"
+   },
+   {
+    "path": "labs/L300/16-performance-scale/test_build_task.py",
+    "purpose": "buildTask check (BUILD_TARGET=mine checks your file)"
+   },
+   {
+    "path": "labs/L300/16-performance-scale/test_stretch.py",
+    "purpose": "stretch check"
+   }
+  ],
+  "expectedResults": [
+   "Loop and numpy agree to 1e-13",
+   "Shipped tasks_for() (shared seed): 1 distinct result of 40",
+   "Fixed tasks_for() (spawned children): 40 of 40, worker-count independent"
+  ],
+  "testCases": [
+   {
+    "action": "python -m unittest -v",
+    "expected": "Ran 9 tests ... OK"
+   },
+   {
+    "action": "BUILD_TARGET=mine python -m unittest test_build_task (shipped file)",
+    "expected": "FAILED (failures=2): 1 distinct value, zero-width CI"
+   },
+   {
+    "action": "Lindley by hand: service [2,1,3,1], gaps [0,1,5,1]",
+    "expected": "waits 0, 1, 0, 2 -> mean 0.75 for loop and numpy"
+   }
+  ],
+  "troubleshooting": [
+   {
+    "symptom": "RuntimeError about bootstrapping / pool starting recursively (Windows, macOS)",
+    "action": "Put pool creation under if __name__ == \"__main__\": and keep the worker at module top level."
+   },
+   {
+    "symptom": "Parallel slower than serial",
+    "action": "Too little work per task or too few cores: vectorise, chunk (stretch task), measure again."
+   }
+  ],
+  "tryIt": [
+   {
+    "task": "Run the same 12 replications on 1, 2 and 3 workers.",
+    "predict": "Identical results, or different?",
+    "expected": "1 vs 2 vs 3 workers bit-identical: True | mean wait 4.099 min"
+   },
+   {
+    "task": "Seed workers with root + worker_id (the NumPy docs' UNSAFE pattern), then 'rerun' with root + 1.",
+    "predict": "How many streams repeat?",
+    "expected": "root+id seeding: 7 of 8 replications of run B repeat run A | SeedSequence(17).spawn(8): 0 of 8 repeat run A"
+   }
+  ],
+  "equivalents": [
+   "concurrent.futures.ProcessPoolExecutor (stdlib) with the same spawn context.",
+   "numpy Generator.spawn() / default_rng([worker_id, root_seed]) per the NumPy parallel-RNG docs.",
+   "Numba or Cython when no array form exists; Dask or Ray to spread replications over several machines."
+  ],
+  "learningTools": [
+   {
+    "name": "JupyterLab (+ JupyterLab Desktop)",
+    "role": "CHECK",
+    "exercise": "In a notebook in this lab folder: from perf import *; build 40 draws from SeedSequence(16).spawn(40) and %timeit mean_wait_loop vs mean_wait_vectorised on them; then check np.max(abs(loop - vec)).",
+    "expected": "The difference must be ~1e-13 (lab: 9.1e-14); the speed-up should be of the same order as the lab's 7-26x but depends on your machine. Run the process pool from perf.py itself, not from a notebook cell (spawn needs an importable worker). Pending a manual run in JupyterLab.",
+    "mac": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or the JupyterLab Desktop arm64 installer",
+    "windows": "pip install jupyterlab (catalog version 4.6.4), then jupyter lab   # or winget install jupyterlab",
+    "licence": "BSD-3-Clause (OSI: yes)",
+    "url": "https://pypi.org/project/jupyterlab/"
+   }
+  ],
+  "inRealSystems": [
+   "Simulation studies run thousands of replications on clusters with per-replication seeds recorded in run logs.",
+   "Reproducibility reviews require that results do not depend on worker count or scheduling."
+  ],
+  "useWhen": "Vectorise whenever the model allows; add processes when single replications take seconds and cores exist; always tie seeds to replications.",
+  "caution": "Timings are machine-dependent (this sandbox has 1 CPU); never report a speed-up without the machine. Do not run untrusted code in worker processes - pickled data from workers is trusted by the parent.",
+  "checkpoint": "PASS: the shipped tasks_for() gives identical replications; after your fix test_build_task passes with BUILD_TARGET=mine (distinct, worker-count independent); chunked stretch test passes.",
+  "checkYourself": [
+   {
+    "q": "Why is '4.240 +/- 0.000' a bug, not great precision?",
+    "a": "Forty identical replications are one replication; the CI formula assumes independent runs."
+   },
+   {
+    "q": "Why must the worker be a top-level function?",
+    "a": "Spawn pickles the function by reference; children import the module and must find it there."
+   }
+  ],
+  "sources": [
+   {
+    "title": "Python docs: multiprocessing (spawn default on Windows/macOS; main-module guard)",
+    "url": "https://docs.python.org/3/library/multiprocessing.html"
+   },
+   {
+    "title": "NumPy v2.5 manual: Parallel random number generation",
+    "url": "https://numpy.org/doc/stable/reference/random/parallel.html"
+   }
+  ],
+  "next": "L400 #17 Digital twins with live data: state estimation, drift detection and recalibration (from fast, reproducible replications to a model kept in step with live data)",
+  "validation": {
+   "status": "validated-local",
+   "how": "perf.py, solution/perf.py, try_it.py, solution/chunked.py and unittests (Ran 9 tests ... OK) ran locally on Python 3.12.15 + numpy 2.5.3 with the spawn start method on Linux (1 CPU); outputs pasted (timing lines vary per run); BUILD_TARGET=mine on the shipped file fails 2 of 3 build-task tests; failure proof shipped FAIL / solution PASS. Real multi-core speed-ups and the macOS/Windows spawn defaults are pending-ci.",
+   "pendingCi": [
+    "macOS and Windows runs (spawn is their default start method)",
+    "multi-core timing (sandbox has 1 CPU)"
+   ]
+  },
+  "platforms": {
+   "mac": "expected",
+   "windows": "expected"
+  },
+  "conceptNote": "content/concepts/L300/16-performance-scale.md",
+  "conceptSummary": "Vectorise first: Lindley's recursion becomes cumsum and a running minimum, verified equal to the loop before timing. Then run replications in spawn-safe worker processes, giving each replication its own SeedSequence child so results are independent and identical for any worker count; a shared seed yields identical runs and a fake zero-width CI.",
+  "seeAlso": [
+   "simulation L300 #12 Variance reduction: same precision, fewer runs: antithetic pairs break when streams are reseeded per evaluation - the same stream mistake as one seed for every worker.",
+   "distributed-systems L300 #16 Backpressure and load shedding: bounded queues, 503 + Retry-After, AIMD concurrency limits: the same queueing maths on a live server - this lab's M/M/1 at 80% load already waits 4 service times, and waits explode near capacity.",
+   "simulation L400 #20 Large-scale and parallel simulation: reproducible streams, checkpoints and result storage: this lesson's spawn-per-replication fix breaks when a run is resumed - L400 keys streams on (scenario, rep) and checkpoints to SQLite."
+  ]
+ }
+]

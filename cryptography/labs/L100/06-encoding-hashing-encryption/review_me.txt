@@ -1,0 +1,21 @@
+import hashlib
+import random
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+NONCE = b"\x00" * 12
+
+
+def reset_token():
+    return "".join(random.choice("0123456789abcdef") for _ in range(32))
+
+
+def store_password(pw):
+    return hashlib.md5(pw.encode()).hexdigest()
+
+
+def file_id(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def seal(key, msg):
+    return AESGCM(key).encrypt(NONCE, msg, None)

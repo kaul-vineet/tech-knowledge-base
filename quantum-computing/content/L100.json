@@ -1,0 +1,1400 @@
+[
+  {
+    "id": "setup-environment",
+    "number": 1,
+    "level": "Setup",
+    "title": "Set up your quantum environment",
+    "phase": "Foundations",
+    "category": "setup",
+    "description": "Create a Python venv with pinned Qiskit (and Cirq) and run a 1-qubit circuit on the built-in reference simulator.",
+    "outcome": "You have a reproducible local environment and have run X + measure on a simulator.",
+    "environment": "macOS on Apple silicon (Mac mini) or Windows 11 x64; Python 3.12 (3.11+), venv; qiskit 2.6.1 (reference StatevectorSampler, local CPU), qiskit-qasm3-import 0.6.0, cirq 1.7.0; optional qiskit-aer 0.18.2; numpy for the cross-check",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "Quantum SDKs are ordinary Python packages; a local simulator stands in for hardware, so no account or cloud access is needed."
+    ],
+    "prerequisites": [
+      "Python 3.11 or newer (3.12 used here)",
+      "Basic terminal and pip usage"
+    ],
+    "glossary": [
+      {
+        "term": "qubit",
+        "meaning": "Quantum bit; measured result is 0 or 1."
+      },
+      {
+        "term": "circuit",
+        "meaning": "Ordered list of gates and measurements on qubits."
+      },
+      {
+        "term": "simulator (backend)",
+        "meaning": "Software that executes a circuit on a classical CPU."
+      },
+      {
+        "term": "shots",
+        "meaning": "How many times the circuit is run and measured."
+      }
+    ],
+    "concepts": [
+      "SDK = library to build circuits; simulator = local engine that runs them.",
+      "Pin exact versions: quantum SDK APIs change between major releases.",
+      "transpile() rewrites a circuit into gates the target supports."
+    ],
+    "steps": [
+      {
+        "title": "Install Python 3.12",
+        "detail": "Install CPython 3.12 (3.11+ works) from the OS package manager. Full workstation setup: ../shared/WORKSTATION-SETUP.md (same commands for every topic).",
+        "mac": "brew install python@3.12\npython3.12 --version",
+        "windows": "winget install -e --id Python.Python.3.12\npy -3.12 --version",
+        "expected": "Python 3.12.x is printed.",
+        "ifNot": "macOS: run `brew doctor`. Windows: open a new terminal so the `py` launcher is on PATH."
+      },
+      {
+        "title": "Create and activate a venv",
+        "detail": "In the quantum-computing folder, create a virtual environment named .venv and activate it.",
+        "mac": "python3.12 -m venv .venv && source .venv/bin/activate",
+        "windows": "py -3.12 -m venv .venv; .venv\\Scripts\\Activate.ps1\n$env:PYTHONUTF8 = \"1\"   # UTF-8 output for circuit drawings",
+        "expected": "Prompt shows (.venv); `python --version` prints 3.12.",
+        "ifNot": "Windows 'running scripts is disabled': Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, then activate again."
+      },
+      {
+        "title": "Install pinned packages",
+        "detail": "Install the pinned SDKs from labs/L100/requirements.txt with the venv's pip.",
+        "mac": "python -m pip install -r labs/L100/requirements.txt",
+        "windows": "python -m pip install -r labs\\L100\\requirements.txt",
+        "expected": "pip finishes with 'Successfully installed ... qiskit-2.6.1 ...' (qiskit-aer 0.18.2 is installed too, as an optional equivalent).",
+        "ifNot": "Upgrade pip (`python -m pip install -U pip`) and check Python is 64-bit 3.11+ (Windows on Arm: see HARDWARE.md)."
+      },
+      {
+        "title": "Run the independent numpy check",
+        "detail": "Go to the lab folder and run crosscheck_numpy.py.",
+        "mac": "cd labs/L100/01-setup-environment\npython crosscheck_numpy.py",
+        "windows": "cd labs\\L100\\01-setup-environment\npython crosscheck_numpy.py",
+        "expected": "P(X|0>): {'0': 0.0, '1': 1.0}",
+        "ifNot": "pip install numpy inside the venv."
+      },
+      {
+        "title": "Run the lab",
+        "detail": "Run check_env.py (same command on both systems).",
+        "mac": "python check_env.py",
+        "windows": "python check_env.py",
+        "expected": "Each package line ends in OK (qiskit-aer marked optional), then counts: {'1': 100}.",
+        "ifNot": "A line says 'missing' or 'expected x.y.z': reinstall from requirements.txt."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "Run the lab's unit tests.",
+        "mac": "python -m unittest -v",
+        "windows": "python -m unittest -v",
+        "expected": "OK (no skips when the SDKs are installed).",
+        "ifNot": "Read the failing assertion; usually a version mismatch."
+      },
+      {
+        "title": "Optional: local model for agent assist (lessons 5 and 8)",
+        "detail": "Install Ollama, start its server, pull a small model and point LOCAL_MODEL_URL / LOCAL_MODEL at its OpenAI-compatible endpoint (same variables in every topic). Labs and tests never need it (they use a fake server). Full workstation setup: ../shared/WORKSTATION-SETUP.md",
+        "mac": "brew install ollama\nbrew services start ollama\nollama pull qwen2.5:1.5b\nexport LOCAL_MODEL_URL=http://localhost:11434/v1\nexport LOCAL_MODEL=qwen2.5:1.5b\ncurl $LOCAL_MODEL_URL/models",
+        "windows": "# install OllamaSetup.exe from ollama.com/download (winget Ollama.Ollama lags behind)\nollama pull qwen2.5:1.5b\n$env:LOCAL_MODEL_URL=\"http://localhost:11434/v1\"\n$env:LOCAL_MODEL=\"qwen2.5:1.5b\"\nInvoke-RestMethod \"$env:LOCAL_MODEL_URL/models\"",
+        "expected": "The model list includes qwen2.5:1.5b (about 1 GB download).",
+        "ifNot": "No answer: the server must be running before `ollama pull` (run `ollama serve` in another terminal). Or skip it: `python agent_assist.py --fake` in lab 05 needs no model."
+      }
+    ],
+    "code": "\"\"\"Lab 01 - check the quantum toolchain and run a 1-qubit circuit on the local simulator.\n\nRun:  python check_env.py\nNo cloud account, token or network access is used: Qiskit's reference StatevectorSampler runs on your CPU.\n\"\"\"\nimport sys\nfrom importlib import metadata\n\n# Version pinning: SDK APIs change between releases (see labs/L100/requirements.txt).\nPINNED = {\n    \"qiskit\": \"2.6.1\",               # includes the reference primitives (StatevectorSampler) used by every lab\n    \"qiskit-qasm3-import\": \"0.6.0\",  # needed by qiskit.qasm3.loads (lesson 5)\n    \"cirq\": \"1.7.0\",                 # optional until lesson 6\n    \"qiskit-aer\": \"0.18.2\",          # optional equivalent (noise models, speed); reduced-maintenance mode\n}\nOPTIONAL = {\"qiskit-aer\"}\nBASIS = [\"rz\", \"sx\", \"x\", \"cx\"]      # a typical hardware gate set (GenericBackendV2's default, lesson 11)\n\n\ndef installed_versions():\n    \"\"\"Return {package: installed version or None}.\"\"\"\n    found = {}\n    for name in PINNED:\n        try:\n            found[name] = metadata.version(name)\n        except metadata.PackageNotFoundError:\n            found[name] = None\n    return found\n\n\ndef run_one_qubit(shots=100, seed=7):\n    \"\"\"Build |0> -> X -> measure, transpile it to BASIS and sample it with StatevectorSampler.\"\"\"\n    from qiskit import QuantumCircuit, transpile\n    from qiskit.primitives import StatevectorSampler\n\n    qc = QuantumCircuit(1)          # circuit: 1 qubit, starts in |0>\n    qc.x(0)            # gate: X = NOT, |0> becomes |1>\n    qc.measure_all()   # adds a classical register named \"meas\"\n\n    compiled = transpile(qc, basis_gates=BASIS)       # transpile: rewrite into gates the target supports\n    sampler = StatevectorSampler(seed=seed)           # simulator: holds all 2^n amplitudes in your CPU's memory\n    result = sampler.run([compiled], shots=shots).result()   # shots: run + measure `shots` times\n    return result[0].data.meas.get_counts()\n\n\nif __name__ == \"__main__\":\n    print(f\"python {sys.version.split()[0]}\")\n    if sys.version_info < (3, 11):\n        sys.exit(\"Python 3.11+ is required by cirq (lesson 6) and qiskit-aer\")\n    for name, version in installed_versions().items():\n        flag = \"OK\" if version == PINNED[name] else f\"expected {PINNED[name]}\"\n        if name in OPTIONAL:\n            flag += \" (optional)\"\n        print(f\"{name:20s} {version or 'missing':10s} {flag}\")\n    counts = run_one_qubit()\n    print(\"counts:\", counts)   # expected: {'1': 100}\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/01-setup-environment/check_env.py",
+        "purpose": "main lab: version check + 1-qubit circuit transpiled and sampled with StatevectorSampler"
+      },
+      {
+        "path": "labs/L100/01-setup-environment/crosscheck_numpy.py",
+        "purpose": "independent numpy expectation"
+      },
+      {
+        "path": "labs/L100/01-setup-environment/test_setup.py",
+        "purpose": "unittest: versions, counts vs numpy"
+      },
+      {
+        "path": "labs/L100/01-setup-environment/README.md",
+        "purpose": "run commands and expected output"
+      },
+      {
+        "path": "labs/L100/01-setup-environment/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L100/01-setup-environment/test_try_it.py",
+        "purpose": "tryIt tests"
+      },
+      {
+        "path": "labs/L100/requirements.txt",
+        "purpose": "pinned SDK versions"
+      }
+    ],
+    "expectedResults": [
+      "Version table with OK on every line",
+      "counts: {'1': 100}"
+    ],
+    "testCases": [
+      {
+        "action": "python -m unittest -v",
+        "expected": "4 tests OK; X circuit gives {'1': 100}, matching numpy."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "In run_one_qubit, add a second qc.x(0) before measure_all(), then run python try_it.py.",
+        "predict": "What counts will 100 shots give?",
+        "expected": "{'0': 100}: X is reversible (X·X = I), so the qubit is back in |0>."
+      },
+      {
+        "task": "Predict the statevector size for QuantumCircuit(3) and QuantumCircuit(30), then run python try_it.py.",
+        "predict": "How many bytes does each need?",
+        "expected": "3 qubits: 128 bytes; 30 qubits: 17179869184 bytes (16 GiB). Memory doubles with every qubit."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "ModuleNotFoundError: No module named 'qiskit'",
+        "action": "Activate the venv, then pip install -r labs/L100/requirements.txt."
+      },
+      {
+        "symptom": "pip cannot find cirq or qiskit-aer for your Python",
+        "action": "cirq 1.7.0 and qiskit-aer 0.18.2 need Python >= 3.11; use 3.11-3.13."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Cirq: `pip install cirq`, then `cirq.Simulator().run(circuit, repetitions=100)`.",
+      "Qiskit Aer (Apache-2.0, 'reduced maintenance mode'): `qiskit_aer.primitives.SamplerV2(seed=7)` takes the same PUBs; use it for noise models or speed.",
+      "PennyLane (Apache-2.0): `qp.device('default.qubit', wires=2)` + `@qp.qnode`; set shots with `qp.set_shots`.",
+      "Amazon Braket SDK (Apache-2.0): `Circuit().h(0).cnot(0, 1)` on the SDK's local `braket_sv` simulator; read `measurement_counts`.",
+      "Microsoft QDK / Q# (MIT): same operations written in Q#, run locally from Python via the `qdk` package."
+    ],
+    "inRealSystems": "Qiskit's transpiler runs six stages (init, layout, routing, translation, optimization, scheduling); StatevectorSampler is the exact reference, while Aer picks a faster simulation method per circuit; Cirq ships cirq.Simulator with qsim as a faster plug-in; Stim simulates only Clifford circuits to reach thousands of qubits.",
+    "useWhen": "Use a local simulator for learning, unit tests and CI (offline, exact, seedable); go further when you need more than about 30 qubits of statevector or realistic hardware noise.",
+    "simulatorVsReal": "Runs on Qiskit's reference StatevectorSampler (qiskit 2.6.1), an ideal (noise-free) local simulator. Real hardware adds noise, so outcomes that are impossible here (e.g. '01' for a Bell pair) appear with small counts.",
+    "caution": "No account, API token or network call is used. Never commit cloud tokens if you later add hardware access.",
+    "checkpoint": "PASS if check_env.py prints OK for qiskit and counts {'1': 100}.",
+    "checkYourself": [
+      {
+        "q": "Which object actually executes the circuit in lab 01?",
+        "a": "qiskit.primitives.StatevectorSampler (built into qiskit); transpile only rewrites it. Aer's SamplerV2 would be an optional equivalent."
+      },
+      {
+        "q": "Why is the output always exactly {'1': 100}?",
+        "a": "X|0> = |1>, so P(1) = 1 and every shot reads 1."
+      },
+      {
+        "q": "Roughly how much memory does a 30-qubit statevector need?",
+        "a": "2^30 x 16 bytes = 16 GiB."
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "sources": [
+      {
+        "title": "Install Qiskit (IBM Quantum docs)",
+        "url": "https://quantum.cloud.ibm.com/docs/en/guides/install-qiskit"
+      },
+      {
+        "title": "qiskit on PyPI",
+        "url": "https://pypi.org/project/qiskit/"
+      },
+      {
+        "title": "StatevectorSampler API",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.primitives.StatevectorSampler"
+      },
+      {
+        "title": "Exact simulation with Qiskit SDK primitives",
+        "url": "https://quantum.cloud.ibm.com/docs/en/guides/simulate-with-qiskit-sdk-primitives"
+      },
+      {
+        "title": "qiskit-aer on PyPI",
+        "url": "https://pypi.org/project/qiskit-aer/"
+      },
+      {
+        "title": "Python docs: venv (activation per shell, Windows execution policy)",
+        "url": "https://docs.python.org/3/library/venv.html"
+      },
+      {
+        "title": "Homebrew formula python@3.12",
+        "url": "https://formulae.brew.sh/formula/python@3.12"
+      },
+      {
+        "title": "winget-pkgs: Python.Python.3.12 manifests",
+        "url": "https://github.com/microsoft/winget-pkgs/tree/master/manifests/p/Python/Python/3/12"
+      },
+      {
+        "title": "Introduction to transpilation",
+        "url": "https://quantum.cloud.ibm.com/docs/en/guides/transpile"
+      },
+      {
+        "title": "AerSimulator API (methods, 16 bytes per amplitude)",
+        "url": "https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.AerSimulator.html"
+      }
+    ],
+    "next": "L200 #11 Transpiling to a device layout: the transpile step from this lab, now for basis gates and a coupling map on GenericBackendV2.",
+    "validation": {
+      "status": "pending-ci",
+      "how": "qiskit/qiskit-aer/cirq cannot be pip-installed in the authoring sandbox (no package network). Ran locally: `python crosscheck_numpy.py` -> P(X|0>) = {'0': 0.0, '1': 1.0}; `python -m unittest` (incl. test_try_it.py) -> 7 tests: 3 OK, 4 SDK tests skipped. tryIt: `python try_it.py` (numpy/parser part, output = tryIt.expected) and test_try_it.py ran locally; their SDK variants are skipped. SDK part: check_env.py and test_setup.py (+ try_it.py/test_try_it.py SDK variants) runs in .github/workflows/labs.yml job 'sdk-labs' (REQUIRE_QUANTUM_SDKS=1, pinned versions); not yet observed. tryIt 1: local: try_it.py numpy part (observed); SDK variant in test_try_it.py is pending-ci. tryIt 2: local: try_it.py (numpy complex128, the same 16 bytes per amplitude the AerSimulator docs state for statevector simulation). Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable and 127.0.0.1; CI matrix job runs the same tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "check_env.py",
+        "test_setup.py (SdkLab)",
+        "try_it.py + test_try_it.py (SDK variant)"
+      ]
+    },
+    "conceptNote": "content/concepts/01-setup-environment.md",
+    "conceptSummary": "An SDK builds circuits, a transpiler rewrites them for a target, and a local simulator executes them by holding all 2^n amplitudes in memory. Pinned versions in a venv make the whole chain reproducible offline; memory doubles with every qubit (30 qubits = 16 GiB)."
+  },
+  {
+    "id": "qubits-and-gates",
+    "number": 2,
+    "level": "L100",
+    "title": "Qubits and gates in code",
+    "phase": "Circuits",
+    "category": "gates",
+    "description": "Build circuits with X, H and measure; run them; read the counts.",
+    "outcome": "You can predict and read the counts of X, H and H-H circuits, and read Qiskit bitstrings in the right order.",
+    "environment": "macOS on Apple silicon (Mac mini) or Windows 11 x64; Python 3.12 (3.11+), venv; qiskit 2.6.1 (reference StatevectorSampler, local CPU), qiskit-qasm3-import 0.6.0, cirq 1.7.0; optional qiskit-aer 0.18.2; numpy for the cross-check",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "X flips a qubit, H puts it into a 50/50 superposition, and measurement turns the qubit into a classical bit."
+    ],
+    "prerequisites": [
+      "Lesson 1 environment"
+    ],
+    "glossary": [
+      {
+        "term": "X gate",
+        "meaning": "Quantum NOT: |0> -> |1>."
+      },
+      {
+        "term": "H gate (Hadamard)",
+        "meaning": "Creates an equal superposition from |0>."
+      },
+      {
+        "term": "measure",
+        "meaning": "Reads a qubit into a classical bit (0 or 1)."
+      },
+      {
+        "term": "counts",
+        "meaning": "Dict of bitstring -> how many shots gave it."
+      }
+    ],
+    "concepts": [
+      "Qubits start in |0>.",
+      "H twice cancels out (H is its own inverse).",
+      "Qiskit bitstrings put qubit 0 on the RIGHT ('01' = qubit 0 is 1)."
+    ],
+    "steps": [
+      {
+        "title": "Predict with numpy",
+        "detail": "python crosscheck_numpy.py",
+        "expected": "x {'1': 1.0}, h {'0': 0.5, '1': 0.5}, h_h {'0': 1.0}, x_on_q0_of_2 {'01': 1.0}",
+        "ifNot": "Check numpy is installed in the venv."
+      },
+      {
+        "title": "Run the circuits",
+        "detail": "python gates_lab.py",
+        "expected": "A drawing of the H circuit, then counts; 'x' is {'1': 1000}, 'h' is roughly 500/500.",
+        "ifNot": "ImportError: redo lesson 1 install."
+      },
+      {
+        "title": "Read the 2-qubit result",
+        "detail": "Look at x_on_q0_of_2.",
+        "expected": "{'01': 1000} - the 1 is on the right because it is qubit 0.",
+        "ifNot": "If you expected '10', re-read the bit-order note; nothing is wrong."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v",
+        "expected": "OK; every circuit's counts are within 5 sigma of the numpy probabilities.",
+        "ifNot": "Compare the failing circuit name with crosscheck_numpy.EXPECTED."
+      }
+    ],
+    "code": "\"\"\"Lab 02 - build small circuits with X, H and measure, run them, read the counts.\n\nRun:  python gates_lab.py\n\"\"\"\nfrom qiskit import QuantumCircuit\nfrom qiskit.primitives import StatevectorSampler   # Qiskit's reference sampler; Aer's SamplerV2 is an equivalent\n\n\ndef build_circuits():\n    \"\"\"Return {name: circuit}. Every circuit ends with measure_all() -> register 'meas'.\"\"\"\n    circuits = {}\n\n    qc = QuantumCircuit(1)          # qubits start in |0>\n    qc.measure_all()\n    circuits[\"nothing\"] = qc        # always '0'\n\n    qc = QuantumCircuit(1)\n    qc.x(0)                         # X = NOT: |0> -> |1>\n    qc.measure_all()\n    circuits[\"x\"] = qc              # always '1'\n\n    qc = QuantumCircuit(1)\n    qc.h(0)                         # superposition: H gives amplitudes (0.7071, 0.7071)\n    qc.measure_all()                # Born rule: P = |amplitude|^2 -> 50% '0', 50% '1'\n    circuits[\"h\"] = qc\n\n    qc = QuantumCircuit(1)\n    qc.h(0)\n    qc.h(0)                         # interference: H twice undoes itself -> always '0'\n    qc.measure_all()\n    circuits[\"h_h\"] = qc\n\n    qc = QuantumCircuit(2)\n    qc.x(0)                         # flip qubit 0 only\n    qc.measure_all()\n    circuits[\"x_on_q0_of_2\"] = qc   # bit order: prints '01', qubit 0 is the RIGHTMOST bit\n\n    return circuits\n\n\ndef run_all(shots=1000, seed=7):\n    \"\"\"Run every circuit on the local reference sampler; return {name: counts}.\"\"\"\n    circuits = build_circuits()\n    names = list(circuits)\n    sampler = StatevectorSampler(seed=seed)   # fixed seed -> same counts every run\n    result = sampler.run([circuits[n] for n in names], shots=shots).result()\n    return {name: result[i].data.meas.get_counts() for i, name in enumerate(names)}\n\n\nif __name__ == \"__main__\":\n    print(build_circuits()[\"h\"].draw())   # text drawing of the H circuit\n    for name, counts in run_all().items():\n        print(f\"{name:14s} {dict(sorted(counts.items()))}\")\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/02-qubits-and-gates/gates_lab.py",
+        "purpose": "main lab: 5 small circuits on StatevectorSampler"
+      },
+      {
+        "path": "labs/L100/02-qubits-and-gates/crosscheck_numpy.py",
+        "purpose": "numpy statevector expectations"
+      },
+      {
+        "path": "labs/L100/02-qubits-and-gates/test_gates.py",
+        "purpose": "unittest: counts vs numpy, seed repeatability"
+      },
+      {
+        "path": "labs/L100/02-qubits-and-gates/README.md",
+        "purpose": "run commands and expected output"
+      },
+      {
+        "path": "labs/L100/02-qubits-and-gates/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L100/02-qubits-and-gates/test_try_it.py",
+        "purpose": "tryIt tests"
+      },
+      {
+        "path": "labs/L100/requirements.txt",
+        "purpose": "pinned SDK versions"
+      }
+    ],
+    "expectedResults": [
+      "nothing -> {'0': 1000}",
+      "x -> {'1': 1000}",
+      "h -> about 500 '0' and 500 '1'",
+      "h_h -> {'0': 1000}",
+      "x_on_q0_of_2 -> {'01': 1000}"
+    ],
+    "testCases": [
+      {
+        "action": "run_all(shots=1000)",
+        "expected": "Only outcomes allowed by numpy appear; counts within 5 sigma."
+      },
+      {
+        "action": "run_all(seed=11) twice",
+        "expected": "Identical dicts."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Add a circuit 'h_x_h': qc.h(0); qc.x(0); qc.h(0); then measure. Run python try_it.py.",
+        "predict": "50/50 like a single H, or a fixed result?",
+        "expected": "Always '0' (numpy {'0': 1.0}): H·X·H = Z, which only flips a sign that |0> does not have."
+      },
+      {
+        "task": "In x_on_q0_of_2, change qc.x(0) to qc.x(1).",
+        "predict": "Which bitstring prints now?",
+        "expected": "'10' (numpy {'10': 1.0}): qubit 1 is the left character."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "AttributeError: 'DataBin' object has no attribute 'meas'",
+        "action": "Use measure_all() (it names the register 'meas') or read the name from qc.cregs[0].name."
+      },
+      {
+        "symptom": "h counts are not exactly 500/500",
+        "action": "Expected: each shot is random. See lesson 3."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Cirq: `cirq.Circuit(cirq.H(q), cirq.measure(q, key='m'))`.",
+      "Same gates in OpenQASM 3: `x q[0]; h q[0];` from stdgates.inc.",
+      "Qiskit Aer (Apache-2.0, 'reduced maintenance mode'): `qiskit_aer.primitives.SamplerV2(seed=7)` takes the same PUBs; use it for noise models or speed.",
+      "PennyLane (Apache-2.0): `qp.device('default.qubit', wires=2)` + `@qp.qnode`; set shots with `qp.set_shots`.",
+      "Amazon Braket SDK (Apache-2.0): `Circuit().h(0).cnot(0, 1)` on the SDK's local `braket_sv` simulator; read `measurement_counts`.",
+      "Microsoft QDK / Q# (MIT): same operations written in Q#, run locally from Python via the `qdk` package."
+    ],
+    "inRealSystems": "OpenQASM's stdgates.inc defines x, h and cx exactly like this; Qiskit (qc.x, qc.h) and Cirq (cirq.X, cirq.H) name the same matrices; transpilers decompose them into each device's native gates.",
+    "useWhen": "Reason about amplitudes for 1-3 qubit circuits and to debug 'why is this 50/50?'; simulate or just sample when circuits are large or only statistics matter.",
+    "simulatorVsReal": "Runs on Qiskit's reference StatevectorSampler (qiskit 2.6.1), an ideal (noise-free) local simulator. Real hardware adds noise, so outcomes that are impossible here (e.g. '01' for a Bell pair) appear with small counts.",
+    "checkpoint": "PASS if x gives only '1', h_h gives only '0', and x_on_q0_of_2 gives only '01'.",
+    "checkYourself": [
+      {
+        "q": "What does H·H do to any qubit state?",
+        "a": "Nothing: H·H = I."
+      },
+      {
+        "q": "What are the measurement probabilities of (0.6, 0.8)?",
+        "a": "P(0) = 0.36, P(1) = 0.64 (np.abs([0.6, 0.8])**2)."
+      },
+      {
+        "q": "In Qiskit, which qubit is 1 in the result '10'?",
+        "a": "Qubit 1; qubit 0 is the rightmost character."
+      }
+    ],
+    "learningTools": [
+      {
+        "name": "Qiskit visualization (qiskit.visualization)",
+        "role": "SEE",
+        "exercise": "Build the lab's 'h' and 'x' circuits without measure_all() and call plot_bloch_multivector(Statevector(qc)) after each gate (H, X, then add S); predict the arrow before you look.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). H: arrow on the equator (+x); X: arrow at the south pole (|1>); S after H turns it a quarter around the equator. Should match the lab's printed values: h {'0': 0.5, '1': 0.5}, x {'1': 1.0}.",
+        "mac": "pip install 'qiskit[visualization]'",
+        "windows": "pip install \"qiskit[visualization]\"",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/visualization"
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "sources": [
+      {
+        "title": "Bit-ordering in the Qiskit SDK",
+        "url": "https://quantum.cloud.ibm.com/docs/en/guides/bit-ordering"
+      },
+      {
+        "title": "StatevectorSampler API",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.primitives.StatevectorSampler"
+      },
+      {
+        "title": "OpenQASM 3 standard library (stdgates.inc)",
+        "url": "https://openqasm.com/language/standard_library.html"
+      },
+      {
+        "title": "qiskit.compiler.transpile API",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/compiler"
+      },
+      {
+        "title": "IBM Quantum Learning: Single systems, quantum information",
+        "url": "https://quantum.cloud.ibm.com/learning/en/courses/basics-of-quantum-information/single-systems/quantum-information"
+      }
+    ],
+    "next": "L200 #10 Parameterized circuits and sweeps: rotation gates (RY, RX) with Parameter objects instead of fixed X/H.",
+    "validation": {
+      "status": "pending-ci",
+      "how": "qiskit/qiskit-aer/cirq cannot be pip-installed in the authoring sandbox (no package network). Ran locally: `python crosscheck_numpy.py` (output pasted in README) and `python -m unittest` (incl. test_try_it.py) -> 6 tests: 3 OK, 3 SDK tests skipped. tryIt: `python try_it.py` (numpy/parser part, output = tryIt.expected) and test_try_it.py ran locally; their SDK variants are skipped. SDK part: gates_lab.py and test_gates.py (+ try_it.py/test_try_it.py SDK variants) runs in .github/workflows/labs.yml job 'sdk-labs' (REQUIRE_QUANTUM_SDKS=1, pinned versions); not yet observed. tryIt 1: local: try_it.py numpy part (observed); SDK variant in test_try_it.py is pending-ci. tryIt 2: local: try_it.py numpy part (observed); SDK variant in test_try_it.py is pending-ci. Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable and 127.0.0.1; CI matrix job runs the same tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "gates_lab.py",
+        "test_gates.py (SdkLab)",
+        "try_it.py + test_try_it.py (SDK variant)",
+        "learningTools: Qiskit visualization (qiskit.visualization) exercise (manual run)"
+      ]
+    },
+    "conceptNote": "content/concepts/02-qubits-and-gates.md",
+    "conceptSummary": "A qubit is a pair of complex amplitudes and a gate is a reversible matrix: X swaps them, H makes an equal superposition, and H twice undoes itself. Measurement returns 0 or 1 with probability |amplitude|^2, and Qiskit writes qubit 0 as the rightmost bit."
+  },
+  {
+    "id": "shots-counts-probability",
+    "number": 3,
+    "level": "L100",
+    "title": "Shots, counts and probability",
+    "phase": "Circuits",
+    "category": "sampling",
+    "description": "Run N shots, histogram the counts, see why results vary, and seed the simulator for reproducibility.",
+    "outcome": "You can choose a shot count, explain the spread in results, and make runs repeatable with a seed.",
+    "environment": "macOS on Apple silicon (Mac mini) or Windows 11 x64; Python 3.12 (3.11+), venv; qiskit 2.6.1 (reference StatevectorSampler, local CPU), qiskit-qasm3-import 0.6.0, cirq 1.7.0; optional qiskit-aer 0.18.2; numpy for the cross-check",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "Each shot is a random draw from the circuit's probability distribution, so counts vary run to run; more shots shrink the error and a fixed seed repeats the same draws."
+    ],
+    "prerequisites": [
+      "Lesson 2"
+    ],
+    "glossary": [
+      {
+        "term": "shot",
+        "meaning": "One execution + measurement of the circuit."
+      },
+      {
+        "term": "estimated probability",
+        "meaning": "count / shots."
+      },
+      {
+        "term": "standard error",
+        "meaning": "Typical spread of the estimate: sqrt(p(1-p)/shots)."
+      },
+      {
+        "term": "seed",
+        "meaning": "Fixed start value for the random number generator."
+      }
+    ],
+    "concepts": [
+      "Counts are samples, not exact probabilities.",
+      "Error shrinks like 1/sqrt(shots): 100x more shots -> 10x smaller error.",
+      "Seed the sampler in tests and demos; leave it unseeded in real studies."
+    ],
+    "steps": [
+      {
+        "title": "See shot noise without any SDK",
+        "detail": "python crosscheck_numpy.py",
+        "expected": "P('1') estimates move toward 0.5 as shots grow; the two 'seed 2024' draws are identical.",
+        "ifNot": "Check numpy version (2.x)."
+      },
+      {
+        "title": "Run the lab",
+        "detail": "python shots_lab.py",
+        "expected": "Four lines for 10/100/1000/10000 shots; estimates approach 0.5.",
+        "ifNot": "ImportError: redo lesson 1."
+      },
+      {
+        "title": "Compare unseeded vs seeded runs",
+        "detail": "Read the four 'unseeded'/'seeded' lines.",
+        "expected": "Unseeded runs usually differ; seeded runs are identical.",
+        "ifNot": "Two unseeded runs can match by chance; run again."
+      },
+      {
+        "title": "Read the histogram",
+        "detail": "Last block of output.",
+        "expected": "Two bars of about the same length (about 500 each).",
+        "ifNot": "If one bar is near zero, check the circuit still has qc.h(0)."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v",
+        "expected": "OK; 10000-shot estimate within 5 standard errors of 0.5.",
+        "ifNot": "Look at the failing seed and shots in the message."
+      }
+    ],
+    "code": "\"\"\"Lab 03 - shots, counts and probability: why results vary and how a seed makes them repeatable.\n\nRun:  python shots_lab.py\n\"\"\"\nfrom qiskit import QuantumCircuit\nfrom qiskit.primitives import StatevectorSampler   # Qiskit's reference sampler; Aer's SamplerV2 is an equivalent\n\n\ndef coin_circuit():\n    \"\"\"One qubit in equal superposition: ideal P('0') = P('1') = 0.5.\"\"\"\n    qc = QuantumCircuit(1)\n    qc.h(0)\n    qc.measure_all()\n    return qc\n\n\ndef sample(shots, seed=None):\n    \"\"\"Run `shots` repetitions. seed=None -> new random stream each call.\"\"\"\n    sampler = StatevectorSampler(seed=seed)    # seed: replays the same random draws; does not make them more accurate\n    result = sampler.run([coin_circuit()], shots=shots).result()   # shot noise: each shot is one random draw\n    counts = result[0].data.meas.get_counts()\n    return {\"0\": counts.get(\"0\", 0), \"1\": counts.get(\"1\", 0)}\n\n\ndef text_histogram(counts, width=40):\n    \"\"\"Tiny terminal histogram: one '#' per (total/width) shots.\"\"\"\n    total = sum(counts.values())\n    return \"\\n\".join(f\"{k} | {'#' * round(width * v / total):<{width}} {v}\" for k, v in sorted(counts.items()))\n\n\nif __name__ == \"__main__\":\n    for shots in (10, 100, 1000, 10000):\n        c = sample(shots, seed=42)\n        # estimate = count / shots; its standard error shrinks like 1/sqrt(shots)\n        print(f\"shots={shots:<6d} counts={c}  estimated P('1')={c['1'] / shots:.3f}\")\n    print(\"\\nunseeded, run 1:\", sample(100))     # these two usually differ\n    print(\"unseeded, run 2:\", sample(100))\n    print(\"seeded 2024, run 1:\", sample(100, seed=2024))  # these two are identical\n    print(\"seeded 2024, run 2:\", sample(100, seed=2024))\n    print(\"\\n\" + text_histogram(sample(1000, seed=42)))\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/03-shots-counts-probability/shots_lab.py",
+        "purpose": "main lab: sampling at several shot counts, seeding, text histogram"
+      },
+      {
+        "path": "labs/L100/03-shots-counts-probability/crosscheck_numpy.py",
+        "purpose": "exact probability + numpy sampling with standard error"
+      },
+      {
+        "path": "labs/L100/03-shots-counts-probability/test_shots.py",
+        "purpose": "unittest: sums, tolerance, seed repeatability"
+      },
+      {
+        "path": "labs/L100/03-shots-counts-probability/README.md",
+        "purpose": "run commands and expected output"
+      },
+      {
+        "path": "labs/L100/03-shots-counts-probability/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L100/03-shots-counts-probability/test_try_it.py",
+        "purpose": "tryIt tests"
+      },
+      {
+        "path": "labs/L100/requirements.txt",
+        "purpose": "pinned SDK versions"
+      }
+    ],
+    "expectedResults": [
+      "Estimate of P('1') converges to 0.5",
+      "Same seed -> same counts",
+      "Text histogram with two similar bars"
+    ],
+    "testCases": [
+      {
+        "action": "sample(shots, seed=5) for 10/100/1000",
+        "expected": "Counts sum to shots."
+      },
+      {
+        "action": "sample(10000, seed=42)",
+        "expected": "|P('1') - 0.5| < 5 * 0.005."
+      },
+      {
+        "action": "sample(100, seed=2024) twice",
+        "expected": "Identical."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Add 2500 to the shot counts in the main loop (10, 100, 1000, 2500, 10000) and run python try_it.py.",
+        "predict": "How far from 0.5 can P('1') be at 2500 shots?",
+        "expected": "Standard error 0.010; the numpy stand-in (seed 42) gave {'0': 1294, '1': 1206}, P('1') ~ 0.4824, within 2 SE. StatevectorSampler's exact count differs (own RNG)."
+      },
+      {
+        "task": "Change the second seeded run from seed=2024 to seed=2025.",
+        "predict": "Same counts as seed 2024?",
+        "expected": "No: numpy gave {'0': 51, '1': 49} vs {'0': 52, '1': 48}. Another seed is another random stream."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Tests flaky across machines",
+        "action": "Always pass a seed in tests; compare with tolerances, never exact unseeded counts."
+      },
+      {
+        "symptom": "Want a graphical histogram",
+        "action": "qiskit.visualization.plot_histogram(counts) (needs matplotlib)."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Cirq: `cirq.Simulator(seed=42).run(circuit, repetitions=1000)` then `result.histogram(key='m')`.",
+      "Qiskit Aer (Apache-2.0, 'reduced maintenance mode'): `qiskit_aer.primitives.SamplerV2(seed=7)` takes the same PUBs; use it for noise models or speed.",
+      "Plain numpy: `np.random.default_rng(seed).binomial(shots, p)` (see crosscheck_numpy.py).",
+      "PennyLane (Apache-2.0): `qp.device('default.qubit', wires=2)` + `@qp.qnode`; set shots with `qp.set_shots`.",
+      "Amazon Braket SDK (Apache-2.0): `Circuit().h(0).cnot(0, 1)` on the SDK's local `braket_sv` simulator; read `measurement_counts`.",
+      "Microsoft QDK / Q# (MIT): same operations written in Q#, run locally from Python via the `qdk` package."
+    ],
+    "inRealSystems": "Qiskit StatevectorSampler(seed=...) (used here) and Aer SamplerV2(seed=...) take shots and seeds; Cirq uses repetitions with cirq.Simulator(seed=...); PennyLane sets qp.set_shots (shots=None gives exact statistics); CI suites, including this repo's, compare with tolerances (5 sigma).",
+    "useWhen": "Seed for unit tests, demos, docs output and bug reproduction; leave unseeded when estimating real variability or benchmarking, and never expect a seed to match across frameworks.",
+    "simulatorVsReal": "Runs on Qiskit's reference StatevectorSampler (qiskit 2.6.1), an ideal (noise-free) local simulator. Real hardware adds noise, so outcomes that are impossible here (e.g. '01' for a Bell pair) appear with small counts. Hardware results also drift between runs; a seed only fixes simulator sampling.",
+    "checkpoint": "PASS if seeded runs repeat exactly and the 10000-shot estimate is within 0.025 of 0.5.",
+    "checkYourself": [
+      {
+        "q": "You need P('1') to about +/-0.005 (one standard error) at p ~ 0.5. How many shots?",
+        "a": "0.25 / 0.005^2 = 10000."
+      },
+      {
+        "q": "1000 shots of H gave 520 ones. Is something wrong?",
+        "a": "No: 520 is inside the ~95% range 469-531."
+      },
+      {
+        "q": "Does StatevectorSampler(seed=7) make Cirq reproduce the same counts?",
+        "a": "No; a seed only applies to its own simulator's RNG."
+      }
+    ],
+    "learningTools": [
+      {
+        "name": "Qiskit visualization (qiskit.visualization)",
+        "role": "SEE",
+        "exercise": "plot_histogram([sample(100, seed=42), sample(10000, seed=42)], legend=['100', '10000']) using shots_lab.sample; see the sampling noise shrink.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Both bars approach 0.5; the 100-shot bars wobble more. The lab's numpy check printed P('1') 0.550 at 100 shots and 0.491 at 10000 (standard error 0.050 vs 0.005); StatevectorSampler's own counts will differ but stay within about 2 standard errors.",
+        "mac": "pip install 'qiskit[visualization]'",
+        "windows": "pip install \"qiskit[visualization]\"",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/visualization"
+      },
+      {
+        "name": "JupyterLab (+ JupyterLab Desktop)",
+        "role": "CHECK",
+        "exercise": "In a notebook, import shots_lab, run sample(n, seed=42) for n in 10, 100, 1000, 10000 and plot P('1') against shots with the exact 0.5 line from crosscheck_numpy.exact_probabilities().",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Points converge on the 0.5 line inside the ±2·standard-error band (0.158, 0.050, 0.016, 0.005 from the lab's numpy check).",
+        "mac": "pip install jupyterlab, or Desktop arm64 installer; open with: jupyter lab",
+        "windows": "pip install jupyterlab, or Desktop x64 installer / winget install jupyterlab; open with: jupyter lab",
+        "licence": "BSD-3-Clause (OSI: yes)",
+        "url": "https://pypi.org/project/jupyterlab/"
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "sources": [
+      {
+        "title": "StatevectorSampler API",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.primitives.StatevectorSampler"
+      },
+      {
+        "title": "Exact simulation with Qiskit SDK primitives",
+        "url": "https://quantum.cloud.ibm.com/docs/en/guides/simulate-with-qiskit-sdk-primitives"
+      },
+      {
+        "title": "Cirq: Simulation",
+        "url": "https://quantumai.google/cirq/simulate/simulation"
+      },
+      {
+        "title": "Qiskit Aer SamplerV2 API",
+        "url": "https://qiskit.github.io/qiskit-aer/stubs/qiskit_aer.primitives.SamplerV2.html"
+      }
+    ],
+    "next": "L200 #10 Parameterized circuits and sweeps: expectation values with StatevectorEstimator and a fit over sampled counts.",
+    "validation": {
+      "status": "pending-ci",
+      "how": "qiskit/qiskit-aer/cirq cannot be pip-installed in the authoring sandbox (no package network). Ran locally: `python crosscheck_numpy.py` (output pasted in README) and `python -m unittest` (incl. test_try_it.py) -> 10 tests: 4 OK, 6 SDK tests skipped. tryIt: `python try_it.py` (numpy/parser part, output = tryIt.expected) and test_try_it.py ran locally; their SDK variants are skipped. SDK part: shots_lab.py and test_shots.py (+ try_it.py/test_try_it.py SDK variants) runs in .github/workflows/labs.yml job 'sdk-labs' (REQUIRE_QUANTUM_SDKS=1, pinned versions); not yet observed. tryIt 1: local: try_it.py numpy part (observed); SDK variant in test_try_it.py is pending-ci (SDK count not yet observed). tryIt 2: local: try_it.py numpy part (observed); SDK variant in test_try_it.py is pending-ci. Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable and 127.0.0.1; CI matrix job runs the same tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "shots_lab.py",
+        "test_shots.py (SdkLab)",
+        "try_it.py + test_try_it.py (SDK variant)",
+        "learningTools: Qiskit visualization (qiskit.visualization) exercise (manual run)",
+        "learningTools: JupyterLab (+ JupyterLab Desktop) exercise (manual run)"
+      ]
+    },
+    "conceptNote": "content/concepts/03-shots-counts-probability.md",
+    "conceptSummary": "Every result is a sample: each shot draws one outcome from the circuit's exact distribution, so counts vary with a standard error of sqrt(p(1-p)/N). Seeds replay the same draws in one simulator for repeatable tests, but do not make estimates more accurate."
+  },
+  {
+    "id": "bell-pair-entanglement",
+    "number": 4,
+    "level": "L100",
+    "title": "Entanglement with a Bell pair",
+    "phase": "Circuits",
+    "category": "entanglement",
+    "description": "Build H + CNOT, run it, and check that only '00' and '11' appear.",
+    "outcome": "You can build a Bell pair and verify the perfectly correlated results in code.",
+    "environment": "macOS on Apple silicon (Mac mini) or Windows 11 x64; Python 3.12 (3.11+), venv; qiskit 2.6.1 (reference StatevectorSampler, local CPU), qiskit-qasm3-import 0.6.0, cirq 1.7.0; optional qiskit-aer 0.18.2; numpy for the cross-check",
+    "estimatedTime": "15-30 minutes",
+    "overview": [
+      "H then CNOT links two qubits so each is random on its own but both always agree when measured."
+    ],
+    "prerequisites": [
+      "Lessons 2-3"
+    ],
+    "glossary": [
+      {
+        "term": "CNOT (CX)",
+        "meaning": "Flips the target qubit when the control qubit is 1."
+      },
+      {
+        "term": "Bell pair",
+        "meaning": "Two-qubit state (|00> + |11>)/sqrt(2)."
+      },
+      {
+        "term": "entanglement",
+        "meaning": "Qubits whose results are correlated beyond what separate qubits allow."
+      },
+      {
+        "term": "statevector",
+        "meaning": "List of complex amplitudes; probabilities are |amplitude|^2."
+      }
+    ],
+    "concepts": [
+      "cx(control, target): Qiskit and OpenQASM both put the control first.",
+      "Ideal Bell pair: P('00') = P('11') = 0.5, P('01') = P('10') = 0.",
+      "Check exact probabilities (statevector) and sampled counts separately."
+    ],
+    "steps": [
+      {
+        "title": "Predict with numpy",
+        "detail": "python crosscheck_numpy.py",
+        "expected": "amplitudes [0.7071 0 0 0.7071], probabilities {'00': 0.5, '11': 0.5}",
+        "ifNot": "Check numpy installed."
+      },
+      {
+        "title": "Run the lab",
+        "detail": "python bell_lab.py",
+        "expected": "Circuit drawing, ideal probabilities {'00': 0.5, '11': 0.5}, counts with only '00' and '11', 'only ... seen: True'.",
+        "ifNot": "If '01'/'10' appear you are not on the ideal StatevectorSampler (noise model?)."
+      },
+      {
+        "title": "Break it on purpose",
+        "detail": "Remove qc.cx(0, 1) and rerun.",
+        "expected": "Now '00' and '01' appear: qubit 1 no longer follows qubit 0.",
+        "ifNot": "Make sure you edited bell_circuit()."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v",
+        "expected": "OK; statevector equals numpy; 2000 shots contain only '00'/'11'.",
+        "ifNot": "Restore qc.cx(0, 1) if you removed it."
+      }
+    ],
+    "code": "\"\"\"Lab 04 - entanglement with a Bell pair: H + CNOT, then check only '00' and '11' appear.\n\nRun:  python bell_lab.py\n\"\"\"\nfrom qiskit import QuantumCircuit\nfrom qiskit.primitives import StatevectorSampler   # Qiskit's reference sampler; Aer's SamplerV2 is an equivalent\nfrom qiskit.quantum_info import Statevector\n\n\ndef bell_circuit(measure=True):\n    qc = QuantumCircuit(2)\n    qc.h(0)        # superposition on qubit 0; still a product state\n    qc.cx(0, 1)    # entanglement: CNOT(control 0, target 1) -> (|00> + |11>)/sqrt(2)\n    if measure:\n        qc.measure_all()\n    return qc\n\n\ndef ideal_probabilities():\n    \"\"\"Exact probabilities from Qiskit's statevector (Born rule, no shot noise).\"\"\"\n    probs = Statevector(bell_circuit(measure=False)).probabilities_dict()\n    return {k: round(float(v), 12) for k, v in probs.items() if v > 1e-12}\n\n\ndef run_bell(shots=1000, seed=7):\n    result = StatevectorSampler(seed=seed).run([bell_circuit()], shots=shots).result()\n    return result[0].data.meas.get_counts()\n\n\ndef only_correlated(counts):\n    \"\"\"Correlation check: True when every shot gave matching bits ('00' or '11').\"\"\"\n    return set(counts) <= {\"00\", \"11\"}\n\n\nif __name__ == \"__main__\":\n    print(bell_circuit().draw())\n    print(\"ideal probabilities:\", ideal_probabilities())\n    counts = run_bell()\n    print(\"counts:\", dict(sorted(counts.items())))\n    print(\"only '00'/'11' seen:\", only_correlated(counts))\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/04-bell-pair-entanglement/bell_lab.py",
+        "purpose": "main lab: Bell circuit, ideal probabilities, sampled counts"
+      },
+      {
+        "path": "labs/L100/04-bell-pair-entanglement/crosscheck_numpy.py",
+        "purpose": "numpy H + CNOT statevector"
+      },
+      {
+        "path": "labs/L100/04-bell-pair-entanglement/test_bell.py",
+        "purpose": "unittest: statevector vs numpy, only 00/11"
+      },
+      {
+        "path": "labs/L100/04-bell-pair-entanglement/README.md",
+        "purpose": "run commands and expected output"
+      },
+      {
+        "path": "labs/L100/04-bell-pair-entanglement/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L100/04-bell-pair-entanglement/test_try_it.py",
+        "purpose": "tryIt tests"
+      },
+      {
+        "path": "labs/L100/requirements.txt",
+        "purpose": "pinned SDK versions"
+      }
+    ],
+    "expectedResults": [
+      "ideal probabilities: {'00': 0.5, '11': 0.5}",
+      "counts keys subset of {'00', '11'}",
+      "only '00'/'11' seen: True"
+    ],
+    "testCases": [
+      {
+        "action": "ideal_probabilities()",
+        "expected": "Equals numpy {'00': 0.5, '11': 0.5}."
+      },
+      {
+        "action": "run_bell(shots=2000, seed=3)",
+        "expected": "Only '00'/'11'; '00' within 5 sigma of 1000."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "In bell_circuit, change qc.cx(0, 1) to qc.cx(1, 0); run python try_it.py.",
+        "predict": "Still only '00' and '11'?",
+        "expected": "{'00': 0.5, '01': 0.5}, product test 0.0: the control q1 is 0, so nothing flips and nothing is entangled."
+      },
+      {
+        "task": "Restore cx(0, 1) and add qc.x(0) after it.",
+        "predict": "Are the qubits still linked?",
+        "expected": "{'01': 0.5, '10': 0.5}, product test 0.5: still entangled, now anti-correlated, so only_correlated() returns False."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "'01' or '10' in counts",
+        "action": "Check gate order (H before CX). StatevectorSampler is ideal; only a noisy simulator (e.g. an Aer noise model) or hardware gives these."
+      },
+      {
+        "symptom": "Counts not exactly 50/50",
+        "action": "Normal shot noise (lesson 3); test with a tolerance."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Cirq: `cirq.Circuit(cirq.H(q0), cirq.CX(q0, q1), cirq.measure(q0, q1, key='m'))`.",
+      "Same circuit in OpenQASM 3: `h q[0]; cx q[0], q[1];`.",
+      "Qiskit Aer (Apache-2.0, 'reduced maintenance mode'): `qiskit_aer.primitives.SamplerV2(seed=7)` takes the same PUBs; use it for noise models or speed.",
+      "PennyLane (Apache-2.0): `qp.device('default.qubit', wires=2)` + `@qp.qnode`; set shots with `qp.set_shots`.",
+      "Amazon Braket SDK (Apache-2.0): `Circuit().h(0).cnot(0, 1)` on the SDK's local `braket_sv` simulator; read `measurement_counts`.",
+      "Microsoft QDK / Q# (MIT): same operations written in Q#, run locally from Python via the `qdk` package."
+    ],
+    "inRealSystems": "The Bell pair is the hello-world of the Qiskit Aer tutorial and the Amazon Braket SDK README (Circuit().h(0).cnot(0, 1)); Stim/QEC parity checks are repeated CNOTs; GHZ states extend it to 3+ qubits.",
+    "useWhen": "Use a Bell pair to smoke-test a two-qubit pipeline and check control/target and bit order; don't expect it to send information, and expect some '01'/'10' on noisy hardware.",
+    "simulatorVsReal": "Runs on Qiskit's reference StatevectorSampler (qiskit 2.6.1), an ideal (noise-free) local simulator. Real hardware adds noise, so outcomes that are impossible here (e.g. '01' for a Bell pair) appear with small counts.",
+    "checkpoint": "PASS if 2000 seeded shots contain only '00' and '11' and the statevector matches numpy.",
+    "checkYourself": [
+      {
+        "q": "Is (|00> + |01>)/sqrt(2) entangled?",
+        "a": "No: a00*a11 - a01*a10 = 0, it is |0> (x) |+>."
+      },
+      {
+        "q": "Does measuring q0 change q1's own probabilities?",
+        "a": "No; q1 alone stays 50/50. The correlation shows only when both results are compared."
+      }
+    ],
+    "learningTools": [
+      {
+        "name": "Qiskit visualization (qiskit.visualization)",
+        "role": "SEE",
+        "exercise": "plot_state_city(Statevector(bell_circuit(measure=False))) from bell_lab.py; then repeat with the cx removed.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Bell: only the |00> and |11> corners (and their cross terms) are non-zero, height 0.5. Should match the lab's printed ideal probabilities {'00': 0.5, '11': 0.5}; without cx the pattern spreads over |00> and |01>.",
+        "mac": "pip install 'qiskit[visualization]'",
+        "windows": "pip install \"qiskit[visualization]\"",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/visualization"
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "sources": [
+      {
+        "title": "StatevectorSampler API",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/qiskit.primitives.StatevectorSampler"
+      },
+      {
+        "title": "Exact simulation with Qiskit SDK primitives",
+        "url": "https://quantum.cloud.ibm.com/docs/en/guides/simulate-with-qiskit-sdk-primitives"
+      },
+      {
+        "title": "OpenQASM 3 standard library (stdgates.inc)",
+        "url": "https://openqasm.com/language/standard_library.html"
+      },
+      {
+        "title": "Bit-ordering in the Qiskit SDK",
+        "url": "https://quantum.cloud.ibm.com/docs/en/guides/bit-ordering"
+      },
+      {
+        "title": "IBM Quantum Learning: Multiple systems, quantum information",
+        "url": "https://quantum.cloud.ibm.com/learning/en/courses/basics-of-quantum-information/multiple-systems/quantum-information"
+      }
+    ],
+    "next": "L200 #7 Bernstein–Vazirani as a pattern: H and CX into an ancilla become an oracle with phase kickback.",
+    "validation": {
+      "status": "pending-ci",
+      "how": "qiskit/qiskit-aer/cirq cannot be pip-installed in the authoring sandbox (no package network). Ran locally: `python crosscheck_numpy.py` (output pasted in README) and `python -m unittest` (incl. test_try_it.py) -> 8 tests: 3 OK, 5 SDK tests skipped. tryIt: `python try_it.py` (numpy/parser part, output = tryIt.expected) and test_try_it.py ran locally; their SDK variants are skipped. SDK part: bell_lab.py and test_bell.py (+ try_it.py/test_try_it.py SDK variants) runs in .github/workflows/labs.yml job 'sdk-labs' (REQUIRE_QUANTUM_SDKS=1, pinned versions); not yet observed. tryIt 1: local: try_it.py numpy part (observed); SDK variant in test_try_it.py is pending-ci. tryIt 2: local: try_it.py numpy part (observed); SDK variant in test_try_it.py is pending-ci. Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable and 127.0.0.1; CI matrix job runs the same tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "bell_lab.py",
+        "test_bell.py (SdkLab)",
+        "try_it.py + test_try_it.py (SDK variant)",
+        "learningTools: Qiskit visualization (qiskit.visualization) exercise (manual run)"
+      ]
+    },
+    "conceptNote": "content/concepts/04-bell-pair-entanglement.md",
+    "conceptSummary": "H then CNOT turns a product state into the entangled Bell state (|00> + |11>)/sqrt2, whose two qubits are each random but always agree. Entanglement shows up as correlation between results, not as a way to send signals."
+  },
+  {
+    "id": "openqasm-portability",
+    "number": 5,
+    "level": "L100",
+    "title": "Portable circuits with OpenQASM",
+    "phase": "Interoperability",
+    "category": "interop",
+    "description": "Export a circuit to OpenQASM 3 (and 2), re-import it, and prove nothing changed.",
+    "outcome": "You can save a circuit as neutral OpenQASM text, load it back, and verify equivalence.",
+    "environment": "macOS on Apple silicon (Mac mini) or Windows 11 x64; Python 3.12 (3.11+), venv; qiskit 2.6.1 (reference StatevectorSampler, local CPU), qiskit-qasm3-import 0.6.0, cirq 1.7.0; optional qiskit-aer 0.18.2; numpy for the cross-check",
+    "estimatedTime": "20-30 minutes",
+    "overview": [
+      "OpenQASM is a vendor-neutral text format for circuits, so one file can move between tools, reviews and version control."
+    ],
+    "prerequisites": [
+      "Lesson 4",
+      "qiskit-qasm3-import installed (in requirements.txt)"
+    ],
+    "glossary": [
+      {
+        "term": "OpenQASM 3",
+        "meaning": "Current open circuit language (Apache-2.0 spec); gates from stdgates.inc."
+      },
+      {
+        "term": "OpenQASM 2",
+        "meaning": "Older, simpler version (qelib1.inc); still widely accepted."
+      },
+      {
+        "term": "round-trip",
+        "meaning": "Export then re-import and check you get the same circuit."
+      },
+      {
+        "term": "unitary equivalence",
+        "meaning": "Two gate sequences doing the same operation (up to global phase)."
+      }
+    ],
+    "concepts": [
+      "qasm3.dumps / qasm3.loads: circuit <-> OpenQASM 3 text (loads needs qiskit-qasm3-import).",
+      "qasm2.dumps / qasm2.loads: same for OpenQASM 2 (built in).",
+      "Compare behaviour, not text: Operator.equiv for gates, seeded counts for measured circuits."
+    ],
+    "steps": [
+      {
+        "title": "Read the reference files with a tiny independent parser",
+        "detail": "python crosscheck_qasm_numpy.py",
+        "expected": "Both reference files give {'00': 0.5, '11': 0.5}.",
+        "ifNot": "Run from inside the lab folder so the .qasm paths resolve."
+      },
+      {
+        "title": "Export and re-import",
+        "detail": "python qasm_lab.py",
+        "expected": "Prints OpenQASM 3 text starting 'OPENQASM 3.0;' with include \"stdgates.inc\", then OpenQASM 2 text; writes bell.qasm.",
+        "ifNot": "QASM3ImporterError / missing qiskit_qasm3_import: pip install qiskit-qasm3-import==0.6.0."
+      },
+      {
+        "title": "Check equivalence",
+        "detail": "Read the 'same unitary' lines.",
+        "expected": "Both print True.",
+        "ifNot": "If False, diff the exported text against the original gate list."
+      },
+      {
+        "title": "Check counts",
+        "detail": "Read the two counts lines.",
+        "expected": "Same seed -> same counts for original and re-imported circuit (only '00'/'11').",
+        "ifNot": "Different register names can change result layout; the lab reads qc.cregs[0].name."
+      },
+      {
+        "title": "Feed Qiskit's output to the independent parser",
+        "detail": "python crosscheck_qasm_numpy.py bell.qasm",
+        "expected": "bell.qasm: {'00': 0.5, '11': 0.5}",
+        "ifNot": "If 'unsupported statement', the exporter used a gate outside the parser's tiny subset; note it."
+      },
+      {
+        "title": "Agent assist: let code judge a model's draft",
+        "detail": "python agent_assist.py --fake   (or without --fake to ask your local Ollama model)",
+        "expected": "bell ACCEPT with counts only '00'/'11'; ghz3 REJECT (wrong outcomes); phase REJECT (parser cannot verify rz).",
+        "ifNot": "'No local model reachable': start Ollama (lesson 1, step 7) or add --fake."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v",
+        "expected": "OK; includes parsing Qiskit-exported text with the independent parser and the agent-assist checks.",
+        "ifNot": "Check qiskit-qasm3-import is installed."
+      }
+    ],
+    "code": "\"\"\"Lab 05 - portable circuits: export to OpenQASM 3 (and 2), re-import, compare.\n\nRun:  python qasm_lab.py\nNeeds: qiskit, qiskit-qasm3-import (qasm3.loads depends on it).\n\"\"\"\nfrom pathlib import Path\n\nfrom qiskit import QuantumCircuit, qasm2, qasm3\nfrom qiskit.primitives import StatevectorSampler   # Qiskit's reference sampler; Aer's SamplerV2 is an equivalent\nfrom qiskit.quantum_info import Operator\n\n\ndef bell_circuit(measure=True):\n    qc = QuantumCircuit(2)\n    qc.h(0)\n    qc.cx(0, 1)\n    if measure:\n        qc.measure_all()\n    return qc\n\n\ndef roundtrip_qasm3(qc):\n    text = qasm3.dumps(qc)          # portability: QuantumCircuit -> neutral OpenQASM 3 text\n    return text, qasm3.loads(text)  # round-trip: text -> new QuantumCircuit\n\n\ndef roundtrip_qasm2(qc):\n    text = qasm2.dumps(qc)          # older, simpler format; still widely accepted\n    return text, qasm2.loads(text)\n\n\ndef same_unitary(a, b):\n    \"\"\"True if two measurement-free circuits do the same thing (up to global phase).\"\"\"\n    return Operator(a).equiv(Operator(b))   # unitary equivalence: compare behaviour, not text\n\n\ndef counts(qc, shots=1000, seed=7):\n    result = StatevectorSampler(seed=seed).run([qc], shots=shots).result()\n    register = qc.cregs[0].name                  # 'meas' from measure_all(); read it, don't assume\n    return getattr(result[0].data, register).get_counts()\n\n\nif __name__ == \"__main__\":\n    text3, back3 = roundtrip_qasm3(bell_circuit())\n    print(text3)\n    out = Path(__file__).resolve().parent / \"bell.qasm\"   # the neutral artifact you can share\n    out.write_text(text3, encoding=\"utf-8\")\n    text2, _ = roundtrip_qasm2(bell_circuit())\n    print(text2)\n    _, gates_only = roundtrip_qasm3(bell_circuit(measure=False))\n    print(\"qasm3 round-trip same unitary:\", same_unitary(bell_circuit(False), gates_only))\n    print(\"qasm2 round-trip same unitary:\", same_unitary(bell_circuit(False), roundtrip_qasm2(bell_circuit(False))[1]))\n    print(\"original counts:  \", counts(bell_circuit()))\n    print(\"re-imported counts:\", counts(back3))   # same seed -> expected identical\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/05-openqasm-portability/qasm_lab.py",
+        "purpose": "main lab: export/import OpenQASM 3 and 2, compare"
+      },
+      {
+        "path": "labs/L100/05-openqasm-portability/crosscheck_qasm_numpy.py",
+        "purpose": "independent mini OpenQASM reader + numpy statevector"
+      },
+      {
+        "path": "labs/L100/05-openqasm-portability/reference_bell_qasm3.qasm",
+        "purpose": "hand-written OpenQASM 3 Bell pair"
+      },
+      {
+        "path": "labs/L100/05-openqasm-portability/reference_bell_qasm2.qasm",
+        "purpose": "OpenQASM 2 Bell pair (format from qiskit.qasm2 docs)"
+      },
+      {
+        "path": "labs/L100/05-openqasm-portability/test_qasm.py",
+        "purpose": "unittest: round-trips, independent parse, equivalence"
+      },
+      {
+        "path": "labs/L100/05-openqasm-portability/agent_assist.py",
+        "purpose": "agent assist: local model drafts OpenQASM, the lab parser + numpy accept/reject it"
+      },
+      {
+        "path": "labs/L100/05-openqasm-portability/fake_qasm_rule.py",
+        "purpose": "deterministic fake-model route for tests and --fake (not a model)"
+      },
+      {
+        "path": "labs/L100/05-openqasm-portability/test_agent_assist.py",
+        "purpose": "unittest: accept/reject verdicts against the fake server; Qiskit agreement (CI)"
+      },
+      {
+        "path": "labs/_shared/local_agent/client.py",
+        "purpose": "vendored local-model client (OpenAI-compatible, stdlib only)"
+      },
+      {
+        "path": "labs/L100/05-openqasm-portability/README.md",
+        "purpose": "run commands and expected output"
+      },
+      {
+        "path": "labs/L100/05-openqasm-portability/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L100/05-openqasm-portability/test_try_it.py",
+        "purpose": "tryIt tests"
+      },
+      {
+        "path": "labs/L100/requirements.txt",
+        "purpose": "pinned SDK versions"
+      }
+    ],
+    "expectedResults": [
+      "OpenQASM 3 text with include \"stdgates.inc\"",
+      "qasm3/qasm2 round-trip same unitary: True",
+      "Original and re-imported counts identical with the same seed"
+    ],
+    "testCases": [
+      {
+        "action": "roundtrip_qasm3(bell) / roundtrip_qasm2(bell)",
+        "expected": "Text parsed by crosscheck_qasm_numpy gives {'00': 0.5, '11': 0.5}."
+      },
+      {
+        "action": "same_unitary(original, reimported)",
+        "expected": "True for both versions."
+      },
+      {
+        "action": "qasm3.loads(reference_bell_qasm3.qasm)",
+        "expected": "Counts only '00'/'11'."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "In reference_bell_qasm3.qasm change 'cx q[0], q[1];' to 'cx q[1], q[0];' and parse it (python try_it.py does this in memory).",
+        "predict": "Does a one-token edit matter?",
+        "expected": "{'00': 0.5, '01': 0.5}: no longer a Bell pair, and the bug is visible in a text diff."
+      },
+      {
+        "task": "Add the standard gate 's q[0];' after 'h q[0];' and parse it.",
+        "predict": "Will every tool read a valid stdgates.inc gate?",
+        "expected": "The tiny parser raises ValueError: unsupported statement: 's q[0]'. Tools implement subsets; Qiskit's qasm3.loads is expected to accept it."
+      }
+    ],
+    "agentAssist": {
+      "task": "A local model drafts OpenQASM 3 for three plain-English descriptions (Bell pair, 3-qubit GHZ, Bell pair with a pi/2 phase); the lab decides whether to accept each draft.",
+      "prompt": "System: You write OpenQASM 3 programs. Reply with exactly one program in a ```qasm code block. Use only h, x and cx from stdgates.inc, then measure every qubit. User: [[QASM-DRAFT]] Write an OpenQASM 3 program for: 2 qubits: a Bell pair; both qubits always measure the same value",
+      "check": "Code, not the model, decides: extract the program, read it with the lab's independent parser (crosscheck_qasm_numpy.py), compute exact probabilities with numpy and require them to equal the spec in agent_assist.TASKS (Bell: only '00'/'11' at 0.5 each). Anything the parser cannot read is rejected as unverifiable; accepted drafts are then sampled (1000 seeded shots).",
+      "expected": "bell   ACCEPT  matches spec  counts(1000, seed 7) {'00': 502, '11': 498}\nghz3   REJECT  outcomes {'000': 0.5, '011': 0.5} != spec {'000': 0.5, '111': 0.5}\nphase  REJECT  parser: unsupported statement: 'rz(pi/2) q[0]'",
+      "realModelNote": "Not run with a real model here. With Ollama (e.g. LOCAL_MODEL=qwen2.5:1.5b) drafts vary by model and version; small models often add prose, use OpenQASM 2 or gates outside h/x/cx. The verdict code is identical, so a wrong or unverifiable draft is rejected the same way."
+    },
+    "troubleshooting": [
+      {
+        "symptom": "qasm3.loads raises about qiskit_qasm3_import",
+        "action": "pip install 'qiskit[qasm3-import]' or qiskit-qasm3-import==0.6.0."
+      },
+      {
+        "symptom": "Another tool rejects the file",
+        "action": "Export OpenQASM 2 (qasm2.dumps) or keep to stdgates.inc gates; many tools support only a subset."
+      }
+    ],
+    "equivalents": [
+      "Same idea in Cirq: `circuit.to_qasm(version='3.0')`; import with `cirq.contrib.qasm_import.circuit_from_qasm` (needs ply).",
+      "Qiskit-only lossless save: qiskit.qpy (not portable to other tools).",
+      "PennyLane (Apache-2.0): `qp.from_qasm(text)` loads OpenQASM (via the PennyLane-Qiskit plugin).",
+      "Amazon Braket SDK (Apache-2.0): `Circuit().h(0).cnot(0, 1)` on the SDK's local `braket_sv` simulator; read `measurement_counts`.",
+      "Microsoft QDK / Q# (MIT): same operations written in Q#, run locally from Python via the `qdk` package."
+    ],
+    "inRealSystems": "Qiskit qasm3.dumps/loads (loads needs qiskit-qasm3-import) and qasm2; Cirq circuit.to_qasm(version='3.0') and cirq.contrib.qasm_import (subset, needs ply); PennyLane qp.from_qasm; the spec is the Apache-2.0 openqasm/openqasm project (v3.1).",
+    "useWhen": "Use OpenQASM to exchange, review and submit circuits; use QPY for lossless Qiskit-only saves, and avoid experimental export flags for long-term storage.",
+    "simulatorVsReal": "Runs on Qiskit's reference StatevectorSampler (qiskit 2.6.1), an ideal (noise-free) local simulator. Real hardware adds noise, so outcomes that are impossible here (e.g. '01' for a Bell pair) appear with small counts. Hardware may accept only a subset of OpenQASM 3 features.",
+    "caution": "Only load OpenQASM files from sources you trust and review them like code; experimental export flags are not suitable for long-term storage. Agent assist: the model only proposes text; code accepts or rejects it, nothing it writes is executed or allowed to take actions, and never put secrets or API tokens in a prompt.",
+    "checkpoint": "PASS if both round-trips report the same unitary and the independent parser reads Qiskit's exported file as {'00': 0.5, '11': 0.5}.",
+    "checkYourself": [
+      {
+        "q": "Why compare unitaries or counts rather than .qasm text?",
+        "a": "Exporters format the same circuit differently; behaviour is what must match."
+      },
+      {
+        "q": "Which line makes h and cx available in OpenQASM 3?",
+        "a": "include \"stdgates.inc\";"
+      }
+    ],
+    "learningTools": [
+      {
+        "name": "OpenQASM 3 spec + openqasm3 reference parser",
+        "role": "CHECK",
+        "exercise": "Parse the bell.qasm that qasm_lab.py wrote with openqasm3.parse() and count the gate-call statements in the AST; hand-write the same circuit from the spec's stdgates.inc and parse it too.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). 2 gate calls (h on q[0], cx q[0], q[1]) plus measurements, the same statements the lab's own parser (crosscheck_qasm_numpy.py) turns into {'00': 0.5, '11': 0.5}. The parser API is declared not yet stable.",
+        "mac": "pip install \"openqasm3[parser]\"",
+        "windows": "pip install \"openqasm3[parser]\"",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://pypi.org/project/openqasm3/"
+      },
+      {
+        "name": "Microsoft Quantum Development Kit (qdk + VS Code extension)",
+        "role": "SEE",
+        "exercise": "Open bell.qasm in VS Code with the QDK extension, view the circuit diagram, set a breakpoint after the h and step.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Diagram: H on q[0], then CX from q[0] to q[1], then two measurements, matching the OpenQASM 3 text qasm_lab.py prints; after stepping past cx only |00> and |11> remain.",
+        "mac": "pip install qdk ; VS Code extension 'Microsoft Quantum Development Kit (QDK)' (or vscode.dev/quantum/playground)",
+        "windows": "pip install qdk ; same VS Code extension",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microsoft/qdk"
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "sources": [
+      {
+        "title": "qiskit.qasm3 API",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/qasm3"
+      },
+      {
+        "title": "qiskit.qasm2 API",
+        "url": "https://quantum.cloud.ibm.com/docs/en/api/qiskit/qasm2"
+      },
+      {
+        "title": "qiskit-qasm3-import on PyPI",
+        "url": "https://pypi.org/project/qiskit-qasm3-import/"
+      },
+      {
+        "title": "OpenQASM specification: Introduction",
+        "url": "https://openqasm.com/intro.html"
+      },
+      {
+        "title": "Cirq: Import/export circuits",
+        "url": "https://quantumai.google/cirq/build/interop"
+      },
+      {
+        "title": "Ollama: OpenAI compatibility (/v1/chat/completions)",
+        "url": "https://docs.ollama.com/api/openai-compatibility"
+      }
+    ],
+    "next": "L200 #8 Small Grover search: the same agent-assist pattern (model proposes, code decides), now judging marked states and iteration counts.",
+    "validation": {
+      "status": "pending-ci",
+      "how": "qiskit/qiskit-aer/cirq cannot be pip-installed in the authoring sandbox (no package network). Ran locally: `python crosscheck_qasm_numpy.py` on the two reference files -> {'00': 0.5, '11': 0.5} each; `python agent_assist.py --fake` (output = agentAssist.expected); `python -m unittest` (incl. test_try_it.py, test_agent_assist.py) -> 18 tests: 11 OK, 7 SDK tests skipped. tryIt: `python try_it.py` (numpy/parser part, output = tryIt.expected) and test_try_it.py ran locally; their SDK variants are skipped. SDK part: qasm_lab.py and test_qasm.py (including parsing real qasm3.dumps/qasm2.dumps output) (+ try_it.py/test_try_it.py SDK variants) runs in .github/workflows/labs.yml job 'sdk-labs' (REQUIRE_QUANTUM_SDKS=1, pinned versions); not yet observed. tryIt 1: local: try_it.py with the lab's independent parser (observed); qasm3.loads variant pending-ci. tryIt 2: local: parser error observed; Qiskit acceptance pending-ci. agentAssist: local: agent_assist.py --fake and test_agent_assist.py against the vendored fake server (observed); Qiskit agreement test pending-ci. Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable and 127.0.0.1; CI matrix job runs the same tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "qasm_lab.py",
+        "test_qasm.py (SDK tests)",
+        "try_it.py + test_try_it.py (qasm3.loads variant)",
+        "test_agent_assist.py (SdkAgreesWithTheJudge)",
+        "crosscheck_qasm_numpy.py bell.qasm (needs qasm_lab.py output)",
+        "agent_assist.py with a real local model",
+        "learningTools: OpenQASM 3 spec + openqasm3 reference parser exercise (manual run)",
+        "learningTools: Microsoft Quantum Development Kit (qdk + VS Code extension) exercise (manual run)"
+      ]
+    },
+    "conceptNote": "content/concepts/05-openqasm-portability.md",
+    "conceptSummary": "OpenQASM is an open text format for circuits that many tools read and write, so circuits can be reviewed, versioned and exchanged across SDKs. Round-trips are verified by comparing behaviour (unitaries or seeded counts), not text."
+  },
+  {
+    "id": "same-circuit-two-frameworks",
+    "number": 6,
+    "level": "L100",
+    "title": "Same circuit, two frameworks",
+    "phase": "Interoperability",
+    "category": "interop",
+    "description": "Run a Bell pair (and a bit-order probe) in Qiskit and in Cirq and compare the outputs.",
+    "outcome": "You can port a small circuit between frameworks and normalise results before comparing them.",
+    "environment": "macOS on Apple silicon (Mac mini) or Windows 11 x64; Python 3.12 (3.11+), venv; qiskit 2.6.1 (reference StatevectorSampler, local CPU), qiskit-qasm3-import 0.6.0, cirq 1.7.0; optional qiskit-aer 0.18.2; numpy for the cross-check",
+    "estimatedTime": "20-30 minutes",
+    "overview": [
+      "Gates are the same across frameworks, but result formats differ - most importantly bit order - so normalise before you compare."
+    ],
+    "prerequisites": [
+      "Lesson 4",
+      "cirq 1.7.0 installed"
+    ],
+    "glossary": [
+      {
+        "term": "little-endian (Qiskit)",
+        "meaning": "Qubit 0 is the rightmost character of a bitstring."
+      },
+      {
+        "term": "big-endian (Cirq histogram)",
+        "meaning": "First measured qubit is the highest (leftmost) bit."
+      },
+      {
+        "term": "repetitions",
+        "meaning": "Cirq's name for shots."
+      },
+      {
+        "term": "measurement key",
+        "meaning": "Cirq's name for the result label (like a classical register)."
+      }
+    ],
+    "concepts": [
+      "Same circuit, different APIs: qc.h(0) vs cirq.H(q0); qc.cx vs cirq.CX.",
+      "A symmetric result (Bell) hides bit-order bugs; an asymmetric probe (X on qubit 0) exposes them.",
+      "Compare normalised distributions with tolerances, never raw dicts."
+    ],
+    "steps": [
+      {
+        "title": "Predict both conventions with numpy",
+        "detail": "python crosscheck_numpy.py",
+        "expected": "bell: {'00','11'} in both orders; x_on_q0: '01' (Qiskit order) vs '10' (Cirq order).",
+        "ifNot": "Check numpy installed."
+      },
+      {
+        "title": "Run the lab",
+        "detail": "python two_frameworks_lab.py",
+        "expected": "bell: all three rows only '00'/'11'. x_on_q0: qiskit {'01': 1000}, cirq_raw {'10': 1000}, cirq_in_qiskit_order {'01': 1000}.",
+        "ifNot": "ImportError for cirq: pip install cirq==1.7.0."
+      },
+      {
+        "title": "Spot the bit-order trap",
+        "detail": "Compare x_on_q0 'qiskit' and 'cirq_raw'.",
+        "expected": "They look different but describe the same physical result.",
+        "ifNot": "If they match, check cirq.measure(q0, q1, ...) order."
+      },
+      {
+        "title": "Run the tests",
+        "detail": "python -m unittest -v",
+        "expected": "OK; both frameworks within 5 sigma of numpy and agree after normalising.",
+        "ifNot": "Read which framework/circuit failed in the message."
+      }
+    ],
+    "code": "\"\"\"Lab 06 - the same circuits in Qiskit and Cirq, compared on one bit-order convention.\n\nRun:  python two_frameworks_lab.py\nConvention used for comparison: Qiskit's (qubit 0 = RIGHTMOST bit of the string).\n\"\"\"\nimport cirq\nfrom qiskit import QuantumCircuit\nfrom qiskit.primitives import StatevectorSampler   # Qiskit's reference sampler; Aer's SamplerV2 is an equivalent\n\nCIRCUITS = (\"bell\", \"x_on_q0\")   # bell: H(0), CX(0,1)   x_on_q0: X on qubit 0 only\n\n\ndef qiskit_counts(kind, shots=1000, seed=7):\n    qc = QuantumCircuit(2)\n    if kind == \"bell\":\n        qc.h(0)\n        qc.cx(0, 1)\n    else:\n        qc.x(0)\n    qc.measure_all()\n    result = StatevectorSampler(seed=seed).run([qc], shots=shots).result()\n    return result[0].data.meas.get_counts()          # bit order: little-endian, keys like '01' = q1 q0\n\n\ndef cirq_counts_raw(kind, shots=1000, seed=7):\n    q0, q1 = cirq.NamedQubit(\"q0\"), cirq.NamedQubit(\"q1\")\n    ops = [cirq.H(q0), cirq.CX(q0, q1)] if kind == \"bell\" else [cirq.X(q0)]\n    circuit = cirq.Circuit(*ops, cirq.measure(q0, q1, key=\"m\"))\n    result = cirq.Simulator(seed=seed).run(circuit, repetitions=shots)   # own RNG: same seed != same counts as Qiskit\n    hist = result.histogram(key=\"m\")                 # bit order: big-endian ints, q0 is the HIGHEST bit\n    return {format(k, \"02b\"): v for k, v in hist.items()}   # keys like '10' = q0 q1\n\n\ndef to_qiskit_order(counts):\n    \"\"\"Normalise: reverse each bitstring so qubit 0 is rightmost, matching Qiskit.\"\"\"\n    return {bits[::-1]: v for bits, v in counts.items()}\n\n\ndef compare(kind, shots=1000, seed=7):\n    return {\n        \"qiskit\": qiskit_counts(kind, shots, seed),\n        \"cirq_raw\": cirq_counts_raw(kind, shots, seed),\n        \"cirq_in_qiskit_order\": to_qiskit_order(cirq_counts_raw(kind, shots, seed)),\n    }\n\n\nif __name__ == \"__main__\":\n    for kind in CIRCUITS:\n        print(f\"== {kind}\")\n        for label, counts in compare(kind).items():\n            print(f\"  {label:22s} {dict(sorted(counts.items()))}\")\n",
+    "codeLanguage": "python",
+    "projectFiles": [
+      {
+        "path": "labs/L100/06-same-circuit-two-frameworks/two_frameworks_lab.py",
+        "purpose": "main lab: same circuits in Qiskit and Cirq, normalised comparison"
+      },
+      {
+        "path": "labs/L100/06-same-circuit-two-frameworks/crosscheck_numpy.py",
+        "purpose": "numpy probabilities in both bit-order conventions"
+      },
+      {
+        "path": "labs/L100/06-same-circuit-two-frameworks/test_two_frameworks.py",
+        "purpose": "unittest: each framework vs numpy, agreement after normalising"
+      },
+      {
+        "path": "labs/L100/06-same-circuit-two-frameworks/README.md",
+        "purpose": "run commands and expected output"
+      },
+      {
+        "path": "labs/L100/06-same-circuit-two-frameworks/try_it.py",
+        "purpose": "runs the two tryIt changes"
+      },
+      {
+        "path": "labs/L100/06-same-circuit-two-frameworks/test_try_it.py",
+        "purpose": "tryIt tests"
+      },
+      {
+        "path": "labs/L100/requirements.txt",
+        "purpose": "pinned SDK versions"
+      }
+    ],
+    "expectedResults": [
+      "bell: Qiskit and Cirq only '00'/'11', about 50/50",
+      "x_on_q0: Qiskit '01', Cirq raw '10', Cirq normalised '01'"
+    ],
+    "testCases": [
+      {
+        "action": "qiskit_counts / cirq_counts_raw for each circuit",
+        "expected": "Within 5 sigma of numpy in that framework's convention."
+      },
+      {
+        "action": "compare(kind)",
+        "expected": "Same outcome set for 'qiskit' and 'cirq_in_qiskit_order'."
+      }
+    ],
+    "tryIt": [
+      {
+        "task": "Extend x_on_q0 to 3 qubits (X on q0, measure q0, q1, q2) in both frameworks; run python try_it.py.",
+        "predict": "Which key does each framework print?",
+        "expected": "Qiskit '001', Cirq raw '100', Cirq normalised '001'."
+      },
+      {
+        "task": "In cirq_counts_raw, change cirq.measure(q0, q1, ...) to cirq.measure(q1, q0, ...).",
+        "predict": "Does the normalised comparison still pass?",
+        "expected": "No: Cirq raw becomes '01', so to_qiskit_order turns it into '10'. Measurement order sets bit order."
+      }
+    ],
+    "troubleshooting": [
+      {
+        "symptom": "Frameworks 'disagree' on a 2-qubit result",
+        "action": "Reverse the bitstrings of one side (to_qiskit_order) before comparing."
+      },
+      {
+        "symptom": "Counts differ between frameworks with the same seed",
+        "action": "Expected: each simulator has its own RNG; compare distributions, not exact counts."
+      }
+    ],
+    "equivalents": [
+      "Portable hand-off instead of re-coding: export OpenQASM (lesson 5) and import it in the other tool.",
+      "PennyLane (Apache-2.0): `qp.device('default.qubit', wires=2)` + `@qp.qnode`; set shots with `qp.set_shots`.",
+      "Amazon Braket SDK (Apache-2.0): `Circuit().h(0).cnot(0, 1)` on the SDK's local `braket_sv` simulator; read `measurement_counts`.",
+      "Microsoft QDK / Q# (MIT): same operations written in Q#, run locally from Python via the `qdk` package."
+    ],
+    "inRealSystems": "The Qiskit SDK documents little-endian order (some IBM runtime primitives differ); cirq.Result.histogram documents big-endian folding; PennyLane imports Qiskit circuits (qp.from_qiskit) or OpenQASM rather than re-coding.",
+    "useWhen": "Port or compare frameworks to validate a result independently or reach a library from another ecosystem; avoid extra frameworks when one stack suffices, and never compare without normalising bit order.",
+    "simulatorVsReal": "Uses Qiskit's StatevectorSampler (qiskit 2.6.1) and cirq.Simulator (cirq 1.7.0), both ideal and noise-free. Real hardware adds noise to both.",
+    "caution": "Bit order is the most common silent bug when comparing frameworks; always test with an asymmetric circuit.",
+    "checkpoint": "PASS if x_on_q0 gives '01' in Qiskit and '01' for Cirq after to_qiskit_order, and Bell gives only '00'/'11' in both.",
+    "checkYourself": [
+      {
+        "q": "Why can't a Bell pair catch a bit-order bug?",
+        "a": "'00' and '11' read the same reversed."
+      },
+      {
+        "q": "Both frameworks use seed 7. Why do the Bell counts differ?",
+        "a": "Each simulator has its own RNG; the seed values are unrelated."
+      }
+    ],
+    "learningTools": [
+      {
+        "name": "qiskit-qasm3-import",
+        "role": "CHECK",
+        "exercise": "Export the lab's Cirq circuits with circuit.to_qasm(version='3.0'), load them with qiskit.qasm3.loads, sample with StatevectorSampler(seed=7) (read the register by qc.cregs[0].name, as lab 05 does) and compare with the lab's 'qiskit' row.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Bell: only '00'/'11', about 50/50; x_on_q0: '01' in Qiskit order, the same as 'cirq_in_qiskit_order'. Cirq's own QASM import is 'experimental' and covers a limited subset, so go Cirq -> Qiskit, not back.",
+        "mac": "pip install qiskit-qasm3-import (already in labs/L100/requirements.txt)",
+        "windows": "pip install qiskit-qasm3-import (already in labs\\L100\\requirements.txt)",
+        "licence": "Apache-2.0 (OSI: yes)",
+        "url": "https://pypi.org/project/qiskit-qasm3-import/"
+      },
+      {
+        "name": "Microsoft Quantum Development Kit (qdk + VS Code extension)",
+        "role": "CHECK",
+        "exercise": "Use the qdk[qiskit] interop to run the same Bell and x_on_q0 circuits in a third framework and compare counts with the lab's Qiskit and Cirq rows.",
+        "expected": "Pending a manual run (tool not runnable in the authoring sandbox). Same outcome sets after bit-order normalisation: Bell only '00'/'11'; x_on_q0 '01' in Qiskit order. Exact counts differ (each simulator has its own RNG). Set QDK_PYTHON_TELEMETRY=none to turn off its default Python telemetry.",
+        "mac": "pip install qdk ; VS Code extension 'Microsoft Quantum Development Kit (QDK)' (or vscode.dev/quantum/playground)",
+        "windows": "pip install qdk ; same VS Code extension",
+        "licence": "MIT (OSI: yes)",
+        "url": "https://github.com/microsoft/qdk"
+      }
+    ],
+    "platforms": {
+      "mac": "expected",
+      "windows": "expected"
+    },
+    "sources": [
+      {
+        "title": "Cirq: Simulation",
+        "url": "https://quantumai.google/cirq/simulate/simulation"
+      },
+      {
+        "title": "cirq.Result API (histogram)",
+        "url": "https://quantumai.google/reference/python/cirq/Result"
+      },
+      {
+        "title": "cirq on PyPI",
+        "url": "https://pypi.org/project/cirq/"
+      },
+      {
+        "title": "Bit-ordering in the Qiskit SDK",
+        "url": "https://quantum.cloud.ibm.com/docs/en/guides/bit-ordering"
+      }
+    ],
+    "next": "L200 #9 The QFT as a building block: check one circuit against independent references (numpy DFT, QFTGate), the cross-check habit from this lab.",
+    "validation": {
+      "status": "pending-ci",
+      "how": "qiskit/qiskit-aer/cirq cannot be pip-installed in the authoring sandbox (no package network). Ran locally: `python crosscheck_numpy.py` (output pasted in README) and `python -m unittest` (incl. test_try_it.py) -> 9 tests: 5 OK, 4 SDK tests skipped. tryIt: `python try_it.py` (numpy/parser part, output = tryIt.expected) and test_try_it.py ran locally; their SDK variants are skipped. SDK part: two_frameworks_lab.py and test_two_frameworks.py (+ try_it.py/test_try_it.py SDK variants) runs in .github/workflows/labs.yml job 'sdk-labs' (REQUIRE_QUANTUM_SDKS=1, pinned versions); not yet observed. tryIt 1: local: try_it.py numpy bit-order model (observed); Qiskit/Cirq variant pending-ci. tryIt 2: local: try_it.py numpy bit-order model (observed); Cirq variant pending-ci. Platforms: mac/windows 'expected': authored and run on Linux only; lab code uses pathlib, utf-8 file I/O, sys.executable and 127.0.0.1; CI matrix job runs the same tools/run_labs.py on macos-latest and windows-latest.",
+      "pendingCi": [
+        "two_frameworks_lab.py",
+        "test_two_frameworks.py (SDK tests)",
+        "try_it.py + test_try_it.py (Qiskit/Cirq variant)",
+        "learningTools: qiskit-qasm3-import exercise (manual run)",
+        "learningTools: Microsoft Quantum Development Kit (qdk + VS Code extension) exercise (manual run)"
+      ]
+    },
+    "conceptNote": "content/concepts/06-same-circuit-two-frameworks.md",
+    "conceptSummary": "Qiskit and Cirq share gates and physics but differ in conventions: Qiskit bitstrings are little-endian, Cirq histograms big-endian, and each has its own RNG. Normalise bit order and compare distributions, using an asymmetric probe to catch ordering bugs."
+  }
+]
