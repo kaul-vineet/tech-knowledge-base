@@ -1,0 +1,41 @@
+# Technology Knowledge Base — L100 to L400 + Capstones
+
+Eight topics in the LPC1768-guide format: 22 lessons each (Setup + L100 Run it · L200 Build it · L300 Harden it · L400 Design it · Capstone). Implementation-first, open source, simulators instead of hardware, Apple-silicon Mac mini + Windows 11, local agents where they fit (the agent proposes or explains; code decides).
+
+**Status:** all lab tests pass on Linux. Not yet run on macOS or Windows; SDK, container, simulator and real-model paths run in CI (see CI.md).
+
+| Topic | L100 (1–6) | L200 (7–11) | L300 (12–16) | L400 (17–21) | Capstone (22) |
+|---|---|---|---|---|---|
+| Quantum Computing | 1. Set up your quantum environment<br>2. Qubits and gates in code<br>3. Shots, counts and probability<br>4. Entanglement with a Bell pair<br>5. Portable circuits with OpenQASM<br>6. Same circuit, two frameworks | 7. Bernstein–Vazirani as a pattern<br>8. Small Grover search<br>9. The QFT as a building block<br>10. Parameterized circuits and sweeps<br>11. Transpiling to a device layout | 12. Noise models<br>13. Error mitigation<br>14. QAOA on MaxCut vs the classical optimum<br>15. A hybrid variational loop (VQE) under shot noise<br>16. A quantum classifier vs a classical baseline | 17. Hybrid quantum-classical architecture<br>18. Benchmarking honestly against classical solvers<br>19. Resource estimation<br>20. Error-aware compilation<br>21. Quantum and post-quantum | an end-to-end quantum optimisation service |
+| Cryptography | 1. Set up your crypto workbench<br>2. Hashing and integrity<br>3. Secure randomness<br>4. Authenticated encryption<br>5. Password storage<br>6. Encoding vs hashing vs encryption | 7. Digital signatures with Ed25519<br>8. Key exchange and hybrid encryption (X25519 + HKDF + AEAD)<br>9. A local certificate authority<br>10. TLS on localhost<br>11. Tokens done right | 12. Envelope encryption and key rotation<br>13. Certificate lifecycle<br>14. Signing the software supply chain<br>15. Misuse you can test<br>16. Secrets handling in applications | 17. Crypto agility<br>18. Post-quantum cryptography in practice<br>19. Keys in hardware-style storage<br>20. End-to-end encryption for groups<br>21. Threat modelling cryptographic systems | an encrypted document service |
+| AI Agents | 1. Set up your environment<br>2. Call a model over HTTP<br>3. Prompt structure<br>4. Structured output<br>5. Your first tool call<br>6. A minimal agent loop | 7. Retrieval-augmented answers<br>8. Agents with several tools<br>9. State and memory<br>10. Build an MCP server and client<br>11. Guardrails basics | 12. Evaluating agents with a golden set<br>13. Tracing and observability<br>14. Reliability<br>15. Safe tool execution<br>16. Red-teaming prompt injection | 17. Multi-agent patterns<br>18. Durable agent workflows<br>19. Cost, latency and model choice<br>20. Deterministic core, LLM at the edge<br>21. Governance and evaluation in production | An incident-triage agent |
+| Distributed Systems | 1. Set up your environment<br>2. Two services talking over HTTP<br>3. Timeouts<br>4. Retries with exponential backoff, jitter and a retry budget<br>5. Idempotency keys<br>6. Ordering events with Lamport clocks | 7. Leader election with leases and fencing tokens<br>8. At-least-once messaging<br>9. Sharding with consistent hashing<br>10. Caching and invalidation<br>11. Rate limiting | 12. Replicated log with Raft (simplified)<br>13. Network partitions and fault injection<br>14. Sagas with compensation<br>15. Distributed tracing with W3C traceparent<br>16. Backpressure and load shedding | 17. Consistency models in practice<br>18. CRDTs for local-first collaboration<br>19. Multi-region design<br>20. Chaos engineering<br>21. Verifying correctness | An order pipeline that survives chaos and proves it |
+| Application Architecture | 1. Set up your environment<br>2. Layered structure<br>3. Modular monolith boundaries with a fitness function<br>4. API-first with OpenAPI 3.1<br>5. Configuration the 12-factor way<br>6. Documenting architecture | 7. Hexagonal architecture<br>8. Aggregates and invariants (DDD)<br>9. Event-driven integration<br>10. Authentication with OpenID Connect (code flow + PKCE)<br>11. Testing pyramid | 12. CQRS and read models<br>13. Resilience patterns<br>14. Consumer-driven contract testing<br>15. SLOs and error budgets<br>16. Performance and architecture fitness functions in CI | 17. Strangler-fig decomposition<br>18. Multi-tenancy<br>19. Policy as code<br>20. Evolutionary architecture<br>21. Cost and capacity planning | Library Loans, production-ready |
+| micro:bit (simulator) | 1. Set up your environment<br>2. The LED display<br>3. Buttons<br>4. Sound<br>5. Sensing temperature and light<br>6. Motion and gestures | 7. Radio between two boards<br>8. Data logging<br>9. Pins and PWM on the edge connector<br>10. An external sensor over I2C<br>11. A game as a state machine | 12. A reliable radio protocol<br>13. Non-blocking firmware structure<br>14. Power budgeting (modelled, not measured)<br>15. A serial gateway to the PC<br>16. Close-sibling low-level code | 17. Edge-to-cloud architecture<br>18. Device fleet management<br>19. Securing constrained devices<br>20. A digital twin of the sensor network<br>21. Local AI at the edge gateway | classroom environmental monitor network |
+| Simulation | 1. Set up your simulation workbench<br>2. Monte Carlo<br>3. Discrete-event simulation<br>4. Time-stepped physics<br>5. Agent-based modelling<br>6. Is the model right? Verification vs validation | 7. Input modelling<br>8. Resources and queues<br>9. ODE solvers in practice<br>10. Warm-up, replications and confidence<br>11. A supply-chain model | 12. Variance reduction<br>13. Calibration<br>14. Global sensitivity<br>15. Co-simulation with FMI<br>16. Performance and scale | 17. Digital twins with live data<br>18. Simulation-based optimisation<br>19. Surrogate models and emulation<br>20. Large-scale and parallel simulation<br>21. Model governance and V&V | a digital twin of a service centre |
+| Astronomy & Astrophysics | 1. Your astronomy workbench<br>2. Coordinates and the sky<br>3. Time systems<br>4. Units and scales<br>5. Orbits<br>6. Light and spectra | 7. Catalogues and cross-matching<br>8. FITS images and WCS<br>9. Aperture photometry<br>10. Light curves and periods<br>11. N-body simulation | 12. Observation planning<br>13. Calibration frames<br>14. Plate solving (astrometry-lite)<br>15. Fitting with honest uncertainty<br>16. Reproducible data pipelines | 17. Survey pipeline architecture<br>18. Time-domain alerts<br>19. Big catalogues<br>20. Model comparison<br>21. Open data and science software practice | an exoplanet transit search pipeline |
+
+## Shared
+- `shared/WORKSTATION-SETUP.md` — one install recipe for Mac mini + Windows
+- `shared/LEARNING-TOOLS-CATALOG.md` — verified open-source learning tools (SEE / BUILD WITHOUT CODE / CHECK / INSPECT)
+- `shared/local_agent/` — local-model client + deterministic stand-in server for tests
+- `CI.md` + `.github/workflows/` — Mac / Windows / Linux matrix; re-sync with `python tools/sync_root_ci.py`
+- Reviews: `REVIEW-L100-L200.md`, `REVIEW-L300.md`
+
+## L500 · Theory & rigour (undergraduate layer)
+
+Each topic adds lessons 23–27: Foundations I–III (theorems, proofs, code checks and problem sets), Ethics & society (a case study), and a Reading seminar.
+Each topic also has an assessment pack in `content/assessment/`: syllabus, midterm, final, a 15-item concept inventory, an oral defence, an ADR peer review and team roles.
+
+## Practice question bank
+
+There are 1,866 multiple-choice questions across L100–L500, in `content/qbank/`. To practise, open the website and choose **Practice**.
+
+## L600 · Integrate it (cross-topic projects)
+
+`integrated/` has eight projects that combine 2–3 topics each: post-quantum messaging on a replicated log, a quantum-safe
+migration, an AI agent that runs simulation studies, an offline-first micro:bit fleet, an observatory scheduler,
+signed science-data releases, a quantum-job service, and a least-privilege tool platform for AI agents. Each one tests
+every seam between the topics and ships a reproducible integration failure. See `integrated/README.md`.
+#   t e c h - k n o w l e d g e - b a s e  
+ 
